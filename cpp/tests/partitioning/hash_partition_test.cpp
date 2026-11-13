@@ -11,6 +11,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
@@ -257,6 +258,54 @@ TEST_F(HashPartition, LargePartitionCountWithNulls)
   // Verify null count is preserved
   EXPECT_EQ(output->get_column(0).null_count(), num_rows / 4);
   EXPECT_EQ(output->get_column(1).null_count(), num_rows / 4);
+}
+
+TEST_F(HashPartition, ManyBlocksSlicedMixedTypes)
+{
+  // More rows than a thread block processes, with an offset in every column
+  cudf::size_type const num_rows = 100'002;
+  auto const iter                = cuda::counting_iterator<int64_t>{0};
+  auto const valids   = cuda::transform_iterator(iter, [](auto i) { return i % 7 != 0; });
+  auto const str_iter = cuda::transform_iterator(iter, [](auto i) { return std::to_string(i); });
+
+  fixed_width_column_wrapper<int64_t> row_ids(iter, iter + num_rows);
+  fixed_width_column_wrapper<int8_t, int64_t> bytes(iter, iter + num_rows, valids);
+  fixed_width_column_wrapper<int16_t, int64_t> shorts(
+    iter, iter + num_rows, cudf::test::iterators::no_nulls());
+  cudf::test::fixed_point_column_wrapper<__int128_t> decimals(
+    iter, iter + num_rows, numeric::scale_type{-2});
+  strings_column_wrapper strings(str_iter, str_iter + num_rows, valids);
+  auto const input =
+    cudf::slice(cudf::table_view({row_ids, bytes, shorts, decimals, strings}), {1, num_rows - 1})
+      .front();
+
+  for (cudf::size_type const num_partitions : {13, 1024, 2049}) {
+    auto [output, offsets] = cudf::hash_partition(input, {0, 1}, num_partitions);
+
+    EXPECT_EQ(static_cast<size_t>(num_partitions + 1), offsets.size());
+    EXPECT_EQ(0, offsets.front());
+    EXPECT_EQ(input.num_rows(), offsets.back());
+
+    // Every row is in the partition of its hash
+    auto const hashes = cudf::test::to_host<uint32_t>(
+                          cudf::hashing::murmurhash3_x86_32(output->view().select({0, 1}))->view())
+                          .first;
+    std::vector<cudf::size_type> expected(hashes.size());
+    std::transform(hashes.begin(), hashes.end(), expected.begin(), [&](auto hash) {
+      return hash % num_partitions;
+    });
+    std::vector<cudf::size_type> partitions(hashes.size());
+    for (cudf::size_type partition = 0; partition < num_partitions; ++partition) {
+      std::fill(partitions.begin() + offsets[partition],
+                partitions.begin() + offsets[partition + 1],
+                partition);
+    }
+    EXPECT_EQ(expected, partitions);
+
+    // Every row keeps the values of all its columns
+    auto const sorted = cudf::sort_by_key(output->view(), output->view().select({0}));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, sorted->view());
+  }
 }
 
 TEST_F(HashPartition, MixedColumnTypes)

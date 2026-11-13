@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -57,6 +57,21 @@ TEST_F(PartitionTest, ZeroPartitions)
   auto [output, offsets]               = cudf::hash_partition(input,
                                                 columns_to_hash,
                                                 num_partitions,
+                                                cudf::hash_id::HASH_MURMUR3,
+                                                cudf::DEFAULT_HASH_SEED,
+                                                cudf::test::get_default_stream());
+}
+
+TEST_F(PartitionTest, HashPartitionMixedTypes)
+{
+  fixed_width_column_wrapper<int32_t> keys({1, 2, 3, 4, 5, 6, 7, 8});
+  fixed_width_column_wrapper<int64_t> payload({1, 2, 3, 4, 5, 6, 7, 8}, {1, 1, 0, 1, 1, 0, 1, 1});
+  strings_column_wrapper strings({"a", "bb", "ccc", "d", "ee", "fff", "gg", "h"});
+  auto input = cudf::table_view({keys, payload, strings});
+
+  auto [output, offsets] = cudf::hash_partition(input,
+                                                std::vector<cudf::size_type>({0}),
+                                                4,
                                                 cudf::hash_id::HASH_MURMUR3,
                                                 cudf::DEFAULT_HASH_SEED,
                                                 cudf::test::get_default_stream());

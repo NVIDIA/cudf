@@ -10,6 +10,8 @@ Use this skill when the user invokes `/review-cudf` with:
 
 cudf GitHub repository is located at: https://github.com/NVIDIA/cudf
 
+To write a change, use the [`contribute-cudf`](../contribute-cudf/SKILL.md) skill, which runs this review before each push.
+
 # Review cuDF Pull Request
 
 1. **Fetch PR metadata and diff**

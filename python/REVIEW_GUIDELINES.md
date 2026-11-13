@@ -54,6 +54,10 @@
 - Missing size/type checks
 - Not handling edge cases (empty DataFrames, all-null columns)
 
+### Code Reuse
+- New helpers that reimplement functionality already available in cudf, pylibcudf, cudf_polars utilities, or the underlying libcudf API without a correctness reason or a measured performance justification
+- New code beyond what the change needs: dead code, unused parameters, speculative generality
+
 ### dask_cudf
 - Dask DataFrame API compatibility issues
 - Serialization/deserialization errors for GPU objects
@@ -64,6 +68,7 @@
 - Using external datasets (tests must not depend on external resources)
 - Missing tests for different array types (CuPy, Numba)
 - New pytest files not conforming to standards and patterns of existing test files in that directory
+- New tests that duplicate existing coverage instead of extending an existing test or `@pytest.mark.parametrize` list; cite the covering test
 
 ### Documentation
 - Missing or incorrect docstrings for public methods
@@ -91,7 +96,7 @@
 
 Before commenting, ask:
 1. Is this actually wrong/risky, or just different?
-2. Would this cause a real problem (crash, leak, wrong results, API break)?
+2. Would this cause a real problem (crash, leak, wrong results, API break), or leave code or tests the repository does not need (dead code, or a copy of an existing helper or test that you can name)?
 3. Does this comment add unique value?
 
 **If no to any: Skip the comment.**

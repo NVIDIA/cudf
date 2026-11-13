@@ -1339,3 +1339,50 @@ def test_datetime_combine_integer_time_unsupported(in_memory_engine: pl.GPUEngin
     ldf = pl.LazyFrame({"a": [datetime.date(2024, 1, 1)], "b": [1]})
     q = ldf.select(pl.col("a").dt.combine(pl.col("b")))
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("time_zone", ["Asia/Kathmandu", "America/New_York"])
+@pytest.mark.parametrize(
+    "func",
+    [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "weekday",
+        "ordinal_day",
+        "quarter",
+        "week",
+        "iso_year",
+        "date",
+        "is_leap_year",
+        "days_in_month",
+        "century",
+        "millennium",
+    ],
+)
+def test_datetime_fields_read_local_wall_clock(
+    engine: pl.GPUEngine, time_zone: str, func: str
+):
+    # Fields come from the local wall clock of the column's zone, so instants
+    # near midnight, a year end and a DST change land on different local values.
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2020, 1, 1, 0, 0),
+                    datetime.datetime(2019, 12, 31, 23, 30),
+                    datetime.datetime(2020, 2, 29, 21, 15, 7),
+                    datetime.datetime(2021, 3, 14, 6, 59, 59),
+                    datetime.datetime(2021, 3, 14, 7, 0, 0),
+                    datetime.datetime(2021, 12, 31, 20, 0, 0),
+                    None,
+                ],
+                dtype=pl.Datetime("us", time_zone="UTC"),
+            )
+        }
+    )
+    local = pl.col("a").dt.convert_time_zone(time_zone)
+    assert_gpu_result_equal(ldf.select(getattr(local.dt, func)()), engine=engine)

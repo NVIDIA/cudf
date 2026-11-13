@@ -2179,12 +2179,11 @@ aggregate_reader_metadata::select_columns(
     // column. The time units must always agree when both sources have a logical type, because
     // the values are copied without conversion. Otherwise sources match if their converted types
     // are equal or their logical types are identical.
-    auto const annotations_match =
-      (lhs.logical_type.has_value() and rhs.logical_type.has_value())
-        ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
-            (lhs.converted_type == rhs.converted_type or
-             logical_types_match(*lhs.logical_type, *rhs.logical_type))
-        : lhs.converted_type == rhs.converted_type;
+    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
+                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
+                                         (lhs.converted_type == rhs.converted_type or
+                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
+                                     : lhs.converted_type == rhs.converted_type;
     return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
            identities_match and lhs.decimal_scale == rhs.decimal_scale and
            lhs.decimal_precision == rhs.decimal_precision;

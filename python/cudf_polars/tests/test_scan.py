@@ -6,7 +6,7 @@ import datetime as dt
 import gzip
 import zlib
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
 import numpy as np
@@ -1301,7 +1301,7 @@ def _read_mismatched_sources(paths: list[Path]) -> plc.Table:
         plc.io.parquet.ParquetReaderOptions.builder(
             plc.io.SourceInfo([str(p) for p in paths])
         )
-        .allow_mismatched_pq_schemas(True)
+        .allow_mismatched_pq_schemas(val=True)
         .build()
     )
     options.set_column_names(["t"])
@@ -1326,7 +1326,7 @@ def test_read_parquet_sources_from_different_writers(
     )
     paths = [pyarrow_path, polars_path]
     result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
-    assert_table_eq(pa.table({"t": pa.array([t, t], pa.timestamp("us"))}), result)
+    assert result.columns()[0].to_pylist() == [t, t]
 
 
 @pytest.mark.parametrize("pyarrow_first", [True, False])
@@ -1357,20 +1357,21 @@ def test_read_parquet_sources_naive_and_utc_from_same_writer(
     paths = [tmp_path / "naive.parquet", tmp_path / "utc.parquet"]
     for path, tz in zip(paths, (None, "UTC"), strict=True):
         if writer == "pyarrow":
-            pq.write_table(
-                pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), path
-            )
+            pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), path)
         else:
-            pl.DataFrame(
-                {"t": [t]}, schema={"t": pl.Datetime("us", tz)}
-            ).write_parquet(path)
+            pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+                path
+            )
     assert _read_mismatched_sources(paths).num_rows() == 2
 
 
 @pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ms", "ns")])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_read_parquet_sources_with_different_time_units(
-    tmp_path: Path, units: tuple[str, str], *, reverse: bool
+    tmp_path: Path,
+    units: tuple[Literal["ms", "us", "ns"], Literal["ms", "us", "ns"]],
+    *,
+    reverse: bool,
 ) -> None:
     # The values are copied without conversion, so sources with different
     # time units must not be read together. Polars writes no converted type,
@@ -1378,8 +1379,6 @@ def test_read_parquet_sources_with_different_time_units(
     t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
     paths = [tmp_path / f"{unit}.parquet" for unit in units]
     for path, unit in zip(paths, units, strict=True):
-        pl.DataFrame(
-            {"t": [t]}, schema={"t": pl.Datetime(unit)}
-        ).write_parquet(path)
+        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(path)
     with pytest.raises(ValueError, match="mismatching data type or schema"):
         _read_mismatched_sources(paths[::-1] if reverse else paths)

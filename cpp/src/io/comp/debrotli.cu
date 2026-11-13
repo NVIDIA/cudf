@@ -55,6 +55,7 @@ THE SOFTWARE.
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/stream>
 

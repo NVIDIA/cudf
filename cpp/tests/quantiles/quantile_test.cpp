@@ -13,7 +13,9 @@
 #include <cudf/copying.hpp>
 #include <cudf/quantiles.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 #include <limits>
@@ -158,9 +160,8 @@ test_case<bool> interpolate_extrema_low<bool>()
 
 // single
 
-template <typename T>
+template <cuda::std::floating_point T>
 test_case<T> single()
-  requires(std::is_floating_point_v<T>)
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({7.309999942779541}),
                       {
@@ -194,17 +195,15 @@ test_case<T> single()
                       }};
 }
 
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 test_case<T> single()
-  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1}),
                       {q_expect{0.7, 1, 1, 1, 1, 1, 1}}};
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 test_case<T> single()
-  requires(cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1}),
                       {q_expect{0.7, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0}}};
@@ -212,9 +211,8 @@ test_case<T> single()
 
 // all_invalid
 
-template <typename T>
+template <cuda::std::floating_point T>
 test_case<T> all_invalid()
-  requires(std::is_floating_point_v<T>)
 {
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({6.8, 0.15, 3.4, 4.17, 2.13, 1.11, -1.01, 0.8, 5.7},
@@ -222,18 +220,16 @@ test_case<T> all_invalid()
     {q_expect{-1.0}, q_expect{0.0}, q_expect{0.5}, q_expect{1.0}, q_expect{2.0}}};
 }
 
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 test_case<T> all_invalid()
-  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6},
                                                                 {0, 0, 0, 0, 0, 0, 0, 0, 0}),
                       {q_expect{0.7}}};
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 test_case<T> all_invalid()
-  requires(cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1, 0, 1, 1, 0, 1, 0, 1, 1},
                                                                 {0, 0, 0, 0, 0, 0, 0, 0, 0}),
@@ -242,9 +238,8 @@ test_case<T> all_invalid()
 
 // some invalid
 
-template <typename T>
+template <cuda::std::same_as<double> T>
 test_case<T> some_invalid()
-  requires(std::is_same_v<T, double>)
 {
   T high = 0.16;
   T low  = -1.024;
@@ -261,9 +256,8 @@ test_case<T> some_invalid()
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1})};
 }
 
-template <typename T>
+template <cuda::std::same_as<float> T>
 test_case<T> some_invalid()
-  requires(std::is_same_v<T, float>)
 {
   T high     = 0.16;
   T low      = -1.024;
@@ -280,9 +274,8 @@ test_case<T> some_invalid()
                       cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1})};
 }
 
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 test_case<T> some_invalid()
-  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6},
                                                                 {0, 0, 1, 0, 0, 0, 0, 0, 1}),
@@ -292,9 +285,8 @@ test_case<T> some_invalid()
                       cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 8})};
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 test_case<T> some_invalid()
-  requires(cudf::is_boolean<T>())
 {
   return test_case<T>{cudf::test::fixed_width_column_wrapper<T>({1, 0, 1, 1, 0, 1, 0, 1, 1},
                                                                 {0, 0, 1, 0, 1, 0, 0, 0, 0}),
@@ -306,9 +298,8 @@ test_case<T> some_invalid()
 
 // unsorted
 
-template <typename T>
+template <cuda::std::floating_point T>
 test_case<T> unsorted()
-  requires(std::is_floating_point_v<T>)
 {
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({6.8, 0.15, 3.4, 4.17, 2.13, 1.11, -1.00, 0.8, 5.7}),
@@ -318,9 +309,8 @@ test_case<T> unsorted()
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({6, 1, 7, 5, 4, 2, 3, 8, 0})};
 }
 
-template <typename T>
+template <cudf::concepts::integral_not_bool T>
 test_case<T> unsorted()
-  requires(cuda::std::is_integral_v<T> and not cudf::is_boolean<T>())
 {
   return cuda::std::is_signed<T>()
            ? test_case<T>{cudf::test::fixed_width_column_wrapper<T>({6, 0, 3, 4, 2, 1, -1, 1, 6}),
@@ -333,9 +323,8 @@ test_case<T> unsorted()
                             {6, 1, 7, 5, 4, 2, 3, 8, 0})};
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 test_case<T> unsorted()
-  requires(cudf::is_boolean<T>())
 {
   return test_case<T>{
     cudf::test::fixed_width_column_wrapper<T>({0, 0, 1, 1, 0, 1, 1, 0, 1}),

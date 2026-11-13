@@ -20,7 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -573,8 +572,11 @@ void make_device_json_column(device_span<SymbolT const> input,
       return;
     } else if (column_category == NC_VAL || column_category == NC_STR) {
       auto const num_rows = max_row_offsets[i] + 1;
-      col.string_offsets.resize(num_rows, stream);
-      col.string_lengths.resize(num_rows, stream);
+      // These buffers are empty until this column is initialized.
+      col.string_offsets = cuda::device_buffer<size_type>(
+        stream, col.string_offsets.memory_resource(), num_rows, cuda::no_init);
+      col.string_lengths = cuda::device_buffer<size_type>(
+        stream, col.string_lengths.memory_resource(), num_rows, cuda::no_init);
       thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          num_rows,

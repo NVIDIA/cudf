@@ -491,7 +491,8 @@ streaming::Actor shuffle(std::shared_ptr<streaming::Context> ctx,
                                      ctx->br().get());
     shuffler.insert(std::move(packed));
   }
-  co_await shuffler.insert_finished();
+  shuffler.insert_finished();
+  co_await shuffler.wait();
   for (auto pid : shuffler.local_partitions()) {
     auto packed_data = shuffler.extract(pid);
     auto stream      = ctx->br()->stream_pool()->get_stream();

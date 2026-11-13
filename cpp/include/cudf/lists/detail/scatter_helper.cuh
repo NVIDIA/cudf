@@ -13,6 +13,8 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
+
 #include <memory>
 
 namespace cudf {
@@ -120,7 +122,7 @@ struct unbound_list_view {
 
 std::unique_ptr<column> build_lists_child_column_recursive(
   data_type child_column_type,
-  rmm::device_uvector<unbound_list_view> const& list_vector,
+  cuda::device_buffer<unbound_list_view> const& list_vector,
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,

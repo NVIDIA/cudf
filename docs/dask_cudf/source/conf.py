@@ -59,7 +59,7 @@ html_theme = "nvidia_sphinx_theme"
 htmlhelp_basename = "dask-cudfdoc"
 html_use_modindex = True
 
-html_static_path = ["_static"]
+html_static_path = []
 
 pygments_style = "sphinx"
 
@@ -78,16 +78,33 @@ html_theme_options = {
 }
 include_pandas_compat = True
 
+with open("../../../RAPIDS_BRANCH", "r") as f:
+    branch = f.read().strip()
+intersphinx_version = "latest" if branch == "main" else version
+
+# CI builds cuDF first and stages its docs here before building dask-cuDF.
+# Use that inventory even before this release's docs have been published.
+docs_dir = os.environ.get("RAPIDS_DOCS_DIR")
+cudf_inventory = (
+    os.path.join(docs_dir, "cudf", "html", "objects.inv") if docs_dir else None
+)
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "pyarrow": ("https://arrow.apache.org/docs/", None),
-    "cudf": ("https://docs.rapids.ai/api/cudf/stable/", None),
+    "cudf": (
+        f"https://docs.nvidia.com/cudf/{intersphinx_version}/",
+        cudf_inventory,
+    ),
     "dask": ("https://docs.dask.org/en/stable/", None),
-    # Temporarily disable pandas intersphinx: https://github.com/pandas-dev/pandas/issues/64584
-    # "pandas": ("https://pandas.pydata.org/docs/", None),
-    "dask-cuda": ("https://docs.rapids.ai/api/dask-cuda/stable/", None),
+    "pandas": ("https://pandas.pydata.org/docs/", None),
+    "dask-cuda": (
+        f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
+        None,
+    ),
+    "rmm": (f"https://docs.nvidia.com/rmm/{intersphinx_version}/", None),
 }
 
 numpydoc_show_inherited_class_members = True

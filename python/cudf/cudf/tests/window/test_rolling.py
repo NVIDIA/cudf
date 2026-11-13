@@ -455,40 +455,47 @@ def test_rolling_numba_udf_with_nulls_raises():
         gsr.rolling(2).apply(some_func)
 
 
-def test_rolling_groupby_simple(supported_rolling_reductions):
-    pdf = pd.DataFrame(
-        {
-            "a": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
-            "b": [1, 2, 3, 1, 2, 3, 1, 2, 3, 1],
-        }
-    )
-    gdf = cudf.from_pandas(pdf)
-
-    for window_size in range(1, len(pdf) + 1):
-        expect = getattr(
-            pdf.groupby("a").rolling(window_size), supported_rolling_reductions
-        )()
-        got = getattr(
-            gdf.groupby("a").rolling(window_size), supported_rolling_reductions
-        )()
-        assert_eq(expect, got)
-
-    pdf = pd.DataFrame(
-        {"a": [1, 1, 1, 2, 2], "b": [1, 1, 2, 2, 3], "c": [1, 2, 3, 4, 5]}
-    )
-    gdf = cudf.from_pandas(pdf)
-
-    for window_size in range(1, len(pdf) + 1):
-        expect = getattr(
-            pdf.groupby("a").rolling(window_size), supported_rolling_reductions
-        )()
-        got = getattr(
-            gdf.groupby("a").rolling(window_size), supported_rolling_reductions
-        )()
-        assert_eq(expect, got)
+@pytest.fixture(scope="module")
+def rolling_groupby_simple_inputs():
+    pdfs = [
+        pd.DataFrame(
+            {
+                "a": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
+                "b": [1, 2, 3, 1, 2, 3, 1, 2, 3, 1],
+            }
+        ),
+        pd.DataFrame(
+            {
+                "a": [1, 1, 1, 2, 2],
+                "b": [1, 1, 2, 2, 3],
+                "c": [1, 2, 3, 4, 5],
+            }
+        ),
+    ]
+    return [
+        (pdf.groupby("a"), cudf.from_pandas(pdf).groupby("a"), len(pdf))
+        for pdf in pdfs
+    ]
 
 
-def test_rolling_groupby_multi(supported_rolling_reductions):
+def test_rolling_groupby_simple(
+    supported_rolling_reductions, rolling_groupby_simple_inputs
+):
+    for pandas_groupby, cudf_groupby, size in rolling_groupby_simple_inputs:
+        for window_size in range(1, size + 1):
+            expect = getattr(
+                pandas_groupby.rolling(window_size),
+                supported_rolling_reductions,
+            )()
+            got = getattr(
+                cudf_groupby.rolling(window_size),
+                supported_rolling_reductions,
+            )()
+            assert_eq(expect, got)
+
+
+@pytest.fixture(scope="module")
+def rolling_groupby_multi_inputs():
     pdf = pd.DataFrame(
         {
             "a": [1, 1, 1, 1, 1, 1, 2, 2, 2, 2],
@@ -496,22 +503,29 @@ def test_rolling_groupby_multi(supported_rolling_reductions):
             "c": [1, 2, 3, 1, 2, 3, 1, 2, 3, 1],
         }
     )
-    gdf = cudf.from_pandas(pdf)
+    return (
+        pdf.groupby(["a", "b"], sort=True),
+        cudf.from_pandas(pdf).groupby(["a", "b"], sort=True),
+        len(pdf),
+    )
 
-    for window_size in range(1, len(pdf) + 1):
+
+def test_rolling_groupby_multi(
+    supported_rolling_reductions, rolling_groupby_multi_inputs
+):
+    pandas_groupby, cudf_groupby, size = rolling_groupby_multi_inputs
+    for window_size in range(1, size + 1):
         expect = getattr(
-            pdf.groupby(["a", "b"], sort=True).rolling(window_size),
-            supported_rolling_reductions,
+            pandas_groupby.rolling(window_size), supported_rolling_reductions
         )()
         got = getattr(
-            gdf.groupby(["a", "b"], sort=True).rolling(window_size),
-            supported_rolling_reductions,
+            cudf_groupby.rolling(window_size), supported_rolling_reductions
         )()
         assert_eq(expect, got)
 
 
-@pytest.mark.parametrize("window_size", ["1D", "3D", "6D", "7D"])
-def test_rolling_groupby_offset(supported_rolling_reductions, window_size):
+@pytest.fixture(scope="module")
+def rolling_groupby_offset_inputs():
     pdf = pd.DataFrame(
         {
             "date": pd.date_range(start="2016-01-01", periods=7, freq="D"),
@@ -519,12 +533,19 @@ def test_rolling_groupby_offset(supported_rolling_reductions, window_size):
             "val": [5, 6, 7, 8, 1, 2, 3],
         }
     ).set_index("date")
-    gdf = cudf.from_pandas(pdf)
+    return pdf.groupby("group"), cudf.from_pandas(pdf).groupby("group")
+
+
+@pytest.mark.parametrize("window_size", ["1D", "3D", "6D", "7D"])
+def test_rolling_groupby_offset(
+    supported_rolling_reductions, window_size, rolling_groupby_offset_inputs
+):
+    pandas_groupby, cudf_groupby = rolling_groupby_offset_inputs
     expect = getattr(
-        pdf.groupby("group").rolling(window_size), supported_rolling_reductions
+        pandas_groupby.rolling(window_size), supported_rolling_reductions
     )()
     got = getattr(
-        gdf.groupby("group").rolling(window_size), supported_rolling_reductions
+        cudf_groupby.rolling(window_size), supported_rolling_reductions
     )()
     assert_eq(expect, got)
 

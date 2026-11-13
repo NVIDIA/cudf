@@ -19,11 +19,10 @@ from typing import (
 
 import polars as pl
 import polars.datatypes
-from polars import polars as plrs  # type: ignore[attr-defined]
+from polars import _plr as plrs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import TypeAlias
 
     import pylibcudf as plc
 
@@ -48,7 +47,7 @@ __all__: list[str] = [
     "Slice",
 ]
 
-PolarsIR: TypeAlias = Union[
+type PolarsIR = Union[
     plrs._ir_nodes.PythonScan,
     plrs._ir_nodes.Scan,
     plrs._ir_nodes.Cache,
@@ -65,10 +64,9 @@ PolarsIR: TypeAlias = Union[
     plrs._ir_nodes.MapFunction,
     plrs._ir_nodes.Union,
     plrs._ir_nodes.HConcat,
-    plrs._ir_nodes.ExtContext,
 ]
 
-PolarsExpr: TypeAlias = Union[
+type PolarsExpr = Union[
     plrs._expr_nodes.Function,
     plrs._expr_nodes.Window,
     plrs._expr_nodes.Literal,
@@ -84,16 +82,16 @@ PolarsExpr: TypeAlias = Union[
     plrs._expr_nodes.PyExprIR,
 ]
 
-PolarsSchema: TypeAlias = dict[str, pl.DataType]
-Schema: TypeAlias = dict[str, "DataType"]
+type PolarsSchema = dict[str, pl.DataType]
+type Schema = dict[str, "DataType"]
 
-PolarsDataType: TypeAlias = polars.datatypes.DataTypeClass | polars.datatypes.DataType
+type PolarsDataType = polars.datatypes.DataTypeClass | polars.datatypes.DataType
 
-Slice: TypeAlias = tuple[int, int | None]
+type Slice = tuple[int, int | None]
 
-CSECache: TypeAlias = MutableMapping[int, tuple["DataFrame", int]]
+type CSECache = MutableMapping[int, tuple["DataFrame", int]]
 
-ClosedInterval: TypeAlias = Literal["left", "right", "both", "none"]
+type ClosedInterval = Literal["left", "right", "both", "none"]
 
 Duration = NewType("Duration", tuple[int, int, int, int, bool, bool])
 
@@ -137,7 +135,7 @@ class NodeTraverser(Protocol):
         ...
 
 
-OptimizationArgs: TypeAlias = Literal[
+type OptimizationArgs = Literal[
     "type_coercion",
     "predicate_pushdown",
     "projection_pushdown",
@@ -150,7 +148,7 @@ OptimizationArgs: TypeAlias = Literal[
     "optimizations",
 ]
 
-CollectKwargs: TypeAlias = dict[OptimizationArgs, bool | pl.QueryOptFlags]
+type CollectKwargs = dict[OptimizationArgs, bool | pl.QueryOptFlags]
 
 
 U_contra = TypeVar("U_contra", bound=Hashable, contravariant=True)
@@ -220,6 +218,18 @@ class _StructDataTypeHeader(TypedDict):
     fields: list[_StructFieldHeader]
 
 
+class _CategoricalDataTypeHeader(TypedDict):
+    kind: Literal["categorical"]
+    name: str
+    namespace: str
+    physical: str
+
+
+class _EnumDataTypeHeader(TypedDict):
+    kind: Literal["enum"]
+    categories: list[str]
+
+
 DataTypeHeader = (
     _ScalarDataTypeHeader
     | _DecimalDataTypeHeader
@@ -228,6 +238,8 @@ DataTypeHeader = (
     | _ListDataTypeHeader
     | _ArrayDataTypeHeader
     | _StructDataTypeHeader
+    | _CategoricalDataTypeHeader
+    | _EnumDataTypeHeader
 )
 
 

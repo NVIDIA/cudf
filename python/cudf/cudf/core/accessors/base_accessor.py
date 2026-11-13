@@ -89,6 +89,7 @@ class BaseAccessor(NotIterable):
                 table = new_col
 
                 if isinstance(self._parent, cudf.Index):
+                    # Expanded results map column names to columns.
                     if len(table) == 0:
                         raise TypeError(
                             "Cannot infer number of levels from empty list"

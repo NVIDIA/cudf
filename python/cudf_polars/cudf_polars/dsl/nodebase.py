@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from cudf_polars.dsl.traversal import traversal
 
@@ -43,7 +43,7 @@ def _update_stable_hasher(hasher: Any, obj: Hashable) -> None:
         hasher.update(repr(obj).encode("utf-8"))
 
 
-class Node(Generic[T]):
+class Node[T: "Node[Any]"]:
     """
     An abstract node type.
 

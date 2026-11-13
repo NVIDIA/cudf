@@ -20,23 +20,24 @@ namespace cudf {
 namespace detail {
 
 // logical-and scan of the null mask of the input view
-std::pair<rmm::device_buffer, size_type> mask_scan(column_view const& input_view,
-                                                   scan_type inclusive,
-                                                   cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> mask_scan(
+  column_view const& input_view,
+  scan_type inclusive,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 // exponentially weighted moving average of the input
 std::unique_ptr<column> exponentially_weighted_moving_average(column_view const& input,
                                                               scan_aggregation const& agg,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr);
+                                                              cudf::memory_resources mr);
 
 template <template <typename> typename DispatchFn>
 std::unique_ptr<column> scan_agg_dispatch(column_view const& input,
                                           scan_aggregation const& agg,
                                           bitmask_type const* output_mask,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   switch (agg.kind) {
     case aggregation::SUM:

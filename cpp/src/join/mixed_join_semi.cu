@@ -20,15 +20,15 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
-#include <thrust/fill.h>
 
 #include <optional>
 
@@ -44,8 +44,9 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   null_equality compare_nulls,
   join_kind join_type,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   CUDF_EXPECTS((join_type != join_kind::INNER_JOIN) and (join_type != join_kind::LEFT_JOIN) and
                  (join_type != join_kind::FULL_JOIN),
                "Inner, left, and full joins should use mixed_join.");
@@ -70,7 +71,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
         return get_trivial_left_join_indices(left_conditional, 0, stream, mr).first;
       // Inner and left semi joins return empty output because no matches can exist.
       case join_kind::LEFT_SEMI_JOIN:
-        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
+        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
       default: CUDF_FAIL("Invalid join kind."); break;
     }
   } else if (left_num_rows == 0) {
@@ -78,7 +79,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
       // Anti and semi joins both return empty sets.
       case join_kind::LEFT_ANTI_JOIN:
       case join_kind::LEFT_SEMI_JOIN:
-        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr);
+        return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
       default: CUDF_FAIL("Invalid join kind."); break;
     }
   }
@@ -163,7 +164,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
     auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
-    row_is_valid pred{static_cast<bitmask_type const*>(row_bitmask.data())};
+    row_is_valid pred{row_bitmask.data()};
 
     // insert valid rows
     row_set.insert_if_async(iter, iter + right_num_rows, stencil, pred, stream.get());
@@ -180,7 +181,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   hash_set_ref_type const row_set_ref = row_set.ref(cuco::contains).rebind_hash_function(hash_left);
 
   // Vector used to indicate indices from the left table which are present in output
-  auto left_table_keep_mask = rmm::device_uvector<bool>(left.num_rows(), stream, temp_mr);
+  auto left_table_keep_mask =
+    cuda::device_buffer<bool>(stream, temp_mr, left.num_rows(), cuda::no_init);
 
   launch_mixed_join_semi(has_nulls,
                          *left_conditional_view,
@@ -195,7 +197,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
                          shmem_size_per_block,
                          stream);
 
-  auto gather_map = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
+  auto gather_map =
+    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
 
   // gather_map_end will be the end of valid data in gather_map
   auto gather_map_end = cudf::detail::copy_if(
@@ -206,7 +209,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     [join_type] __device__(bool keep_row) -> bool {
       return keep_row == (join_type == join_kind::LEFT_SEMI_JOIN);
     },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   gather_map->resize(cuda::std::distance(gather_map->begin(), gather_map_end), stream);
   return gather_map;
@@ -222,7 +226,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_semi_join(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,
@@ -244,7 +248,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_left_anti_join(
   ast::expression const& binary_predicate,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::mixed_join_semi(left_equality,

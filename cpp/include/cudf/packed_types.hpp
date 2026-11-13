@@ -33,6 +33,7 @@ namespace CUDF_EXPORT cudf {
  * table metadata and one on device which contains the table data.
  */
 struct packed_columns {
+  /// @brief Construct empty packed columns
   packed_columns()
     : metadata(std::make_unique<std::vector<uint8_t>>()),
       gpu_data(std::make_unique<rmm::device_buffer>())

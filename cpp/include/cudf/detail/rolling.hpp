@@ -10,7 +10,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -30,9 +32,9 @@ enum class direction : bool {
  * @brief Wrapper for preprocessed group information from sorted group keys.
  */
 struct preprocessed_group_info {
-  rmm::device_uvector<size_type> const& labels;   ///< Mapping from row index to group label
-  rmm::device_uvector<size_type> const& offsets;  ///< Mapping from group label to row offsets
-  rmm::device_uvector<size_type> const&
+  device_span<size_type const> labels;   ///< Mapping from row index to group label
+  device_span<size_type const> offsets;  ///< Mapping from group label to row offsets
+  cuda::device_buffer<size_type> const&
     nulls_per_group;  ///< Mapping from group label to null count in the group
 };
 
@@ -44,12 +46,13 @@ struct preprocessed_group_info {
  * @param orderby Column with null mask.
  * @param offsets Offset array defining the (sorted) groups.
  * @param stream CUDA stream used for kernel launches
- * @return device_uvector containing the null count per group.
+ * @return Buffer containing the null count per group.
  */
-[[nodiscard]] rmm::device_uvector<cudf::size_type> nulls_per_group(
+[[nodiscard]] cuda::device_buffer<cudf::size_type> nulls_per_group(
   column_view const& orderby,
-  rmm::device_uvector<size_type> const& offsets,
-  cuda::stream_ref stream);
+  device_span<size_type const> offsets,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @copydoc std::unique_ptr<column> rolling_window(
@@ -58,7 +61,7 @@ struct preprocessed_group_info {
  *            column_view const& following_window,
  *            size_type min_periods,
  *            rolling_aggregation const& agg,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
@@ -68,7 +71,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cudf::memory_resources mr);
 
 /**
  * @brief Make a column representing the window offsets for a range-based window
@@ -97,7 +100,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
   null_order null_order,
   range_window_type window,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

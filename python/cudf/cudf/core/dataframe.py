@@ -27,10 +27,10 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never
 
 import cupy
-import numba
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from numba_cuda_mlir import cuda
 from nvtx import annotate
 from pandas.io.formats import console
 from pandas.io.formats.printing import pprint_thing
@@ -102,7 +102,7 @@ from cudf.core.mixins import GetAttrGetItemMixin
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import DataFrameResampler
 from cudf.core.series import Series
-from cudf.core.udf.row_function import DataFrameApplyKernel
+from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
 from cudf.errors import MixedTypeError
 from cudf.options import get_option
 from cudf.utils import docutils, ioutils, queryutils
@@ -630,8 +630,8 @@ def _pd_index_level_dtypes(idx) -> tuple | None:
 @_performance_tracking
 def _listlike_to_column_accessor(
     data: Sequence,
-    columns: None | pd.Index,
-    index: None | Index,
+    columns: pd.Index | None,
+    index: Index | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -825,7 +825,7 @@ def _listlike_to_column_accessor(
 @_performance_tracking
 def _array_to_column_accessor(
     data: np.ndarray | cupy.ndarray,
-    columns: None | pd.Index,
+    columns: pd.Index | None,
     nan_as_null: bool,
 ) -> ColumnAccessor:
     """Convert a 1D or 2D numpy or cupy array to a ColumnAccessor for DataFrame.__init__"""
@@ -866,8 +866,8 @@ def _array_to_column_accessor(
 @_performance_tracking
 def _mapping_to_column_accessor(
     data: Mapping,
-    index: None | Index,
-    dtype: None | Dtype,
+    index: Index | None,
+    dtype: Dtype | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -5360,8 +5360,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
     def query(
         self,
         expr: str,
-        local_dict: None | dict[str, Any] = None,
-        global_dict: None | dict[str, Any] = None,
+        local_dict: dict[str, Any] | None = None,
+        global_dict: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
         """
@@ -5500,8 +5500,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -5684,8 +5684,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         >>> df.apply(f, axis=1)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
         """
         if axis != 1:
             raise NotImplementedError(
@@ -5738,7 +5738,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if na_action == "ignore":
-            devfunc = numba.cuda.jit(device=True)(func)
+            devfunc = cuda.jit(device=True)(func)
 
             # promote to a null-ignoring function
             # this code is never run in python, it only
@@ -7835,6 +7835,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         column_type_length=None,
         output_as_binary=None,
         *args,
+        filesystem=None,
         **kwargs,
     ):
         """{docstring}"""
@@ -7857,6 +7858,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             max_page_size_bytes=max_page_size_bytes,
             max_page_size_rows=max_page_size_rows,
             storage_options=storage_options,
+            filesystem=filesystem,
             return_metadata=return_metadata,
             use_dictionary=use_dictionary,
             header_version=header_version,
@@ -7890,6 +7892,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         lineterminator=None,
         chunksize=None,
         storage_options=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import csv
@@ -7909,6 +7912,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             encoding=encoding,
             compression=compression,
             storage_options=storage_options,
+            filesystem=filesystem,
             quoting=quoting,
         )
 
@@ -7924,6 +7928,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         cols_as_map_type=None,
         storage_options=None,
         index=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import orc
@@ -7938,6 +7943,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             row_index_stride=row_index_stride,
             cols_as_map_type=cols_as_map_type,
             storage_options=storage_options,
+            filesystem=filesystem,
             index=index,
         )
 

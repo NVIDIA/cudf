@@ -1069,8 +1069,6 @@ TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
   // NaN counts per row group for the non-nullable and nullable columns
   std::array<int64_t, 3> const expected_nan_counts{0, 1, 500};
   std::array<int64_t, 3> const expected_nullable_nan_counts{0, 1, 429};
-  std::array<std::vector<int64_t>, 2> const expected_page_nan_counts{std::vector<int64_t>{0, 0},
-                                                                     std::vector<int64_t>{1, 0}};
   for (int rg = 0; rg < 3; ++rg) {
     for (int col = 0; col < 3; ++col) {
       auto const& chunk    = fmd.row_groups[rg].columns[col];
@@ -1081,10 +1079,10 @@ TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
       EXPECT_EQ(stats.min_value.has_value(), nan_count == 0);
       EXPECT_EQ(stats.max_value.has_value(), nan_count == 0);
       EXPECT_GT(chunk.offset_index_length, 0);
-      if (rg < 2) {
-        EXPECT_EQ(read_column_index(source, chunk).nan_counts, expected_page_nan_counts[rg]);
+      // Pages with NaNs have no valid min/max, so their chunk has no column index
+      if (nan_count == 0) {
+        EXPECT_EQ(read_column_index(source, chunk).nan_counts, (std::vector<int64_t>{0, 0}));
       } else {
-        // An all-NaN page has no valid min/max, so its chunk has no column index
         EXPECT_EQ(chunk.column_index_length, 0);
       }
     }

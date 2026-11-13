@@ -537,15 +537,18 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
 }
 
-TEST_F(HybridScanTest, FilterAllNanPage)
+TEST_F(HybridScanTest, FilterNanPage)
 {
-  // A cudf-written chunk with an all-NaN page has no column index, so the page is kept and its
-  // NaNs satisfy `col0 != 5`
+  // A cudf-written chunk with a NaN page has no column index, so the page is kept and its
+  // finite values satisfy `col0 == 5`
   auto constexpr num_rows  = 2000;
   auto constexpr rg_size   = 1000;
   auto constexpr page_size = 500;
-  auto const elements      = cudf::detail::make_counting_transform_iterator(
-    0, [](int i) { return i >= 1500 ? std::numeric_limits<double>::quiet_NaN() : 5.0; });
+  auto const elements      = cudf::detail::make_counting_transform_iterator(0, [](int i) {
+    // The last page alternates 5.0 and NaN, the rest is 1.0
+    if (i < 1500) { return 1.0; }
+    return i % 2 ? std::numeric_limits<double>::quiet_NaN() : 5.0;
+  });
   cudf::test::fixed_width_column_wrapper<double> col0(elements, elements + num_rows);
   auto const payload = cudf::detail::make_counting_transform_iterator(0, [](int i) { return i; });
   cudf::test::fixed_width_column_wrapper<int32_t> col1(payload, payload + num_rows);
@@ -567,7 +570,7 @@ TEST_F(HybridScanTest, FilterAllNanPage)
   auto five_value   = cudf::numeric_scalar<double>(5.0);
   auto five         = cudf::ast::literal(five_value);
   auto col_ref_0    = cudf::ast::column_name_reference("col0");
-  auto const filter = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, five);
+  auto const filter = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, five);
 
   auto stream     = cudf::get_default_stream();
   auto mr         = cudf::get_current_device_resource_ref();
@@ -577,10 +580,16 @@ TEST_F(HybridScanTest, FilterAllNanPage)
   auto const [read_filter_table, read_payload_table] =
     hybrid_scan(*datasource, filter, {}, true, false, stream, mr, aligned_mr);
 
-  // Only the NaN rows satisfy the filter
-  auto const expected = cudf::slice(table, {1500, num_rows}).front();
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.select({0}), read_filter_table->view());
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected.select({1}), read_payload_table->view());
+  // Only the even rows of the last page satisfy the filter
+  auto constexpr num_expected = (num_rows - 1500) / 2;
+  auto const expected_payload =
+    cudf::detail::make_counting_transform_iterator(0, [](int i) { return 1500 + 2 * i; });
+  cudf::test::fixed_width_column_wrapper<double> expected_col0(
+    cuda::make_constant_iterator(5.0), cuda::make_constant_iterator(5.0) + num_expected);
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_col1(expected_payload,
+                                                                expected_payload + num_expected);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected_col0}}, read_filter_table->view());
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected_col1}}, read_payload_table->view());
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)

@@ -3310,16 +3310,13 @@ CUDF_KERNEL void __launch_bounds__(1)
   uint32_t const pageidx         = ck_g->first_page;
   size_t var_bytes               = 0;
 
-  // A float page holding only NaNs has no valid min/max, so no column index is written for its
-  // chunk (the histograms and var_bytes below are still needed)
+  // Float pages with NaNs have no min/max (see merge_group_statistics), so no column index is
+  // written for their chunk (the histograms and var_bytes below are still needed)
   auto const is_float   = col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64;
-  auto const is_all_nan = [](statistics_chunk const& stats) {
-    return stats.nan_count > 0 and stats.nan_count == stats.non_nulls;
-  };
+  auto const has_nan    = [](statistics_chunk const& stats) { return stats.nan_count > 0; };
   auto const page_stats = column_stats.begin() + pageidx;
-  auto const has_all_nan_page =
-    is_float and
-    cuda::std::any_of(page_stats + first_data_page, page_stats + num_pages, is_all_nan);
+  auto const has_nan_page =
+    is_float and cuda::std::any_of(page_stats + first_data_page, page_stats + num_pages, has_nan);
 
   header_encoder encoder(ck_g->column_index_blob);
 
@@ -3423,7 +3420,7 @@ CUDF_KERNEL void __launch_bounds__(1)
 
   // now reset column_index_size to the actual size of the encoded column index blob
   ck_g->column_index_size =
-    has_all_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
+    has_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
   ck_g->var_bytes_size = var_bytes;
 }
 

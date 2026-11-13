@@ -13,6 +13,7 @@
 #include <cudf/detail/row_operator/primitive_equality.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -132,7 +133,7 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
       iter, iter + left_table_num_rows, d_equal, hasher, found_begin, stream.get());
   } else {
     auto stencil           = cuda::counting_iterator<size_type>{0};
-    auto const row_bitmask = cudf::detail::bitmask_and(left, stream, mr.get_temporary_mr()).first;
+    auto const row_bitmask = cudf::detail::bitmask_and(left, stream, mr.as_temporary()).first;
     auto const pred        = cudf::detail::row_is_valid{row_bitmask.data()};
 
     hash_table.find_if_async(
@@ -234,11 +235,11 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
     left_table_num_rows, stream, mr.get_output_mr());
 
   auto found_indices = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), left_table_num_rows, cuda::no_init);
+    stream, mr.get_temporary_mr(), left_table_num_rows, cuda::no_init);
   auto const found_begin = cuda::make_transform_output_iterator(found_indices.begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
-    left, stream, cudf::get_current_device_resource_ref());
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
       cudf::detail::row::primitive::row_hasher{nullate::DYNAMIC{has_nulls}, preprocessed_left};
@@ -255,7 +256,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                _nulls_equal,
                                found_begin,
                                stream,
-                               cudf::get_current_device_resource_ref());
+                               mr);
   } else {
     auto const two_table_equal =
       cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
@@ -276,7 +277,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                  _nulls_equal,
                                  found_begin,
                                  stream,
-                                 cudf::get_current_device_resource_ref());
+                                 mr);
     } else {
       auto const device_comparator =
         two_table_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, _nulls_equal);
@@ -288,7 +289,7 @@ distinct_hash_join::inner_join(cudf::table_view const& left,
                                  _nulls_equal,
                                  found_begin,
                                  stream,
-                                 cudf::get_current_device_resource_ref());
+                                 mr);
     }
   }
 
@@ -334,8 +335,8 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
   auto const output_begin =
     cuda::make_transform_output_iterator(right_indices->begin(), output_fn{});
 
-  auto preprocessed_left = cudf::detail::row::equality::preprocessed_table::create(
-    left, stream, cudf::get_current_device_resource_ref());
+  auto preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
 
   if (cudf::detail::is_primitive_row_op_compatible(_right)) {
     auto const d_hasher =
@@ -354,11 +355,11 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                _nulls_equal,
                                output_begin,
                                stream,
-                               cudf::get_current_device_resource_ref());
+                               mr);
   } else {
     // If right table is empty, return left table
     if (this->_right.num_rows() == 0) {
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    right_indices->begin(),
                    right_indices->end(),
                    cudf::JoinNoMatch);
@@ -382,7 +383,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                    _nulls_equal,
                                    output_begin,
                                    stream,
-                                   cudf::get_current_device_resource_ref());
+                                   mr);
       } else {
         auto const device_comparator =
           two_table_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, _nulls_equal);
@@ -394,7 +395,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> distinct_hash_join::left_join(
                                    _nulls_equal,
                                    output_begin,
                                    stream,
-                                   cudf::get_current_device_resource_ref());
+                                   mr);
       }
     }
   }

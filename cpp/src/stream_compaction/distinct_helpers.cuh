@@ -7,6 +7,7 @@
 
 #include "distinct_helpers.hpp"
 
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -47,15 +48,14 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
                                                                   cuda::stream_ref stream,
                                                                   cudf::memory_resources mr)
 {
-  auto output_indices    = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
-  auto reduction_results = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
-  initialize_reduction_results(
-    reduction_results.data(), num_rows, keep, stream, cudf::get_current_device_resource_ref());
+  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
+  auto reduction_results =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
+  initialize_reduction_results(reduction_results.data(), num_rows, keep, stream, mr);
 
   auto set_ref = set.ref(cuco::op::insert_and_find);
 
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<cudf::size_type>{0},
                    cuda::counting_iterator{num_rows},
                    [set_ref, keep, reduction_results = reduction_results.begin()] __device__(
@@ -76,8 +76,8 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
                      }
                    });
 
-  auto const output_size =
-    copy_reduction_results(reduction_results.data(), num_rows, output_indices.data(), keep, stream);
+  auto const output_size = copy_reduction_results(
+    reduction_results.data(), num_rows, output_indices.data(), keep, stream, mr);
   output_indices.resize(output_size, stream);
   return output_indices;
 }

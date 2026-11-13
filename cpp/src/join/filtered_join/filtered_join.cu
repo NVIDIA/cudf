@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/preprocessed_table.cuh>
 #include <cudf/detail/row_operator/primitive_common.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/filtered_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/null_mask.hpp>
@@ -132,7 +133,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
 {
   cudf::scoped_range range{"filtered_join::semi_anti_join"};
 
-  auto const temp_mr           = cudf::get_current_device_resource_ref();
+  auto const temp_mr           = mr.get_temporary_mr();
   auto const preprocessed_left = [&left, stream, temp_mr] {
     cudf::scoped_range range{"filtered_join::semi_anti_join::preprocessed_left"};
     return cudf::detail::row::equality::preprocessed_table::create(left, stream, temp_mr);
@@ -143,14 +144,13 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
   if (_right_mode == row_operator_mode::PRIMITIVE) {
     query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);
   } else if (_right_mode == row_operator_mode::NESTED) {
-    query_right_table_nested(
-      left, preprocessed_left, contains_map_span, stream, cudf::get_current_device_resource_ref());
+    query_right_table_nested(left, preprocessed_left, contains_map_span, stream, mr);
   } else {
     query_right_table_flat(left, preprocessed_left, contains_map_span, stream);
   }
 
   rmm::device_uvector<size_type> gather_map(left.num_rows(), stream, mr.get_output_mr());
-  auto gather_map_end = thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
+  auto gather_map_end = thrust::copy_if(cudf::detail::exec_policy_nosync(stream, mr),
                                         cuda::counting_iterator<size_type>{0},
                                         cuda::counting_iterator<size_type>{left.num_rows()},
                                         gather_map.begin(),
@@ -180,9 +180,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::anti_join(
   if (_right.num_rows() == 0) {
     auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
       left.num_rows(), stream, mr.get_output_mr());
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     result->begin(),
-                     result->end());
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), result->begin(), result->end());
     return result;
   }
 

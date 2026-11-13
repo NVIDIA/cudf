@@ -8,6 +8,7 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/partitioning.hpp>
@@ -87,8 +88,8 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
 
   if (num_partitions == nrows) {
     cuda::device_buffer<cudf::size_type> partition_offsets(
-      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      stream, mr.get_temporary_mr(), num_partitions + 1, cuda::no_init);
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                      partition_offsets.begin(),
                      partition_offsets.end());
 
@@ -102,7 +103,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
     return std::pair{std::move(uniq_tbl), cudf::detail::make_std_vector(partition_offsets, stream)};
   } else {  //( num_partitions > nrows )
     cuda::device_buffer<cudf::size_type> d_row_indices(
-      stream, cudf::get_current_device_resource_ref(), nrows, cuda::no_init);
+      stream, mr.get_temporary_mr(), nrows, cuda::no_init);
 
     // copy rotated right partition indexes that
     // fall in the interval [0, nrows):
@@ -134,16 +135,14 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> degenerate
 
     // offsets (part 2: compute partition offsets):
     cuda::device_buffer<cudf::size_type> partition_offsets(
-      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      stream, mr.get_temporary_mr(), num_partitions + 1, cuda::no_init);
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            nedges_iter_begin,
                            nedges_iter_begin + num_partitions,
                            partition_offsets.begin());
     // Add the total row count as the last offset
-    thrust::fill_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   partition_offsets.end() - 1,
-                   1,
-                   nrows);
+    thrust::fill_n(
+      cudf::detail::exec_policy_nosync(stream, mr), partition_offsets.end() - 1, 1, nrows);
 
     return std::pair{std::move(uniq_tbl), cudf::detail::make_std_vector(partition_offsets, stream)};
   }

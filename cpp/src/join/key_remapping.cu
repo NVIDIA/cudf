@@ -14,6 +14,7 @@
 #include <cudf/detail/row_operator/primitive_equality.cuh>
 #include <cudf/detail/row_operator/primitive_hashing.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing.hpp>
@@ -383,12 +384,12 @@ class key_remap_table : public key_remap_table_interface {
       return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
     }
 
-    auto const temp_mr = cudf::get_current_device_resource_ref();
+    auto const temp_mr = mr.get_temporary_mr();
 
     if (this->_right.num_rows() == 0) {
       auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
         left_num_rows, stream, mr.get_output_mr());
-      thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
@@ -417,7 +418,7 @@ class key_remap_table : public key_remap_table_interface {
                    left_keys,
                    output_begin,
                    stream,
-                   cudf::get_current_device_resource_ref());
+                   mr);
     } else {
       auto const two_table_equal =
         cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
@@ -430,21 +431,13 @@ class key_remap_table : public key_remap_table_interface {
       if (_right_has_nested_columns) {
         auto const device_comparator =
           two_table_equal.equal_to<true>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter,
-                     probe_comparator{device_comparator},
-                     left_keys,
-                     output_begin,
-                     stream,
-                     cudf::get_current_device_resource_ref());
+        find_matches(
+          iter, probe_comparator{device_comparator}, left_keys, output_begin, stream, mr);
       } else {
         auto const device_comparator =
           two_table_equal.equal_to<false>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
-        find_matches(iter,
-                     probe_comparator{device_comparator},
-                     left_keys,
-                     output_begin,
-                     stream,
-                     cudf::get_current_device_resource_ref());
+        find_matches(
+          iter, probe_comparator{device_comparator}, left_keys, output_begin, stream, mr);
       }
     }
     return result;
@@ -482,7 +475,7 @@ class key_remap_table : public key_remap_table_interface {
     } else {
       auto stencil = cuda::counting_iterator<cudf::size_type>{0};
       auto const row_bitmask =
-        cudf::detail::bitmask_and(left_keys, stream, mr.get_temporary_mr()).first;
+        cudf::detail::bitmask_and(left_keys, stream, mr.as_temporary()).first;
       auto const pred = row_is_valid{row_bitmask.data()};
 
       _hash_table.find_if_async(iter,
@@ -614,7 +607,7 @@ class key_remapping_impl {
     if (_table == nullptr) {
       auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
         keys.num_rows(), stream, mr.get_output_mr());
-      thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                    result->begin(),
                    result->end(),
                    cudf::JoinNoMatch);
@@ -678,7 +671,7 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
 
   if (indices->size() == 0) { return cudf::make_empty_column(cudf::type_id::INT32); }
 
-  thrust::replace(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::replace(cudf::detail::exec_policy_nosync(stream, mr),
                   indices->begin(),
                   indices->end(),
                   cudf::JoinNoMatch,

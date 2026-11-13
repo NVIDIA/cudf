@@ -12,6 +12,7 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -376,11 +377,11 @@ cuda::device_buffer<size_type> compute_gather_map(size_type num_rows,
                                                   size_type const* block_partition_sizes,
                                                   size_type const* scanned_block_partition_sizes,
                                                   size_type grid_size,
-                                                  cuda::stream_ref stream)
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   auto sequence = cuda::counting_iterator<cudf::size_type>{0};
-  cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  cuda::device_buffer<size_type> gather_map(stream, mr.get_output_mr(), num_rows, cuda::no_init);
 
   copy_block_partitions_impl(sequence,
                              gather_map.data(),
@@ -455,7 +456,8 @@ struct copy_block_partitions_dispatcher {
                                          block_partition_sizes,
                                          scanned_block_partition_sizes,
                                          grid_size,
-                                         stream);
+                                         stream,
+                                         mr.as_temporary());
 
     auto gather_table = cudf::detail::gather(cudf::table_view({input}),
                                              gather_map,
@@ -483,12 +485,12 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
                "num_partitions exceeds cudf's supported limit");
 
   cuda::device_buffer<size_type> row_partition_numbers(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
 
   // Compute partition number for each row
   if (is_power_two(num_partitions)) {
     auto const partitioner = bitwise_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -497,7 +499,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
                       });
   } else {
     auto const partitioner = modulo_partitioner<hash_value_type>(num_partitions);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>(0),
                       cuda::counting_iterator<size_type>(num_rows),
                       row_partition_numbers.begin(),
@@ -510,7 +512,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
   // HistogramEven writes num_partitions bins; the extra element is used by the exclusive scan
   // below to produce the total row count as the last offset. Zero-initialize to avoid UB.
   auto histogram = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    num_partitions + 1, stream, cudf::get_current_device_resource_ref());
+    num_partitions + 1, stream, mr.get_temporary_mr());
   {
     auto const num_levels  = num_partitions + 1;
     auto const lower_level = size_type{0};
@@ -527,7 +529,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
                                         num_rows,
                                         stream.get());
     cuda::device_buffer<std::byte> temp_storage(
-      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+      stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
                                         row_partition_numbers.data(),
@@ -541,7 +543,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
 
   // Exclusive scan on histogram to get partition offsets.
   // histogram has num_partitions+1 elements; after scan, histogram[num_partitions] = num_rows.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          histogram.begin(),
                          histogram.end(),
                          histogram.begin());
@@ -551,9 +553,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table_g
 
   // Build scatter map: atomically increment partition offsets
   cuda::device_buffer<size_type> scatter_map(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     row_partition_numbers.begin(),
     row_partition_numbers.end(),
     scatter_map.begin(),
@@ -584,7 +586,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   cudf::memory_resources mr)
 {
   auto const num_rows = table_to_hash.num_rows();
-  auto const temp_mr  = cudf::get_current_device_resource_ref();
+  auto const temp_mr  = mr.get_temporary_mr();
 
   auto const row_hasher = detail::row::hash::row_hasher(table_to_hash, stream, temp_mr);
   auto const hasher =
@@ -679,7 +681,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
 
   // Compute exclusive scan of all blocks' partition sizes in-place to determine
   // the starting point for each blocks portion of each partition in the output
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          block_partition_sizes.begin(),
                          block_partition_sizes.end(),
                          scanned_block_partition_sizes.data());
@@ -687,7 +689,7 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   // Compute exclusive scan of size of each partition to determine offset
   // location of each partition in final output.
   // TODO This can be done independently on a separate stream
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          global_partition_sizes.begin(),
                          global_partition_sizes.end(),
                          global_partition_sizes.begin());
@@ -728,7 +730,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
                                            block_partition_sizes.data(),
                                            scanned_block_partition_sizes.data(),
                                            grid_size,
-                                           stream);
+                                           stream,
+                                           mr.as_temporary());
 
       // Handle bitmask using gather to take advantage of ballot_sync
       detail::gather_bitmask(
@@ -789,7 +792,7 @@ struct dispatch_map_type {
   {
     // Build a histogram of the number of rows in each partition
     cuda::device_buffer<size_type> histogram(
-      stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_partitions + 1, cuda::no_init);
     std::size_t temp_storage_bytes{};
     std::size_t const num_levels = num_partitions + 1;
     size_type const lower_level  = 0;
@@ -805,7 +808,7 @@ struct dispatch_map_type {
                                         stream.get());
 
     cuda::device_buffer<std::byte> temp_storage(
-      stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+      stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
 
     cub::DeviceHistogram::HistogramEven(temp_storage.data(),
                                         temp_storage_bytes,
@@ -819,7 +822,7 @@ struct dispatch_map_type {
 
     // `histogram` was created with an extra entry at the end such that an
     // exclusive scan will put the total number of rows at the end
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            histogram.begin(),
                            histogram.end(),
                            histogram.begin());
@@ -830,11 +833,11 @@ struct dispatch_map_type {
     // Unfortunately need to materialize the scatter map because
     // `detail::scatter` requires multiple passes through the iterator
     cuda::device_buffer<size_type> scatter_map(
-      stream, cudf::get_current_device_resource_ref(), partition_map.size(), cuda::no_init);
+      stream, mr.get_temporary_mr(), partition_map.size(), cuda::no_init);
 
     // For each `partition_map[i]`, atomically increment the corresponding
     // partition offset to determine `i`s location in the output
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       partition_map.begin<MapType>(),
                       partition_map.end<MapType>(),
                       scatter_map.begin(),

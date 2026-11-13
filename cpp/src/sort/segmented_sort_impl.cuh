@@ -56,39 +56,36 @@ struct column_fast_sort_fn {
                  column_view const& segment_offsets,
                  mutable_column_view& indices,
                  bool ascending,
-                 cuda::stream_ref stream)
+                 cuda::stream_ref stream,
+                 cudf::memory_resources mr)
   {
     // CUB's segmented sort functions cannot accept iterators.
     // We create a temporary column here for it to use.
-    auto temp_col                   = cudf::detail::allocate_like(input,
-                                                input.size(),
-                                                mask_allocation_policy::NEVER,
-                                                stream,
-                                                cudf::get_current_device_resource_ref());
+    auto temp_col = cudf::detail::allocate_like(
+      input, input.size(), mask_allocation_policy::NEVER, stream, mr.as_temporary());
     mutable_column_view output_view = temp_col->mutable_view();
     auto temp_indices =
       cudf::column(cudf::column_view(indices.type(), indices.size(), indices.head(), nullptr, 0),
                    stream,
-                   cudf::get_current_device_resource_ref());
+                   mr.as_temporary());
 
     // DeviceSegmentedSort is faster than DeviceSegmentedRadixSort at this time
-    auto fast_sort_impl = [stream](bool ascending, [[maybe_unused]] auto&&... args) {
-      cuda::device_buffer<std::byte> d_temp_storage{stream,
-                                                    cudf::get_current_device_resource_ref()};
+    auto fast_sort_impl = [stream, mr](bool ascending, [[maybe_unused]] auto&&... args) {
+      cuda::device_buffer<std::byte> d_temp_storage{stream, mr.get_temporary_mr()};
       size_t temp_storage_bytes = 0;
       if (ascending) {
         if constexpr (method == sort_method::STABLE) {
           cub::DeviceSegmentedSort::StableSortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
           d_temp_storage = cuda::device_buffer<std::byte>{
-            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
+            stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::StableSortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         } else {
           cub::DeviceSegmentedSort::SortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
           d_temp_storage = cuda::device_buffer<std::byte>{
-            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
+            stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::SortPairs(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         }
@@ -97,14 +94,14 @@ struct column_fast_sort_fn {
           cub::DeviceSegmentedSort::StableSortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
           d_temp_storage = cuda::device_buffer<std::byte>{
-            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
+            stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::StableSortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         } else {
           cub::DeviceSegmentedSort::SortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
           d_temp_storage = cuda::device_buffer<std::byte>{
-            stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init};
+            stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init};
           cub::DeviceSegmentedSort::SortPairsDescending(
             d_temp_storage.data(), temp_storage_bytes, std::forward<decltype(args)>(args)...);
         }
@@ -128,14 +125,19 @@ struct column_fast_sort_fn {
                   column_view const& segment_offsets,
                   mutable_column_view& indices,
                   bool ascending,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
   {
-    fast_sort<T>(input, segment_offsets, indices, ascending, stream);
+    fast_sort<T>(input, segment_offsets, indices, ascending, stream, mr);
   }
 
   template <typename T, CUDF_ENABLE_IF(!is_fast_sort_supported<T>())>
-  void operator()(
-    column_view const&, column_view const&, mutable_column_view&, bool, cuda::stream_ref)
+  void operator()(column_view const&,
+                  column_view const&,
+                  mutable_column_view&,
+                  bool,
+                  cuda::stream_ref,
+                  cudf::memory_resources)
   {
     CUDF_FAIL("Column type cannot be used with fast-sort function");
   }
@@ -162,10 +164,7 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
   // Unfortunately, CUB's segmented sort functions cannot accept iterators.
   // We have to build a pre-filled sequence of indices as input.
   auto sorted_indices = cudf::detail::sequence(
-    input.size(),
-    numeric_scalar<size_type>{0, true, stream, cudf::get_current_device_resource_ref()},
-    stream,
-    mr);
+    input.size(), numeric_scalar<size_type>{0, true, stream, mr.as_temporary()}, stream, mr);
   auto indices_view = sorted_indices->mutable_view();
 
   cudf::type_dispatcher<dispatch_storage_type>(input.type(),
@@ -174,7 +173,8 @@ std::unique_ptr<column> fast_segmented_sorted_order(column_view const& input,
                                                segment_offsets,
                                                indices_view,
                                                column_order == order::ASCENDING,
-                                               stream);
+                                               stream,
+                                               mr);
   return sorted_indices;
 }
 
@@ -269,8 +269,8 @@ std::unique_ptr<column> segmented_sorted_order_common(
   }
 
   // Get segment id of each element in all segments.
-  auto segment_ids = get_segment_indices(
-    keys.num_rows(), segment_offsets, stream, cudf::get_current_device_resource_ref());
+  auto segment_ids =
+    get_segment_indices(keys.num_rows(), segment_offsets, stream, mr.as_temporary());
 
   // insert segment id before all columns.
   std::vector<column_view> keys_with_segid;
@@ -311,13 +311,8 @@ std::unique_ptr<table> segmented_sort_by_key_common(table_view const& values,
 {
   CUDF_EXPECTS(values.num_rows() == keys.num_rows(),
                "Mismatch in number of rows for values and keys");
-  auto sorted_order =
-    segmented_sorted_order_common<method>(keys,
-                                          segment_offsets,
-                                          column_order,
-                                          null_precedence,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
+  auto sorted_order = segmented_sorted_order_common<method>(
+    keys, segment_offsets, column_order, null_precedence, stream, mr.as_temporary());
   // Gather segmented sort of child value columns
   return detail::gather(values,
                         sorted_order->view(),

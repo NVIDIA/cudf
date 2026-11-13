@@ -67,8 +67,8 @@ std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
-  auto const preprocessed_input = cudf::detail::row::hash::preprocessed_table::create(
-    input, stream, cudf::get_current_device_resource_ref());
+  auto const preprocessed_input =
+    cudf::detail::row::hash::preprocessed_table::create(input, stream, mr.get_temporary_mr());
   return murmurhash3_x86_32_impl(
     preprocessed_input, input.num_rows(), seed, nullate::DYNAMIC{has_nulls(input)}, stream, mr);
 }

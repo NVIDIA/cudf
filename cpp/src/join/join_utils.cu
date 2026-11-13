@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
@@ -67,17 +68,16 @@ VectorPair get_trivial_left_join_indices(table_view const& left,
 {
   auto left_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    left_indices->begin(),
                    left_indices->end(),
                    left_offset);
   auto right_indices =
     std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
-  thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    right_indices->begin(),
-    right_indices->end(),
-    cudf::JoinNoMatch);
+  thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                             right_indices->begin(),
+                             right_indices->end(),
+                             cudf::JoinNoMatch);
   return std::pair(std::move(left_indices), std::move(right_indices));
 }
 
@@ -123,15 +123,14 @@ VectorPair finalize_full_join(VectorPair&& indices,
     auto const tail = static_cast<std::size_t>(right_table_num_rows);
     left_out->resize(match_total + tail, stream);
     right_out->resize(match_total + tail, stream);
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                      right_out->begin() + match_total,
                      right_out->end(),
                      0);
-    thrust::uninitialized_fill(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      left_out->begin() + match_total,
-      left_out->end(),
-      cudf::JoinNoMatch);
+    thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
+                               left_out->begin() + match_total,
+                               left_out->end(),
+                               cudf::JoinNoMatch);
     return std::pair(std::move(left_out), std::move(right_out));
   }
 
@@ -155,9 +154,9 @@ VectorPair finalize_full_join(VectorPair&& indices,
   // output-sized scatter. Other join implementations use this fallback to derive the same flags
   // from their materialized right indices.
   auto computed_matches = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    right_matches ? 0 : right_table_num_rows, stream, cudf::get_current_device_resource_ref());
+    right_matches ? 0 : right_table_num_rows, stream, mr.get_temporary_mr());
   if (!right_matches) {
-    thrust::scatter_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter_if(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::make_constant_iterator(size_type{1}),
                        cuda::make_constant_iterator(size_type{1}) + match_total,
                        right_out->begin(),

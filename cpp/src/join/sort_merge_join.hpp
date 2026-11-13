@@ -177,10 +177,12 @@ class sort_merge_join {
      * @brief Create mapping from processed table indices to unprocessed table indices
      *
      * @param stream CUDA stream used for device memory operations and kernel launches
+     * @param mr Memory resources used to allocate the returned mapping and temporaries
      * @return A device vector containing the mapping from processed table indices to unprocessed
      * table indices
      */
-    cuda::device_buffer<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
+    cuda::device_buffer<size_type> map_table_to_unprocessed(cuda::stream_ref stream,
+                                                            cudf::memory_resources mr) const;
   };
 
   /**
@@ -230,11 +232,13 @@ class sort_merge_join {
    * result
    * @param larger_indices Indices for the larger processed table used to construct the join result
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources; only the temporary resource is used
    */
   void postprocess_indices(preprocessed_table const& preprocessed_left,
                            device_span<size_type> smaller_indices,
                            device_span<size_type> larger_indices,
-                           cuda::stream_ref stream) const;
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr) const;
 
   /**
    * @brief Core merge operation implementation for the sort-merge join algorithm.
@@ -244,13 +248,15 @@ class sort_merge_join {
    * @param left_view The preprocessed left table view
    * @param op The merge operation functor to execute during the merge
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources; only the temporary resource is used
    * @return The result of the merge operation as defined by the MergeOperation functor
    */
   template <typename MergeOperation>
   auto invoke_merge(table_view right_view,
                     table_view left_view,
                     MergeOperation&& op,
-                    cuda::stream_ref stream) const;
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr) const;
 };
 
 }  // namespace detail

@@ -7,6 +7,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -32,6 +33,7 @@ struct sort_radix_fn {
   mutable_column_view output;  // output sorted
   bool ascending;              // true if ascending sort
   cuda::stream_ref stream;     // stream for allocations and kernel launches
+  cudf::memory_resources mr;   // temporary allocations
 
   template <typename T>
   void sort_radix()
@@ -45,13 +47,13 @@ struct sort_radix_fn {
     std::size_t tmp_bytes = 0;
     if (ascending) {
       cub::DeviceRadixSort::SortKeys(nullptr, tmp_bytes, d_in, d_out, n, 0, end_bit, sv);
-      auto tmp_stg = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
+      auto tmp_stg =
+        cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortKeys(tmp_stg.data(), tmp_bytes, d_in, d_out, n, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortKeysDescending(nullptr, tmp_bytes, d_in, d_out, n, 0, end_bit, sv);
-      auto tmp_stg = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
+      auto tmp_stg =
+        cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortKeysDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, n, 0, end_bit, sv);
     }
@@ -62,13 +64,13 @@ struct sort_radix_fn {
     requires(cudf::is_floating_point<T>())
   {
     auto pair_in = cuda::device_buffer<float_pair<T>>(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+      stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
     auto d_in     = pair_in.data();
     auto pair_out = cuda::device_buffer<float_pair<T>>(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+      stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
     auto d_out = pair_out.data();
 
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_in,
@@ -83,19 +85,19 @@ struct sort_radix_fn {
     if (ascending) {
       cub::DeviceRadixSort::SortKeys(
         nullptr, tmp_bytes, d_in, d_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
+      auto tmp_stg =
+        cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortKeys(
         tmp_stg.data(), tmp_bytes, d_in, d_out, n, decomposer, 0, end_bit, sv);
     } else {
       cub::DeviceRadixSort::SortKeysDescending(
         nullptr, tmp_bytes, d_in, d_out, n, decomposer, 0, end_bit, sv);
-      auto tmp_stg = cuda::device_buffer<std::byte>(
-        stream, cudf::get_current_device_resource_ref(), tmp_bytes, cuda::no_init);
+      auto tmp_stg =
+        cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), tmp_bytes, cuda::no_init);
       cub::DeviceRadixSort::SortKeysDescending(
         tmp_stg.data(), tmp_bytes, d_in, d_out, n, decomposer, 0, end_bit, sv);
     }
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       d_out,
                       d_out + input.size(),
                       output.begin<T>(),
@@ -139,8 +141,8 @@ std::unique_ptr<column> sort_radix(column_view const& input,
 {
   auto result   = std::make_unique<column>(input, stream, mr);
   auto out_view = result->mutable_view();
-  cudf::type_dispatcher<dispatch_storage_type>(input.type(),
-                                               sort_radix_fn{input, out_view, ascending, stream});
+  cudf::type_dispatcher<dispatch_storage_type>(
+    input.type(), sort_radix_fn{input, out_view, ascending, stream, mr});
   return result;
 }
 

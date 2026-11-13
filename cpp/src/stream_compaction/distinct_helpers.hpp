@@ -56,7 +56,8 @@ CUDF_HIDDEN size_type copy_reduction_results(size_type const* results,
                                              size_type num_rows,
                                              size_type* output,
                                              duplicate_keep_option keep,
-                                             cuda::stream_ref stream);
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr);
 
 struct distinct_precomputed_hash {
   CUDF_HOST_DEVICE constexpr distinct_precomputed_hash(hash_value_type const* hashes)

@@ -13,6 +13,7 @@
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/sorting.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/sorting.hpp>
@@ -96,9 +97,9 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
                std::invalid_argument);
 
   auto const nulls   = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const indices = cudf::detail::segmented_sorted_order(
-    cudf::table_view({col}), segment_offsets, {topk_order}, {nulls}, stream, temp_mr);
+    cudf::table_view({col}), segment_offsets, {topk_order}, {nulls}, stream, mr.as_temporary());
   auto const d_indices = indices->mutable_view().begin<size_type>();
 
   // Zero-initialized because resolve_segment_indices writes a segment's size only from its
@@ -117,7 +118,7 @@ std::unique_ptr<column> segmented_top_k_order(column_view const& col,
     size_data_type, total_elements, mask_state::UNALLOCATED, stream, mr);
   auto d_result = result->mutable_view().begin<size_type>();
   // remove the indices marked by resolve_segment_indices
-  thrust::remove_copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::remove_copy(cudf::detail::exec_policy_nosync(stream, mr),
                       d_indices,
                       d_indices + indices->size(),
                       d_result,

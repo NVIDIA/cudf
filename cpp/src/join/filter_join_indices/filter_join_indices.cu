@@ -19,6 +19,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/dispatchers.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
@@ -112,8 +113,8 @@ filter_join_indices(cudf::table_view const& left,
   if (left_indices.empty()) { return make_empty_result(); }
 
   if (join_kind == join_kind::FULL_JOIN) {
-    auto left_maps = full_to_left_join_indices(
-      left_indices, right_indices, stream, cudf::get_current_device_resource_ref());
+    auto left_maps =
+      full_to_left_join_indices(left_indices, right_indices, stream, mr.as_temporary());
     auto filtered_left =
       cudf::detail::filter_join_indices(left,
                                         right,
@@ -148,8 +149,8 @@ filter_join_indices(cudf::table_view const& left,
   auto const has_nulls = predicate.may_evaluate_null(left, right, stream);
 
   // Create expression parser
-  auto const parser = ast::detail::expression_parser{
-    predicate, left, right, has_nulls, stream, cudf::get_current_device_resource_ref()};
+  auto const parser =
+    ast::detail::expression_parser{predicate, left, right, has_nulls, stream, mr.as_temporary()};
 
   CUDF_EXPECTS(parser.output_type().id() == type_id::BOOL8,
                "The predicate expression must produce a Boolean output",
@@ -163,8 +164,8 @@ filter_join_indices(cudf::table_view const& left,
   auto right_table = table_device_view::create(right, stream);
 
   // Allocate array to store predicate evaluation results
-  auto predicate_results = cuda::device_buffer<bool>(
-    stream, cudf::get_current_device_resource_ref(), left_indices.size(), cuda::no_init);
+  auto predicate_results =
+    cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), left_indices.size(), cuda::no_init);
 
   // Configure kernel parameters with dynamic shared memory calculation
   int device_id;
@@ -286,7 +287,7 @@ filter_join_indices(cudf::table_view const& left,
                                    {},
                                    {},
                                    {},
-                                   {},
+                                   rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
                                    stream.get()};
 
     auto predicate_func = [predicate_results_ptr] __device__(std::size_t idx) -> bool {
@@ -305,8 +306,7 @@ filter_join_indices(cudf::table_view const& left,
       if (output_size.has_value()) { return *output_size - num_invalid; }
       // CUB APIs are used instead of Thrust to enable 64-bit operations on index vectors of size
       // greater than integer limits
-      cudf::detail::device_scalar<std::size_t> d_num_valid(stream,
-                                                           cudf::get_current_device_resource_ref());
+      cudf::detail::device_scalar<std::size_t> d_num_valid(stream, mr.get_temporary_mr());
       auto const predicate_it =
         cuda::transform_iterator{predicate_results_ptr,
                                  cuda::proclaim_return_type<std::size_t>(
@@ -319,7 +319,7 @@ filter_join_indices(cudf::table_view const& left,
                              left_indices.size(),
                              stream.get());
       cuda::device_buffer<std::byte> temp_storage(
-        stream, cudf::get_current_device_resource_ref(), temp_storage_bytes, cuda::no_init);
+        stream, mr.get_temporary_mr(), temp_storage_bytes, cuda::no_init);
       cub::DeviceReduce::Sum(temp_storage.data(),
                              temp_storage_bytes,
                              predicate_it,
@@ -410,8 +410,8 @@ filter_join_indices_output_size(cudf::table_view const& left,
 
   auto const has_nulls = predicate.may_evaluate_null(left, right, stream);
 
-  auto const parser = ast::detail::expression_parser{
-    predicate, left, right, has_nulls, stream, cudf::get_current_device_resource_ref()};
+  auto const parser =
+    ast::detail::expression_parser{predicate, left, right, has_nulls, stream, mr.as_temporary()};
 
   CUDF_EXPECTS(parser.output_type().id() == type_id::BOOL8,
                "The predicate expression must produce a Boolean output",
@@ -453,7 +453,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
   });
 
   if (join_kind == join_kind::LEFT_JOIN) {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       output_counts.begin(),
                       output_counts.end(),
                       output_counts.begin(),
@@ -464,7 +464,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
   if (join_kind == join_kind::FULL_JOIN) {
     auto const counts    = output_counts.data();
     auto const left_size = static_cast<std::size_t>(left.num_rows());
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<std::size_t>{0},
                       cuda::counting_iterator<std::size_t>{counts_size},
                       output_counts.begin(),
@@ -474,11 +474,10 @@ filter_join_indices_output_size(cudf::table_view const& left,
                       });
   }
 
-  std::size_t const total =
-    thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   output_counts.begin(),
-                   output_counts.end(),
-                   std::size_t{0});
+  std::size_t const total = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                           output_counts.begin(),
+                                           output_counts.end(),
+                                           std::size_t{0});
 
   return {total, std::make_unique<rmm::device_uvector<size_type>>(std::move(output_counts))};
 }

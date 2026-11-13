@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/join/mark_join.hpp>
@@ -441,9 +442,9 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
 {
   CUDF_EXPECTS(_bloom_filter != nullptr, "Prefilter-enabled mark_join is missing bloom filter.");
 
-  auto filtered_right_rows =
-    cuda::device_buffer<right_key_type>(stream, mr.get_output_mr(), num_right_rows, cuda::no_init);
-  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_output_mr());
+  auto filtered_right_rows = cuda::device_buffer<right_key_type>(
+    stream, mr.get_temporary_mr(), num_right_rows, cuda::no_init);
+  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_temporary_mr());
 
   auto const filter_ref = _bloom_filter->ref();
   using prefilter_operator_type =
@@ -467,13 +468,8 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto const filtered_count = d_filtered_count.value(stream);
-  return mark_probe_without_prefilter(storage_ref,
-                                      comparator,
-                                      filtered_right_rows.data(),
-                                      filtered_count,
-                                      nullptr,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+  return mark_probe_without_prefilter(
+    storage_ref, comparator, filtered_right_rows.data(), filtered_count, nullptr, stream, mr);
 }
 
 template <typename Comparator>
@@ -487,7 +483,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
 {
   CUDF_FUNC_RANGE();
 
-  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto const temp_mr          = mr.get_temporary_mr();
   auto materialize_right_rows = [&](auto const& key_fn) {
     cuda::device_buffer<right_key_type> right_rows(
       stream, temp_mr, right.num_rows(), cuda::no_init);
@@ -523,22 +519,21 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
     right_bitmask_ptr           = bitmask_buffer_and_ptr.second;
   }
 
-  auto const marked_count =
-    (_prefilter == cudf::join_prefilter::YES)
-      ? mark_probe_with_prefilter(storage_ref,
-                                  comparator,
-                                  right_rows.data(),
-                                  right.num_rows(),
-                                  right_bitmask_ptr,
-                                  stream,
-                                  mr)
-      : mark_probe_without_prefilter(storage_ref,
-                                     comparator,
-                                     right_rows.data(),
-                                     right.num_rows(),
-                                     right_bitmask_ptr,
-                                     stream,
-                                     cudf::get_current_device_resource_ref());
+  auto const marked_count = (_prefilter == cudf::join_prefilter::YES)
+                              ? mark_probe_with_prefilter(storage_ref,
+                                                          comparator,
+                                                          right_rows.data(),
+                                                          right.num_rows(),
+                                                          right_bitmask_ptr,
+                                                          stream,
+                                                          mr)
+                              : mark_probe_without_prefilter(storage_ref,
+                                                             comparator,
+                                                             right_rows.data(),
+                                                             right.num_rows(),
+                                                             right_bitmask_ptr,
+                                                             stream,
+                                                             mr);
 
   auto const null_left_rows  = static_cast<size_type>(_left.num_rows()) - num_left_inserted();
   auto const is_anti         = (kind == join_kind::LEFT_ANTI_JOIN);
@@ -590,7 +585,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   if (null_contribution > 0) {
     auto const bitmask_buffer_and_ptr = build_row_bitmask(_left, stream);
     auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
-    thrust::copy_if(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::copy_if(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator{_left.num_rows()},
                     result.begin() + unmatched_valid,
@@ -755,10 +750,10 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 {
   clear_marks(stream);
 
-  auto const preprocessed_right = [&right, stream] {
+  auto const preprocessed_right = [&right, stream, mr] {
     cudf::scoped_range range{"mark_join::semi_anti_join::preprocessed_right"};
     return cudf::detail::row::equality::preprocessed_table::create(
-      right, stream, cudf::get_current_device_resource_ref());
+      right, stream, mr.get_temporary_mr());
   }();
 
   if (is_primitive_row_op_compatible(_left)) {
@@ -815,9 +810,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::anti_join(
   if (right.num_rows() == 0) {
     auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
       _left.num_rows(), stream, mr.get_output_mr());
-    thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     result->begin(),
-                     result->end());
+    thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr), result->begin(), result->end());
     return result;
   }
   return semi_anti_join(right, join_kind::LEFT_ANTI_JOIN, stream, mr);

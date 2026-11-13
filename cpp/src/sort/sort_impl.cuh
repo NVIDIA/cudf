@@ -14,6 +14,7 @@
 #include <cudf/detail/row_operator/lexicographic.cuh>
 #include <cudf/detail/row_operator/primitive_common.cuh>
 #include <cudf/detail/row_operator/primitive_lexicographic.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
@@ -52,7 +53,6 @@ std::unique_ptr<column> sorted_order(table_view input,
                                      cudf::memory_resources mr)
 {
   auto const output_mr = mr.get_output_mr();
-  auto const temp_mr   = mr.get_temporary_mr();
   if (input.num_rows() == 0 or input.num_columns() == 0) {
     return cudf::make_numeric_column(
       data_type(type_to_id<size_type>()), 0, mask_state::UNALLOCATED, stream, output_mr);
@@ -83,7 +83,7 @@ std::unique_ptr<column> sorted_order(table_view input,
                               stream,
                               output_mr);
   mutable_column_view mutable_indices_view = sorted_indices->mutable_view();
-  thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices_view.begin<size_type>(),
                    mutable_indices_view.end<size_type>(),
                    0);
@@ -92,12 +92,12 @@ std::unique_ptr<column> sorted_order(table_view input,
     // Compiling `thrust::*sort*` APIs is expensive.
     // Thus, we should optimize that by using constexpr condition to only compile what we need.
     if constexpr (method == sort_method::STABLE) {
-      thrust::stable_sort(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::stable_sort(cudf::detail::exec_policy_nosync(stream, mr),
                           mutable_indices_view.begin<size_type>(),
                           mutable_indices_view.end<size_type>(),
                           comparator);
     } else {
-      thrust::sort(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::sort(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices_view.begin<size_type>(),
                    mutable_indices_view.end<size_type>(),
                    comparator);

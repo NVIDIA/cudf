@@ -22,6 +22,9 @@
 
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
+#include <cuda/execution.determinism.h>
+#include <cuda/execution.output_ordering.h>
+#include <cuda/execution.require.h>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>

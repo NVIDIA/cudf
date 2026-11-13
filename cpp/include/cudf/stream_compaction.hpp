@@ -187,7 +187,8 @@ std::unique_ptr<table> drop_nans(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied to the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `true`.
+ * if the corresponding element `i` in the mask is valid and `true`, or null when
+ * `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p retention_mask is empty, or @p input has zero rows, an empty table is returned.
@@ -207,6 +208,19 @@ std::unique_ptr<table> drop_nans(
 std::unique_ptr<table> apply_retention_mask(
   table_view const& input,
   column_view const& retention_mask,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @copydoc apply_retention_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
+ *
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
+ */
+std::unique_ptr<table> apply_retention_mask(
+  table_view const& input,
+  column_view const& retention_mask,
+  null_policy null_handling,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
@@ -234,7 +248,8 @@ std::unique_ptr<table> apply_retention_mask(
  *
  * Given an input `table_view` and a mask `column_view`, an element `i` from
  * each column_view of the `input` is copied from the corresponding output column
- * if the corresponding element `i` in the mask is non-null and `false`.
+ * if the corresponding element `i` in the mask is valid and `false`, or null when
+ * `null_policy::INCLUDE` is specified.
  * This operation is stable: the input order is preserved.
  *
  * @note If @p deletion_mask is empty, a copy of @p input is returned. If @p input has zero rows,
@@ -255,6 +270,19 @@ std::unique_ptr<table> apply_retention_mask(
 std::unique_ptr<table> apply_deletion_mask(
   table_view const& input,
   column_view const& deletion_mask,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @copydoc apply_deletion_mask(table_view const&, column_view const&, cuda::stream_ref,
+ * cudf::memory_resources)
+ *
+ * @param[in] null_handling Whether to keep or drop rows with null mask elements
+ */
+std::unique_ptr<table> apply_deletion_mask(
+  table_view const& input,
+  column_view const& deletion_mask,
+  null_policy null_handling,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

@@ -924,9 +924,6 @@ def test_contains_any(engine: pl.GPUEngine, ldf, ascii_case_insensitive):
 
 
 def test_contains_any_empty(engine: pl.GPUEngine):
-    # libcudf's ``contains_multiple`` asserts ``num_blocks > 0`` and crashes
-    # on a zero-row input, so the expression short-circuits to an empty
-    # bool column.
     ldf = pl.LazyFrame({"a": pl.Series([], dtype=pl.String)})
     q = ldf.select(pl.col("a").str.contains_any(["a", "b"]))
     assert_gpu_result_equal(q, engine=engine)

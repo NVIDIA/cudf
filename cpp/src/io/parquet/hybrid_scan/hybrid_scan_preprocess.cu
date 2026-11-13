@@ -65,7 +65,7 @@ void decode_dictionary_page_headers(
                    chunk_page_offsets.end(),
                    0);
 
-  parquet::kernel_error error_code(stream);
+  cudf::io::kernel_error error_code(stream);
 
   // Decode dictionary page headers, one thread per page
   parquet::detail::decode_page_headers_from_page_data(
@@ -79,7 +79,7 @@ void decode_dictionary_page_headers(
 
   if (auto const error = error_code.value_sync(stream); error != 0) {
     CUDF_FAIL("Parquet header parsing failed with code(s) " +
-              parquet::kernel_error::to_string(error));
+              cudf::io::kernel_error::to_string(error));
   }
 
   // Point each chunk at its dictionary page. A chunk whose span is empty keeps a zeroed page and is
@@ -96,7 +96,7 @@ void decode_dictionary_page_headers(
                        chunk.dict_page = &page;
                      } else if (chunk.compressed_size > 0) {
                        parquet::detail::set_error(
-                         static_cast<parquet::kernel_error::value_type>(
+                         static_cast<cudf::io::kernel_error::value_type>(
                            parquet::detail::decode_error::INVALID_PAGE_TYPE),
                          error_code);
                      }
@@ -104,7 +104,7 @@ void decode_dictionary_page_headers(
 
   if (auto const error = error_code.value_sync(stream); error != 0) {
     CUDF_FAIL("Dictionary page data holds a non-dictionary page, code(s) " +
-              parquet::kernel_error::to_string(error));
+              cudf::io::kernel_error::to_string(error));
   }
 
   pages.device_to_host_async(stream);

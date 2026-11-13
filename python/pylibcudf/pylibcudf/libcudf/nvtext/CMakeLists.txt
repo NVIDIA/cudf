@@ -5,7 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
-set(cython_sources stemmer.pyx unicode_normalize.pyx)
+set(cython_sources normalize.pyx stemmer.pyx unicode_normalize.pyx)
 
 set(linked_libraries cudf::cudf)
 

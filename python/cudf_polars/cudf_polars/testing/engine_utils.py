@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Helpers for :class:`polars.GPUEngine` tests."""
@@ -101,7 +101,7 @@ def warns_on_spmd(  # pragma: no cover; rapidsmpf-only path
 
 
 SMALL_MAX_ROWS_PER_PARTITION = 4
-SMALL_TARGET_PARTITION_SIZE = 10
+SMALL_TARGET_PARTITION_SIZE = 500
 
 
 def create_streaming_options(
@@ -174,7 +174,9 @@ def merge_streaming_options(
 EngineT = TypeVar("EngineT", bound="StreamingEngine")
 
 
-def configure_streaming_engine(engine: EngineT, options: StreamingOptions) -> EngineT:
+def configure_streaming_engine[EngineT: "StreamingEngine"](
+    engine: EngineT, options: StreamingOptions
+) -> EngineT:
     """
     Configure an engine with a set of options.
 

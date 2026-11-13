@@ -350,7 +350,8 @@ struct source_info {
    *
    * @param host_buffers Input buffers in host memory
    */
-  template <typename T, CUDF_ENABLE_IF(is_byte_like_type<std::remove_cv_t<T>>())>
+  template <typename T>
+    requires(is_byte_like_type<std::remove_cv_t<T>>())
   explicit source_info(cudf::host_span<cudf::host_span<T>> const host_buffers)
     : _type(io_type::HOST_BUFFER), _num_sources(host_buffers.size())
   {
@@ -373,7 +374,8 @@ struct source_info {
    *
    * @param host_data Input buffer in host memory
    */
-  template <typename T, CUDF_ENABLE_IF(is_byte_like_type<std::remove_cv_t<T>>())>
+  template <typename T>
+    requires(is_byte_like_type<std::remove_cv_t<T>>())
   explicit source_info(cudf::host_span<T> host_data)
     : _type(io_type::HOST_BUFFER),
       _num_sources(1),

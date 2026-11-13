@@ -104,6 +104,18 @@ class memory_resources {
     return _temporary_mr;
   }
 
+  /**
+   * @brief Return a new memory resource reference with this reference's temporary resource as both
+   * the output and the temporary resource. Intended to be passed to helpers that create scratch
+   * buffers for the calling function.
+   *
+   * @return Fully temporary resource reference
+   */
+  [[nodiscard]] memory_resources as_temporary() const noexcept
+  {
+    return memory_resources{_temporary_mr, _temporary_mr};
+  }
+
  private:
   rmm::device_async_resource_ref _output_mr;
   rmm::device_async_resource_ref _temporary_mr;

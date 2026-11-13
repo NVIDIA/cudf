@@ -6,11 +6,9 @@
 
 #include <cudf_test/iterator_utilities.hpp>
 
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/device_uvector.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/utility>
@@ -23,7 +21,7 @@ auto strings_to_string_views(std::vector<std::string>& input_strings)
   std::vector<int32_t> offsets;
   std::tie(chars, offsets) = cudf::test::detail::make_chars_and_offsets(
     input_strings.begin(), input_strings.end(), all_valid);
-  auto dev_chars = cudf::detail::make_device_uvector(
+  auto dev_chars = cudf::detail::make_device_buffer(
     chars, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   // calculate the expected value by CPU. (but contains device pointers)
@@ -31,7 +29,7 @@ auto strings_to_string_views(std::vector<std::string>& input_strings)
   std::transform(cuda::counting_iterator<std::size_t>{0},
                  cuda::counting_iterator<std::size_t>{replaced_array.size()},
                  replaced_array.begin(),
-                 [c_start = dev_chars.begin(), offsets](auto i) {
+                 [c_start = dev_chars.data(), offsets](auto i) {
                    return cudf::string_view(c_start + offsets[i], offsets[i + 1] - offsets[i]);
                  });
   return std::make_tuple(std::move(dev_chars), replaced_array);
@@ -44,9 +42,9 @@ TEST_F(StringIteratorTest, string_view_null_iterator)
   using T = cudf::string_view;
   std::string zero("zero");
   // the char data has to be in GPU
-  auto initmsg = cudf::detail::make_device_uvector(cudf::host_span<char const>{zero},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto initmsg = cudf::detail::make_device_buffer(cudf::host_span<char const>{zero},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
   T init       = T{initmsg.data(), int(initmsg.size())};
 
   // data and valid arrays
@@ -81,9 +79,9 @@ TEST_F(StringIteratorTest, string_view_no_null_iterator)
   // T init = T{"", 0};
   std::string zero("zero");
   // the char data has to be in GPU
-  auto initmsg = cudf::detail::make_device_uvector(cudf::host_span<char const>{zero},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto initmsg = cudf::detail::make_device_buffer(cudf::host_span<char const>{zero},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
   T init       = T{initmsg.data(), int(initmsg.size())};
 
   // data array
@@ -107,9 +105,9 @@ TEST_F(StringIteratorTest, string_scalar_iterator)
   // T init = T{"", 0};
   std::string zero("zero");
   // the char data has to be in GPU
-  auto initmsg = cudf::detail::make_device_uvector(cudf::host_span<char const>{zero},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto initmsg = cudf::detail::make_device_buffer(cudf::host_span<char const>{zero},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
   T init       = T{initmsg.data(), int(initmsg.size())};
 
   // data array

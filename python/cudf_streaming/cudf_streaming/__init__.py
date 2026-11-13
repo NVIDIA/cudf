@@ -24,6 +24,8 @@ from cudf_streaming.channel_metadata import (
     OrderKey,
     OrderScheme,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
 from cudf_streaming.partition import (
     partition_and_pack as actor_partition_and_pack,
@@ -53,6 +55,8 @@ __all__ = [
     "OrderScheme",
     "Ordering",
     "Partitioning",
+    "RowOrdering",
+    "RowOrderingScope",
     "TableChunk",
     "actor_partition_and_pack",
     "actor_unpack_and_concat",

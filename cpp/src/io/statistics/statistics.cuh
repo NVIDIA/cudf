@@ -16,7 +16,10 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/wrappers/durations.hpp>
+#include <cudf/wrappers/timestamps.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -41,6 +44,18 @@ enum statistics_dtype {
   dtype_byte_array,
 };
 
+/**
+ * @brief A timezone's offsets from UT over time, as `make_timezone_transition_table` returns them.
+ *
+ * ORC timestamp statistics are gathered from the writer's wall clock, which this converts the input
+ * instants to. Empty when writing UTC, where the two coincide.
+ */
+struct ut_offset_table {
+  timestamp_s const* times;   //!< Transition times, ascending within each part of the table
+  duration_s const* offsets;  //!< Offset that takes effect at each transition time
+  size_type num_entries;      //!< Number of entries in the table
+};
+
 struct stats_column_desc {
   statistics_dtype stats_dtype;  //!< physical data type of column
   uint32_t num_rows;             //!< number of rows in column
@@ -50,6 +65,8 @@ struct stats_column_desc {
 
   column_device_view const* leaf_column;    //!< Pointer to leaf column
   column_device_view const* parent_column;  //!< Pointer to parent column; nullptr if not list type
+
+  ut_offset_table ut_offsets;  //!< Offsets that put ORC timestamp statistics on the wall clock
 };
 
 template <typename ReturnType>
@@ -107,14 +124,12 @@ struct statistics_merge_group {
 
 template <typename T>
 __device__ T get_element(column_device_view const& col, uint32_t row)
-  requires(!std::is_same_v<T, statistics::byte_array_view>)
 {
   return col.element<T>(row);
 }
 
-template <typename T>
+template <cuda::std::same_as<statistics::byte_array_view> T>
 __device__ T get_element(column_device_view const& col, uint32_t row)
-  requires(std::is_same_v<T, statistics::byte_array_view>)
 {
   using et              = typename T::element_type;
   size_type const index = row + col.offset();  // account for this view's _offset

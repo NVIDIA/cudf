@@ -72,6 +72,8 @@ class streaming_hash_join {
    * @throws std::invalid_argument if `total_right_rows` is negative
    * @throws std::invalid_argument if `max_num_batches` is not positive
    * @throws std::invalid_argument if `load_factor` is not in (0, 1]
+   * @throws std::overflow_error if `total_right_rows / load_factor` exceeds the hash table's
+   *                             capacity of about 2^32 slots
    *
    * @param right_schema Exemplar of the right-side schema. Only its column types and nesting are
    *                     used; the rows are ignored and an empty copy is retained, so the caller

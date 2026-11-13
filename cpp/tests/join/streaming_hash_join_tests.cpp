@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <atomic>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <stdexcept>
@@ -651,4 +652,13 @@ TEST_F(StreamingHashJoinTest, ConstructorValidatesArguments)
                                          cudf::null_equality::EQUAL,
                                          /*load_factor=*/1.5),
                std::invalid_argument);
+
+  EXPECT_THROW(cudf::streaming_hash_join(single_schema,
+                                         single_key,
+                                         std::numeric_limits<size_type>::max(),
+                                         /*max_num_batches=*/1,
+                                         cudf::nullable_join::NO,
+                                         cudf::null_equality::EQUAL,
+                                         /*load_factor=*/0.25),
+               std::overflow_error);
 }

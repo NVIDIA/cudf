@@ -4,6 +4,7 @@
  */
 
 #include <tests/copying/slice_tests.cuh>
+#include <tests/io/compression_common.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -815,6 +816,15 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
   EXPECT_EQ(small_packed.result.metadata, *cudf::pack(small).metadata);
   EXPECT_EQ(small_plan.sizes().payload_bytes, small_plan.sizes().uncompressed_payload_bytes);
   expect_materializes_to(small, small_packed.view());
+
+  // With nvCOMP disabled, automatic keeps every region uncompressed and forced Cascaded throws.
+  tmp_env_var const nvcomp_off{nvcomp_policy_env_var, "OFF"};
+  auto const off_packed = pack_to_device(cx::prepare_pack(input, options));
+  EXPECT_EQ(off_packed.result.metadata, *cudf::pack(input).metadata);
+  expect_materializes_to(input, off_packed.view());
+  EXPECT_THROW(cx::prepare_pack(input, make_options(cx::pack_compression::cascaded)),
+               cudf::logic_error);
+  EXPECT_THROW(cx::materialize(packed.view()), cudf::logic_error);
 }
 
 TEST_F(ExperimentalPackUnpackTest, PerRegionCompression)

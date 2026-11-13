@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #define CUDF_NVCOMP_HAS_GZIP_COMPRESSION (NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 3, 0))
 
@@ -970,6 +972,32 @@ nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(type_id value_type
 
 }  // namespace
 
+std::optional<std::string> is_cascaded_disabled(feature_status_parameters params)
+{
+  static std::vector<std::pair<feature_status_parameters, std::optional<std::string>>> memo;
+  static std::mutex memo_mutex;
+
+  std::unique_lock memo_lock{memo_mutex};
+  if (auto const it = std::ranges::find(memo, params, &decltype(memo)::value_type::first);
+      it != memo.end()) {
+    return it->second;
+  }
+  auto const reason = params.are_stable_integrations_enabled
+                        ? std::nullopt
+                        : std::optional<std::string>{
+                            "nvCOMP use is disabled through the `LIBCUDF_NVCOMP_POLICY` "
+                            "environment variable."};
+  memo.emplace_back(params, reason);
+  memo_lock.unlock();
+
+  if (reason.has_value()) {
+    CUDF_LOG_INFO("nvCOMP is disabled for Cascaded compression; reason: %s", reason.value());
+  } else {
+    CUDF_LOG_INFO("nvCOMP is enabled for Cascaded compression");
+  }
+  return reason;
+}
+
 size_t cascaded_compress_max_allowed_chunk_size()
 {
   return nvcompCascadedCompressionMaxAllowedChunkSize;
@@ -994,6 +1022,7 @@ void batched_cascaded_compress(type_id value_type,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
+  if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Compression error: " + *reason); }
   auto const temp_mr = mr.get_temporary_mr();
   auto args          = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
   rmm::device_uvector<nvcompStatus_t> statuses(inputs.size(), stream, temp_mr);
@@ -1025,6 +1054,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
     !group_offsets.empty() && group_offsets.front() == 0 && group_offsets.back() == inputs.size(),
     "group offsets must cover all chunks");
   if (inputs.empty()) { return; }
+  if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Decompression error: " + *reason); }
 
   auto const temp_mr = mr.get_temporary_mr();
   auto const args    = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});

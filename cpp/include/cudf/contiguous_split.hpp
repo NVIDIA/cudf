@@ -319,11 +319,12 @@ namespace experimental {
 enum class pack_compression : int32_t {
   none      = 0,  ///< Preserve the current uncompressed packed representation
   automatic = 1,  ///< Cascaded, except that string characters and small regions stay
-                  ///< uncompressed, and so do blocks that Cascaded shrinks too little. A table
-                  ///< whose regions all stay uncompressed uses the uncompressed format.
+                  ///< uncompressed, and so do blocks that Cascaded shrinks too little. Every
+                  ///< region stays uncompressed when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP. A
+                  ///< table whose regions all stay uncompressed uses the uncompressed format.
   cascaded = 2,   ///< nvCOMP Cascaded, on values of each region's native width and signedness.
                   ///< Values wider than 64 bits, such as `DECIMAL128`, and string characters are
-                  ///< treated as bytes.
+                  ///< treated as bytes. Unavailable when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP.
   zstd   = 3,     ///< Zstandard
   snappy = 4,     ///< Snappy
 };
@@ -470,6 +471,8 @@ class pack_plan_builder {
    * @brief Consume the builder.
    *
    * @throw std::invalid_argument if a region's codec is not a `pack_compression` value
+   * @throw cudf::logic_error if a region's codec is `pack_compression::cascaded` and
+   * `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
    *
    * @return The configured plan
    */
@@ -550,6 +553,8 @@ pack_plan_builder make_pack_plan_builder(
  *
  * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
  * @throw std::invalid_argument if `options.compression` is not a `pack_compression` value
+ * @throw cudf::logic_error if `options.compression` is `pack_compression::cascaded` and
+ * `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
  *
  * @param input View of the table to pack
  * @param options Compression and codec options
@@ -638,6 +643,8 @@ table_view unpack_view(packed_data_view input);
  * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
  * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
+ * @throw cudf::logic_error if the payload holds Cascaded blocks and `LIBCUDF_NVCOMP_POLICY`
+ * disables nvCOMP
  *
  * @param input Packed metadata and payload
  * @param stream Stream used for the deep copy
@@ -664,6 +671,8 @@ std::unique_ptr<table> materialize(
  * the `payload_alignment` it was packed with
  * @throw cudf::logic_error if `input.metadata` or `input.payload` is truncated or malformed.
  * Corrupt compressed blocks are not reliably detected and may produce incorrect data instead.
+ * @throw cudf::logic_error if the payload holds Cascaded blocks and `LIBCUDF_NVCOMP_POLICY`
+ * disables nvCOMP
  *
  * @param input Packed metadata and payload
  * @param column_indices Indices of the top-level columns to materialize, in output order

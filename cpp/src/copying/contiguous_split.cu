@@ -3308,9 +3308,12 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
 
 [[nodiscard]] pack_compression select_automatic_compression(compression_region_layout const& layout)
 {
-  if (layout.uncompressed_bytes < automatic_min_region_bytes) { return pack_compression::none; }
-  return layout.kind == pack_region_kind::string_characters ? pack_compression::none
-                                                            : pack_compression::cascaded;
+  if (layout.uncompressed_bytes < automatic_min_region_bytes ||
+      layout.kind == pack_region_kind::string_characters ||
+      io::detail::nvcomp::is_cascaded_disabled().has_value()) {
+    return pack_compression::none;
+  }
+  return pack_compression::cascaded;
 }
 
 std::unique_ptr<detail::contiguous_split_state> make_split_state(cudf::table_view const& input,
@@ -3677,6 +3680,11 @@ class pack_plan::impl {
         CUDF_EXPECTS(is_concrete_codec(requested),
                      "Unsupported pack compression codec",
                      std::invalid_argument);
+        if (requested == pack_compression::cascaded) {
+          if (auto const reason = io::detail::nvcomp::is_cascaded_disabled()) {
+            CUDF_FAIL("Cascaded compression is unavailable: " + *reason);
+          }
+        }
         return requested;
       });
     return codecs;

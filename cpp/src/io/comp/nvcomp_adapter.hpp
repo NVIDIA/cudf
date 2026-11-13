@@ -17,6 +17,7 @@
 
 #include <optional>
 #include <span>
+#include <string>
 
 namespace cudf::io::detail::nvcomp {
 /**
@@ -164,6 +165,18 @@ void batched_compress(compression_type compression,
                       device_span<codec_exec_result> results,
                       cuda::stream_ref stream,
                       cudf::memory_resources mr);
+
+/**
+ * @brief If nvCOMP Cascaded is disabled, returns the reason as a string.
+ *
+ * Cascaded has no fallback implementation, so it is unavailable whenever `LIBCUDF_NVCOMP_POLICY`
+ * disables stable nvCOMP integrations.
+ *
+ * @param params Optional parameters to query status with different configurations
+ * @returns Reason for the feature disablement, `std::nullopt` if the feature is enabled
+ */
+[[nodiscard]] std::optional<std::string> is_cascaded_disabled(
+  feature_status_parameters params = feature_status_parameters());
 
 /**
  * @brief Maximum size of uncompressed chunks that can be compressed with nvCOMP Cascaded.

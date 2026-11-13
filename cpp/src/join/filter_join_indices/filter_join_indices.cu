@@ -272,18 +272,19 @@ filter_join_indices(cudf::table_view const& left,
   } else if (join_kind == join_kind::LEFT_JOIN) {
     // LEFT_JOIN: Keep pairs that pass predicate, add one unmatched entry per left row with no
     // matches
-    using SetType =
-      cuco::static_set<size_type,
-                       cuco::extent<std::size_t>,
-                       cuda::thread_scope_device,
-                       cuda::std::equal_to<size_type>,
-                       cuco::double_hashing<1, cuco::default_hash_function<size_type>>,
-                       rmm::mr::polymorphic_allocator<char>>;
+    using hash_function  = cuda::hash<size_type, cuda::hash_algorithm::xxhash_32>;
+    using probing_scheme = cuco::double_hashing<1, hash_function>;
+    using SetType        = cuco::static_set<size_type,
+                                            cuco::extent<std::size_t>,
+                                            cuda::thread_scope_device,
+                                            cuda::std::equal_to<size_type>,
+                                            probing_scheme,
+                                            rmm::mr::polymorphic_allocator<char>>;
     SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
                                    cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
                                    cuco::empty_key{-1},
                                    {},
-                                   {},
+                                   probing_scheme{hash_function{0}, hash_function{1}},
                                    {},
                                    {},
                                    {},

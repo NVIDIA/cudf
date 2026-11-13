@@ -21,26 +21,23 @@ namespace cudf::detail::partition_identity {
 /**
  * @brief Determine whether column metadata identifies a supported uniform column
  *
- * Recognizes all-null fixed-width or STRING columns and non-null STRING columns with no character
- * buffer. It does not inspect device data to detect other columns whose values happen to be equal.
+ * Recognizes all-null fixed-width or STRING columns using host metadata only. Columns containing
+ * valid values, including empty strings, are not recognized as uniform.
  *
- * @param input Column whose type, null count and character-buffer pointer are inspected
+ * @param input Column whose type, size and null count are inspected
  * @return Whether the column can be reconstructed by `uniform_column` without reading its values
  */
 inline bool is_uniform(column_view const& input)
 {
   bool const flat = is_fixed_width(input.type()) || input.type().id() == type_id::STRING;
-  return flat && (input.null_count() == input.size() ||
-                  (input.type().id() == type_id::STRING && input.null_count() == 0 &&
-                   input.head<char>() == nullptr));
+  return flat && input.null_count() == input.size();
 }
 
 /**
  * @brief Construct a uniform partition output without copying input values
  *
- * Creates an all-null fixed-width column or a STRING column with zero character bytes. STRING
- * offsets are initialized to zero, and the null mask reflects whether the input is all-null or
- * contains only valid empty strings. Row permutation leaves these logical values unchanged.
+ * Creates an all-null fixed-width or STRING column. STRING offsets are initialized to zero and
+ * the character buffer is empty. Row permutation leaves these logical values unchanged.
  *
  * @pre `is_uniform(input)` is true
  *

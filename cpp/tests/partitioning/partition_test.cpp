@@ -402,7 +402,11 @@ TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
   fixed_width_column_wrapper<int32_t> null_numbers(values.begin(), values.end(), invalid.begin());
   strings_column_wrapper null_strings(text.begin(), text.end(), invalid.begin());
   strings_column_wrapper empty_strings(empty.begin(), empty.end());
-  auto input = cudf::table_view{{null_numbers, null_strings, empty_strings}};
+  std::vector<std::string> slice_values(rows + 2, "");
+  slice_values.front() = "prefix";
+  slice_values.back()  = "suffix";
+  strings_column_wrapper slice_owner(slice_values.begin(), slice_values.end());
+  auto const empty_slice = cudf::slice(slice_owner, {1, rows + 1})[0];
   for (auto const partitions : {1, 17}) {
     std::vector<cudf::size_type> expected(partitions + 1, 0);
     for (int i = 0; i < rows; ++i) {
@@ -411,9 +415,15 @@ TEST_F(PartitionTestNotTyped, UniformPartitionColumns)
     }
     std::partial_sum(expected.begin(), expected.end(), expected.begin());
     fixed_width_column_wrapper<int32_t> map(assignments.begin(), assignments.end());
-    auto result = cudf::partition(input, map, partitions);
-    EXPECT_EQ(result.second, expected);
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, result.first->view());
+    for (auto const& input : {cudf::table_view{{null_numbers, null_strings}},
+                              cudf::table_view{{null_numbers, null_strings, empty_strings}},
+                              cudf::table_view{{empty_strings}},
+                              cudf::table_view{{empty_strings, empty_strings, empty_strings}},
+                              cudf::table_view{{empty_slice}}}) {
+      auto result = cudf::partition(input, map, partitions);
+      EXPECT_EQ(result.second, expected);
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, result.first->view());
+    }
   }
 }
 

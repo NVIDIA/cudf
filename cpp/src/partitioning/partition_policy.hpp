@@ -127,7 +127,7 @@ inline std::optional<partition_plan> select_partition_plan(table_view const& inp
  *
  * @param rows Number of input rows
  * @param partitions Number of destination partitions
- * @param uniform Whether every column can be reconstructed from all-null or empty-string metadata
+ * @param uniform Whether every column is a supported all-null fixed-width or STRING column
  * @return Whether there is one row, one partition, or a uniform table
  */
 inline bool use_trivial(size_type rows, size_type partitions, bool uniform)

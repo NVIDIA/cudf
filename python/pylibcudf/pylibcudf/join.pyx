@@ -112,8 +112,7 @@ cdef class AsofJoin:
 
     def __dealloc__(self):
         if self._stream is not None:
-            with nogil:
-                self._stream.c_synchronize()
+            self._stream.synchronize()
         self.c_obj.reset()
 
     def join(

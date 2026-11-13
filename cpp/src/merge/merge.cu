@@ -13,7 +13,6 @@
 #include <cudf/detail/search.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
-#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/dictionary/detail/merge.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/lists/detail/concatenate.hpp>
@@ -256,7 +255,9 @@ index_vector generate_merged_indices(table_view const& left_table,
 
     auto d_null_precedence =
       cudf::detail::make_device_buffer_async(new_null_precedence, stream, mr.as_temporary());
-
+    // Ensure this stream-ordered copy completes before the host buffers
+    // are released at the end of the block.
+    stream.sync();
     auto ineq_op = detail::row_lexicographic_tagged_comparator<true>(
       *lhs_device_view, *rhs_device_view, d_column_order, d_null_precedence);
     thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -266,10 +267,10 @@ index_vector generate_merged_indices(table_view const& left_table,
                   right_begin + right_size,
                   merged_indices.begin(),
                   ineq_op);
-    // The host sources of d_column_order and d_null_precedence may be read in stream order, so
-    // they must outlive the queued copies; new_null_precedence goes out of scope at block end.
-    cudf::detail::sync_stream(stream);
   } else {
+    // Ensure copy into d_column_order completes before the source
+    // is potentially released at the end of the function.
+    stream.sync();
     auto ineq_op = detail::row_lexicographic_tagged_comparator<false>(
       *lhs_device_view, *rhs_device_view, d_column_order, {});
     thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -279,9 +280,6 @@ index_vector generate_merged_indices(table_view const& left_table,
                   right_begin + right_size,
                   merged_indices.begin(),
                   ineq_op);
-    // The caller's column_order is the host source of d_column_order and may be read in stream
-    // order, so it must outlive the queued copy.
-    cudf::detail::sync_stream(stream);
   }
 
   return merged_indices;

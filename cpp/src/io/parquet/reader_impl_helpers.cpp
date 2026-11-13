@@ -183,27 +183,37 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
 namespace {
 
 /**
- * @brief Check if two logical types have the same time unit.
- */
-bool time_units_match(LogicalType const& lhs, LogicalType const& rhs)
-{
-  auto const unit = [](auto const& t) {
-    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
-  };
-  return unit(lhs.time_type) == unit(rhs.time_type) and
-         unit(lhs.timestamp_type) == unit(rhs.timestamp_type);
-}
-
-/**
  * @brief Check if two logical types are identical in everything the reader uses.
+ *
+ * `isAdjustedToUTC` is not compared as the reader returns the same timestamp type either way.
  */
 bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
 {
-  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
-  return lhs.type == rhs.type and time_units_match(lhs, rhs) and
-         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
-         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
+  // A converted-only ENUM is backfilled as STRING and both are read as strings
+  auto const type = [](LogicalType const& t) {
+    return t.type == LogicalType::ENUM ? LogicalType::STRING : t.type;
+  };
+  auto const unit = [](auto const& t) {
+    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
+  };
+  return type(lhs) == type(rhs) and unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type) and
          lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+}
+
+/**
+ * @brief Check if two schema elements have the same physical and annotated type.
+ *
+ * `converted_type` is deprecated and writers may or may not emit it next to the logical type.
+ * Compare logical types when both elements have one, else fall back to converted types.
+ */
+bool schema_types_match(SchemaElement const& lhs, SchemaElement const& rhs)
+{
+  auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
+                                   ? logical_types_match(*lhs.logical_type, *rhs.logical_type)
+                                   : lhs.converted_type == rhs.converted_type;
+  return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
+         lhs.decimal_scale == rhs.decimal_scale and lhs.decimal_precision == rhs.decimal_precision;
 }
 
 }  // namespace
@@ -993,7 +1003,17 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema, "All sources must have the same schema");
+        // Same as `SchemaElement::operator==` but compares annotations via `schema_types_match`.
+        // The root's name is writer specific (e.g. "schema" or "root"), so it is not compared.
+        auto const elements_match = [](SchemaElement const& lhs, SchemaElement const& rhs) {
+          return schema_types_match(lhs, rhs) and lhs.name == rhs.name and
+                 lhs.num_children == rhs.num_children and lhs.field_id == rhs.field_id;
+        };
+        auto const schemas_match =
+          schema.front().num_children == pfm.schema.front().num_children and
+          std::ranges::equal(
+            schema | std::views::drop(1), pfm.schema | std::views::drop(1), elements_match);
+        CUDF_EXPECTS(schemas_match, "All sources must have the same schema");
       }
 
       // Record fields that are nullable in any source other than the first one
@@ -2176,18 +2196,7 @@ aggregate_reader_metadata::select_columns(
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
-    // Writers may emit the deprecated converted type, the logical type, or both for the same
-    // column. The time units must always agree when both sources have a logical type, because
-    // the values are copied without conversion. Otherwise sources match if their converted types
-    // are equal or their logical types are identical.
-    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
-                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
-                                         (lhs.converted_type == rhs.converted_type or
-                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
-                                     : lhs.converted_type == rhs.converted_type;
-    return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
-           identities_match and lhs.decimal_scale == rhs.decimal_scale and
-           lhs.decimal_precision == rhs.decimal_precision;
+    return identities_match and schema_types_match(lhs, rhs);
   };
 
   // Maps a projected column's schema_idx in the zeroth per_file_metadata (source) to the

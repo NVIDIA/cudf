@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/utilities/strings.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/inplace_vector>
 
@@ -1100,7 +1101,7 @@ transform_args ast_converter::compute_table(
   table_view const& right_table,
   std::string_view function_name,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   ast_converter converter{stream, mr, left_table, right_table};
 
@@ -1166,7 +1167,7 @@ transform_args ast_converter::filter(target target_id,
                                      table_view const& right_table,
                                      std::string_view function_name,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   auto filter = ast::detail::predicate{expr};
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{filter};

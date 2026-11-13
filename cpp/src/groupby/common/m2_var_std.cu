@@ -62,7 +62,7 @@ template <typename TargetType, typename TransformFunc>
 std::unique_ptr<column> compute_variance_std(TransformFunc&& transform_fn,
                                              size_type size,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   auto output = make_numeric_column(
     data_type(type_to_id<TargetType>()), size, mask_state::UNALLOCATED, stream, mr);
@@ -92,7 +92,7 @@ std::unique_ptr<column> compute_variance(column_view const& m2,
                                          column_view const& count,
                                          size_type ddof,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   check_input_types(m2, count);
 
@@ -111,7 +111,7 @@ std::unique_ptr<column> compute_std(column_view const& m2,
                                     column_view const& count,
                                     size_type ddof,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   check_input_types(m2, count);
 

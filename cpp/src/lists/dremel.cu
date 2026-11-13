@@ -269,14 +269,14 @@ dremel_data get_encoding(column_view h_col,
 
   auto d_nullability = cudf::detail::make_device_buffer_async(nullability, stream, temp_mr);
 
-  rmm::device_uvector<uint8_t> rep_level(max_vals_size, stream, temp_mr);
-  rmm::device_uvector<uint8_t> def_level(max_vals_size, stream, temp_mr);
+  cuda::device_buffer<uint8_t> rep_level(stream, temp_mr, max_vals_size, cuda::no_init);
+  cuda::device_buffer<uint8_t> def_level(stream, temp_mr, max_vals_size, cuda::no_init);
 
   // Use max_vals_size only for nested lists; otherwise no temporary values are needed.
   auto const temp_vals_size = nesting_levels.size() > 2 ? max_vals_size : size_t{0};
-  rmm::device_uvector<uint8_t> temp_rep_vals(temp_vals_size, stream, temp_mr);
-  rmm::device_uvector<uint8_t> temp_def_vals(temp_vals_size, stream, temp_mr);
-  rmm::device_uvector<size_type> new_offsets(0, stream, temp_mr);
+  cuda::device_buffer<uint8_t> temp_rep_vals(stream, temp_mr, temp_vals_size, cuda::no_init);
+  cuda::device_buffer<uint8_t> temp_def_vals(stream, temp_mr, temp_vals_size, cuda::no_init);
+  cuda::device_buffer<size_type> new_offsets(stream, temp_mr, 0, cuda::no_init);
   size_type curr_rep_values_size = 0;
   {
     // At this point, curr_col contains the leaf column. Max nesting level is
@@ -350,7 +350,8 @@ dremel_data get_encoding(column_view h_col,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
-    new_offsets = rmm::device_uvector<size_type>(offset_size_at_level, stream, temp_mr);
+    new_offsets =
+      cuda::device_buffer<size_type>(stream, temp_mr, offset_size_at_level, cuda::no_init);
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
@@ -439,7 +440,8 @@ dremel_data get_encoding(column_view h_col,
                            scan_out.begin());
 
     // Add scan output to existing offsets to get new offsets into merged rep level values
-    rmm::device_uvector<size_type> temp_new_offsets(offset_size_at_level, stream, temp_mr);
+    cuda::device_buffer<size_type> temp_new_offsets(
+      stream, temp_mr, offset_size_at_level, cuda::no_init);
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        offset_size_at_level,
@@ -460,14 +462,13 @@ dremel_data get_encoding(column_view h_col,
                     rep_level.begin());
   }
 
-  size_t level_vals_size = new_offsets.back_element(stream);
-  rep_level.resize(level_vals_size, stream);
-  def_level.resize(level_vals_size, stream);
+  // rep_level/def_level stay sized to max_vals_size; only the first `new_offsets` back element
+  // values are valid. Bound reads with `dremel_offsets`, not `.size()`.
 
   // Results were built in temp_mr buffers. If output_mr is a different resource, copy them into
   // output_mr since the caller owns them; otherwise hand over the existing buffers.
-  auto const to_output = [&]<typename T>(rmm::device_uvector<T>& vec) {
-    return output_mr == temp_mr ? std::move(vec) : rmm::device_uvector<T>(vec, stream, output_mr);
+  auto const to_output = [&]<typename T>(cuda::device_buffer<T>& vec) {
+    return output_mr == temp_mr ? std::move(vec) : cuda::device_buffer<T>(stream, output_mr, vec);
   };
   auto output_offsets   = to_output(new_offsets);
   auto output_rep_level = to_output(rep_level);

@@ -32,7 +32,7 @@ using metadata_base = parquet::detail::metadata;
  */
 struct page_statistics_input {
   size_type column_index;  ///< Index of the logical filter column
-  cudf::table statistics;  ///< Compacted page-level min, max, and all-null stats columns
+  cudf::table statistics;  ///< Compacted page-level min, max, all-null and has-NaN stats columns
   std::vector<size_type> page_row_offsets;  ///< Row offset of each page, spanning all rows
 };
 
@@ -69,7 +69,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 /**
  * @brief Checks whether every row is retained by the boolean row mask
  *
- * Null entries in the row mask are treated as surviving rows
+ * Null rows are treated as pruned
  *
  * @param retention_mask Boolean column indicating retained rows
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -81,7 +81,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 /**
  * @brief Computes a mask indicating which row ranges contain at least one selected row
  *
- * Null entries in the row mask are treated as surviving rows
+ * Null rows are treated as pruned
  *
  * @param row_mask Boolean column indicating selected rows
  * @param page_row_offsets Page row offsets defining the row ranges

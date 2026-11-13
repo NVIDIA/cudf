@@ -20,7 +20,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
-#include <cuda/execution>
+#include <cuda/execution.tune.h>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -57,7 +57,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
@@ -82,7 +82,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FAIL(
     "This function should never be called. fixed_point reduce should always go through the reduce "
@@ -98,7 +98,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
@@ -146,7 +146,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type valid_count,
                                cudf::size_type ddof,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
   auto const initial_value = op.template get_identity<IntermediateType>();

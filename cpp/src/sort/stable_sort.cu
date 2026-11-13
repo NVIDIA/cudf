@@ -33,7 +33,7 @@ std::unique_ptr<table> stable_sort(table_view const& input,
                                    std::vector<order> const& column_order,
                                    std::vector<null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   // fast-path sort conditions: single, fixed-width column with no nulls
   if (input.num_columns() == 1 && is_radix_sortable(input.column(0))) {
@@ -51,7 +51,7 @@ std::unique_ptr<table> stable_sort_by_key(table_view const& values,
                                           std::vector<order> const& column_order,
                                           std::vector<null_order> const& null_precedence,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values.num_rows() == keys.num_rows(),
                "Mismatch in number of rows for values and keys");
@@ -82,7 +82,7 @@ std::unique_ptr<table> stable_sort(table_view const& input,
                                    std::vector<order> const& column_order,
                                    std::vector<null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_sort(input, column_order, null_precedence, stream, mr);
@@ -93,7 +93,7 @@ std::unique_ptr<table> stable_sort_by_key(table_view const& values,
                                           std::vector<order> const& column_order,
                                           std::vector<null_order> const& null_precedence,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_sort_by_key(values, keys, column_order, null_precedence, stream, mr);

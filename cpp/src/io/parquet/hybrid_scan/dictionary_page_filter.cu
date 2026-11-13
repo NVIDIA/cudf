@@ -1099,7 +1099,7 @@ struct dictionary_caster {
 
     // Device vector to store the decoded values for all dictionaries
     cuda::device_buffer<T> decoded_data{stream, default_mr, total_num_values, cuda::no_init};
-    kernel_error error_code(stream);
+    kernel_error error_code(stream, mr.as_temporary());
 
     // Host vector of scalar device views from all literals
     std::vector<ast::generic_scalar_device_view> host_scalars;
@@ -1269,7 +1269,7 @@ struct dictionary_caster {
       cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Error code for the dictionary decode kernel
-    kernel_error error_code(stream);
+    kernel_error error_code(stream, mr.as_temporary());
 
     if constexpr (not cuda::std::is_same_v<T, cudf::string_view>) {
       // Decode fixed width dictionaries and evaluate literals against them, one dictionary per

@@ -133,7 +133,7 @@ void reader_impl::build_string_dict_indices()
       pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks, _sparse_page_io});
 
   // compute the indices
-  kernel_error error_code(_stream);
+  kernel_error error_code(_stream, _mr.as_temporary());
   build_string_dictionary_index(
     pass.chunks.device_ptr(), pass.chunks.size(), error_code.data(), _stream);
   pass.chunks.device_to_host(_stream);
@@ -593,7 +593,7 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
   _stream.sync();
 
   // Pre-process string offsets for non-dictionary string columns
-  kernel_error error_code(_stream);
+  kernel_error error_code(_stream, _mr.as_temporary());
   detail::preprocess_string_offsets(subpass.pages,
                                     pass.chunks,
                                     subpass.page_string_offset_indices,
@@ -690,8 +690,9 @@ void reader_impl::read_compressed_data()
   read_chunks_tasks.get();
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                             : count_page_headers(chunks, _stream);
+  auto const total_pages = _has_offset_index
+                             ? count_page_headers_with_pgidx(chunks, _stream)
+                             : count_page_headers(chunks, _stream, _mr.as_temporary());
   if (total_pages <= 0) { return; }
 
   // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
@@ -700,7 +701,7 @@ void reader_impl::read_compressed_data()
     total_pages, _stream, _mr.as_temporary());
 
   // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }

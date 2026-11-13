@@ -95,26 +95,51 @@ python -m cudf_polars.streaming.benchmarks.pdsh all \
 ### Results
 
 Results are written to `pdsh_results.jsonl` in the current directory by default (override with `-o`).
-Each run appends one JSON line containing metadata and a `records` field with per-query,
-per-iteration timings:
+Each run appends one JSON line using the version-2 benchmark interchange format. Query
+timings use the same field names and millisecond units as common benchmark services, but
+the runner is standalone: it neither requires nor contacts a service.
 
 ```json
 {
-  "engine_name": "cudf-polars",
-  "frontend": "spmd",
-  "dataset_path": "data/tables/scale-1000.0",
-  "scale_factor": 1000,
-  "records": {
-    "1": [
-      {"query": 1, "iteration": 0, "duration": 0.79, "status": "success"},
-      {"query": 1, "iteration": 1, "duration": 0.55, "status": "success"}
-    ]
+  "schema_version": 2,
+  "run_id": "d45bf21e-c350-4927-80a0-855c888f57cc",
+  "run_at": "2026-11-10T18:00:00+00:00",
+  "query_engine": {
+    "engine_name": "cudf-polars",
+    "version": "26.12.0",
+    "commit_hash": "abc123"
+  },
+  "query_logs": [
+    {
+      "query_name": "1",
+      "execution_order": 0,
+      "status": "success",
+      "runtime_ms": 790.0,
+      "extra_info": {"iteration": 0}
+    },
+    {
+      "query_name": "1",
+      "execution_order": 1,
+      "status": "success",
+      "runtime_ms": 550.0,
+      "extra_info": {"iteration": 1}
+    }
+  ],
+  "extra_info": {
+    "benchmark": {
+      "frontend": "spmd",
+      "dataset_path": "data/tables/scale-1000.0",
+      "scale_factor": 1000
+    }
   }
 }
 ```
 
-`duration` is in seconds. Running multiple frontends with the same `-o` file appends each as a
-separate line, making it easy to compare CPU and GPU results in one file.
+Runner-specific metadata is retained under namespaced `extra_info` entries, and generated
+profiles are described in the `artifacts` manifest. Optional catalog arguments such as
+`--sku-name`, `--storage-configuration-name`, and `--benchmark-definition-name` add matching
+top-level fields when supplied; they are never required to run a benchmark. Running multiple
+frontends with the same `-o` file appends each as a separate line.
 
 ### Tuning
 

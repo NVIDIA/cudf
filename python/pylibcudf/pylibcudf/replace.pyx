@@ -18,7 +18,7 @@ from pylibcudf.libcudf.replace import \
 
 from .column cimport Column
 from .scalar cimport Scalar
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ cpdef Column replace_nulls(
                     c_source_column,
                     policy,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             return Column.from_libcudf(move(c_result), _stream, mr)
         else:
@@ -109,21 +109,21 @@ cpdef Column replace_nulls(
                 c_source_column,
                 c_replacement,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         elif ReplacementType is Scalar:
             c_result = cpp_replace.replace_nulls(
                 c_source_column,
                 dereference(replacement.c_obj),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         elif ReplacementType is replace_policy:
             c_result = cpp_replace.replace_nulls(
                 c_source_column,
                 replacement,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         else:
             assert False, "Internal error. Please contact pylibcudf developers"
@@ -175,7 +175,7 @@ cpdef Column find_and_replace_all(
             c_values_to_replace,
             c_replacement_values,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -234,7 +234,7 @@ cpdef Column clamp(
                 dereference(lo.c_obj),
                 dereference(hi.c_obj),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         else:
             c_result = cpp_replace.clamp(
@@ -244,7 +244,7 @@ cpdef Column clamp(
                 dereference(hi.c_obj),
                 dereference(hi_replace.c_obj),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -291,13 +291,13 @@ cpdef Column normalize_nans_and_zeros(
             cpp_replace.normalize_nans_and_zeros(
                 c_mutable_source_column,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         else:
             c_result = cpp_replace.normalize_nans_and_zeros(
                 c_source_column,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
 
     if not inplace:

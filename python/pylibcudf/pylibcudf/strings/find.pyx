@@ -8,7 +8,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport find as cpp_find
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ cpdef Column find(
                 c_target,
                 start,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -89,7 +89,7 @@ cpdef Column find(
                 start,
                 stop,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -142,7 +142,7 @@ cpdef Column rfind(
             start,
             stop,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -196,7 +196,7 @@ cpdef Column contains(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -205,7 +205,7 @@ cpdef Column contains(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -263,7 +263,7 @@ cpdef Column starts_with(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -272,7 +272,7 @@ cpdef Column starts_with(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -327,7 +327,7 @@ cpdef Column ends_with(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -336,7 +336,7 @@ cpdef Column ends_with(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         raise ValueError(f"Invalid target {target}")

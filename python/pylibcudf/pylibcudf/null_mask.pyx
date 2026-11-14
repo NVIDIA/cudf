@@ -21,7 +21,7 @@ from .span import Span, is_span as py_is_span
 from .column cimport Column
 from .gpumemoryview cimport gpumemoryview, _from_cuda_device_buffer
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ cpdef gpumemoryview copy_bitmask(
 
     cdef column_view c_col = col.view()
     with nogil:
-        db = cpp_null_mask.copy_bitmask_to_unique_ptr(c_col, _cs, mr.get_mr())
+        db = cpp_null_mask.copy_bitmask_to_unique_ptr(c_col, _cs, _get_memory_resources(mr))
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
 
@@ -121,7 +121,7 @@ cpdef gpumemoryview copy_bitmask_from_bitmask(
             begin_bit,
             end_bit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
@@ -184,7 +184,7 @@ cpdef gpumemoryview create_null_mask(
 
     with nogil:
         db = cpp_null_mask.create_null_mask_unique_ptr(
-            size, state, _cs, mr.get_mr()
+            size, state, _cs, _get_memory_resources(mr)
         )
 
     return _from_cuda_device_buffer(move(db), _stream, mr)
@@ -222,7 +222,7 @@ cpdef tuple[gpumemoryview, int] bitmask_and(
     cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_and_unique_ptr(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return (
@@ -263,7 +263,7 @@ cpdef tuple[gpumemoryview, int] bitmask_or(
     cdef table_view c_input = c_table.view()
     with nogil:
         c_result = cpp_null_mask.bitmask_or_unique_ptr(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return (

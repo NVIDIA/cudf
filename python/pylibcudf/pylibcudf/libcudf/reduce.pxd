@@ -14,10 +14,10 @@ from pylibcudf.libcudf.scalar.scalar cimport scalar
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport data_type, nan_policy, null_policy
 from cuda.bindings.cyruntime cimport cudaStream_t
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 from rmm.librmm.memory_resource cimport (
     any_resource,
     device_accessible,
-    device_async_resource_ref,
 )
 
 ctypedef const scalar constscalar
@@ -29,7 +29,7 @@ cdef extern from "cudf/reduction.hpp" namespace "cudf" nogil:
         data_type output_type,
         optional[reference_wrapper[constscalar]] init,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        memory_resources mr
     ) except +libcudf_exception_handler
 
     cpdef enum class scan_type(bool):
@@ -42,13 +42,13 @@ cdef extern from "cudf/reduction.hpp" namespace "cudf" nogil:
         scan_type inclusive,
         null_policy null_handling,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        memory_resources mr
     ) except +libcudf_exception_handler
 
     cdef pair[unique_ptr[scalar], unique_ptr[scalar]] minmax(
         const column_view& col,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        memory_resources mr
     ) except +libcudf_exception_handler
 
 

@@ -18,7 +18,7 @@ from pylibcudf.libcudf.io.avro cimport (
 
 from pylibcudf.libcudf.types cimport size_type
 
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -183,6 +183,6 @@ cpdef TableWithMetadata read_avro(
     cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
-        c_result = move(cpp_read_avro(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_avro(options.c_obj, _cs, _get_memory_resources(mr)))
 
     return TableWithMetadata.from_libcudf(c_result, s, mr)

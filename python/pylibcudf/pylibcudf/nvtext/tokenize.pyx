@@ -21,7 +21,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ cdef class TokenizeVocabulary:
         cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
-            self.c_obj = move(cpp_load_vocabulary(c_vocab, _cs, mr.get_mr()))
+            self.c_obj = move(cpp_load_vocabulary(c_vocab, _cs, _get_memory_resources(mr)))
 
     __hash__ = None
 
@@ -89,7 +89,7 @@ cpdef Column tokenize_scalar(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef column_view c_input = input.view()
@@ -98,7 +98,7 @@ cpdef Column tokenize_scalar(
             c_input,
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -138,7 +138,7 @@ cpdef Column tokenize_column(
             c_input,
             c_delimiters,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -176,7 +176,7 @@ cpdef Column count_tokens_scalar(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef column_view c_input = input.view()
@@ -185,7 +185,7 @@ cpdef Column count_tokens_scalar(
             c_input,
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -225,7 +225,7 @@ cpdef Column count_tokens_column(
             c_input,
             c_delimiters,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -257,7 +257,7 @@ cpdef Column character_tokenize(
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_character_tokenize(c_input, _cs, mr.get_mr())
+        c_result = cpp_character_tokenize(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -297,7 +297,7 @@ cpdef Column detokenize(
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef column_view c_input = input.view()
@@ -308,7 +308,7 @@ cpdef Column detokenize(
             c_row_indices,
             dereference(<const string_scalar*>separator.c_obj.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -358,7 +358,7 @@ cpdef Column tokenize_with_vocabulary(
             dereference(<const string_scalar*>delimiter.c_obj.get()),
             default_id,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

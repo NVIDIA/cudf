@@ -12,7 +12,7 @@ from pylibcudf.libcudf.strings.split cimport partition as cpp_partition
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.table cimport Table
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ cpdef Table partition(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef const string_scalar* c_delimiter = <const string_scalar*>(
@@ -71,7 +71,7 @@ cpdef Table partition(
             c_input,
             dereference(c_delimiter),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -109,7 +109,7 @@ cpdef Table rpartition(
 
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef const string_scalar* c_delimiter = <const string_scalar*>(
@@ -122,7 +122,7 @@ cpdef Table rpartition(
             c_input,
             dereference(c_delimiter),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

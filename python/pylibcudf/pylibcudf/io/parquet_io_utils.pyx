@@ -30,7 +30,7 @@ from pylibcudf.libcudf.io.parquet_io_utils cimport (
 
 from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.utilities.span cimport device_span
-from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -106,7 +106,7 @@ cpdef list fetch_byte_ranges_to_device(
             std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
             policy,
             _stream.view().get(),
-            _mr.get_mr(),
+            _get_memory_resources(_mr),
         )
 
     if fetched.first.size() != 1:

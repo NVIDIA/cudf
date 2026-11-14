@@ -13,7 +13,7 @@ from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from typing import TYPE_CHECKING
@@ -76,6 +76,6 @@ cpdef Table merge (
             c_column_order,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)

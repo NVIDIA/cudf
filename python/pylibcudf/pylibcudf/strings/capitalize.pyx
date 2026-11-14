@@ -13,7 +13,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 from pylibcudf.libcudf.strings cimport capitalize as cpp_capitalize
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.char_types cimport string_character_types
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ cpdef Column capitalize(
 
     if delimiters is None:
         delimiters = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef const string_scalar* cpp_delimiters = <const string_scalar*>(
@@ -71,7 +71,7 @@ cpdef Column capitalize(
             c_input,
             dereference(cpp_delimiters),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -107,7 +107,7 @@ cpdef Column title(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_capitalize.title(
-            c_input, sequence_type, _cs, mr.get_mr()
+            c_input, sequence_type, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -134,6 +134,6 @@ cpdef Column is_title(Column input, object stream: CudaStreamLike | None = None,
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_capitalize.is_title(c_input, _cs, mr.get_mr())
+        c_result = cpp_capitalize.is_title(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(c_result), _stream, mr)

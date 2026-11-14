@@ -39,7 +39,7 @@ from pylibcudf.libcudf.types cimport type_id
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
-from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources, _get_stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -1173,7 +1173,7 @@ cpdef Table read_parquet_column_chunk_bounds(
             ),
             std_span[const_string](c_columns.data(), c_columns.size()),
             _cs,
-            mr.get_mr(),
+            _get_memory_resources(mr),
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

@@ -14,7 +14,7 @@ from pylibcudf.libcudf.nvtext.stemmer cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.nvtext.stemmer cimport ColumnOrSize
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ cpdef Column porter_stemmer_measure(
 
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_porter_stemmer_measure(c_input, _cs, mr.get_mr())
+        c_result = cpp_porter_stemmer_measure(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(c_result), _stream, mr)
 

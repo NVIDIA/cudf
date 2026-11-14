@@ -13,7 +13,7 @@ from pylibcudf.libcudf.nvtext.normalize cimport (
     normalize_flags,
     underlying_type_t_normalize_flags,
 )
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ cdef class CharacterNormalizer:
                     do_lower_case,
                     c_tokens,
                     _cs,
-                    mr.get_mr()
+                    _get_memory_resources(mr)
                 )
             )
 
@@ -88,7 +88,7 @@ cpdef Column normalize_spaces(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_normalize.normalize_spaces(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -136,7 +136,7 @@ cpdef Column normalize_characters(
             dereference(normalizer.c_obj.get()),
             c_flags,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

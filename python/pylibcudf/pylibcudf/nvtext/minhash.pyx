@@ -14,7 +14,7 @@ from pylibcudf.libcudf.nvtext.minhash cimport (
     minhash64_ngrams as cpp_minhash64_ngrams,
 )
 from pylibcudf.libcudf.types cimport size_type
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -79,7 +79,7 @@ cpdef Column minhash(
             c_b,
             width,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -135,7 +135,7 @@ cpdef Column minhash64(
             c_b,
             width,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -192,7 +192,7 @@ cpdef Column minhash_ngrams(
             c_a,
             c_b,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -249,7 +249,7 @@ cpdef Column minhash64_ngrams(
             c_a,
             c_b,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

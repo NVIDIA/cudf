@@ -11,7 +11,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.table cimport Table
 from pylibcudf.libcudf.types cimport size_type
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ cpdef Table extract(
             c_input,
             prog.c_obj.get()[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -96,7 +96,7 @@ cpdef Column extract_all_record(
             c_input,
             prog.c_obj.get()[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -142,7 +142,7 @@ cpdef Column extract_single(
             prog.c_obj.get()[0],
             group,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

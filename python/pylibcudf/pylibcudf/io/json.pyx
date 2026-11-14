@@ -14,7 +14,7 @@ from rmm.pylibrmm.stream cimport Stream
 from pylibcudf.concatenate cimport concatenate
 from pylibcudf.column cimport Column
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_memory_resource
+from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.io.types cimport SinkInfo, SourceInfo, TableWithMetadata
@@ -758,7 +758,7 @@ cpdef tuple[list[Column], list[str], dict] chunked_read_json(
 
         try:
             with nogil:
-                c_result = move(cpp_read_json(options.c_obj, _cs, mr.get_mr()))
+                c_result = move(cpp_read_json(options.c_obj, _cs, _get_memory_resources(mr)))
         except (ValueError, OverflowError):
             break
         if meta_names is None:
@@ -815,7 +815,7 @@ cpdef TableWithMetadata read_json(
     cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
-        c_result = move(cpp_read_json(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_json(options.c_obj, _cs, _get_memory_resources(mr)))
 
     return TableWithMetadata.from_libcudf(c_result, s, mr)
 
@@ -881,7 +881,7 @@ cpdef TableWithMetadata read_json_from_string_column(
                 dereference(c_separator),
                 dereference(c_narep),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         )
         c_contents = c_join_string_column.get().release()
@@ -904,7 +904,7 @@ cpdef TableWithMetadata read_json_from_string_column(
 
     # Read JSON from the joined string
     with nogil:
-        c_result = move(cpp_read_json(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_json(options.c_obj, _cs, _get_memory_resources(mr)))
 
     return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 

@@ -10,7 +10,7 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_booleans as cpp_convert_booleans,
 )
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ cpdef Column to_booleans(
             c_input,
             dereference(c_true_string),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -117,7 +117,7 @@ cpdef Column from_booleans(
             dereference(c_true_string),
             dereference(c_false_string),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

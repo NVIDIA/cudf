@@ -16,7 +16,7 @@ from pylibcudf.libcudf.nvtext.unicode_normalize cimport (
 from pylibcudf.libcudf.nvtext.unicode_normalize import \
     unicode_normalization_form as UnicodeNormalizationForm  # no-cython-lint
 from pylibcudf.table cimport Table
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ cdef class UnicodeNormalizer:
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
-                cpp_create_unicode_normalizer(c_data, form, _cs, _mr.get_mr())
+                cpp_create_unicode_normalizer(c_data, form, _cs, _get_memory_resources(_mr))
             )
 
     __hash__ = None
@@ -115,7 +115,7 @@ cpdef Column normalize_unicode(
             c_input,
             dereference(normalizer.c_obj.get()),
             _cs,
-            _mr.get_mr(),
+            _get_memory_resources(_mr),
         )
 
     return Column.from_libcudf(move(c_result), _stream, _mr)

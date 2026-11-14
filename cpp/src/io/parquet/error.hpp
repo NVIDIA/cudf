@@ -7,6 +7,8 @@
 
 #include "io/utilities/hostdevice_vector.hpp"
 
+#include <cudf/utilities/memory_resource.hpp>
+
 #include <cuda/stream>
 
 #include <cstdint>
@@ -39,9 +41,10 @@ class kernel_error {
    * @throws `rmm::cuda_error` if copying `initial_value` to device memory fails.
    *
    * @param stream CUDA stream to use
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  kernel_error(cuda::stream_ref stream)
-    : _error_code(1, stream, cudf::get_current_device_resource_ref())
+  kernel_error(cuda::stream_ref stream, cudf::memory_resources mr)
+    : _error_code(1, stream, mr.get_output_mr())
   {
     _error_code[0] = 0;
     _error_code.host_to_device_async(stream);

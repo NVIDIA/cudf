@@ -20,13 +20,11 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 /**
- * @brief Functor to dispatch aggregation with
+ * @brief Base functor that computes aggregations on one values column and caches the results
  *
- * This functor is to be used with `aggregation_dispatcher` to compute the
- * appropriate aggregation. If the values on which to run the aggregation are
- * unchanged, then this functor should be re-used. This is because it stores
- * memoised sorted and/or grouped values and re-using will save on computation
- * of these values.
+ * Derived functors are used with `aggregation_dispatcher`. Reuse one instance for every
+ * aggregation on the same values: it memoizes the grouped and sorted values so later
+ * aggregations do not compute them again.
  */
 struct store_result_functor {
   store_result_functor(column_view const& values,

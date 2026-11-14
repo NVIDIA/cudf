@@ -255,7 +255,9 @@ index_vector generate_merged_indices(table_view const& left_table,
 
     auto d_null_precedence =
       cudf::detail::make_device_buffer_async(new_null_precedence, stream, mr.as_temporary());
-
+    // Ensure this stream-ordered copy completes before the host buffers
+    // are released at the end of the block.
+    stream.sync();
     auto ineq_op = detail::row_lexicographic_tagged_comparator<true>(
       *lhs_device_view, *rhs_device_view, d_column_order, d_null_precedence);
     thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -266,6 +268,9 @@ index_vector generate_merged_indices(table_view const& left_table,
                   merged_indices.begin(),
                   ineq_op);
   } else {
+    // Ensure copy into d_column_order completes before the source
+    // is potentially released at the end of the function.
+    stream.sync();
     auto ineq_op = detail::row_lexicographic_tagged_comparator<false>(
       *lhs_device_view, *rhs_device_view, d_column_order, {});
     thrust::merge(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -277,7 +282,6 @@ index_vector generate_merged_indices(table_view const& left_table,
                   ineq_op);
   }
 
-  CUDF_CHECK_CUDA(stream.get());
   return merged_indices;
 }
 

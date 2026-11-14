@@ -1900,7 +1900,6 @@ NODEIDS_THAT_FAIL = {
     "tests/indexing/test_indexing.py::TestFancy::test_index_type_coercion[loc]": "TODO: Add a reason for failure",
     "tests/indexing/test_indexing.py::TestFancy::test_setitem_list": "ValueError: Must have equal len keys and value when setting with an iterable",
     "tests/indexing/test_indexing.py::TestFancy::test_setitem_ndarray_3d[empty-DataFrame-iloc]": "TODO: Add a reason for failure",
-    "tests/indexing/test_indexing.py::TestFancy::test_setitem_ndarray_3d[empty-DataFrame-loc]": "TODO: Add a reason for failure",
     "tests/indexing/test_indexing.py::test_scalar_setitem_series_with_nested_value_length1[iloc-value0]": "TODO: Add a reason for failure",
     "tests/indexing/test_indexing.py::test_scalar_setitem_series_with_nested_value_length1[iloc-value1]": "TODO: Add a reason for failure",
     "tests/indexing/test_indexing.py::test_scalar_setitem_series_with_nested_value_length1[iloc-value3]": "TODO: Add a reason for failure",

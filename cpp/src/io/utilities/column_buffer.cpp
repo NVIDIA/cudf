@@ -69,8 +69,8 @@ void cudf::io::detail::inline_column_buffer::create_string_data(size_t num_bytes
 namespace {
 
 /**
- * @brief Recursively copy `name`, `user_data`, and `string_as_binary` fields of one buffer to
- * another.
+ * @brief Recursively copy `name`, `user_data`, `string_as_binary`, and `is_file` fields of one
+ * buffer to another.
  *
  * @param buff The old output buffer
  * @param new_buff The new output buffer
@@ -81,6 +81,7 @@ void copy_buffer_data(string_policy const& buff, string_policy& new_buff)
   new_buff.name             = buff.name;
   new_buff.user_data        = buff.user_data;
   new_buff.string_as_binary = buff.string_as_binary;
+  new_buff.is_file          = buff.is_file;
   for (auto const& child : buff.children) {
     auto& new_child = new_buff.children.emplace_back(string_policy(child.type, child.is_nullable));
     copy_buffer_data(child, new_child);
@@ -190,6 +191,7 @@ std::unique_ptr<column> make_column(column_buffer_base<string_policy>& buffer,
     if (schema_info != nullptr) {
       schema_info->name        = buffer.name;
       schema_info->is_nullable = buffer.is_nullable;
+      if (buffer.is_file) { schema_info->is_file = true; }
     }
     switch (buffer.type.id()) {
       case type_id::STRING: {
@@ -337,7 +339,10 @@ std::unique_ptr<column> empty_like(column_buffer_base<string_policy>& buffer,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr)
 {
-  if (schema_info != nullptr) { schema_info->name = buffer.name; }
+  if (schema_info != nullptr) {
+    schema_info->name = buffer.name;
+    if (buffer.is_file) { schema_info->is_file = true; }
+  }
 
   switch (buffer.type.id()) {
     case type_id::STRING: {

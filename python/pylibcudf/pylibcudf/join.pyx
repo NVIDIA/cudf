@@ -108,9 +108,10 @@ cdef class AsofJoin:
     """As-of join with reusable right-side preprocessing.
 
     The right keys must be sorted ascending by ``(right_by..., right_on)``
-    with nulls first. This precondition is not checked. Left rows may be
-    unordered. The right input is retained and must not be modified while in
-    use.
+    with nulls first. NaNs in floating-point grouping keys must follow all
+    other non-null values. These preconditions are not checked. Left rows may
+    be unordered. The right input is retained and must not be modified while
+    in use.
     """
 
     def __cinit__(

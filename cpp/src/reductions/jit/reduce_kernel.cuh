@@ -161,7 +161,7 @@ __device__ State block_combine(State local, Merge&& merge)
 }
 
 template <typename T>
-CUDF_HOST_DEVICE constexpr T& deref_value(T& value)
+CUDF_HOST_DEVICE constexpr T const& deref_value(T const& value)
 {
   return value;
 }

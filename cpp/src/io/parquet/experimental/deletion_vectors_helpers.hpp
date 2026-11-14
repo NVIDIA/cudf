@@ -106,6 +106,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
  * @param deletion_vector_refs Host span of cudf::roaring_bitmap references
  * @param deletion_vector_row_counts Host span of number of rows per deletion vector
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  *
  * @return Number of rows marked as deleted
  */
@@ -113,7 +114,8 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> deletion_vector_row_counts,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Computes a chunk of the BOOL8 row mask column by consuming deletion vectors from queues
@@ -140,6 +142,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
  * @param[in,out] deletion_vectors Queue of roaring bitmaps to consume from
  * @param[in,out] deletion_vector_row_counts Queue of per-deletion-vector row counts
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  *
  * @return Number of deleted rows in this chunk
  */
@@ -147,6 +150,7 @@ void prepend_index_column_to_table_metadata(table_metadata& metadata);
   cudf::column_view const& row_index_column,
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace cudf::io::parquet::experimental

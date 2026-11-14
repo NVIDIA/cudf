@@ -518,6 +518,7 @@ class equality_literals_collector : public parquet_expression_simplifier {
  * @param ast_expr StatsAST or BloomfilterAST expression to filter with
  * @param input_row_group_indices Lists of input row groups to read, one per source
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  *
  * @return Collected filtered row group indices, one vector per source, if any. A std::nullopt if
  * all row groups are required or if the computed predicate is all nulls
@@ -526,6 +527,7 @@ class equality_literals_collector : public parquet_expression_simplifier {
   cudf::table_view ast_table,
   std::reference_wrapper<ast::expression const> ast_expr,
   std::span<std::vector<size_type> const> input_row_group_indices,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace cudf::io::parquet::detail

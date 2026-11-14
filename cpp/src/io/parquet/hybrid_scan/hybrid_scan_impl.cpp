@@ -378,7 +378,8 @@ hybrid_scan_reader_impl::filter_row_groups_with_byte_range(
 std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_with_stats(
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -387,7 +388,8 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
                                                           output_dtypes,
                                                           _output_column_schemas,
                                                           expr_conv.get_converted_expr().value(),
-                                                          stream);
+                                                          stream,
+                                                          mr);
 }
 
 std::pair<std::vector<dictionary_byte_range>, std::vector<cudf::size_type>>
@@ -424,7 +426,8 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -451,15 +454,14 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
 
   // Prepare dictionary column chunks and decode page headers
   auto [has_compressed_data, chunks, pages] = prepare_dictionaries(
-    row_group_indices, dictionary_page_data, dictionary_col_schemas, options, stream);
+    row_group_indices, dictionary_page_data, dictionary_col_schemas, options, stream, mr);
 
   // Decompress dictionary pages if needed and store uncompressed buffers here
-  auto const mr                          = cudf::get_current_device_resource_ref();
   auto decompressed_dictionary_page_data = std::optional<cuda::device_buffer<std::uint8_t>>{};
   if (has_compressed_data) {
     // Use the `decompress_page_data` utility to decompress dictionary pages (passed as pass_pages)
-    decompressed_dictionary_page_data =
-      std::get<0>(parquet::detail::decompress_page_data(chunks, pages, {}, {}, stream, mr));
+    decompressed_dictionary_page_data = std::get<0>(
+      parquet::detail::decompress_page_data(chunks, pages, {}, {}, stream, mr.as_temporary()));
     pages.host_to_device_async(stream);
   }
 
@@ -473,14 +475,16 @@ hybrid_scan_reader_impl::filter_row_groups_with_dictionary_pages(
     output_dtypes,
     dictionary_col_schemas,
     expr_conv.get_converted_expr().value(),
-    stream);
+    stream,
+    mr);
 }
 
 std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_with_bloom_filters(
   std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not row_group_indices.empty(), "Empty input row group indices encountered");
   auto [expr_conv, output_dtypes] = prepare_filter_and_output_types(options);
@@ -491,7 +495,8 @@ std::vector<std::vector<size_type>> hybrid_scan_reader_impl::filter_row_groups_w
     output_dtypes,
     _output_column_schemas,
     expr_conv.get_converted_expr().value(),
-    stream);
+    stream,
+    mr);
 }
 
 std::unique_ptr<cudf::column> hybrid_scan_reader_impl::build_all_true_row_mask(
@@ -588,7 +593,8 @@ hybrid_scan_reader_impl::sparse_payload_pages_byte_ranges(
   std::span<std::vector<size_type> const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->get_num_sources(),
                "Row group source count must match the number of input sources");
@@ -636,8 +642,8 @@ hybrid_scan_reader_impl::sparse_payload_pages_byte_ranges(
 
   // Compute the data page mask
   auto const mask_size = mask_offsets.back();
-  auto data_page_mask =
-    _extended_metadata->compute_data_page_mask(row_mask, row_group_indices, _input_columns, stream);
+  auto data_page_mask  = _extended_metadata->compute_data_page_mask(
+    row_mask, row_group_indices, _input_columns, stream, mr);
   CUDF_EXPECTS(data_page_mask.empty() or data_page_mask.size() == mask_size,
                "Computed data page mask does not match offset indexes");
 
@@ -1058,7 +1064,7 @@ void hybrid_scan_reader_impl::prepare_data(
   auto data_page_mask = thrust::host_vector<bool>{};
   if (_has_offset_index and row_mask.has_value() and not _sparse_page_io) {
     data_page_mask = _extended_metadata->compute_data_page_mask(
-      row_mask.value(), row_group_indices, _input_columns, _stream);
+      row_mask.value(), row_group_indices, _input_columns, _stream, _mr);
   }
 
   // handle any chunking work (ratcheting through the subpasses and chunks within
@@ -1350,7 +1356,7 @@ thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_p
   auto const& pass = *_pass_itm_data;
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, _stream)) { return thrust::host_vector<bool>{}; }
+  if (are_all_rows_retained(row_mask, _stream, _mr)) { return thrust::host_vector<bool>{}; }
 
   std::vector<cudf::size_type> page_row_offsets;
   page_row_offsets.reserve(pass.pages.size() * 2);
@@ -1396,7 +1402,7 @@ thrust::host_vector<bool> hybrid_scan_reader_impl::compute_data_page_mask_with_p
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), pass.num_rows),
                "Row mask must span across all rows in the pass");
   auto const row_range_mask =
-    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, _stream);
+    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, _stream, _mr);
 
   if (row_range_mask.empty()) { return data_page_mask; }
 

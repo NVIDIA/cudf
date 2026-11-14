@@ -82,10 +82,11 @@ std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_wit
 std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_with_stats(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return _impl->filter_row_groups_with_stats(row_group_indices, options, stream);
+  return _impl->filter_row_groups_with_stats(row_group_indices, options, stream, mr);
 }
 
 std::pair<std::vector<text::byte_range_info>, std::vector<size_type>>
@@ -100,11 +101,12 @@ std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_wit
   std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
   std::span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->filter_row_groups_with_bloom_filters(
-    bloom_filter_data, row_group_indices, options, stream);
+    bloom_filter_data, row_group_indices, options, stream, mr);
 }
 
 std::unique_ptr<cudf::column> hybrid_scan_multifile::build_all_true_row_mask(
@@ -167,10 +169,11 @@ hybrid_scan_multifile::payload_pages_byte_ranges(
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return _impl->sparse_payload_pages_byte_ranges(row_group_indices, row_mask, options, stream);
+  return _impl->sparse_payload_pages_byte_ranges(row_group_indices, row_mask, options, stream, mr);
 }
 
 table_with_metadata hybrid_scan_multifile::materialize_payload_columns(
@@ -380,11 +383,12 @@ std::vector<std::vector<size_type>> hybrid_scan_multifile::filter_row_groups_wit
   cudf::host_span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   cudf::host_span<std::vector<size_type> const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return _impl->filter_row_groups_with_dictionary_pages(
-    dictionary_page_data, row_group_indices, options, stream);
+    dictionary_page_data, row_group_indices, options, stream, mr);
 }
 
 }  // namespace cudf::io::parquet::experimental

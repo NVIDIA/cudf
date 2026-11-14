@@ -381,14 +381,15 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   auto const stats_filtered_row_group_indices = apply_stats_filters(
-    row_group_indices, total_row_groups, output_dtypes, output_column_schemas, filter, stream);
+    row_group_indices, total_row_groups, output_dtypes, output_column_schemas, filter, stream, mr);
 
   return stats_filtered_row_group_indices.value_or(all_row_group_indices(row_group_indices));
 }
@@ -604,7 +605,8 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Compute total number of input row groups
   auto const total_row_groups =
@@ -620,7 +622,8 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
                                                                       output_dtypes,
                                                                       dictionary_col_schemas,
                                                                       filter,
-                                                                      stream);
+                                                                      stream,
+                                                                      mr);
 
   return dictionary_filtered_row_groups.value_or(all_row_group_indices(row_group_indices));
 }
@@ -632,7 +635,8 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Timestamp columns stored with another precision in any source cannot use bloom filters
   auto const ts_precision_mismatches =
@@ -685,7 +689,8 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                                                              output_dtypes,
                                                              bloom_filter_col_schemas,
                                                              filter,
-                                                             stream);
+                                                             stream,
+                                                             mr);
 
   return bloom_filtered_row_groups.value_or(all_row_group_indices(row_group_indices));
 }

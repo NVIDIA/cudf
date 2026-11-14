@@ -62,10 +62,9 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   std::span<data_type const> output_dtypes,
   std::span<int const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
-  auto mr = cudf::get_current_device_resource_ref();
-
   // Get a boolean mask indicating which columns can participate in stats based filtering
   auto const stats_columns_mask =
     stats_columns_collector{filter.get(), output_dtypes}.get_stats_columns_mask();
@@ -110,17 +109,17 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
         return cudf::make_numeric_column(
           data_type{cudf::type_id::BOOL8},
           total_row_groups,
-          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr.as_temporary()),
           0,
           stream,
-          mr);
+          mr.as_temporary());
       });
       continue;
     }
     // Map each filter column's zeroth-source schema index into every source's schema tree.
     auto const schema_indices_per_source = map_schema_index_to_sources(schema_idx);
     auto stats_columns                   = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, schema_indices_per_source, dtype, stream, mr);
+      dtype, stats_col, schema_indices_per_source, dtype, stream, mr.as_temporary());
     CUDF_EXPECTS(stats_columns.size() == stats_cols_per_column,
                  "All statistics columns must be present");
     std::ranges::move(stats_columns, std::back_inserter(columns));
@@ -136,7 +135,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   return collect_filtered_row_group_indices(
-    stats_table, converted_expr.value(), input_row_group_indices, stream);
+    stats_table, converted_expr.value(), input_row_group_indices, stream, mr);
 }
 
 std::pair<std::optional<std::vector<std::vector<size_type>>>, surviving_row_group_metrics>
@@ -149,13 +148,16 @@ aggregate_reader_metadata::filter_row_groups(
   std::reference_wrapper<ast::expression const> filter,
   cuda::stream_ref stream) const
 {
+  auto const mr = cudf::get_current_device_resource_ref();
+
   // Apply stats filtering on input row groups
   auto const stats_filtered_row_groups = apply_stats_filters(input_row_group_indices,
                                                              total_row_groups,
                                                              output_dtypes,
                                                              output_column_schemas,
                                                              filter,
-                                                             stream);
+                                                             stream,
+                                                             mr);
 
   // Number of surviving row groups after applying stats filter
   auto const num_stats_filtered_row_groups =
@@ -226,7 +228,8 @@ aggregate_reader_metadata::filter_row_groups(
                                                              output_dtypes,
                                                              equality_col_schemas,
                                                              filter,
-                                                             stream);
+                                                             stream,
+                                                             mr);
 
   // Number of surviving row groups after applying bloom filter
   auto const num_bloom_filtered_row_groups =

@@ -2813,7 +2813,7 @@ class StringMethods(BaseAccessor):
             )
 
         # Pandas treats 0 as all
-        if n == 0:
+        if n is None or n == 0:
             n = -1
 
         if pat is None:

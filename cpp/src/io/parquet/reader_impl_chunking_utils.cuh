@@ -299,6 +299,31 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageType const& pag
                                                              size_t& rep_level_size);
 
 /**
+ * @brief Computes the nz map scratch for the chunked-read budget, summed per column.
+ *
+ * Entry i is the scratch of page i plus every earlier page in its column (see
+ * `compute_page_nz_map_size`), matching the cumulative page sizes `include_scratch_size` adds it
+ * to. Pages outside the subpass's page mask are charged too, which overestimates.
+ *
+ * @param chunks List of column chunk descriptors
+ * @param pages List of page information
+ * @param level_type_size Size in bytes for each level value
+ * @param skip_rows Starting row for the pass
+ * @param num_rows Number of rows to read in the pass
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for allocating the returned device_buffer
+ * @returns For each page, the nz map scratch in bytes of that page and the earlier pages in its
+ * column
+ */
+cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc const> chunks,
+                                                 device_span<PageInfo const> pages,
+                                                 int level_type_size,
+                                                 size_t skip_rows,
+                                                 size_t num_rows,
+                                                 cuda::stream_ref stream,
+                                                 rmm::device_async_resource_ref mr);
+
+/**
  * @brief Add the cost of decompression codec scratch space to the per-page cumulative
  * size information
  */
@@ -846,6 +871,81 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageInfo const& pag
 
   // Compute space for repetition levels
   rep_level_size = has_repetition ? num_to_decode * level_type_size : 0;
+}
+
+/**
+ * @brief Decide which nz map consumer, if any, can decode @p page.
+ *
+ * Both the chunked-read budget (`compute_nz_map_sizes`) and the allocation
+ * (`allocate_level_decode_space`) call this, so the pages charged are the pages allocated for.
+ *
+ * @param page Page to classify
+ * @param chunk Column chunk the page belongs to
+ * @return The page's nz map kind, or `NONE` if no consumer can decode it
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline nz_map_kind classify_nz_map_kind(PageInfo const& page,
+                                                                       ColumnChunkDesc const& chunk)
+{
+  // The encodings with an nz map consumer.
+  bool const has_consumer =
+    BitAnd(page.kernel_mask,
+           BitOr(decode_kernel_mask::DELTA_BINARY, decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
+  if (!has_consumer) { return nz_map_kind::NONE; }
+
+  // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta
+  // leaves keep decoding their own levels.
+  bool const is_flat = chunk.max_level[level_type::REPETITION] == 0 && chunk.max_nesting_depth <= 1;
+  return is_flat ? nz_map_kind::DELTA_FLAT : nz_map_kind::NONE;
+}
+
+/**
+ * @brief Bytes of the valid-rank map for a page with a flat nz map.
+ *
+ * One `uint32_t` per value the producer can index, `min(num_input_values,
+ * num_decoded_level_values)`, which is smaller for a sliced read. A required page gets none: its
+ * map is the identity, which the consumer computes from the rank instead of reading.
+ *
+ * @param page Page with a flat nz map
+ * @param chunk Column chunk the page belongs to
+ * @param num_decoded_level_values Number of level values decoded for the page
+ * @return Size of the page's rank map in bytes
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline size_t nz_map_rank_map_size(PageInfo const& page,
+                                                                  ColumnChunkDesc const& chunk,
+                                                                  size_t num_decoded_level_values)
+{
+  if (chunk.max_level[level_type::DEFINITION] == 0) { return 0; }
+  return cuda::std::min(static_cast<size_t>(page.num_input_values), num_decoded_level_values) *
+         sizeof(uint32_t);
+}
+
+/**
+ * @brief Bytes of nz map scratch `allocate_level_decode_space` allocates for a page.
+ *
+ * A page that `classify_nz_map_kind` selects gets a `page_nz_map` and, if it is optional, a rank
+ * map. The decoded level count is computed exactly as `allocate_level_decode_space` computes it.
+ *
+ * @param page The page to compute the size for
+ * @param chunk The column chunk descriptor for this page
+ * @param level_type_size Size in bytes for each level value
+ * @param skip_rows Starting row for the pass
+ * @param num_rows Number of rows to read in the pass
+ * @return Size of the page's nz map scratch in bytes
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline size_t compute_page_nz_map_size(PageInfo const& page,
+                                                                      ColumnChunkDesc const& chunk,
+                                                                      int level_type_size,
+                                                                      size_t skip_rows,
+                                                                      size_t num_rows)
+{
+  if (classify_nz_map_kind(page, chunk) == nz_map_kind::NONE) { return 0; }
+  size_t def_level_size = 0;
+  size_t rep_level_size = 0;
+  compute_page_level_decode_sizes(
+    page, chunk, level_type_size, skip_rows, num_rows, def_level_size, rep_level_size);
+  auto const num_decoded_level_values =
+    cuda::std::max(def_level_size, rep_level_size) / level_type_size;
+  return sizeof(page_nz_map) + nz_map_rank_map_size(page, chunk, num_decoded_level_values);
 }
 
 /**

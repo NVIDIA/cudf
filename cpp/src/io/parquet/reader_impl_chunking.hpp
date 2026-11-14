@@ -170,6 +170,7 @@ struct pass_intermediate_data {
       decomp_scratch_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       string_offset_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       level_decode_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
+      nz_map_sizes(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init),
       str_dict_index(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
   {
   }
@@ -193,6 +194,8 @@ struct pass_intermediate_data {
   cuda::device_buffer<size_t> decomp_scratch_sizes;
   cuda::device_buffer<size_t> string_offset_sizes;
   cuda::device_buffer<size_t> level_decode_sizes;
+  // Empty when the nz map is disabled: no page is then classified, so none needs scratch.
+  cuda::device_buffer<size_t> nz_map_sizes;
   cuda::device_buffer<string_index_pair> str_dict_index;
 
   // currently active subpass

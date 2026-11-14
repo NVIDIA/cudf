@@ -1428,6 +1428,78 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
   EXPECT_GT(num_chunks, 1);
 }
 
+namespace {
+// Chunked read of `filepath` from `skip_rows` with the nz map set to `nz_map`, checked against the
+// matching rows of `expected`. Returns the number of chunks.
+int nz_map_chunked_read(std::string const& filepath,
+                        cudf::table_view const& expected,
+                        char const* nz_map,
+                        std::size_t output_limit,
+                        std::size_t input_limit,
+                        cudf::size_type skip_rows)
+{
+  SCOPED_TRACE(std::string{"nz map "} + nz_map + ", output limit " + std::to_string(output_limit) +
+               ", input limit " + std::to_string(input_limit) + ", skip rows " +
+               std::to_string(skip_rows));
+  tmp_env_var const env{"LIBCUDF_PARQUET_NZ_MAP", nz_map};
+  auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                         .skip_rows(skip_rows)
+                         .build();
+  auto const result = chunked_read(options, output_limit, input_limit);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::slice(expected, {skip_rows, expected.num_rows()})[0],
+                                     result.first->view());
+  return result.second;
+}
+}  // namespace
+
+TEST_F(ParquetChunkedReaderInputLimitTest, NzMapScratchIsBudgeted)
+{
+  // With the nz map on, each optional DELTA page with a consumer gets a rank map of 4 bytes per
+  // value. The input limit charges it, so the same input-limited read splits into more chunks with
+  // the map on than off.
+  constexpr cudf::size_type num_rows = 100'000;
+  auto const values                  = cuda::counting_iterator<int32_t>{0};
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  int32s_col const optional_ints(values, values + num_rows, valids);
+  // Required: takes the consumer's identity-map path, with no rank map to charge.
+  int32s_col const required_ints(values, values + num_rows);
+  auto const strs = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                      return std::string(1 + (i % 3), static_cast<char>('a' + (i % 26)));
+                    });
+  strings_col const optional_strs(strs.begin(), strs.begin() + num_rows, valids);
+  auto const expected = cudf::table_view{{optional_ints, required_ints, optional_strs}};
+
+  auto metadata = cudf::io::table_input_metadata{expected};
+  metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  metadata.column_metadata[1].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  metadata.column_metadata[2].set_encoding(cudf::io::column_encoding::DELTA_LENGTH_BYTE_ARRAY);
+  auto const filepath = temp_env->get_temp_filepath("NzMapScratchIsBudgeted.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(metadata)
+      // The reader only splits compressed data into subpasses. SNAPPY has no decompression scratch,
+      // so the limit is spent on the data and the nz map alone.
+      .compression(cudf::io::compression_type::SNAPPY)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(5'000)
+      .build());
+
+  // Without the map the file fits this limit in one chunk. The two rank maps total about 800 KB,
+  // so the read only splits if each column's maps are summed across its pages. Charging each page
+  // just its own ~20 KB map leaves it at one chunk.
+  constexpr std::size_t input_limit = 512 * 1024;
+  auto const chunks_off = nz_map_chunked_read(filepath, expected, "0", 0, input_limit, 0);
+  auto const chunks_on  = nz_map_chunked_read(filepath, expected, "1", 0, input_limit, 0);
+  EXPECT_GT(chunks_on, chunks_off);
+
+  // Output-limited reads, where a page's rows span two output chunks, and a read starting mid-page.
+  for (auto const* const nz_map : {"0", "1"}) {
+    EXPECT_GT(nz_map_chunked_read(filepath, expected, nz_map, 64 * 1024, 0, 0), 1);
+    EXPECT_GT(nz_map_chunked_read(filepath, expected, nz_map, 64 * 1024, input_limit, 1'234), 1);
+  }
+}
+
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {
   constexpr int num_columns        = 16;

@@ -284,10 +284,20 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                                            pass.num_rows,
                                                            _stream,
                                                            _mr.get_temporary_mr());
+      if (_nz_map_enabled) {
+        pass.nz_map_sizes = compute_nz_map_sizes(pass.chunks,
+                                                 pass.pages,
+                                                 pass.level_type_size,
+                                                 pass.skip_rows,
+                                                 pass.num_rows,
+                                                 _stream,
+                                                 _mr.get_temporary_mr());
+      }
     }
     include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream);
     include_scratch_size(pass.string_offset_sizes, c_info, _stream);
     include_scratch_size(pass.level_decode_sizes, c_info, _stream);
+    if (_nz_map_enabled) { include_scratch_size(pass.nz_map_sizes, c_info, _stream); }
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;

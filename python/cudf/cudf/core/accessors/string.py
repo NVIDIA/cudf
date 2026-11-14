@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 import pylibcudf as plc
 
@@ -130,12 +131,15 @@ class StringMethods(BaseAccessor):
         return self._return_or_inplace(new_col)
 
     def _return_integer(self, new_col: ColumnBase) -> Series | Index:
-        if (
-            isinstance(self._column.dtype, pd.StringDtype)
-            and self._column.dtype.na_value is pd.NA
-        ):
-            # Nullable string methods return pandas' nullable 64-bit integers.
-            new_col = new_col.astype(pd.Int64Dtype())
+        if isinstance(self._column.dtype, pd.StringDtype):
+            if self._column.dtype.na_value is pd.NA:
+                # Nullable string methods return nullable 64-bit integers.
+                new_col = new_col.astype(pd.Int64Dtype())
+            else:
+                # NaN string methods use floats when missing values occur.
+                new_col = new_col.astype(
+                    np.dtype("float64" if new_col.has_nulls() else "int64")
+                )
         return self._return_or_inplace(new_col)
 
     def htoi(self) -> Series | Index:
@@ -4145,7 +4149,16 @@ class StringMethods(BaseAccessor):
         if end is None:
             end = -1
 
-        return self._return_integer(self._column.find(method, sub, start, end))
+        new_col: ColumnBase = self._column.find(method, sub, start, end)
+        if (
+            isinstance(self._column.dtype, pd.ArrowDtype)
+            and new_col.is_all_null
+        ):
+            # Pandas infers Arrow's null dtype when no positions are present.
+            new_col = column_empty(
+                len(new_col), dtype=pd.ArrowDtype(pa.null())
+            )
+        return self._return_integer(new_col)
 
     def find(
         self, sub: str, start: int = 0, end: int | None = None

@@ -128,7 +128,16 @@ def test_string_additional_predicate_nullable_dtype(
     assert_eq(result, expected)
 
 
-@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python"),
+        pd.StringDtype(storage="pyarrow"),
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.ArrowDtype(pa.string()),
+    ],
+)
 @pytest.mark.parametrize(
     "data", [["aba", None, "abc"], [], [None, None], ["aba"]]
 )
@@ -143,8 +152,8 @@ def test_string_additional_predicate_nullable_dtype(
         ("rindex", ("a",)),
     ],
 )
-def test_string_numeric_nullable_dtype(storage, data, method, args):
-    ps = pd.Series(data, dtype=pd.StringDtype(storage=storage))
+def test_string_numeric_nullable_dtype(dtype, data, method, args):
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expected = getattr(ps.str, method)(*args)

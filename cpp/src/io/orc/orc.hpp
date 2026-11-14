@@ -20,8 +20,10 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -429,12 +431,16 @@ template <>
 inline uint64_t protobuf_reader::get<uint64_t>()
 {
   uint64_t v = 0;
-  for (uint32_t l = 0; l < sizeof(v) * 8; l += 7) {
-    uint64_t c = get<uint8_t>();
+  for (uint32_t l = 0;; l += 7) {
+    uint64_t const c = get<uint8_t>();
+    // Comparing the raw byte, not the masked payload, also rejects a continuation in the last group
+    CUDF_EXPECTS(
+      l < std::numeric_limits<uint64_t>::digits && c <= (std::numeric_limits<uint64_t>::max() >> l),
+      "ORC varint exceeds the width of its target type",
+      std::overflow_error);
     v |= (c & 0x7f) << l;
     if (c < 0x80) return v;
   }
-  CUDF_FAIL("Invalid varint: exceeds maximum encoded length");
 }
 
 template <>

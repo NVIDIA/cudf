@@ -1,11 +1,15 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "avro.hpp"
 
+#include <cudf/utilities/error.hpp>
+
 #include <array>
+#include <limits>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace cudf {
@@ -16,9 +20,14 @@ template <>
 uint64_t container::get_encoded()
 {
   uint64_t val = 0;
-  for (auto len = 0; len < 64; len += 7) {
+  for (auto len = 0;; len += 7) {
     // 64-bit int since shift left is upto 64.
     uint64_t const byte = get_raw<uint8_t>();
+    // Comparing the raw byte, not the masked payload, also rejects a continuation in the last group
+    CUDF_EXPECTS(len < std::numeric_limits<uint64_t>::digits &&
+                   byte <= (std::numeric_limits<uint64_t>::max() >> len),
+                 "Avro varint exceeds the width of its target type",
+                 std::overflow_error);
     val |= (byte & 0x7f) << len;
     if (byte < 0x80) break;
   }

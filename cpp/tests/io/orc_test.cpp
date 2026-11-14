@@ -40,6 +40,7 @@
 #include <array>
 #include <numeric>
 #include <ranges>
+#include <stdexcept>
 #include <type_traits>
 
 template <typename T, typename SourceElementT = T>
@@ -3275,6 +3276,25 @@ TEST_F(OrcWriterTest, DISABLED_SizeTypeOverflow)
   auto const result = cudf::io::read_orc(read_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({col->view()}), result.tbl->view());
+}
+
+TEST_F(OrcMetadataReaderTest, PostScriptVarintWidth)
+{
+  // A PostScript holding only `footerLength` (field 1) as a 10-byte varint, then its length byte.
+  auto const read_with_last_group = [](uint8_t first_group, uint8_t last_group) {
+    std::vector<uint8_t> file{0x08, first_group};
+    file.insert(file.end(), 8, 0xFF);
+    file.push_back(last_group);
+    file.push_back(static_cast<uint8_t>(file.size()));
+    return cudf::io::read_orc_metadata(
+      cudf::io::source_info{cudf::host_span<uint8_t const>(file.data(), file.size())});
+  };
+
+  // The last group holds only bit 63, so 0x02 and a continuation byte do not fit in 64 bits
+  EXPECT_THROW(read_with_last_group(0x80, 0x02), std::overflow_error);
+  EXPECT_THROW(read_with_last_group(0x80, 0x81), std::overflow_error);
+  // UINT64_MAX decodes, and is then rejected as a footer length larger than the file
+  EXPECT_THROW(read_with_last_group(0xFF, 0x01), std::out_of_range);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

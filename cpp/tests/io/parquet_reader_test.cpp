@@ -7552,6 +7552,24 @@ TEST_F(ParquetReaderTest, MismatchedSchemaColumnValidation)
   }
 }
 
+TEST_F(ParquetReaderTest, MismatchedLogicalTypeAcrossSources)
+{
+  // Same physical type (INT64), different timestamp unit: must still be rejected.
+  column_wrapper<cudf::timestamp_ms> const ms{1790816523456L};
+  column_wrapper<cudf::timestamp_us> const us{1790816523456789L};
+  auto const ms_file = write_parquet_temp_file(cudf::table_view{{ms}}, "TsMillis.parquet", {"t"});
+  auto const us_file = write_parquet_temp_file(cudf::table_view{{us}}, "TsMicros.parquet", {"t"});
+
+  for (auto const& paths :
+       {std::vector<std::string>{ms_file, us_file}, std::vector<std::string>{us_file, ms_file}}) {
+    auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+                        .allow_mismatched_pq_schemas(true)
+                        .column_names({"t"})
+                        .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+  }
+}
+
 TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)
 {
   auto const write_record = [](std::unique_ptr<cudf::column> record,

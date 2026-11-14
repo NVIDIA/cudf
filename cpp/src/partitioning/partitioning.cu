@@ -3,6 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "partition_identity.cuh"
+#include "partition_map_plan.cuh"
+#include "partition_policy.hpp"
+#include "partition_strings.cuh"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/gather.cuh>
@@ -34,6 +39,7 @@
 #include <thrust/scan.h>
 #include <thrust/transform.h>
 
+#include <optional>
 #include <stdexcept>
 
 namespace cudf {
@@ -758,6 +764,127 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
   }
 }
 
+/**
+ * @brief Compute partition boundaries without constructing a row permutation
+ *
+ * Builds a histogram of partition IDs and exclusively scans the counts. Temporary device storage
+ * uses the current device memory resource. Copying the offsets to host synchronizes `stream`.
+ *
+ * @pre The map has no nulls and its values lie in `[0, num_partitions)`
+ * @pre `num_partitions` is positive and less than `std::numeric_limits<size_type>::max()`
+ *
+ * @tparam MapType Integral element type matching `partition_map`
+ * @param partition_map Destination partition ID for each input row
+ * @param num_partitions Number of destination partitions
+ * @param stream CUDA stream used for device operations, allocation and offset readback
+ * @return Host vector of `num_partitions + 1` boundaries, from zero to `partition_map.size()`
+ */
+template <typename MapType>
+std::vector<size_type> make_map_partition_offsets(column_view const& partition_map,
+                                                  size_type num_partitions,
+                                                  cuda::stream_ref stream)
+{
+  rmm::device_uvector<size_type> offsets(static_cast<std::size_t>(num_partitions) + 1, stream);
+  CUDF_CUDA_TRY(
+    cudaMemsetAsync(offsets.data() + num_partitions, 0, sizeof(size_type), stream.get()));
+  std::size_t bytes = 0;
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(nullptr,
+                                                    bytes,
+                                                    partition_map.begin<MapType>(),
+                                                    offsets.data(),
+                                                    num_partitions + 1,
+                                                    size_type{0},
+                                                    num_partitions,
+                                                    partition_map.size(),
+                                                    stream.get()));
+  {
+    rmm::device_buffer scratch(bytes, stream);
+    CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(scratch.data(),
+                                                      bytes,
+                                                      partition_map.begin<MapType>(),
+                                                      offsets.data(),
+                                                      num_partitions + 1,
+                                                      size_type{0},
+                                                      num_partitions,
+                                                      partition_map.size(),
+                                                      stream.get()));
+  }
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                         offsets.begin(),
+                         offsets.end(),
+                         offsets.begin());
+  auto const pinned_offsets = cudf::detail::make_pinned_vector(offsets, stream);
+  return {pinned_offsets.begin(), pinned_offsets.end()};
+}
+
+/**
+ * @brief Try partitioning an input that needs no row permutation or payload gathering
+ *
+ * For one partition, derives the offsets directly; for one row, reads its partition ID to construct
+ * the offsets. Otherwise, tables whose columns are all supported uniform columns need only a
+ * histogram and scan of the map. Nonuniform inputs use the standard table copy, while uniform
+ * columns are reconstructed from their metadata without reading row values.
+ *
+ * Reading partition IDs or offsets back to host synchronizes `stream`. Output construction uses
+ * the same stream; temporary offset storage uses the current device memory resource.
+ *
+ * @pre `input` and `partition_map` have the same number of rows
+ * @pre The map contains no nulls, matches `MapType`, and contains valid destination partition IDs
+ *
+ * @tparam MapType Integral partition-map element type accepted by the caller's type dispatch
+ * @param input Table to partition
+ * @param partition_map Destination partition ID for each input row
+ * @param num_partitions Number of destination partitions
+ * @param stream CUDA stream used for device operations and memory allocation
+ * @param mr Device memory resource used to allocate the output table
+ * @return Output table and `num_partitions + 1` host boundaries when a shortcut applies, or
+ * `std::nullopt` when it does not apply or the partition count is nonpositive or the maximum
+ * `size_type` value
+ */
+template <typename MapType>
+std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_partition_trivial(
+  table_view const& input,
+  column_view const& partition_map,
+  size_type num_partitions,
+  cuda::stream_ref stream,
+  rmm::device_async_resource_ref mr)
+{
+  if (num_partitions <= 0 || num_partitions == std::numeric_limits<size_type>::max()) {
+    return std::nullopt;
+  }
+  auto const rows    = input.num_rows();
+  auto const uniform = std::all_of(input.begin(), input.end(), [](auto const& col) {
+    return cudf::detail::partition_identity::is_uniform(col);
+  });
+  if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, uniform)) {
+    return std::nullopt;
+  }
+
+  std::vector<size_type> offsets;
+  if (num_partitions == 1) {
+    offsets = {0, rows};
+  } else if (rows == 1) {
+    auto const value = cudf::detail::make_std_vector(
+      device_span<MapType const>{partition_map.begin<MapType>(), 1}, stream)[0];
+    offsets.resize(static_cast<std::size_t>(num_partitions) + 1);
+    for (std::size_t p = 0; p < offsets.size(); ++p) {
+      offsets[p] = p > static_cast<std::size_t>(value) ? rows : 0;
+    }
+  } else {
+    offsets = make_map_partition_offsets<MapType>(partition_map, num_partitions, stream);
+  }
+  if (!uniform) {
+    return std::pair{cudf::detail::partition_identity::copy(input, stream, mr), std::move(offsets)};
+  }
+
+  std::vector<std::unique_ptr<column>> columns;
+  columns.reserve(input.num_columns());
+  for (auto const& col : input) {
+    columns.push_back(cudf::detail::partition_identity::uniform_column(col, stream, mr));
+  }
+  return std::pair{std::make_unique<table>(std::move(columns), rows), std::move(offsets)};
+}
+
 struct dispatch_map_type {
   /**
    * @brief Partitions the table `t` according to the `partition_map`.
@@ -787,6 +914,41 @@ struct dispatch_map_type {
     cudf::memory_resources mr) const
     requires(is_index_type<MapType>())
   {
+    if (auto output =
+          try_partition_trivial<MapType>(t, partition_map, num_partitions, stream, mr)) {
+      return std::move(*output);
+    }
+    if (t.num_rows() >= 1'024 && num_partitions <= 256 && t.num_columns() >= 2 &&
+        t.num_columns() <= 65'535 && (t.num_columns() >= 4 || num_partitions != 2) &&
+        std::all_of(t.begin(), t.end(), [](auto const& col) {
+          return col.type().id() == type_id::STRING && col.null_count() == 0 &&
+                 strings_column_view(col).offsets().type().id() == type_id::INT32;
+        })) {
+      rmm::device_uvector<size_type> gather_map(t.num_rows(), stream);
+      namespace plans        = cudf::detail::partition_map_plan;
+      auto partition_offsets = plans::run(
+        partition_map.begin<MapType>(),
+        t.num_rows(),
+        num_partitions,
+        num_partitions == 2 ? plans::algorithm::binary : plans::algorithm::super2,
+        [indices = gather_map.data()] __device__(size_type source, size_type destination) {
+          indices[destination] = source;
+        },
+        false,
+        stream);
+      auto output = cudf::detail::gather_partition_strings(t, gather_map, stream, mr);
+      if (!output) {
+        output =
+          cudf::detail::gather(t,
+                               device_span<size_type const>{gather_map.data(), gather_map.size()},
+                               out_of_bounds_policy::DONT_CHECK,
+                               negative_index_policy::NOT_ALLOWED,
+                               stream,
+                               mr);
+      }
+      return std::pair{std::move(output), partition_offsets};
+    }
+
     // Build a histogram of the number of rows in each partition
     cuda::device_buffer<size_type> histogram(
       stream, cudf::get_current_device_resource_ref(), num_partitions + 1, cuda::no_init);

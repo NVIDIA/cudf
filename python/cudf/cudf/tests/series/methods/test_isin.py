@@ -440,3 +440,65 @@ def test_isin_string_null_values(dtype):
         assert_eq(got, psr.isin(["a", pd.NA]))
 
     assert_eq(gsr.isin([]), psr.isin([]))
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.StringDtype(storage="python", na_value=pd.NA),
+        pd.StringDtype(storage="pyarrow", na_value=pd.NA),
+        np.dtype("object"),
+    ],
+)
+def test_isin_float_nan_against_string_with_missing(dtype, float_types_as_str):
+    # The NaN-backed ``str`` dtype uses NaN as its missing value, so pandas
+    # matches a float NaN against a missing string. Other string dtypes and
+    # object (holding None) do not.
+    data = [np.nan, 1.0, 2.0]
+    values = ["a", None]
+    psr = pd.Series(data, dtype=float_types_as_str)
+    gsr = cudf.Series(data, dtype=float_types_as_str, nan_as_null=False)
+
+    got = gsr.isin(cudf.Series(values, dtype=dtype))
+    expected = psr.isin(pd.Series(values, dtype=dtype))
+    assert_eq(got, expected)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+    ],
+)
+def test_isin_missing_string_against_float_nan(dtype):
+    # The reverse direction: a missing value in a NaN-backed ``str`` series
+    # matches a NaN in the values.
+    data = ["a", None]
+    psr = pd.Series(data, dtype=dtype)
+    gsr = cudf.Series(data, dtype=dtype)
+
+    assert_eq(gsr.isin([np.nan, 1.0]), psr.isin([np.nan, 1.0]))
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+    ],
+)
+def test_isin_float_nan_against_all_missing_string(dtype, float_types_as_str):
+    # An all-missing NaN-backed ``str`` column must still match NaN, in
+    # either direction.
+    pfloat = pd.Series([np.nan, 1.0], dtype=float_types_as_str)
+    gfloat = cudf.Series(
+        [np.nan, 1.0], dtype=float_types_as_str, nan_as_null=False
+    )
+    pstr = pd.Series([None, None], dtype=dtype)
+    gstr = cudf.Series([None, None], dtype=dtype)
+
+    assert_eq(gfloat.isin(gstr), pfloat.isin(pstr))
+    assert_eq(gstr.isin([np.nan, 1.0]), pstr.isin([np.nan, 1.0]))

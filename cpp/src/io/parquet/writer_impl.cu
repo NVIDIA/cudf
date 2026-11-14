@@ -1192,7 +1192,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
 
   chunks.host_to_device_async(stream);
   // Calculate number of pages and store in respective chunks
@@ -1498,7 +1498,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   cuda::device_buffer<statistics_merge_group> page_stats_mrg(
     stream, cudf::get_current_device_resource_ref(), num_stats_bfr, cuda::no_init);
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
   chunks.host_to_device_async(stream);
   InitEncoderPages(chunks,
                    pages,

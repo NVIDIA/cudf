@@ -11,9 +11,10 @@ import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column.column import as_column
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal
+from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
 
 def test_init_via_list_of_tuples():
@@ -23,7 +24,12 @@ def test_init_via_list_of_tuples():
         (3, "cows", "moo", -2.1, "occasionally"),
     ]
 
-    pdf = pd.DataFrame(data)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        pdf = pd.DataFrame(data)
     gdf = cudf.DataFrame(data)
 
     assert_eq(pdf, gdf)
@@ -630,15 +636,25 @@ def test_dataframe_constructor_from_namedtuple():
     data = [Point1(1, 2, 3), Point2(4, 5)]
     idx = ["a", "b"]
     gdf = cudf.DataFrame(data, index=idx)
-    pdf = pd.DataFrame(data, index=idx)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        pdf = pd.DataFrame(data, index=idx)
 
     assert_eq(gdf, pdf)
 
     data = [Point2(4, 5), Point1(1, 2, 3)]
     with pytest.raises(ValueError):
         cudf.DataFrame(data, index=idx)
-    with pytest.raises(ValueError):
-        pd.DataFrame(data, index=idx)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        with pytest.raises(ValueError):
+            pd.DataFrame(data, index=idx)
 
 
 def test_series_data_no_name_with_columns():
@@ -1234,8 +1250,8 @@ def test_dataframe_from_dict_transposed(dtype):
         ),
         (
             {
-                "col_1": np.array([None, 2, 1, 0]),
-                "col_2": np.array([3, None, 1, 0]),
+                "col_1": np.array([np.nan, 2, 1, 0]),
+                "col_2": np.array([3, np.nan, 1, 0]),
             },
             {
                 "col_1": cp.array([np.nan, 2, 1, 0]),

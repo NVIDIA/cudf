@@ -20,6 +20,7 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import binaryop
 from cudf.core._internals.timezones import (
     get_compatible_timezone,
@@ -245,10 +246,15 @@ class DatetimeColumn(TemporalBaseColumn):
         return PylibcudfFunction(
             plc.datetime.extract_quarter,
             int16_same_kind_policy,
-        ).execute_with_args(self)
+        ).execute_with_args(self._calendar_time)
+
+    @property
+    def _calendar_time(self) -> DatetimeColumn:
+        return self
 
     @functools.cached_property
     def year(self) -> ColumnBase:
+        self._check_supported_year()
         return self._get_dt_field(plc.datetime.DatetimeComponent.YEAR)
 
     @functools.cached_property
@@ -285,6 +291,7 @@ class DatetimeColumn(TemporalBaseColumn):
 
     @functools.cached_property
     def weekday(self) -> ColumnBase:
+        self._check_supported_year()
         # pandas counts Monday-Sunday as 0-6
         # while libcudf counts Monday-Sunday as 1-7
         result = self._get_dt_field(plc.datetime.DatetimeComponent.WEEKDAY)
@@ -292,10 +299,11 @@ class DatetimeColumn(TemporalBaseColumn):
 
     @functools.cached_property
     def day_of_year(self) -> ColumnBase:
+        self._check_supported_year()
         result = PylibcudfFunction(
             plc.datetime.day_of_year,
             pylibcudf_result_dtype_policy,
-        ).execute_with_args(self)
+        ).execute_with_args(self._calendar_time)
         if isinstance(self.dtype, pd.ArrowDtype):
             # pyarrow temporal kernels return int64; match pandas.
             result = result.astype(
@@ -317,9 +325,11 @@ class DatetimeColumn(TemporalBaseColumn):
 
     @functools.cached_property
     def is_month_end(self) -> ColumnBase:
-        with self.access(mode="read", scope="internal"):
+        with self._calendar_time.access(
+            mode="read", scope="internal"
+        ) as calendar_time:
             plc_result = plc.unary.cast(
-                plc.datetime.last_day_of_month(self.plc_column),
+                plc.datetime.last_day_of_month(calendar_time.plc_column),
                 plc.DataType(plc.TypeId.TIMESTAMP_SECONDS),
             )
             last_day_col = ColumnBase.create(
@@ -353,10 +363,11 @@ class DatetimeColumn(TemporalBaseColumn):
 
     @functools.cached_property
     def is_leap_year(self) -> ColumnBase:
+        self._check_supported_year()
         return PylibcudfFunction(
             plc.datetime.is_leap_year,
             bool_same_kind_policy,
-        ).execute_with_args(self)
+        ).execute_with_args(self._calendar_time)
 
     @functools.cached_property
     def is_year_start(self) -> ColumnBase:
@@ -367,7 +378,7 @@ class DatetimeColumn(TemporalBaseColumn):
         result = PylibcudfFunction(
             plc.datetime.days_in_month,
             pylibcudf_result_dtype_policy,
-        ).execute_with_args(self)
+        ).execute_with_args(self._calendar_time)
         if isinstance(self.dtype, pd.ArrowDtype):
             # pyarrow temporal kernels return int64; match pandas.
             result = result.astype(
@@ -511,8 +522,9 @@ class DatetimeColumn(TemporalBaseColumn):
         return self._round_dt(plc.datetime.round_datetimes, freq)
 
     def isocalendar(self) -> dict[str, ColumnBase]:
+        self._check_supported_year()
         # pyarrow's isocalendar returns int64 fields and fills nulls with 0;
-        # pandas' isocalendar for datetime64 returns UInt32 with NA preserved.
+        # pandas' isocalendar preserves NA; 3.1 changes only the year to Int32.
         is_arrow = isinstance(self.dtype, pd.ArrowDtype)
         target_dtype: DtypeObj = (
             np.dtype(np.int64) if is_arrow else pd.UInt32Dtype()
@@ -520,7 +532,14 @@ class DatetimeColumn(TemporalBaseColumn):
         result = {
             field: self.strftime(
                 format=directive, dtype=np.dtype("object")
-            ).astype(get_dtype_of_same_kind(self.dtype, target_dtype))
+            ).astype(
+                get_dtype_of_same_kind(
+                    self.dtype,
+                    pd.Int32Dtype()
+                    if PANDAS_GE_31 and not is_arrow and field == "year"
+                    else target_dtype,
+                )
+            )
             for field, directive in zip(
                 ["year", "week", "day"], ["%G", "%V", "%u"], strict=True
             )
@@ -528,6 +547,21 @@ class DatetimeColumn(TemporalBaseColumn):
         if is_arrow:
             result = {field: col.fillna(0) for field, col in result.items()}
         return result
+
+    def _check_supported_year(self) -> None:
+        # libcudf calendar kernels represent years with int16. Nanosecond
+        # timestamps are always within that range; wider resolutions may not
+        # be. Reject those inputs so cudf.pandas can use pandas' wider calendar.
+        if self.time_unit == "ns" or len(self) == self.null_count:
+            return
+        unit = cast('Literal["s", "ms", "us"]', self.time_unit)
+        lower = int(np.datetime64("-32768-01-01", unit).astype(np.int64))
+        upper = int(np.datetime64("32768-01-01", unit).astype(np.int64))
+        lo, hi = self._calendar_time.astype(np.dtype(np.int64)).minmax()
+        if lo < lower or hi >= upper:
+            raise NotImplementedError(
+                "Calendar operations outside the int16 year range are not supported"
+            )
 
     def as_datetime_column(self, dtype: np.dtype) -> DatetimeColumn:
         if dtype == self.dtype:
@@ -1038,6 +1072,10 @@ class DatetimeColumn(TemporalBaseColumn):
 
 
 class DatetimeTZColumn(DatetimeColumn):
+    @property
+    def _calendar_time(self) -> DatetimeColumn:
+        return self._local_time
+
     def _round_dt(
         self,
         round_func: Callable[

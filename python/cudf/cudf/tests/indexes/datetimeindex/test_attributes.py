@@ -70,7 +70,14 @@ def test_dt_index(field):
         [pd.Timestamp(2020, 1, 2, 3, 4, 5, 6, nanosecond=7)]
     )
     gdf_data = cudf.DatetimeIndex(data)
-    assert_eq(getattr(gdf_data, field), getattr(data, field), exact=False)
+    pandas_field = {
+        "weekday": "day_of_week",
+        "dayofweek": "day_of_week",
+        "dayofyear": "day_of_year",
+    }.get(field, field)
+    assert_eq(
+        getattr(gdf_data, field), getattr(data, pandas_field), exact=False
+    )
 
 
 def test_dti_microsecond_includes_milliseconds():

@@ -318,14 +318,14 @@ def test_parquet_reader_index_col(tmp_path, index_col, columns):
 
     if index_col is None:
         # No index column
-        df.reset_index(drop=True, inplace=True)
+        df = df.reset_index(drop=True)
     elif index_col == "Nameless":
         # Index column but no name
-        df.set_index("a", inplace=True)
+        df = df.set_index("a")
         df.index.name = None
     else:
         # Index column as normal
-        df.set_index(index_col, inplace=True)
+        df = df.set_index(index_col)
 
     fname = tmp_path / "test_pq_reader_index_col.parquet"
 
@@ -352,7 +352,7 @@ def test_parquet_reader_pandas_metadata(tmp_path, columns, pandas_compat):
             "d": ["abc", "def", "xyz"],
         }
     )
-    df.set_index("b", inplace=True)
+    df = df.set_index("b")
 
     fname = tmp_path / "test_pq_reader_pandas_metadata.parquet"
     df.to_parquet(fname)
@@ -3002,9 +3002,9 @@ def test_parquet_writer_column_validation():
 def test_parquet_writer_nulls_pandas_read(tmp_path, pdf):
     pdf = pdf.copy()
     if "col_bool" in pdf.columns:
-        pdf.drop(columns="col_bool", inplace=True)
+        pdf = pdf.drop(columns="col_bool")
     if "col_category" in pdf.columns:
-        pdf.drop(columns="col_category", inplace=True)
+        pdf = pdf.drop(columns="col_category")
     gdf = cudf.from_pandas(pdf)
 
     num_rows = len(gdf)

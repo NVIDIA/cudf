@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.udf.utils import precompiled
 from cudf.testing import assert_eq
 
@@ -30,6 +31,7 @@ def run_masked_udf_series(func, data, args=(), nullable=True, **kwargs):
                 dtype="int64",
             ),
             marks=pytest.mark.xfail(
+                not PANDAS_GE_31,
                 reason=(
                     "abs(INT64_MIN): pandas .apply uses Python's "
                     "arbitrary-precision abs (-> +2**63, promoted to float), "
@@ -149,7 +151,8 @@ def test_masked_udf_scalar_args_binops_multiple_series(
                 operator.gt,
                 operator.ge,
             ]
-            and data.dtype.kind != "b",
+            and data.dtype.kind != "b"
+            and not PANDAS_GE_31,
             reason="https://github.com/pandas-dev/pandas/issues/57390",
         )
     )
@@ -193,6 +196,7 @@ def test_series_apply_basic(data, name):
 
 
 @pytest.mark.xfail(
+    not PANDAS_GE_31,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_apply_null_conditional():
@@ -216,6 +220,7 @@ def test_series_arith_masked_vs_masked(arithmetic_op):
 
 
 @pytest.mark.xfail(
+    not PANDAS_GE_31,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_compare_masked_vs_masked(comparison_op):
@@ -276,6 +281,7 @@ def test_series_arith_masked_vs_constant_reflected(
 
 
 @pytest.mark.xfail(
+    not PANDAS_GE_31,
     reason="https://github.com/pandas-dev/pandas/issues/57390",
 )
 def test_series_masked_is_null_conditional():

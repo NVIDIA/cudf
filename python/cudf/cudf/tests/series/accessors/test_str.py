@@ -14,6 +14,7 @@ import pytest
 import cudf
 from cudf import concat
 from cudf.api.extensions import no_default
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
@@ -2872,7 +2873,8 @@ def test_string_cat_input_forms(others):
                 ),
             ],
             marks=pytest.mark.xfail(
-                reason="https://github.com/NVIDIA/cudf/issues/21123"
+                not PANDAS_GE_31,
+                reason="https://github.com/NVIDIA/cudf/issues/21123",
             ),
             id="multiple-series-matching-string-index",
         ),
@@ -2889,7 +2891,8 @@ def test_string_cat_input_forms(others):
                 ),
             ],
             marks=pytest.mark.xfail(
-                reason="https://github.com/NVIDIA/cudf/issues/21123"
+                not PANDAS_GE_31,
+                reason="https://github.com/NVIDIA/cudf/issues/21123",
             ),
             id="multiple-series-partial-string-index",
         ),
@@ -2906,7 +2909,8 @@ def test_string_cat_input_forms(others):
                 ),
             ],
             marks=pytest.mark.xfail(
-                reason="https://github.com/NVIDIA/cudf/issues/21123"
+                not PANDAS_GE_31,
+                reason="https://github.com/NVIDIA/cudf/issues/21123",
             ),
             id="multiple-series-disjoint-string-index",
         ),

@@ -173,7 +173,7 @@ def test_sort_values(data, index, ascending, na_position, ignore_index):
         )
     )
     if ignore_index:
-        expected.reset_index(drop=True, inplace=True)
+        expected = expected.reset_index(drop=True)
     got = gs.list.sort_values(
         ascending=ascending, na_position=na_position, ignore_index=ignore_index
     )

@@ -983,9 +983,17 @@ class _FinalProxy(_FastSlowProxy):
         elif base_class is ProxyNDarrayBase:
             proxy = base_class.__new__(cls, value)
         elif base_class is datetime.datetime:
+            try:
+                year = value.year
+            except (OverflowError, ValueError):
+                return value
+            if not datetime.MINYEAR <= year <= datetime.MAXYEAR:
+                # pandas Timestamp supports a wider range than its Python
+                # datetime base class. Keep those scalars on the slow side.
+                return value
             proxy = base_class.__new__(
                 cls,
-                year=value.year,
+                year=year,
                 month=value.month,
                 day=value.day,
                 hour=value.hour,
@@ -996,9 +1004,19 @@ class _FinalProxy(_FastSlowProxy):
                 fold=value.fold,
             )
         elif base_class is datetime.timedelta:
+            try:
+                days = value.days
+            except (OverflowError, ValueError):
+                return value
+            if (
+                not datetime.timedelta.min.days
+                <= days
+                <= datetime.timedelta.max.days
+            ):
+                return value
             proxy = base_class.__new__(
                 cls,
-                days=value.days,
+                days=days,
                 seconds=value.seconds,
                 microseconds=value.microseconds,
             )

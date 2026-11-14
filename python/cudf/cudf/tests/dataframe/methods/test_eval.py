@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -69,8 +69,7 @@ def test_dataframe_eval(nrows, expr, dtype):
 
     # Test inplace
     if re.search("[^=><]=[^=]", expr) is not None:
-        pdf_eval = df_eval.to_pandas()
-        pdf_eval.eval(expr, inplace=True)
+        pdf_eval = df_eval.to_pandas().eval(expr)
         df_eval.eval(expr, inplace=True)
         assert_eq(pdf_eval, df_eval)
 

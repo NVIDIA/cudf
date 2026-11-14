@@ -19,6 +19,7 @@ import pylibcudf as plc
 import cudf
 from cudf.api.extensions import no_default
 from cudf.api.types import is_dtype_equal, is_scalar, is_string_dtype
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import copying, sorting
 from cudf.core.abc import Serializable
 from cudf.core.column import (
@@ -1531,7 +1532,14 @@ class Frame(BinaryOperand, Scannable, Serializable):
         # If values is scalar, result is expected to be scalar.
         result = outcol.values
         if scalar_flag:
-            return result[0].item()
+            scalar = result[0].item()
+            if (
+                PANDAS_GE_31
+                and cudf.get_option("mode.pandas_compatible")
+                and not pd.get_option("future.python_scalars")
+            ):
+                return np.intp(scalar)
+            return scalar
         else:
             return result
 

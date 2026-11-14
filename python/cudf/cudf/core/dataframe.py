@@ -30,6 +30,7 @@ import cupy
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 from numba_cuda_mlir import cuda
 from nvtx import annotate
 from pandas.io.formats import console
@@ -51,8 +52,10 @@ from cudf.api.types import (
     is_integer,
     is_list_like,
     is_scalar,
+    pandas_dtype,
 )
 from cudf.core import indexing_utils, reshape
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.algorithms import factorize
 from cudf.core.column import (
     CategoricalColumn,
@@ -111,6 +114,7 @@ from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
     SIZE_TYPE_DTYPE,
     can_convert_to_column,
+    cudf_dtype_to_pa_type,
     dtype_from_pylibcudf_column,
     find_common_type,
     get_dtype_of_same_kind,
@@ -1700,6 +1704,20 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             if isinstance(arg, tuple) and any(
                 isinstance(k, slice) for k in arg
             ):
+                if PANDAS_GE_31 and self._data.multiindex:
+                    result = self.loc[:, arg]
+                    fixed_levels = [
+                        level
+                        for level, key in enumerate(arg)
+                        if not isinstance(key, slice)
+                    ]
+                    if fixed_levels:
+                        result.columns = (
+                            result._data.to_pandas_index.droplevel(
+                                fixed_levels
+                            )
+                        )
+                    return result
                 # A tuple key in __getitem__ is a single (possibly
                 # MultiIndex) column label; a slice inside it is invalid
                 # (use .loc for slicing), matching pandas' InvalidIndexError.
@@ -2577,10 +2595,90 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     "whose columns & index are same respectively, "
                     "please reindex."
                 )
-            rhs = dict(zip(other_pd_index, other.to_numpy(), strict=True))
-            # For keys in right but not left, perform binops between NaN (not
-            # NULL!) and the right value (result is NaN).
-            left_default = as_column(np.nan, length=len(self))
+            nullable_series = (
+                PANDAS_GE_31
+                and is_pandas_nullable_extension_dtype(other.dtype)
+                and other.dtype.kind in "biuf"
+            )
+            if nullable_series:
+                # pandas 3.1 dispatches column-wise operations through the
+                # Series' extension array, preserving its nullable dtype.
+                def _nullable_operand(col: ColumnBase) -> ColumnBase:
+                    if col.dtype.kind not in "biuf":
+                        return col
+                    dtype = find_common_type(
+                        [
+                            getattr(col.dtype, "numpy_dtype", col.dtype),
+                            other.dtype.numpy_dtype,
+                        ]
+                    )
+                    source_dtype = (
+                        col.dtype
+                        if isinstance(col.dtype, pd.ArrowDtype)
+                        else other.dtype
+                    )
+                    if isinstance(source_dtype, pd.ArrowDtype) and (
+                        col.dtype.kind != "b" and other.dtype.kind != "b"
+                    ):
+                        # Arrow promotes integer/float pairs to the float's
+                        # width, including int64 combined with float32.
+                        dtype = pd.ArrowDtype(
+                            pc.add(
+                                pa.array(
+                                    [], type=cudf_dtype_to_pa_type(col.dtype)
+                                ),
+                                pa.array(
+                                    [], type=cudf_dtype_to_pa_type(other.dtype)
+                                ),
+                            ).type
+                        )
+                    return col.astype(
+                        get_dtype_of_same_kind(source_dtype, dtype)
+                    )
+
+                lhs = lhs._from_columns_like_self(
+                    _nullable_operand(col) for col in lhs.columns
+                )
+                missing_dtype = np.dtype(np.float64)
+                frame_dtypes = [dtype for _, dtype in self._dtypes]
+                if frame_dtypes and all(
+                    not isinstance(dtype, pd.ArrowDtype)
+                    and dtype.kind in "iuf"
+                    for dtype in frame_dtypes
+                ):
+                    common_dtype = find_common_type(
+                        [
+                            getattr(dtype, "numpy_dtype", dtype)
+                            for dtype in frame_dtypes
+                        ]
+                    )
+                    if common_dtype.kind == "f":
+                        missing_dtype = common_dtype
+                left_default = _nullable_operand(
+                    column_empty(len(self), dtype=missing_dtype)
+                )
+                # Preserve extension dtype and nulls while broadcasting each
+                # value, matching pandas' extension-array operands.
+                rhs_values = (
+                    as_column(
+                        value,
+                        length=len(self),
+                        dtype=(
+                            lhs[name].dtype
+                            if name in lhs and lhs[name].dtype.kind in "biuf"
+                            else left_default.dtype
+                            if name not in lhs
+                            else other.dtype
+                        ),
+                    )
+                    for name, value in zip(
+                        other_pd_index, other.to_pandas().array, strict=True
+                    )
+                )
+            else:
+                rhs_values = other.to_numpy()
+                left_default = as_column(np.nan, length=len(self))
+            rhs = dict(zip(other_pd_index, rhs_values, strict=True))
             equal_columns = other_pd_index.equals(self_pd_columns)
             if equal_columns:
                 ca_attributes = _fill_same_ca_attributes(
@@ -4523,6 +4621,31 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * Not supporting: ``axis``, ``*args``, ``**kwargs``
 
         """
+        if (
+            PANDAS_GE_31
+            and isinstance(aggs, Iterable)
+            and not isinstance(aggs, (str, bytes))
+            and hasattr(aggs, "__len__")
+            and len(aggs) == 0
+        ):
+            reduction_axis = (
+                0 if axis is None else self._get_axis_from_axis_arg(axis)
+            )
+            if isinstance(aggs, dict):
+                if reduction_axis == 1:
+                    return DataFrame(
+                        index=self.index[:0], columns=pd.Index([])
+                    )
+                return DataFrame(
+                    index=pd.Index([]), columns=self._data.to_pandas_index[:0]
+                )
+            if reduction_axis == 1:
+                return DataFrame(index=self.index, columns=pd.Index([]))
+            return DataFrame(
+                index=pd.Index([]),
+                columns=self._data.to_pandas_index,
+                dtype=np.dtype("object"),
+            )
         dtypes = [dtype for _, dtype in self._dtypes]
         common_dtype = find_common_type(dtypes)
         if common_dtype.kind != "b" and any(
@@ -7225,6 +7348,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 try:
                     axis_0_results.append(_apply_reduction(col, op, kwargs))
                 except (AttributeError, ValueError) as err:
+                    if isinstance(err, pd.errors.OutOfBoundsTimedelta):
+                        raise
                     if numeric_only:
                         raise NotImplementedError(
                             f"Column {col_label} with type {col.dtype} does not support {op}"
@@ -7732,6 +7857,59 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         5  False  2.0
         """
 
+        if PANDAS_GE_31:
+            if is_list_like(include):
+                include = tuple(include)
+            if is_list_like(exclude):
+                exclude = tuple(exclude)
+            specs = [
+                spec
+                for selection in (include, exclude)
+                for spec in (
+                    selection
+                    if isinstance(selection, (list, tuple))
+                    else (selection,)
+                )
+                if spec is not None
+            ]
+            if not any(
+                spec is Decimal32Dtype
+                or spec is Decimal64Dtype
+                or spec is Decimal128Dtype
+                or is_decimal32_dtype(spec)
+                or is_decimal64_dtype(spec)
+                or is_decimal128_dtype(spec)
+                for spec in specs
+            ):
+                # pandas 3.1 matches dtype instances exactly. Use its public
+                # matcher on empty columns containing only dtype metadata;
+                # the actual column values stay on the device.
+                metadata = {}
+                for position, (_, dtype) in enumerate(self._dtypes):
+                    if isinstance(dtype, (CategoricalDtype, IntervalDtype)):
+                        dtype = dtype.to_pandas()
+                    elif isinstance(
+                        dtype,
+                        (
+                            Decimal32Dtype,
+                            Decimal64Dtype,
+                            Decimal128Dtype,
+                            ListDtype,
+                            StructDtype,
+                        ),
+                    ):
+                        dtype = pd.ArrowDtype(cudf_dtype_to_pa_type(dtype))
+                    metadata[position] = pd.Series([], dtype=dtype)
+                positions = (
+                    pd.DataFrame(metadata)
+                    .select_dtypes(include=include, exclude=exclude)
+                    .columns.tolist()
+                )
+                result = self.iloc[:, positions]
+                if not positions and self._data.rangeindex:
+                    result._data.rangeindex = True
+                return result
+
         # Mirrors pandas.DataFrame.select_dtypes:
         # https://github.com/pandas-dev/pandas/blob/main/pandas/core/frame.py
 
@@ -7753,11 +7931,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             """
             if _is_categorical_dtype(entry):
                 return (pd.core.dtypes.dtypes.CategoricalDtypeType,)
-            elif is_decimal32_dtype(entry):
+            elif entry is Decimal32Dtype or is_decimal32_dtype(entry):
                 return (Decimal32Dtype,)
-            elif is_decimal64_dtype(entry):
+            elif entry is Decimal64Dtype or is_decimal64_dtype(entry):
                 return (Decimal64Dtype,)
-            elif is_decimal128_dtype(entry):
+            elif entry is Decimal128Dtype or is_decimal128_dtype(entry):
                 return (Decimal128Dtype,)
             elif (isinstance(entry, str) and entry == "int") or entry is int:
                 # Numpy maps int to different types (int32, int64) on Windows
@@ -7768,7 +7946,26 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             ) or entry is float:
                 # np.dtype("float") coerces to np.float64 from Numpy 1.20
                 return (np.float64, np.float32)
-            return (pd.core.dtypes.common.infer_dtype_from_object(entry),)
+            if isinstance(entry, str):
+                if entry in {"datetimetz", "datetime64tz"}:
+                    return (pd.DatetimeTZDtype.type,)
+                if entry in {"datetime", "timedelta"}:
+                    entry += "64"
+                entry = np.__dict__.get(entry, entry)
+            if isinstance(entry, type) and issubclass(entry, np.generic):
+                return (entry,)
+            dtype = pandas_dtype(entry)
+            if (
+                not PANDAS_GE_31
+                and isinstance(dtype, np.dtype)
+                and dtype.kind in "mM"
+                and np.datetime_data(dtype)[0] not in {"generic", "ns"}
+            ):
+                raise ValueError(
+                    f"{dtype.name!r} is too specific of a frequency, "
+                    f"try passing {dtype.type.__name__!r}"
+                )
+            return (getattr(dtype, "numpy_dtype", dtype).type,)
 
         include, exclude = (
             frozenset(

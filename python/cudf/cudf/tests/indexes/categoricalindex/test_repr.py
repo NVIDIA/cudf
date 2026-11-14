@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 
 
 def test_categorical_index_with_nan_repr():
@@ -17,14 +18,21 @@ def test_categorical_index_with_nan_repr():
     )
 
     expected_repr = (
-        "CategoricalIndex([1.0, 2.0, <NA>, 10.0, <NA>, <NA>], "
+        "CategoricalIndex([1.0, 2.0, <NA>, 10.0, <NA>, <NA>],\n"
+        "                 categories=[1.0, 2.0, 10.0], ordered=False,\n"
+        "                 dtype='category')"
+        if PANDAS_GE_31
+        else "CategoricalIndex([1.0, 2.0, <NA>, 10.0, <NA>, <NA>], "
         "categories=[1.0, 2.0, 10.0], ordered=False, dtype='category')"
     )
 
     assert repr(cat_index) == expected_repr
 
     sliced_expected_repr = (
-        "CategoricalIndex([<NA>, 10.0, <NA>, <NA>], "
+        "CategoricalIndex([<NA>, 10.0, <NA>, <NA>], categories=[1.0, 2.0, 10.0],\n"
+        "                 ordered=False, dtype='category')"
+        if PANDAS_GE_31
+        else "CategoricalIndex([<NA>, 10.0, <NA>, <NA>], "
         "categories=[1.0, 2.0, 10.0], ordered=False, dtype='category')"
     )
 

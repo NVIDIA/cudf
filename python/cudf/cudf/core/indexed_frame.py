@@ -36,6 +36,7 @@ from cudf.api.types import (
     is_scalar,
     is_string_dtype,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import copying
 from cudf.core.column import (
     CategoricalColumn,
@@ -7529,7 +7530,9 @@ def _append_new_row(col: ColumnBase, value: ScalarLike) -> ColumnBase:
         if (cudf.utils.utils.is_na_like(value) or value in {None, np.nan})
         else None,
     )
-    if val_col.dtype.kind != "f" and val_col.can_cast_safely(col.dtype):
+    if (PANDAS_GE_31 or val_col.dtype.kind != "f") and val_col.can_cast_safely(
+        col.dtype
+    ):
         # If the value can be cast to the column dtype, do so
         val_col = val_col.astype(col.dtype)
         to_type = col.dtype

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -536,12 +536,12 @@ def test_df_string_cat_types_mask_where(data, condition, other, has_cat):
 
     if has_cat is None:
         assert_eq(
-            expect_where.fillna(-1).astype("str"),
+            expect_where.astype(object).fillna(-1).astype("str"),
             got_where.fillna(-1),
             check_dtype=False,
         )
         assert_eq(
-            expect_mask.fillna(-1).astype("str"),
+            expect_mask.astype(object).fillna(-1).astype("str"),
             got_mask.fillna(-1),
             check_dtype=False,
         )

@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
@@ -371,6 +372,9 @@ def test_getitem_slice_in_tuple_raises():
     mi = pd.MultiIndex.from_product([["x", "y"], [0, 1]])
     pdf = pd.DataFrame([[1, 1, 2, 2], [3, 3, 4, 4]], columns=mi)
     gdf = cudf.from_pandas(pdf)
+    if PANDAS_GE_31:
+        assert_eq(pdf[(slice(None), 0)], gdf[(slice(None), 0)])
+        return
     assert_exceptions_equal(
         lfunc=operator.getitem,
         rfunc=operator.getitem,

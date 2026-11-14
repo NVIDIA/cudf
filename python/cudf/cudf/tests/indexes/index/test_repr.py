@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 
 
 @pytest.mark.parametrize("length", [0, 1, 10, 100, 1000])
@@ -67,13 +68,23 @@ def test_numeric_index_repr(length, numeric_types_as_str):
             lambda: cudf.Index(
                 [None, 111, 22, 33, None, 23, 34, 2343, None], dtype="int16"
             ),
-            "Index([<NA>, 111, 22, 33, <NA>, 23, 34, 2343, <NA>], "
-            "dtype='int16')",
+            (
+                "Index([<NA>, 111, 22, 33, <NA>, 23, 34, 2343, <NA>],\n"
+                "      dtype='int16')"
+                if PANDAS_GE_31
+                else "Index([<NA>, 111, 22, 33, <NA>, 23, 34, 2343, <NA>], "
+                "dtype='int16')"
+            ),
         ),
         (
             lambda: cudf.Index([1, 2, 3, None], dtype="category"),
-            "CategoricalIndex([1, 2, 3, <NA>], categories=[1, 2, 3], "
-            "ordered=False, dtype='category')",
+            (
+                "CategoricalIndex([1, 2, 3, <NA>], categories=[1, 2, 3], "
+                "ordered=False,\n                 dtype='category')"
+                if PANDAS_GE_31
+                else "CategoricalIndex([1, 2, 3, <NA>], categories=[1, 2, 3], "
+                "ordered=False, dtype='category')"
+            ),
         ),
         (
             lambda: cudf.Index([None, None], dtype="category"),
@@ -117,8 +128,13 @@ def test_numeric_index_repr(length, numeric_types_as_str):
         ),
         (
             lambda: cudf.Index(np.array([None] * 10, dtype="datetime64[ms]")),
-            "DatetimeIndex([NaT, NaT, NaT, NaT, NaT, NaT, NaT, NaT, "
-            "NaT, NaT], dtype='datetime64[ms]')",
+            (
+                "DatetimeIndex([NaT, NaT, NaT, NaT, NaT, NaT, NaT, NaT, "
+                "NaT, NaT],\n      dtype='datetime64[ms]')"
+                if PANDAS_GE_31
+                else "DatetimeIndex([NaT, NaT, NaT, NaT, NaT, NaT, NaT, NaT, "
+                "NaT, NaT], dtype='datetime64[ms]')"
+            ),
         ),
     ],
 )

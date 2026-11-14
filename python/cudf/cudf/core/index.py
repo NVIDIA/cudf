@@ -28,6 +28,7 @@ from cudf.api.types import (
     is_list_like,
     is_scalar,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import copying, sorting
 from cudf.core.accessors import StringMethods
 from cudf.core.column import (
@@ -2041,6 +2042,11 @@ class Index(SingleColumnFrame):
                 output = (
                     output[:break_idx].replace("'", "") + output[break_idx:]
                 )
+            elif PANDAS_GE_31:
+                # pandas 3.1 can wrap categories and ordered metadata onto
+                # separate lines. Splicing their final line into a repr built
+                # from decoded values loses categorical types and ordering.
+                output = repr(preprocess.to_pandas())
             else:
                 # Too many non-unique categories will cause
                 # the output to take too long. In this case, we
@@ -2048,7 +2054,8 @@ class Index(SingleColumnFrame):
                 # and generate the repr separately and
                 # merge them.
                 pd_cats = pd.Categorical(
-                    preprocess._column._get_decategorized_column().to_pandas()
+                    preprocess._column._get_decategorized_column().to_pandas(),
+                    ordered=preprocess.dtype.ordered,
                 )
                 pd_preprocess = pd.CategoricalIndex(pd_cats)
                 data_repr = repr(pd_preprocess).split("\n")
@@ -2676,6 +2683,8 @@ class RangeIndex(Index):
 
     @_performance_tracking
     def __repr__(self) -> str:
+        if PANDAS_GE_31:
+            return repr(self.to_pandas())
         return (
             f"{self.__class__.__name__}(start={self.start}, stop={self.stop}"
             f", step={self.step}"
@@ -2948,6 +2957,34 @@ class RangeIndex(Index):
             start, stop, step = reverse.start, reverse.stop, reverse.step
 
         target_array = target_col.values
+        if target_array.dtype.kind in "iu":
+            locs = cupy.full(len(target_array), -1, dtype=np.int64)
+            if not len(self):
+                return locs
+
+            limits = np.iinfo(target_array.dtype)
+            if start > limits.max or stop <= limits.min:
+                return locs
+            if len(self) == 1:
+                if start >= limits.min:
+                    locs[target_array == start] = 0
+                return locs
+            valid = cupy.ones(len(target_array), dtype=bool)
+            if start > limits.min:
+                valid &= target_array >= start
+            if stop <= limits.max:
+                valid &= target_array < stop
+
+            # Exact membership bounds precede subtraction: signed offsets
+            # can overflow even for valid members of a widely spaced range.
+            # Their differences fit in uint64 modulo arithmetic instead.
+            offsets = target_array.astype(np.uint64) - np.uint64(start % 2**64)
+            valid &= offsets % np.uint64(step) == 0
+            locs[valid] = (offsets[valid] // np.uint64(step)).astype(np.int64)
+            if step != self.step:
+                locs[valid] = len(self) - 1 - locs[valid]
+            return locs
+
         locs = target_array - start
         valid = (locs % step == 0) & (locs >= 0) & (target_array < stop)
         locs[~valid] = -1
@@ -2956,7 +2993,16 @@ class RangeIndex(Index):
         if step != self.step:
             # Reversed
             locs[valid] = len(self) - 1 - locs[valid]
-        return locs
+        return locs.astype(np.int64)
+
+    @copy_docstring(Index.take)
+    def take(
+        self, indices, axis=0, allow_fill: bool = True, fill_value=None
+    ) -> Self:
+        result = super().take(
+            indices, axis=axis, allow_fill=allow_fill, fill_value=fill_value
+        )
+        return cast("Self", self._try_reconstruct_range_index(result))
 
     @_performance_tracking
     def get_loc(self, key) -> int:
@@ -3243,18 +3289,30 @@ class RangeIndex(Index):
             # join. Hence falling back to performing a merge on pd.RangeIndex
             # since the conversion is cheap.
             if isinstance(other, RangeIndex):
-                result = self.to_pandas().join(
-                    other.to_pandas(),
+                left = self.to_pandas()
+                right = left if other is self else other.to_pandas()
+                result = left.join(
+                    right,
                     how=how,
                     level=level,
                     return_indexers=return_indexers,
                     sort=sort,
                 )
                 if return_indexers:
-                    return tuple(
-                        cudf.from_pandas(result[0]), result[1], result[2]
+                    return (
+                        self
+                        if result[0] is left
+                        else other
+                        if result[0] is right
+                        else cudf.from_pandas(result[0]),
+                        result[1],
+                        result[2],
                     )
                 else:
+                    if result is left:
+                        return self
+                    if result is right:
+                        return other
                     return cudf.from_pandas(result)
         return self._as_int_index().join(
             other, how, level, return_indexers, sort
@@ -3296,7 +3354,14 @@ class RangeIndex(Index):
         offset = (value - ri.start - shift) // ri.step + 1
         if flip:
             offset = len(ri) - offset
-        return max(min(len(ri), offset), 0)
+        result = max(min(len(ri), offset), 0)
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and not pd.get_option("future.python_scalars")
+        ):
+            return np.intp(result)
+        return result
 
     @_performance_tracking
     def _factorize(
@@ -4543,7 +4608,13 @@ class DatetimeIndex(Index):
             # Fall back to the cached freq when inference is impossible
             # (empty / single-element indexes), so resample round-trips
             # preserve `freq` to match pandas.
-            inferred = result.inferred_freq
+            if PANDAS_GE_31:
+                with pd.option_context(
+                    "future.infer_freq_returns_offset", True
+                ):
+                    inferred = result.inferred_freq
+            else:
+                inferred = result.inferred_freq
             if inferred is None:
                 try:
                     result.freq = self._freq

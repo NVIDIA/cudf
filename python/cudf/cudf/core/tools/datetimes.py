@@ -17,6 +17,7 @@ import pyarrow as pa
 import pylibcudf as plc
 
 from cudf.api.types import is_integer, is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column.column import ColumnBase, as_column
 from cudf.core.dataframe import DataFrame
 from cudf.core.index import DatetimeIndex, Index, ensure_index
@@ -407,6 +408,16 @@ def _process_col(
     utc: bool,
 ):
     if col.dtype.kind == "f":
+        if unit is not None and format is None:
+            integer_values = col.nans_to_nulls()
+            if integer_values.can_cast_safely(np.dtype("int64")):
+                return _process_col(
+                    integer_values.astype(np.dtype("int64")),
+                    unit=unit,
+                    dayfirst=dayfirst,
+                    format=format,
+                    utc=utc,
+                )
         if unit not in (None, "ns"):
             col = col * unit_to_nanoseconds_conversion[unit]
 
@@ -455,6 +466,8 @@ def _process_col(
                     _unit_dtype_map.get(unit, _unit_dtype_map["us"])
                 )
             )
+            if PANDAS_GE_31 and unit not in {"us", "ns"}:
+                col = col.as_datetime_column(np.dtype("datetime64[us]"))
 
     elif col.dtype.kind == "O":
         if col.is_all_null:

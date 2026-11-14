@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -30,7 +30,6 @@ def test_series_sort_index(
         axis=axis,
         ascending=ascending,
         ignore_index=ignore_index,
-        inplace=inplace,
         na_position=na_position,
     )
     got = gs.sort_index(
@@ -43,6 +42,7 @@ def test_series_sort_index(
 
     # As of pandas 3.0, pandas may coerce a Index[int64] to a RangeIndex
     if inplace is True:
-        assert_eq(ps, gs)
+        assert got is None
+        assert_eq(expected, gs)
     else:
         assert_eq(expected, got)

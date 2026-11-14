@@ -3447,6 +3447,22 @@ def as_column(
             if isinstance(arbitrary.dtype, pd.DatetimeTZDtype):
                 new_tz = get_compatible_timezone(arbitrary.dtype)
                 arbitrary = arbitrary.astype(new_tz)
+                if isinstance(arbitrary, (pd.Series, pd.Index)):
+                    arbitrary = arbitrary.array
+                # Older PyArrow versions access Series.values even for an
+                # ExtensionArray, which pandas 3.1 deprecates for tz-aware
+                # data. The integer storage and explicit mask preserve both
+                # the UTC values and the timezone without that conversion.
+                return as_column(
+                    pa.array(
+                        arbitrary.asi8,
+                        mask=arbitrary.isna(),
+                        type=pa.timestamp(new_tz.unit, str(new_tz.tz)),
+                    ),
+                    nan_as_null=nan_as_null,
+                    dtype=dtype,
+                    length=length,
+                )
             if isinstance(arbitrary.dtype, pd.CategoricalDtype):
                 if isinstance(
                     arbitrary.dtype.categories.dtype, pd.DatetimeTZDtype
@@ -3458,13 +3474,19 @@ def as_column(
                     new_tz = get_compatible_timezone(
                         arbitrary.dtype.categories.dtype
                     )
-                    pa_arbitrary = pa.array(arbitrary, from_pandas=True)
-                    arbitrary = pa_arbitrary.cast(
-                        pa.dictionary(
-                            pa_arbitrary.type.index_type,
-                            pa.timestamp(new_tz.unit, str(new_tz.tz)),
-                            ordered=pa_arbitrary.type.ordered,
-                        )
+                    categorical = (
+                        arbitrary.array
+                        if isinstance(arbitrary, (pd.Series, pd.Index))
+                        else arbitrary
+                    )
+                    codes = categorical.codes
+                    arbitrary = pa.DictionaryArray.from_arrays(
+                        pa.array(codes, mask=codes == -1),
+                        pa.array(
+                            categorical.categories.asi8,
+                            type=pa.timestamp(new_tz.unit, str(new_tz.tz)),
+                        ),
+                        ordered=categorical.ordered,
                     )
                 elif dtype is None:
                     # Going through Arrow below erases pandas extension dtypes

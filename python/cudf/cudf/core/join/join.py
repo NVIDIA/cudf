@@ -12,6 +12,7 @@ from pandas.errors import MergeError
 import pylibcudf as plc
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import sorting
 from cudf.core.column import ColumnBase, access_columns
 from cudf.core.copy_types import GatherMap
@@ -466,6 +467,8 @@ class Merge:
             # column-less table whose row count an empty ColumnAccessor cannot
             # carry. Rebuild the result with the row count captured above.
             result = DataFrame._from_data({}, index=RangeIndex(cross_num_rows))
+            if PANDAS_GE_31:
+                result._data.rangeindex = True
 
         if self.sort:
             result = self._sort_result(result)

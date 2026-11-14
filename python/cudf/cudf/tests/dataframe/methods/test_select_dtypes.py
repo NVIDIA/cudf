@@ -3,11 +3,97 @@
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        np.dtype("int64"),
+        pd.Int64Dtype(),
+        pd.ArrowDtype(pa.int64()),
+        pd.DatetimeTZDtype("ns", "UTC"),
+        pd.CategoricalDtype(["a", "b"]),
+    ],
+)
+def test_select_dtypes_instances(selector):
+    pdf = pd.DataFrame(
+        {
+            "numpy": pd.Series([1, 2], dtype="int64"),
+            "nullable": pd.Series([1, 2], dtype="Int64"),
+            "arrow": pd.Series([1, 2], dtype=pd.ArrowDtype(pa.int64())),
+            "utc": pd.date_range("2020-01-01", periods=2, tz="UTC", unit="ns"),
+            "tokyo": pd.date_range(
+                "2020-01-01", periods=2, tz="Asia/Tokyo", unit="ns"
+            ),
+            "category_ab": pd.Categorical(["a", "b"]),
+            "category_ac": pd.Categorical(["a", "c"]),
+        }
+    )
+    gdf = cudf.from_pandas(pdf)
+    for keyword in ("include", "exclude"):
+        assert_eq(
+            pdf.select_dtypes(**{keyword: selector}),
+            gdf.select_dtypes(**{keyword: selector}),
+        )
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31, reason="New pandas 3.1 selector validation"
+)
+@pytest.mark.parametrize(
+    "selector",
+    ["datetime64[10s]", "timedelta64[Y]", pd.CategoricalDtype(ordered=True)],
+)
+def test_select_dtypes_invalid_parameterized_dtype(selector):
+    pdf = pd.DataFrame({"a": [1, 2]})
+    gdf = cudf.from_pandas(pdf)
+    assert_exceptions_equal(
+        pdf.select_dtypes,
+        gdf.select_dtypes,
+        ([selector],),
+        ([selector],),
+    )
+
+
+def test_select_dtypes_cudf_metadata():
+    gdf = cudf.DataFrame(
+        {
+            "integer": [1, 2],
+            "list": [[1], [2]],
+            "struct": [{"x": 1}, {"x": 2}],
+            "decimal": cudf.Series([1, 2], dtype=cudf.Decimal64Dtype(5, 0)),
+        }
+    )
+    assert list(gdf.select_dtypes("int64").columns) == ["integer"]
+    assert list(gdf.select_dtypes(cudf.Decimal64Dtype).columns) == ["decimal"]
+    if PANDAS_GE_31:
+        assert list(gdf.select_dtypes(pd.ArrowDtype).columns) == [
+            "list",
+            "struct",
+            "decimal",
+        ]
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        [(1, "a"), (2, "b")],
+        [1, "b"],
+        pd.MultiIndex.from_tuples([("a", 1), ("b", 2)]),
+    ],
+)
+def test_select_dtypes_preserves_column_labels(columns):
+    pdf = pd.DataFrame({"first": [1, 2], "second": [1.5, 2.5]})
+    pdf.columns = columns
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(pdf.select_dtypes("int64"), gdf.select_dtypes("int64"))
 
 
 def test_select_dtype():
@@ -165,12 +251,18 @@ def test_select_dtype_datetime_with_frequency():
     gdf = gdf.reset_index()
     pdf = gdf.to_pandas()
 
-    assert_exceptions_equal(
-        pdf.select_dtypes,
-        gdf.select_dtypes,
-        (["datetime64[ms]"],),
-        (["datetime64[ms]"],),
-    )
+    if PANDAS_GE_31:
+        assert_eq(
+            pdf.select_dtypes("datetime64[ms]"),
+            gdf.select_dtypes("datetime64[ms]"),
+        )
+    else:
+        assert_exceptions_equal(
+            pdf.select_dtypes,
+            gdf.select_dtypes,
+            (["datetime64[ms]"],),
+            (["datetime64[ms]"],),
+        )
 
 
 @pytest.mark.parametrize("selector", [int, "int", float, "float"])
@@ -220,3 +312,23 @@ def test_reindex_empty_columns_preserves_label_dtype():
         gdf.reindex(columns=[]).to_pandas().columns.dtype
         == pdf.reindex(columns=[]).columns.dtype
     )
+
+
+@pytest.mark.parametrize("rows", [0, 2])
+@pytest.mark.parametrize(
+    "selection", [{"include": "number"}, {"exclude": "str"}]
+)
+def test_select_dtypes_empty_selection_preserves_rangeindex_columns(
+    rows, selection
+):
+    pdf = pd.DataFrame(
+        {
+            0: pd.Series(["x"] * rows, dtype="str"),
+            1: pd.Series(["y"] * rows, dtype="str"),
+        }
+    )
+    pdf.columns = pd.RangeIndex(2, name="columns")
+    expected = pdf.select_dtypes(**selection)
+    actual = cudf.from_pandas(pdf).select_dtypes(**selection).to_pandas()
+    pd.testing.assert_index_equal(expected.columns, actual.columns, exact=True)
+    pd.testing.assert_frame_equal(expected, actual)

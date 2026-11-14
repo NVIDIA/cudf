@@ -99,7 +99,7 @@ requirements:
   run:
     - librmm =${{ minor_version }}
     - python
-    - pandas >=3.0.0,<3.1.0
+    - pandas >=3.0.0,<3.1.2dev0
     - cupy >=14.0.1,!=14.1.0
     - numba-cuda-mlir >=0.3.0
     - numba >=0.60.0,<0.65.0

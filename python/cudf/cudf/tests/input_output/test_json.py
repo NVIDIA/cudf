@@ -179,7 +179,7 @@ def test_cudf_json_writer(pdf, lines):
     pdf = pdf.copy()
     for col_name in pdf.columns:
         if "datetime" in col_name:
-            pdf.drop(col_name, axis=1, inplace=True)
+            pdf = pdf.drop(col_name, axis=1)
     gdf = cudf.DataFrame(pdf)
     pdf_string = pdf.to_json(orient="records", lines=lines)
     gdf_string = gdf.to_json(orient="records", lines=lines, engine="cudf")
@@ -229,7 +229,7 @@ def test_cudf_json_writer_read(gdf_writer_types):
 
     # Bug in pandas https://github.com/pandas-dev/pandas/issues/28558
     if pdf2.empty:
-        pdf2.reset_index(drop=True, inplace=True)
+        pdf2 = pdf2.reset_index(drop=True)
 
     # Pandas moved to consistent datetimes parsing format:
     # https://pandas.pydata.org/docs/dev/whatsnew/v2.0.0.html#datetimes-are-now-parsed-with-a-consistent-format
@@ -1282,6 +1282,9 @@ def test_json_round_trip_gzip():
            [7, 8, [{}]]""",
     ],
 )
+@pytest.mark.filterwarnings(
+    "ignore:Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_json_array_of_arrays(data, lines):
     data = data if lines else "[" + data.replace("\n", ",") + "]"
     pdf = pd.read_json(StringIO(data), orient="values", lines=lines)
@@ -1300,7 +1303,7 @@ def test_json_array_of_arrays(data, lines):
         )
     # TODO: Replace string column names with integer column names
     # for values orient in cudf json reader
-    pdf.rename(columns={name: str(name) for name in pdf.columns}, inplace=True)
+    pdf = pdf.rename(columns={name: str(name) for name in pdf.columns})
     # assert_eq(pdf, df)
     pa_table_pdf = pa.Table.from_pandas(
         pdf, schema=df.to_arrow().schema, safe=False

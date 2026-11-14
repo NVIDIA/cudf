@@ -38,6 +38,7 @@ from pandas.tseries.holiday import (
 )
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 
 from ..annotation import nvtx
 from ..fast_slow_proxy import (
@@ -474,6 +475,29 @@ def Index__setattr__(self, name, value):
     )
 
 
+@functools.wraps(pd.Index.join)
+def _Index_join(self, other, *args, **kwargs):
+    result = _FastSlowAttribute("join").__get__(self, type(self))(
+        other, *args, **kwargs
+    )
+
+    def original_proxy(index):
+        if is_proxy_object(index):
+            wrapped = object.__getattribute__(index, "_fsproxy_wrapped")
+            for original in (self, other):
+                if is_proxy_object(
+                    original
+                ) and wrapped is object.__getattribute__(
+                    original, "_fsproxy_wrapped"
+                ):
+                    return original
+        return index
+
+    if isinstance(result, tuple):
+        return original_proxy(result[0]), result[1], result[2]
+    return original_proxy(result)
+
+
 Index = make_final_proxy_type(
     "Index",
     cudf.Index,
@@ -497,6 +521,7 @@ Index = make_final_proxy_type(
         "__init__": _DELETE,
         "__new__": Index__new__,
         "__setattr__": Index__setattr__,
+        "join": _Index_join,
         "_constructor": _FastSlowAttribute("_constructor"),
         "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
         "_accessors": set(),
@@ -521,6 +546,7 @@ RangeIndex = make_final_proxy_type(
     additional_attributes={
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "join": _Index_join,
         "name": _FastSlowAttribute("name"),
         "nbytes": _FastSlowAttribute("nbytes", private=True),
         "array": _FastSlowAttribute("array", private=True),
@@ -566,6 +592,8 @@ SparseArray = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array__": _FastSlowAttribute("__array__"),
+        "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
         "_readonly": _FastSlowAttribute("_readonly", private=True),
     },
 )
@@ -691,7 +719,10 @@ try:
         pd_NumpyExtensionArray,
         fast_to_slow=_Unusable(),
         slow_to_fast=_Unusable(),
+        bases=(pd.api.extensions.ExtensionArray,),
         additional_attributes={
+            "__array__": _FastSlowAttribute("__array__"),
+            "__array_priority__": 1000,
             "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
@@ -708,7 +739,10 @@ except ImportError:
         pd_PandasArray,
         fast_to_slow=_Unusable(),
         slow_to_fast=_Unusable(),
+        bases=(pd.api.extensions.ExtensionArray,),
         additional_attributes={
+            "__array__": _FastSlowAttribute("__array__"),
+            "__array_priority__": 1000,
             "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
@@ -1203,7 +1237,9 @@ DataFrameGroupBy = make_intermediate_proxy_type(
 RollingGroupBy = make_intermediate_proxy_type(
     "RollingGroupBy",
     cudf.core.window.rolling.RollingGroupby,
-    pd.core.window.rolling.RollingGroupby,
+    pd.core.window.rolling.RollingGroupBy
+    if PANDAS_GE_31
+    else pd.core.window.rolling.RollingGroupby,
 )
 
 _SeriesIlocIndexer = make_intermediate_proxy_type(
@@ -1293,9 +1329,13 @@ ExponentialMovingWindow = make_intermediate_proxy_type(
 )
 
 ExponentialMovingWindowGroupby = make_intermediate_proxy_type(
-    "ExponentialMovingWindowGroupby",
+    "ExponentialMovingWindowGroupBy"
+    if PANDAS_GE_31
+    else "ExponentialMovingWindowGroupby",
     _Unusable,
-    pd.core.window.ewm.ExponentialMovingWindowGroupby,
+    pd.core.window.ewm.ExponentialMovingWindowGroupBy
+    if PANDAS_GE_31
+    else pd.core.window.ewm.ExponentialMovingWindowGroupby,
 )
 
 OnlineExponentialMovingWindow = make_intermediate_proxy_type(
@@ -1317,9 +1357,11 @@ Expanding = make_intermediate_proxy_type(
 )
 
 ExpandingGroupby = make_intermediate_proxy_type(
-    "ExpandingGroupby",
+    "ExpandingGroupBy" if PANDAS_GE_31 else "ExpandingGroupby",
     _Unusable,
-    pd.core.window.expanding.ExpandingGroupby,
+    pd.core.window.expanding.ExpandingGroupBy
+    if PANDAS_GE_31
+    else pd.core.window.expanding.ExpandingGroupby,
 )
 
 Resampler = make_intermediate_proxy_type(
@@ -1357,21 +1399,33 @@ TimedeltaIndexResampler = make_intermediate_proxy_type(
 )
 
 DatetimeIndexResamplerGroupby = make_intermediate_proxy_type(
-    "DatetimeIndexResamplerGroupby",
+    "DatetimeIndexResamplerGroupBy"
+    if PANDAS_GE_31
+    else "DatetimeIndexResamplerGroupby",
     _Unusable,
-    pd.core.resample.DatetimeIndexResamplerGroupby,
+    pd.core.resample.DatetimeIndexResamplerGroupBy
+    if PANDAS_GE_31
+    else pd.core.resample.DatetimeIndexResamplerGroupby,
 )
 
 PeriodIndexResamplerGroupby = make_intermediate_proxy_type(
-    "PeriodIndexResamplerGroupby",
+    "PeriodIndexResamplerGroupBy"
+    if PANDAS_GE_31
+    else "PeriodIndexResamplerGroupby",
     _Unusable,
-    pd.core.resample.PeriodIndexResamplerGroupby,
+    pd.core.resample.PeriodIndexResamplerGroupBy
+    if PANDAS_GE_31
+    else pd.core.resample.PeriodIndexResamplerGroupby,
 )
 
 TimedeltaIndexResamplerGroupby = make_intermediate_proxy_type(
-    "TimedeltaIndexResamplerGroupby",
+    "TimedeltaIndexResamplerGroupBy"
+    if PANDAS_GE_31
+    else "TimedeltaIndexResamplerGroupby",
     _Unusable,
-    pd.core.resample.TimedeltaIndexResamplerGroupby,
+    pd.core.resample.TimedeltaIndexResamplerGroupBy
+    if PANDAS_GE_31
+    else pd.core.resample.TimedeltaIndexResamplerGroupby,
 )
 
 StataReader = make_final_proxy_type(
@@ -1882,6 +1936,7 @@ FY5253 = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1893,6 +1948,7 @@ BDay = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1904,6 +1960,7 @@ BHalfYearBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1915,6 +1972,7 @@ BHalfYearEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1926,6 +1984,7 @@ BMonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1937,6 +1996,7 @@ BMonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1948,6 +2008,7 @@ BQuarterBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1959,6 +2020,7 @@ BQuarterEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1970,6 +2032,7 @@ BusinessDay = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1981,6 +2044,7 @@ BusinessHour = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -1992,6 +2056,7 @@ BusinessMonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2003,6 +2068,7 @@ BusinessMonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2014,6 +2080,7 @@ BYearBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2025,6 +2092,7 @@ BYearEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2036,6 +2104,7 @@ CBMonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2047,6 +2116,7 @@ CBMonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2058,6 +2128,7 @@ CDay = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2069,6 +2140,7 @@ CustomBusinessDay = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2080,6 +2152,7 @@ CustomBusinessHour = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2091,6 +2164,7 @@ CustomBusinessMonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2102,6 +2176,7 @@ CustomBusinessMonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2126,6 +2201,7 @@ DateOffset = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
         **_DATEOFFSET_INSTANCE_ATTRS,
     },
@@ -2138,6 +2214,7 @@ BaseOffset = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
         **_DATEOFFSET_INSTANCE_ATTRS,
     },
@@ -2150,6 +2227,7 @@ Day = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2161,6 +2239,7 @@ Easter = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2172,6 +2251,7 @@ FY5253Quarter = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2183,6 +2263,7 @@ HalfYearBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2194,6 +2275,7 @@ HalfYearEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2205,6 +2287,7 @@ Hour = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2216,6 +2299,7 @@ LastWeekOfMonth = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2227,6 +2311,7 @@ Micro = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2238,6 +2323,7 @@ Milli = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2249,6 +2335,7 @@ Minute = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2261,6 +2348,7 @@ MonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2272,6 +2360,7 @@ MonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2283,6 +2372,7 @@ Nano = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2294,6 +2384,7 @@ QuarterBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2305,6 +2396,7 @@ QuarterEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2316,6 +2408,7 @@ Second = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2327,6 +2420,7 @@ SemiMonthBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2338,6 +2432,7 @@ SemiMonthEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2349,6 +2444,7 @@ Tick = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2360,6 +2456,7 @@ Week = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2371,6 +2468,7 @@ WeekOfMonth = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2382,6 +2480,7 @@ YearBegin = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )
@@ -2393,6 +2492,7 @@ YearEnd = make_final_proxy_type(
     fast_to_slow=_Unusable(),
     slow_to_fast=_Unusable(),
     additional_attributes={
+        "__array_priority__": pd.offsets.BaseOffset.__array_priority__,
         "__hash__": _FastSlowAttribute("__hash__"),
     },
 )

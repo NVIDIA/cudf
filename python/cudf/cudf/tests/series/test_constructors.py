@@ -201,12 +201,16 @@ def test_timedelta_series_create(timedelta_data, timedelta_types_as_str):
 
 
 def test_timedelta_from_pandas(timedelta_data, timedelta_types_as_str):
-    psr = pd.Series(
+    data = (
         cp.asnumpy(timedelta_data)
         if isinstance(timedelta_data, cp.ndarray)
-        else timedelta_data,
-        dtype=timedelta_types_as_str,
+        else timedelta_data
     )
+    if np.asarray(data).dtype.kind in "iu":
+        # Typed storage avoids pandas boxing wide coarse-unit values as
+        # Python timedeltas, whose microsecond conversion can overflow.
+        data = np.asarray(data, dtype=timedelta_types_as_str)
+    psr = pd.Series(data, dtype=timedelta_types_as_str)
     gsr = cudf.from_pandas(psr)
 
     assert_eq(psr, gsr)

@@ -8,9 +8,11 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
+    expect_warning_if,
 )
 from cudf.utils.temporal import infer_format
 
@@ -241,7 +243,14 @@ def test_to_datetime_format(data, format):
     else:
         gd_data = pd_data
 
-    expected = pd.to_datetime(pd_data, format=format)
+    with expect_warning_if(
+        PANDAS_GE_31
+        and isinstance(pd_data, pd.Series)
+        and cudf.api.types.is_numeric_dtype(pd_data.dtype),
+        warning=pd.errors.Pandas4Warning,
+        match="Parsing integer or float values with a format in to_datetime is deprecated",
+    ):
+        expected = pd.to_datetime(pd_data, format=format)
     actual = cudf.to_datetime(gd_data, format=format)
 
     if isinstance(expected, pd.Series):
@@ -351,7 +360,12 @@ def test_to_datetime_scalar_string_returns_us(scalar):
 def test_to_datetime_int_with_format_us(values):
     # Float-with-format path (triggered when a None/nan widens int -> float)
     # must land on [us] regardless of whether the format contains "%f".
-    expected = pd.to_datetime(values, format="%Y%m%d")
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Parsing integer or float values with a format in to_datetime is deprecated",
+    ):
+        expected = pd.to_datetime(values, format="%Y%m%d")
     actual = cudf.to_datetime(values, format="%Y%m%d")
     assert actual.dtype == expected.dtype
     assert_eq(actual, expected, check_exact=False)

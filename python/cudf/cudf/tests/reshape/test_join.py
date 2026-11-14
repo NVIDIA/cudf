@@ -148,10 +148,12 @@ def test_dataframe_join_suffix():
         left.join(right)
 
     got = left.join(right, lsuffix="_left", rsuffix="_right", sort=True)
-    expect = left.to_pandas().join(
+    expect = left.to_pandas().merge(
         right.to_pandas(),
-        lsuffix="_left",
-        rsuffix="_right",
+        how="left",
+        left_index=True,
+        right_index=True,
+        suffixes=("_left", "_right"),
         sort=True,
     )
     # TODO: Retain result index name
@@ -655,8 +657,6 @@ def test_cross_join_overlapping(left_data, right_data, sort):
 
     pdf1 = df1.to_pandas()
     pdf2 = df2.to_pandas()
-    expected = pdf1.join(
-        pdf2, how="cross", lsuffix="_x", rsuffix="_y", sort=sort
-    )
+    expected = pdf1.merge(pdf2, how="cross", suffixes=("_x", "_y"), sort=sort)
     result = df1.join(df2, how="cross", lsuffix="_x", rsuffix="_y", sort=sort)
     assert_eq(result, expected)

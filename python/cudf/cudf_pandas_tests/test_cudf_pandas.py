@@ -304,6 +304,15 @@ def test_groupby_rolling(dataframe):
     tm.assert_frame_equal(expected, got)
 
 
+@pytest.mark.parametrize("window", ["expanding", "ewm"])
+def test_groupby_window_types(dataframe, window):
+    pdf, df = dataframe
+    kwargs = {"com": 0.5} if window == "ewm" else {}
+    expected = getattr(pdf.groupby("a"), window)(**kwargs).mean()
+    got = getattr(df.groupby("a"), window)(**kwargs).mean()
+    tm.assert_frame_equal(expected, got)
+
+
 def test_groupby_rolling_window(dataframe):
     pdf, df = dataframe
     expected = pdf.groupby("a").rolling(2, win_type="triang").mean()
@@ -606,6 +615,18 @@ def test_array_ufunc(series):
     got = np.subtract(sr, sr)
     assert isinstance(got, sr.__class__)
     tm.assert_equal(expect, got)
+
+
+@pytest.mark.parametrize("function", [np.add, np.where])
+def test_numpy_callable_dispatch(series, function):
+    psr, sr = series
+    if function is np.add:
+        expected = function(psr, 1)
+        got = function(sr, 1)
+    else:
+        expected = function(psr > 1, psr, 0)
+        got = function(sr > 1, sr, 0)
+    tm.assert_equal(expected, got)
 
 
 @pytest.mark.xfail(strict=False, reason="Fails in CI, passes locally.")
@@ -1212,10 +1233,23 @@ def test_dataframe_query():
 
 
 def test_private_method_result_wrapped():
-    xoffset = xpd.offsets.Day()
-    dt = datetime.datetime(2020, 1, 1)
-    result = xoffset._apply(dt)
+    df = xpd.DataFrame({"date": [datetime.datetime(2020, 1, 1)]})
+    result = df._get_value(0, "date")
     assert isinstance(result, xpd.Timestamp)
+
+
+@pytest.mark.parametrize("year", [1, 9999, 0, 10000, -1])
+def test_timestamp_datetime_range(year):
+    value = np.datetime64(f"{year:04d}-01-01", "s")
+    expected = pd.Timestamp(value)
+    result = xpd.Timestamp(value)
+    assert result == expected
+    assert result.year == expected.year
+    assert result.month == expected.month
+    assert result.day == expected.day
+    assert result.asm8 == expected.asm8
+    if 1 <= year <= 9999:
+        assert is_proxy_object(result)
 
 
 def test_numpy_var():

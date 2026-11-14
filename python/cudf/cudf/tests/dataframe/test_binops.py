@@ -4,9 +4,11 @@ import operator
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
@@ -408,6 +410,41 @@ def test_df_sr_binop(psr, colnames, binary_op):
         expect = binary_op(psr, pdf)
         got = binary_op(gsr, gdf)
         assert_eq(expect, got)
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31,
+    reason="Column-wise extension-array dispatch starts in pandas 3.1",
+)
+@pytest.mark.parametrize(
+    "left_dtype", ["float32", "Float32", "float64", "Float64"]
+)
+@pytest.mark.parametrize(
+    "right_dtype",
+    [
+        "Float64",
+        "Int64",
+        pd.ArrowDtype(pa.int64()),
+        pd.ArrowDtype(pa.float32()),
+    ],
+)
+@pytest.mark.parametrize("values", [[5, None], [5, 0], [5, 2]])
+@pytest.mark.parametrize("op", [operator.add, operator.mul, operator.pow])
+@pytest.mark.parametrize("labels", [["a", "b"], ["a", "c"]])
+def test_dataframe_series_nullable_column_alignment(
+    left_dtype, right_dtype, values, op, labels
+):
+    pdf = pd.DataFrame(
+        {"a": [1.0, 2.0], "b": [3.0, 4.0]},
+        index=pd.Index(["row_a", "row_b"], name="rows"),
+        dtype=left_dtype,
+    )
+    psr = pd.Series(values, index=labels, dtype=right_dtype)
+
+    expected = op(pdf, psr)
+    result = op(cudf.from_pandas(pdf), cudf.from_pandas(psr))
+
+    assert_eq(expected, result)
 
 
 @pytest.mark.parametrize(

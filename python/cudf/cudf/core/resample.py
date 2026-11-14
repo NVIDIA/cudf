@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.abc import Serializable
 from cudf.core.column.column import deserialize_columns
 from cudf.core.groupby.groupby import (
@@ -308,7 +309,8 @@ class _ResampleGrouping(_Grouping):
 
         nbins = bin_numbers.max() + 1
         if (
-            isinstance(offset, Day)
+            not PANDAS_GE_31
+            and isinstance(offset, Day)
             and closed == "right"
             and natural_end == pd.Timestamp(max_date)
         ):

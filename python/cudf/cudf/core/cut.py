@@ -93,8 +93,8 @@ def cut(
      array([0.994, 3.   , 5.   , 7.   ]))
 
     >>> cudf.cut(np.array([1, 7, 5, 4, 6, 3]),
-    ...          3, labels=["bad", "medium", "good"])
-    CategoricalIndex(['bad', 'medium', 'good', 'good', 'medium', 'bad'], categories=['bad', 'medium', 'good'], ordered=True, dtype='category')
+    ...          3, labels=["bad", "medium", "good"]).to_pandas().tolist()
+    ['bad', 'good', 'medium', 'medium', 'good', 'bad']
 
     >>> cudf.cut(np.array([1, 7, 5, 4, 6, 3]), 3,
     ...          labels=["B", "A", "B"], ordered=False)

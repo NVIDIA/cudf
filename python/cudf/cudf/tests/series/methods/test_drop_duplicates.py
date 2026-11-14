@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -34,6 +34,6 @@ def test_drop_duplicates_series(data, keep, ignore_index):
         gds.drop_duplicates(keep=keep, ignore_index=ignore_index),
     )
 
-    pds.drop_duplicates(keep=keep, inplace=True, ignore_index=ignore_index)
+    expected = pds.drop_duplicates(keep=keep, ignore_index=ignore_index)
     gds.drop_duplicates(keep=keep, inplace=True, ignore_index=ignore_index)
-    assert_eq(pds, gds)
+    assert_eq(expected, gds)

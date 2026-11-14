@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -53,8 +53,7 @@ def test_drop_duplicates():
     # single column
     result = gdf.copy()
     result.drop_duplicates("AAA", inplace=True)
-    expected = pdf.copy()
-    expected.drop_duplicates("AAA", inplace=True)
+    expected = pdf.drop_duplicates("AAA")
     assert_eq(result, expected)
 
     result = gdf.drop_duplicates("AAA", keep="last")

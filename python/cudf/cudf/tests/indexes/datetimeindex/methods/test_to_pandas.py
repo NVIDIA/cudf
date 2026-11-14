@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -54,9 +54,7 @@ def test_to_pandas_externally_set_stale_freq_matches_pandas_inferred():
     )  # nonsense for daily values
 
     actual = gidx.to_pandas()
-    expected_freq = pidx.inferred_freq  # what pandas would infer
-
-    assert actual.freq == pd.tseries.frequencies.to_offset(expected_freq)
+    assert actual.freq == pidx.freq
     assert_eq(actual.values, pidx.values)
 
 

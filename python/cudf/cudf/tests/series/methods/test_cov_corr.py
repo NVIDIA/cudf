@@ -8,6 +8,7 @@ import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import expect_warning_if
 
@@ -119,9 +120,11 @@ def test_corr1d(cov_corr_data_pair, corr_method):
     # Spearman allows for size 1 samples, but will error if all data in a
     # sample is identical since the covariance is zero and so the correlation
     # coefficient is not defined.
-    cond = ((is_singular or is_identical) and corr_method == "pearson") or (
-        is_identical and not is_singular and corr_method == "spearman"
-    )
+    cond = (
+        (is_singular or is_identical)
+        and corr_method == "pearson"
+        and not PANDAS_GE_31
+    ) or (is_identical and not is_singular and corr_method == "spearman")
     if corr_method == "spearman":
         # SciPy has shuffled around the warning it throws a couple of times.
         # It's not worth the effort of conditionally importing the appropriate

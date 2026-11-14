@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
@@ -54,13 +55,16 @@ def test_get_loc_multi_numeric_deviate(key, result):
     gi = cudf.from_pandas(pi)
 
     with expect_warning_if(
-        isinstance(key, tuple), pd.errors.PerformanceWarning
+        isinstance(key, tuple) and (not PANDAS_GE_31 or len(key) < pi.nlevels),
+        pd.errors.PerformanceWarning,
     ):
         key_flag = key not in pi
 
     if key_flag:
         with expect_warning_if(
-            isinstance(key, tuple), pd.errors.PerformanceWarning
+            isinstance(key, tuple)
+            and (not PANDAS_GE_31 or len(key) < pi.nlevels),
+            pd.errors.PerformanceWarning,
         ):
             assert_exceptions_equal(
                 lfunc=pi.get_loc,
@@ -69,7 +73,13 @@ def test_get_loc_multi_numeric_deviate(key, result):
                 rfunc_args_and_kwargs=([], {"key": key}),
             )
     else:
-        expected = result
+        expected = (
+            result.start
+            if PANDAS_GE_31
+            and isinstance(key, tuple)
+            and len(key) == pi.nlevels
+            else result
+        )
         got = gi.get_loc(key)
 
         assert_eq(expected, got)

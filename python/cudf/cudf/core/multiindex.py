@@ -18,6 +18,7 @@ import pylibcudf as plc
 import cudf
 from cudf.api.extensions import no_default
 from cudf.api.types import is_integer, is_list_like, is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import sorting
 from cudf.core.algorithms import factorize
 from cudf.core.column.column import ColumnBase, as_column
@@ -608,8 +609,8 @@ class MultiIndex(Index):
                     (2, 11),
                     (3, 12)],
                 names=['a', 'b'])
-        >>> midx.codes
-        FrozenList([[0, 1, 2], [0, 1, 2]])
+        >>> [codes.tolist() for codes in midx.codes]
+        [[0, 1, 2], [0, 1, 2]]
         """
         self._maybe_materialize_codes_and_levels()
         return pd.core.indexes.frozen.FrozenList(
@@ -2239,7 +2240,8 @@ class MultiIndex(Index):
         if lower_bound == upper_bound:
             raise KeyError(key)
 
-        if is_unique and lower_bound + 1 == upper_bound:
+        scalar_key = len(key) == self.nlevels if PANDAS_GE_31 else is_unique
+        if scalar_key and lower_bound + 1 == upper_bound:
             # Indices are unique (Pandas constraint), search result is unique,
             # return int.
             return (

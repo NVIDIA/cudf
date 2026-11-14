@@ -31,6 +31,16 @@ from .fast_slow_proxy import (
 )
 
 
+def _get_wrapped_constant(value, wrapped_objs):
+    # A registered callable or constant may have a proxy even though it is
+    # neither a class nor an inspectable function. Match by identity to avoid
+    # invoking arbitrary code in the constant's __hash__ or __eq__ methods.
+    for original, wrapped in wrapped_objs.items():
+        if original is value:
+            return wrapped
+    return value
+
+
 def rename_root_module(module: str, root: str, new_root: str) -> str:
     """
     Rename a module to a new root.
@@ -298,6 +308,12 @@ class ModuleAcceleratorBase(
         elif self.fast_lib == self.slow_lib:
             # no need to create a fast-slow wrapper
             wrapped_attr = slow_attr
+        if not isinstance(slow_attr, (type, ModuleType)) and not (
+            _is_function_or_method(slow_attr)
+        ):
+            # Constants do not need wrapping. Hashing them can invoke arbitrary
+            # code, including imports while this module is still being built.
+            return _get_wrapped_constant(slow_attr, self._wrapped_objs)
         if any(
             [
                 slow_attr in get_registered_functions(),
@@ -468,7 +484,10 @@ class ModuleAccelerator(ModuleAcceleratorBase):
             real_attributes[key] = slow_attr
             try:
                 wrapped_attr = self._wrap_attribute(slow_attr, fast_attr, key)
-                self._wrapped_objs[slow_attr] = wrapped_attr
+                if isinstance(slow_attr, (type, ModuleType)) or (
+                    _is_function_or_method(slow_attr)
+                ):
+                    self._wrapped_objs[slow_attr] = wrapped_attr
             except TypeError:
                 # slow_attr is not hashable
                 pass
@@ -567,10 +586,25 @@ class ModuleAccelerator(ModuleAcceleratorBase):
             use_real = _caller_in_denylist(
                 calling_module, tuple(loader._denylist)
             )
+        if name not in real and (getattr_impl := real.get("__getattr__")):
+            # Dynamic aliases may be intentionally absent from __dir__, for
+            # example pandas' deprecated Groupby spellings. Resolve each access
+            # through the original implementation so its warnings are retained.
+            with warnings.catch_warnings(record=True) as caught:
+                value = getattr_impl(name)
+            for warning in caught:
+                warnings.warn(warning.message, warning.category, stacklevel=2)
+            if use_real:
+                return value
+            return loader._wrap_attribute(value, _Unusable(), name)
         try:
             if use_real:
                 return real[name]
             else:
+                if not isinstance(real[name], (type, ModuleType)) and not (
+                    _is_function_or_method(real[name])
+                ):
+                    return _get_wrapped_constant(real[name], wrapped_objs)
                 return wrapped_objs[real[name]]
         except KeyError:
             raise AttributeError(f"No attribute '{name}'")

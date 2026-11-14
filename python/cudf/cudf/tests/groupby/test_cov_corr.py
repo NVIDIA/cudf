@@ -149,7 +149,7 @@ def test_groupby_cov_positive_semidefinite_matrix():
 
     pdf = gdf.to_pandas()
     expected = pdf.groupby(by=pd.Series([1, 1, 1, 1])).cov()
-    expected.reset_index(drop=True, inplace=True)
+    expected = expected.reset_index(drop=True)
 
     assert_eq(
         expected,

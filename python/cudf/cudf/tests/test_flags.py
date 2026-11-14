@@ -7,8 +7,9 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal
+from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
 
 @pytest.fixture(
@@ -578,12 +579,17 @@ def test_set_index_inplace_raises_when_flags_false():
     gdf = cudf.DataFrame({"A": [0, 1], "B": [1, 2]}).set_flags(
         allows_duplicate_labels=False
     )
-    assert_exceptions_equal(
-        lfunc=pdf.set_index,
-        rfunc=gdf.set_index,
-        lfunc_args_and_kwargs=(["A"], {"inplace": True}),
-        rfunc_args_and_kwargs=(["A"], {"inplace": True}),
-    )
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="The inplace keyword in DataFrame.set_index is deprecated",
+    ):
+        assert_exceptions_equal(
+            lfunc=pdf.set_index,
+            rfunc=gdf.set_index,
+            lfunc_args_and_kwargs=(["A"], {"inplace": True}),
+            rfunc_args_and_kwargs=(["A"], {"inplace": True}),
+        )
 
 
 def test_reset_index_inplace_raises_when_flags_false():
@@ -593,18 +599,23 @@ def test_reset_index_inplace_raises_when_flags_false():
     gdf = cudf.DataFrame({"A": [0, 1]}, index=["a", "b"]).set_flags(
         allows_duplicate_labels=False
     )
-    assert_exceptions_equal(
-        lfunc=pdf.reset_index,
-        rfunc=gdf.reset_index,
-        lfunc_args_and_kwargs=([], {"inplace": True}),
-        rfunc_args_and_kwargs=([], {"inplace": True}),
-    )
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="The inplace keyword in DataFrame.reset_index is deprecated",
+    ):
+        assert_exceptions_equal(
+            lfunc=pdf.reset_index,
+            rfunc=gdf.reset_index,
+            lfunc_args_and_kwargs=([], {"inplace": True}),
+            rfunc_args_and_kwargs=([], {"inplace": True}),
+        )
 
 
 def test_set_index_inplace_ok_when_flags_true():
     pdf = pd.DataFrame({"A": [0, 1], "B": [1, 2]})
     gdf = cudf.DataFrame({"A": [0, 1], "B": [1, 2]})
-    pdf.set_index("A", inplace=True)
+    pdf = pdf.set_index("A")
     gdf.set_index("A", inplace=True)
     assert_eq(gdf, pdf)
 

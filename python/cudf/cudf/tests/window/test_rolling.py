@@ -278,7 +278,7 @@ def test_rolling_getitem():
         gdf.rolling(2)["a"].sum(),
     )
     assert_eq(
-        pdf.rolling(2)["a", "b"].sum(),
+        pdf.rolling(2)[["a", "b"]].sum(),
         gdf.rolling(2)["a", "b"].sum(),
     )
     assert_eq(

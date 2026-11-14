@@ -86,7 +86,7 @@ def test_nth_selector_indexing(arg):
     gdf = cudf.from_pandas(pdf)
 
     assert_groupby_results_equal(
-        pdf.groupby("a").nth[arg],
+        pdf.groupby("a").nth(arg),
         gdf.groupby("a").nth[arg],
     )
     if not isinstance(arg, slice):

@@ -81,13 +81,17 @@ python -m pytest -p cudf.pandas \
     -k "profiler" \
     ./python/cudf/cudf_pandas_tests/
 
+# Each compatibility environment selects its pandas version independently of
+# the main test environment while retaining the other CI dependency constraints.
+pandas_compat_constraints_txt="pandas-compat-constraints.txt"
+sed '/^pandas[<>=!~]/d' ./constraints.txt > "${pandas_compat_constraints_txt}"
+
 read -r -a versions <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_pandas_compat pandas_compat_version)"
 
 for version in "${versions[@]}"; do
-    rapids-logger "Testing cudf.pandas compatibility with pandas ${version}.*"
+    rapids-logger "Testing cudf.pandas compatibility with pandas ${version}"
 
-    # Generate requirements for this pandas compat version.
-    # Each entry pins the specific pandas minor line and the CUDA-appropriate cupy.
+    # Generate requirements for this supported pandas line.
     pandas_requirements_txt="pandas-compat-${version}-requirements.txt"
     rapids-dependency-file-generator \
         --config dependencies.yaml \
@@ -108,7 +112,7 @@ for version in "${versions[@]}"; do
     #     ignored if any other --constraint are passed via the CLI
     #
     rapids-uv-pip install \
-        --constraint ./constraints.txt \
+        --constraint "${pandas_compat_constraints_txt}" \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
         "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
@@ -140,3 +144,4 @@ for version in "${versions[@]}"; do
     deactivate
     rm -rf "${env_name}" "${pandas_requirements_txt}"
 done
+rm -f "${pandas_compat_constraints_txt}"

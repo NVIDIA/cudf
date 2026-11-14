@@ -43,7 +43,7 @@ test = [
     "nanoarrow",
     "numba-cuda-mlir>=0.3.0",
     "numba>=0.60.0,<0.65.0",
-    "pandas>=3.0.0,<3.1.0",
+    "pandas>=3.0.0,<3.1.2dev0",
     "pyarrow>=19.0.0",
     "pytest-cov",
     "pytest-xdist",

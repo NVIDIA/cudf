@@ -18,7 +18,9 @@
 #include <cuda/std/type_traits>
 
 #include <src/io/parquet/compact_protocol_reader.hpp>
+#include <src/io/parquet/timestamp_utils.cuh>
 
+#include <cstring>
 #include <format>
 #include <numeric>
 #include <string>
@@ -309,6 +311,15 @@ cudf::io::parquet::OffsetIndex read_offset_index(
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk)
 {
   return chunk.meta_data.statistics;
+}
+
+std::vector<uint8_t> to_int96_bytes(cuda::std::pair<int64_t, int32_t> int96)
+{
+  auto const [nanos, julian_days] = int96;
+  auto bytes                      = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
+  std::memcpy(bytes.data(), &nanos, sizeof(nanos));
+  std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+  return bytes;
 }
 
 // read page header from datasource at location indicated by page_loc,

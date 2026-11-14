@@ -304,13 +304,16 @@ public final class Table implements AutoCloseable {
    * @param filePath           the path of the file to read, or null if no path should be read.
    * @param addrsAndSizes      the address and size pairs for every buffer or null for no buffers.
    * @param timeUnit           return type of TimeStamp in units
+   * @param outputDictColumns  whether to return flat STRING columns as DICTIONARY32
    */
   private static native long[] readParquet(String[] filterColumnNames, boolean[] binaryToString, String filePath,
-                                           long[] addrsAndSizes, int timeUnit) throws CudfException;
+                                           long[] addrsAndSizes, int timeUnit,
+                                           boolean outputDictColumns) throws CudfException;
 
   private static native long[] readParquetFromDataSource(String[] filterColumnNames,
                                                          boolean[] binaryToString, int timeUnit,
-                                                         long dataSourceHandle) throws CudfException;
+                                                         long dataSourceHandle,
+                                                         boolean outputDictColumns) throws CudfException;
 
   /**
    * Read in Avro formatted data.
@@ -920,6 +923,7 @@ public final class Table implements AutoCloseable {
                                             String outputPath) throws CudfException;
 
   public void writeCSVToFile(CSVWriterOptions options, String outputPath) {
+    TableWriter.rejectDictionaryColumns(this, "CSV");
     writeCSVToFile(nativeHandle,
                    options.getColumnNames(),
                    options.getIncludeHeader(),
@@ -970,6 +974,7 @@ public final class Table implements AutoCloseable {
       if (writerHandle == 0) {
         throw new IllegalStateException("Writer was already closed");
       }
+      TableWriter.rejectDictionaryColumns(table, "CSV");
       writeCSVChunkToBuffer(writerHandle, table.nativeHandle);
     }
 
@@ -1294,7 +1299,8 @@ public final class Table implements AutoCloseable {
    */
   public static Table readParquet(ParquetOptions opts, File path) {
     return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
-        path.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId()));
+        path.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId(),
+        opts.isOutputDictColumns()));
   }
 
   /**
@@ -1369,7 +1375,7 @@ public final class Table implements AutoCloseable {
     assert offset >= 0 && offset < buffer.length;
     long[] addrsSizes = new long[]{ buffer.getAddress() + offset, len };
     return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
-        null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
+        null, addrsSizes, opts.timeUnit().typeId.getNativeId(), opts.isOutputDictColumns()));
   }
 
   /**
@@ -1387,7 +1393,7 @@ public final class Table implements AutoCloseable {
       addrsSizes[(i * 2) + 1] = buffers[i].getLength();
     }
     return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
-        null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
+        null, addrsSizes, opts.timeUnit().typeId.getNativeId(), opts.isOutputDictColumns()));
   }
 
   /**
@@ -1401,7 +1407,7 @@ public final class Table implements AutoCloseable {
     try {
       return new Table(readParquetFromDataSource(opts.getIncludeColumnNames(),
               opts.getReadBinaryAsString(), opts.timeUnit().typeId.getNativeId(),
-              dataSourceHandle));
+              dataSourceHandle, opts.isOutputDictColumns()));
     } finally {
       DataSourceHelper.destroyWrapperDataSource(dataSourceHandle);
     }
@@ -1653,6 +1659,7 @@ public final class Table implements AutoCloseable {
       assert (null != columnView) : "ColumnViews can't be null";
       assert (rows == columnView.getRowCount()) : "All columns should have the same number of " +
           "rows " + columnView.getType();
+      TableWriter.rejectDictionaryColumns(columnView, "Parquet");
     }
 
     // Since Arrays are mutable objects make a copy
@@ -1724,6 +1731,7 @@ public final class Table implements AutoCloseable {
       if (writerHandle == 0) {
         throw new IllegalStateException("Writer was already closed");
       }
+      TableWriter.rejectDictionaryColumns(table, "ORC");
       writeORCChunk(writerHandle, table.nativeHandle, table.getDeviceMemorySize());
     }
 

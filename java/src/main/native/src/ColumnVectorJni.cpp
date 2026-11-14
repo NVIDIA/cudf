@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/interop.hpp>
@@ -363,6 +364,27 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_makeListFromOffsets(
                               std::make_unique<cudf::column>(*child_cv),
                               0,
                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_makeDictionary(JNIEnv* env,
+                                                                        jclass,
+                                                                        jlong keys_handle,
+                                                                        jlong indices_handle)
+{
+  JNI_NULL_CHECK(env, keys_handle, "keys_handle is null", 0);
+  JNI_NULL_CHECK(env, indices_handle, "indices_handle is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const keys    = reinterpret_cast<cudf::column_view const*>(keys_handle);
+    auto const indices = reinterpret_cast<cudf::column_view const*>(indices_handle);
+    JNI_ARG_CHECK(env,
+                  keys->type().id() == cudf::type_id::STRING,
+                  "Only DICTIONARY32 columns with STRING keys are supported",
+                  0);
+    return release_as_jlong(cudf::make_dictionary_column(*keys, *indices));
   }
   JNI_CATCH(env, 0);
 }

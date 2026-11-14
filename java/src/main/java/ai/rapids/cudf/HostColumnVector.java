@@ -112,7 +112,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
    * NOTE: Buffers may still be receiving asynchronous device writes. This constructor
    * only stores references; callers must sync the relevant CUDA stream before reading.
    *
-   * @param type               the type of the vector; must not be LIST
+   * @param type               the type of the vector; must not be LIST or DICTIONARY32
    * @param rows               the number of rows in the vector
    * @param nullCount          the number of nulls in the vector
    * @param hostDataBuffer     the host side data for the vector; for STRING this is the
@@ -123,7 +123,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
    *                           start and end of each entry, must be (rows + 1) ints; may
    *                           be null when rows count is 0; must be null for all other non-LIST
    *                           types
-   * @throws IllegalArgumentException if type is LIST; if offsetBuffer is null for a STRING
+   * @throws IllegalArgumentException if type is LIST or DICTIONARY32; if offsetBuffer is null for a STRING
    *                                  column with rows &gt; 0; or if offsetBuffer is non-null
    *                                  for a non-STRING type
    * @throws IllegalStateException    if nullCount is greater than 0 but hostValidityBuffer is null
@@ -134,9 +134,9 @@ public final class HostColumnVector extends HostColumnVectorCore {
     // NOTE: This constructor MUST NOT examine the contents of any host buffers, as they may be
     //       asynchronously written by the device.
     super(type, rows, nullCount, hostDataBuffer, hostValidityBuffer, offsetBuffer, new ArrayList<>());
-    if (type.equals(DType.LIST)) {
-      throw new IllegalArgumentException(
-          "This constructor should not be used for LIST type. Use the nested constructor instead");
+    if (type.equals(DType.LIST) || type.equals(DType.DICTIONARY32)) {
+      throw new IllegalArgumentException("This constructor should not be used for " + type +
+          " type. Use the nested constructor instead");
     }
     if (type.equals(DType.STRING) && offsetBuffer == null && rows > 0) {
       throw new IllegalArgumentException("offsetBuffer is required for non-empty STRING columns");
@@ -254,7 +254,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
    */
   public ColumnVector copyToDevice() {
     if (rows == 0) {
-      if (type.isNestedType()) {
+      if (type.hasChildren()) {
         return ColumnView.NestedColumnVector.createColumnVector(type, 0,
                 null, null, null, Optional.of(0L), children);
       } else {
@@ -266,7 +266,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
     DeviceMemoryBuffer valid = null;
     DeviceMemoryBuffer offsets = null;
     try {
-      if (!type.isNestedType()) {
+      if (!type.hasChildren()) {
         HostMemoryBuffer hdata = this.offHeap.data;
         if (hdata != null) {
           long dataLen = rows * type.getSizeInBytes();

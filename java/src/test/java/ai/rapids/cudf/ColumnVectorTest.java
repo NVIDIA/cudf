@@ -1193,6 +1193,9 @@ public class ColumnVectorTest extends CudfTestBase {
     // magic number to invoke factory method specialized for decimal types
     int mockScale = -8;
     for (DType.DTypeEnum type : DType.DTypeEnum.values()) {
+      if (type == DType.DTypeEnum.DICTIONARY32) {
+        continue; // there are no dictionary scalars
+      }
       Scalar s = null;
       try {
         switch (type) {
@@ -1306,7 +1309,7 @@ public class ColumnVectorTest extends CudfTestBase {
   void testFromScalar() {
     final int rowCount = 4;
     for (DType.DTypeEnum type : DType.DTypeEnum.values()) {
-      if(type.isDecimalType()) {
+      if(type.isDecimalType() || type == DType.DTypeEnum.DICTIONARY32) {
         continue;
       }
       Scalar s = null;
@@ -1499,7 +1502,8 @@ public class ColumnVectorTest extends CudfTestBase {
   void testFromScalarNull() {
     final int rowCount = 4;
     for (DType.DTypeEnum typeEnum : DType.DTypeEnum.values()) {
-      if (typeEnum == DType.DTypeEnum.EMPTY || typeEnum == DType.DTypeEnum.LIST || typeEnum == DType.DTypeEnum.STRUCT) {
+      if (typeEnum == DType.DTypeEnum.EMPTY || typeEnum == DType.DTypeEnum.LIST ||
+          typeEnum == DType.DTypeEnum.STRUCT || typeEnum == DType.DTypeEnum.DICTIONARY32) {
         continue;
       }
       DType dType;
@@ -1542,7 +1546,7 @@ public class ColumnVectorTest extends CudfTestBase {
     for (DType.DTypeEnum typeEnum : DType.DTypeEnum.values()) {
       DType dType = typeEnum.isDecimalType() ? DType.create(typeEnum, -8): DType.create(typeEnum);
       DataType hDataType;
-      if (DType.EMPTY.equals(dType)) {
+      if (DType.EMPTY.equals(dType) || DType.DICTIONARY32.equals(dType)) {
         continue;
       } else if (DType.LIST.equals(dType)) {
         // list of list of int32
@@ -1635,7 +1639,7 @@ public class ColumnVectorTest extends CudfTestBase {
     for (DType.DTypeEnum typeEnum : DType.DTypeEnum.values()) {
       DType dType = typeEnum.isDecimalType() ? DType.create(typeEnum, -8) : DType.create(typeEnum);
       DataType hDataType;
-      if (DType.EMPTY.equals(dType)) {
+      if (DType.EMPTY.equals(dType) || DType.DICTIONARY32.equals(dType)) {
         continue;
       } else if (DType.LIST.equals(dType)) {
         // list of list of int32

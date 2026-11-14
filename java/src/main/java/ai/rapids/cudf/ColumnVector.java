@@ -98,6 +98,8 @@ public final class ColumnVector extends ColumnView {
       DeviceMemoryBuffer offsetBuffer) {
     super(makeOffHeap(type, rows, nullCount, dataBuffer, validityBuffer, offsetBuffer));
     assert !type.equals(DType.LIST) : "This constructor should not be used for list type";
+    assert !type.equals(DType.DICTIONARY32) :
+        "This constructor should not be used for DICTIONARY32 type";
     if (!type.equals(DType.STRING)) {
       assert offsetBuffer == null : "offsets are only supported for STRING";
     }
@@ -522,6 +524,28 @@ public final class ColumnVector extends ColumnView {
   }
 
   /**
+   * Create a DICTIONARY32 column from STRING keys and signed integer indices. Both inputs are
+   * copied. Row i of the result is {@code keys[indices[i]]}, or null where the indices are null.
+   * <p>
+   * The caller must make sure every non-null index is in {@code [0, keys.getRowCount())}; the
+   * indices are not checked, and an index out of that range gives undefined results.
+   *
+   * @param keys the dictionary keys. Must be STRING and must not contain nulls.
+   * @param indices the indices into {@code keys}. Must be INT8, INT16, INT32 or INT64.
+   * @return a new DICTIONARY32 column
+   * @throws IllegalArgumentException if the keys are not STRING
+   * @throws CudfException if the keys contain nulls or the indices are not a signed integer type
+   */
+  public static ColumnVector makeDictionary(ColumnView keys, ColumnView indices) {
+    if (!DType.STRING.equals(keys.getType())) {
+      throw new IllegalArgumentException(
+          "Only DICTIONARY32 columns with STRING keys are supported, got keys of type " +
+              keys.getType());
+    }
+    return new ColumnVector(makeDictionary(keys.getNativeView(), indices.getNativeView()));
+  }
+
+  /**
    * Create a new vector of length rows, starting at the initialValue and going by step each time.
    * Only numeric types are supported.
    * @param initialValue the initial value to start at.
@@ -838,6 +862,9 @@ public final class ColumnVector extends ColumnView {
       throws CudfException;
 
   private static native long makeListFromOffsets(long childHandle, long offsetsHandle, long rows)
+      throws CudfException;
+
+  private static native long makeDictionary(long keysHandle, long indicesHandle)
       throws CudfException;
 
   private static native long concatenate(long[] viewHandles) throws CudfException;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,6 +25,33 @@ public abstract class TableWriter implements AutoCloseable {
 
   @Override
   abstract public void close() throws CudfException;
+
+  /**
+   * Throw if any column of the table, including nested children, is DICTIONARY32. The file
+   * writers (Parquet, ORC, CSV) do not support dictionary columns; callers must decode them with
+   * {@link ColumnView#dictionaryDecode()} first.
+   */
+  static void rejectDictionaryColumns(Table table, String format) {
+    for (int i = 0; i < table.getNumberOfColumns(); i++) {
+      rejectDictionaryColumns(table.getColumn(i), format);
+    }
+  }
+
+  static void rejectDictionaryColumns(ColumnView column, String format) {
+    DType type = column.getType();
+    if (DType.DICTIONARY32.equals(type)) {
+      throw new IllegalArgumentException("The " + format + " writer does not support " +
+          "DICTIONARY32 columns; decode them with ColumnView.dictionaryDecode() first");
+    }
+    // Only LIST and STRUCT columns can contain a dictionary child.
+    if (type.isNestedType()) {
+      for (int i = 0; i < column.getNumChildren(); i++) {
+        try (ColumnView child = column.getChildColumnView(i)) {
+          rejectDictionaryColumns(child, format);
+        }
+      }
+    }
+  }
 
   public static class WriteStatistics {
     public final long numCompressedBytes; // The number of bytes that were successfully compressed

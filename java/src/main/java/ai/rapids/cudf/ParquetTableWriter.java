@@ -67,6 +67,7 @@ public final class ParquetTableWriter extends TableWriter {
 
   @Override
   public void write(Table table) {
+    TableWriter.rejectDictionaryColumns(table, "Parquet");
     write(table.getNativeView(), table.getDeviceMemorySize());
   }
 

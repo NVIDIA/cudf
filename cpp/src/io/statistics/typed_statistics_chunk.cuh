@@ -103,6 +103,24 @@ using to_sum = cuda::std::conditional_t<cuda::std::is_floating_point_v<A>,
                                         cuda::std::identity,
                                         reduction::detail::to_sum_overflow<A>>;
 
+/**
+ * @brief Updates the min/max of a statistics chunk with an element, counting NaNs instead
+ */
+template <typename T, typename Chunk>
+__device__ void reduce_extrema(Chunk& chunk, T const& elem)
+{
+  if constexpr (cuda::std::is_floating_point_v<T>) {
+    if (cuda::std::isnan(elem)) {
+      chunk.nan_count++;
+      return;
+    }
+  }
+  using E             = typename extrema_type<T>::type;
+  chunk.minimum_value = cuda::std::min<E>(chunk.minimum_value, extrema_type<T>::convert(elem));
+  chunk.maximum_value = cuda::std::max<E>(chunk.maximum_value, extrema_type<T>::convert(elem));
+  chunk.has_minmax    = true;
+}
+
 }  // namespace detail
 
 /**
@@ -145,16 +163,7 @@ struct typed_statistics_chunk<T, true> {
     non_nulls++;
     aggregate = detail::sum_op<A>{}(
       aggregate, detail::to_sum<A>{}(detail::aggregation_type<T>::convert(elem)));
-    // NaNs are counted but excluded from min/max
-    if constexpr (cuda::std::is_floating_point_v<T>) {
-      if (cuda::std::isnan(elem)) {
-        nan_count++;
-        return;
-      }
-    }
-    minimum_value = cuda::std::min<E>(minimum_value, detail::extrema_type<T>::convert(elem));
-    maximum_value = cuda::std::max<E>(maximum_value, detail::extrema_type<T>::convert(elem));
-    has_minmax    = true;
+    detail::reduce_extrema(*this, elem);
   }
 
   __device__ void reduce(statistics_chunk const& chunk)
@@ -195,16 +204,7 @@ struct typed_statistics_chunk<T, false> {
   __device__ void reduce(T const& elem)
   {
     non_nulls++;
-    // NaNs are counted but excluded from min/max
-    if constexpr (cuda::std::is_floating_point_v<T>) {
-      if (cuda::std::isnan(elem)) {
-        nan_count++;
-        return;
-      }
-    }
-    minimum_value = cuda::std::min<E>(minimum_value, detail::extrema_type<T>::convert(elem));
-    maximum_value = cuda::std::max<E>(maximum_value, detail::extrema_type<T>::convert(elem));
-    has_minmax    = true;
+    detail::reduce_extrema(*this, elem);
   }
 
   __device__ void reduce(statistics_chunk const& chunk)
@@ -251,7 +251,7 @@ __inline__ __device__ typed_statistics_chunk<T, include_aggregate> block_reduce(
   __syncthreads();
   output_chunk.nan_count =
     count_reduce(storage.template get<uint32_t>()).Sum(output_chunk.nan_count);
-  __syncthreads();
+  // `__syncthreads_or` below is also the barrier before `storage` is reused
   output_chunk.has_minmax = __syncthreads_or(output_chunk.has_minmax);
 
   // FIXME : Is another syncthreads needed here?

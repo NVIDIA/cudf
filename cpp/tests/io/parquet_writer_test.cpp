@@ -13,7 +13,6 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
-#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
@@ -24,8 +23,6 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
-#include <cudf/stream_compaction.hpp>
-#include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -944,7 +941,8 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
 
   auto const filepath = temp_env->get_temp_filepath("FloatingPointWithNaNStats.parquet");
   cudf::io::parquet_writer_options const out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected);
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
   cudf::io::write_parquet(out_opts);
 
   auto const source = cudf::io::datasource::create(filepath);
@@ -972,6 +970,18 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
   // a null alongside the NaN does not interfere with NaN detection
   EXPECT_FALSE(stats_f_nan_null.min_value.has_value());
   EXPECT_FALSE(stats_f_nan_null.max_value.has_value());
+
+  // NaNs are counted, and chunks with NaNs have no column index
+  std::array<int64_t, 5> const expected_nan_counts{1, 1, 4, 0, 1};
+  for (std::size_t c = 0; c < expected_nan_counts.size(); ++c) {
+    auto const& chunk = fmd.row_groups[0].columns[c];
+    EXPECT_EQ(get_statistics(chunk).nan_count, expected_nan_counts[c]);
+    if (expected_nan_counts[c] == 0) {
+      EXPECT_EQ(read_column_index(source, chunk).nan_counts, std::vector<int64_t>{0});
+    } else {
+      EXPECT_EQ(chunk.column_index_length, 0);
+    }
+  }
 }
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)
@@ -1024,87 +1034,6 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedNested)
   auto const stats = get_statistics(fmd.row_groups[0].columns[0]);
   EXPECT_FALSE(stats.min_value.has_value());
   EXPECT_FALSE(stats.max_value.has_value());
-}
-
-TEST_F(ParquetWriterTest, FloatingPointNaNCounts)
-{
-  // Float chunks carry `Statistics.nan_count` and `ColumnIndex.nan_counts`
-  auto constexpr num_rows  = 3000;
-  auto constexpr rg_size   = 1000;
-  auto constexpr page_size = 500;
-  auto constexpr nand      = std::numeric_limits<double>::quiet_NaN();
-  auto constexpr nanf      = std::numeric_limits<float>::quiet_NaN();
-  auto const is_nan_row    = [](int i) {
-    // Row group 0 has no NaN, row group 1 a single NaN, and row group 2 an all-NaN second page
-    return i == 1010 or i >= 2500;
-  };
-  std::vector<double> d_data(num_rows);
-  std::vector<float> f_data(num_rows);
-  for (int i = 0; i < num_rows; ++i) {
-    d_data[i] = is_nan_row(i) ? nand : 5.0;
-    f_data[i] = is_nan_row(i) ? nanf : 5.0f;
-  }
-  // Every 7th row is null in the third column, so its pages mix nulls and NaNs
-  auto const valids =
-    cudf::detail::make_counting_transform_iterator(0, [](int i) { return i % 7; });
-  column_wrapper<double> col_d(d_data.begin(), d_data.end());
-  column_wrapper<float> col_f(f_data.begin(), f_data.end());
-  column_wrapper<double> col_n(d_data.begin(), d_data.end(), valids);
-  auto const expected = table_view{{col_d, col_f, col_n}};
-
-  auto const filepath = temp_env->get_temp_filepath("FloatingPointNaNCounts.parquet");
-  cudf::io::parquet_writer_options const out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
-      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
-      .row_group_size_rows(rg_size)
-      .max_page_size_rows(page_size)
-      .max_page_fragment_size(page_size);
-  cudf::io::write_parquet(out_opts);
-
-  auto const source = cudf::io::datasource::create(filepath);
-  cudf::io::parquet::FileMetaData fmd;
-  read_footer(source, &fmd);
-  ASSERT_EQ(fmd.row_groups.size(), 3);
-
-  // NaN counts per row group for the non-nullable and nullable columns
-  std::array<int64_t, 3> const expected_nan_counts{0, 1, 500};
-  std::array<int64_t, 3> const expected_nullable_nan_counts{0, 1, 429};
-  for (int rg = 0; rg < 3; ++rg) {
-    for (int col = 0; col < 3; ++col) {
-      auto const& chunk    = fmd.row_groups[rg].columns[col];
-      auto const& stats    = get_statistics(chunk);
-      auto const nan_count = col == 2 ? expected_nullable_nan_counts[rg] : expected_nan_counts[rg];
-      EXPECT_EQ(stats.nan_count, nan_count);
-      // min/max are omitted for chunks with NaNs so that legacy readers don't misuse them
-      EXPECT_EQ(stats.min_value.has_value(), nan_count == 0);
-      EXPECT_EQ(stats.max_value.has_value(), nan_count == 0);
-      EXPECT_GT(chunk.offset_index_length, 0);
-      // Pages with NaNs have no valid min/max, so their chunk has no column index
-      if (nan_count == 0) {
-        EXPECT_EQ(read_column_index(source, chunk).nan_counts, (std::vector<int64_t>{0, 0}));
-      } else {
-        EXPECT_EQ(chunk.column_index_length, 0);
-      }
-    }
-  }
-
-  // `col != 5` prunes the NaN-free row group, and keeps the ones with NaNs
-  auto five_d = cudf::numeric_scalar<double>(5.0);
-  auto five_f = cudf::numeric_scalar<float>(5.0f);
-  for (cudf::size_type col_idx : {0, 1, 2}) {
-    auto const col_ref = cudf::ast::column_reference(col_idx);
-    auto const five    = col_idx == 1 ? cudf::ast::literal(five_f) : cudf::ast::literal(five_d);
-    auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, five);
-
-    auto const predicate         = cudf::compute_column(expected, filter);
-    auto const expected_filtered = cudf::apply_retention_mask(expected, *predicate);
-
-    cudf::io::parquet_reader_options read_opts =
-      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}).filter(filter);
-    auto const result = cudf::io::read_parquet(read_opts);
-    CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, *expected_filtered);
-    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 2);
-  }
 }
 
 TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)

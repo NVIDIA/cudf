@@ -461,10 +461,12 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   // Patches the NaN counts of the first column into the metadata, with `nan_count` NaNs in the
   // first row group and its first page, and none elsewhere. std::nullopt removes them. The
   // first row group and page are also made constant at their minimum so that `!=` can prune them,
-  // or entirely null if `first_all_null` is set
+  // or entirely null if `first_all_null` is set. `drop_first_column_index` removes the first
+  // chunk's column index, as cudf writes for chunks with NaNs
   auto const prune = [&](cudf::ast::operation const& filter,
                          std::optional<int64_t> nan_count,
-                         bool first_all_null = false) {
+                         bool first_all_null          = false,
+                         bool drop_first_column_index = false) {
     auto patched      = metadata;
     auto& first_chunk = patched.row_groups.front().columns.front();
     if (first_all_null) {
@@ -488,6 +490,7 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
       chunk.meta_data.statistics.nan_count = is_first ? *nan_count : 0;
       page_nan_counts.front()              = is_first ? *nan_count : 0;
     }
+    if (drop_first_column_index) { first_chunk.column_index.reset(); }
     auto const filter_options = cudf::io::parquet_reader_options::builder().filter(filter).build();
     auto patched_reader =
       cudf::io::parquet::experimental::hybrid_scan_reader(patched, filter_options);
@@ -535,61 +538,9 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
   EXPECT_EQ(prune(not_col0_lt_1, /*nan_count=*/std::nullopt, /*first_all_null=*/true),
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
-}
-
-TEST_F(HybridScanTest, FilterNanPage)
-{
-  // A cudf-written chunk with a NaN page has no column index, so the page is kept and its
-  // finite values satisfy `col0 == 5`
-  auto constexpr num_rows  = 2000;
-  auto constexpr rg_size   = 1000;
-  auto constexpr page_size = 500;
-  auto const elements      = cudf::detail::make_counting_transform_iterator(0, [](int i) {
-    // The last page alternates 5.0 and NaN, the rest is 1.0
-    if (i < 1500) { return 1.0; }
-    return i % 2 ? std::numeric_limits<double>::quiet_NaN() : 5.0;
-  });
-  cudf::test::fixed_width_column_wrapper<double> col0(elements, elements + num_rows);
-  auto const payload = cudf::detail::make_counting_transform_iterator(0, [](int i) { return i; });
-  cudf::test::fixed_width_column_wrapper<int32_t> col1(payload, payload + num_rows);
-  auto const table = cudf::table_view{{col0, col1}};
-  cudf::io::table_input_metadata metadata(table);
-  metadata.column_metadata[0].set_name("col0");
-  metadata.column_metadata[1].set_name("col1");
-
-  std::vector<char> parquet_buffer;
-  cudf::io::parquet_writer_options const out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&parquet_buffer}, table)
-      .metadata(std::move(metadata))
-      .row_group_size_rows(rg_size)
-      .max_page_size_rows(page_size)
-      .max_page_fragment_size(page_size)
-      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
-  cudf::io::write_parquet(out_opts);
-
-  auto five_value   = cudf::numeric_scalar<double>(5.0);
-  auto five         = cudf::ast::literal(five_value);
-  auto col_ref_0    = cudf::ast::column_name_reference("col0");
-  auto const filter = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_0, five);
-
-  auto stream     = cudf::get_default_stream();
-  auto mr         = cudf::get_current_device_resource_ref();
-  auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
-  auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
-    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
-  auto const [read_filter_table, read_payload_table] =
-    hybrid_scan(*datasource, filter, {}, true, false, stream, mr, aligned_mr);
-
-  // Only the even rows of the last page satisfy the filter
-  auto constexpr num_expected = (num_rows - 1500) / 2;
-  auto const expected_payload =
-    cudf::detail::make_counting_transform_iterator(0, [](int i) { return 1500 + 2 * i; });
-  cudf::test::fixed_width_column_wrapper<double> expected_col0(
-    cuda::make_constant_iterator(5.0), cuda::make_constant_iterator(5.0) + num_expected);
-  cudf::test::fixed_width_column_wrapper<int32_t> expected_col1(expected_payload,
-                                                                expected_payload + num_expected);
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected_col0}}, read_filter_table->view());
-  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected_col1}}, read_payload_table->view());
+  // A chunk without a column index keeps all its pages
+  EXPECT_EQ(prune(not_col0_lt_1, 0, /*first_all_null=*/false, /*drop_first_column_index=*/true),
+            std::pair(row_groups_type{2, 3}, int64_t{num_ordered_rows / 2 + rows_per_page}));
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)

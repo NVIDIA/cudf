@@ -28,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -114,16 +115,16 @@ struct page_stats_caster : public stats_caster_base {
           auto const& colchunk               = *colchunk_iter;
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
 
-          // Without a column index (e.g. a float chunk with an all-NaN page), no page can be pruned
+          // Without a column index (e.g. a float chunk with NaNs), no page can be pruned
           if (not colchunk.column_index.has_value()) {
-            auto const num_pages = colchunk.offset_index->page_locations.size();
-            for (std::size_t page_idx = 0; page_idx < num_pages; ++page_idx) {
-              auto const column_page_idx = page_offset_in_colchunk + page_idx;
-              min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-              max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-              all_null.set_index(column_page_idx, std::nullopt, {});
-              has_nan.set_value(column_page_idx, std::nullopt);
-            }
+            std::ranges::for_each(
+              std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
+              [&](auto column_page_idx) {
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                all_null.set_index(column_page_idx, std::nullopt, {});
+                has_nan.set_value(column_page_idx, std::nullopt);
+              });
             return;
           }
 

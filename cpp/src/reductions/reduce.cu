@@ -124,9 +124,9 @@ reduction_shape validate_reduce(std::span<reduce_input const> inputs,
 
   reduction_shape result;
 
-  for (auto const args : {inputs, filter_inputs}) {
-    for (auto const& input : args) {
-      if (auto const* view = std::get_if<column_view>(&input)) {
+  for (auto args : {inputs, filter_inputs}) {
+    for (auto& input : args) {
+      if (auto* view = std::get_if<column_view>(&input)) {
         CUDF_EXPECTS(!result.rows || *result.rows == view->size(),
                      "Reduction input lengths must match",
                      std::invalid_argument);
@@ -143,7 +143,7 @@ std::vector<std::string> reflect_value_parameters(std::span<std::string const> t
 {
   std::vector<std::string> result;
   for (size_t i = 0; i < types.size(); ++i) {
-    auto const& type = types[i];
+    auto type = types[i];
     result.push_back(is_optional[i] && type != "cudf::voidptr_t"
                        ? rtcx::reflect_template("cuda::std::optional", type)
                        : type);
@@ -322,7 +322,7 @@ std::string reflect_reduce_kernel(kernel_reflection const& spec, bool optional_v
 std::vector<std::string> reflect_pointer_parameters(std::span<std::string const> types)
 {
   std::vector<std::string> result;
-  for (auto const& type : types) {
+  for (auto& type : types) {
     result.push_back(type + "*");
   }
   return result;
@@ -390,15 +390,15 @@ std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection c
   }
 
   std::string source;
-  for (auto const& callback : callbacks) {
+  for (auto& callback : callbacks) {
     // The early return handles only all-default callbacks. For mixed default/custom symbols,
     // skip matching callbacks to avoid duplicate definitions and wrappers that call themselves.
     if (callback.symbol == callback.target) { continue; }
-    auto const parameter_types = detail::string_join(callback.parameters, {}, ", ");
-    auto const indices         = std::views::iota(size_t{0}, callback.parameters.size());
-    auto const declarations    = detail::string_join(
+    auto parameter_types = detail::string_join(callback.parameters, {}, ", ");
+    auto indices         = std::views::iota(size_t{0}, callback.parameters.size());
+    auto declarations    = detail::string_join(
       indices, [&](size_t i) { return std::format("{} arg{}", callback.parameters[i], i); }, ", ");
-    auto const arguments =
+    auto arguments =
       detail::string_join(indices, [](size_t i) { return std::format("arg{}", i); }, ", ");
     if (callback.symbol != "cudf_all_true") {
       source += std::format(R"CUDA(
@@ -433,7 +433,7 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   // The kernel depends only on canonical physical types and fixed callback entry points.
   // Symbol forwarding is compiled separately; user-supplied UDF fragments are linked unchanged.
 
-  auto const parameter_defines = detail::string_join(
+  auto parameter_defines = detail::string_join(
     callbacks,
     [](callback_reflection const& callback) {
       return std::format("#define {} {}",
@@ -470,7 +470,7 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
     fragments.push_back({dispatch.value()->view(), rtcx::binary_type::LTO_IR, nullptr});
   }
 
-  for (auto const& fragment : udf.fragments) {
+  for (auto& fragment : udf.fragments) {
     fragments.push_back({fragment.data, jit::as_rtcx_binary_type(fragment.type), nullptr});
   }
 
@@ -504,7 +504,7 @@ struct scope_t {
                                                  cuda::stream_ref stream,
                                                  memory_resources mr)
   {
-    auto const mask = nullable ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED;
+    auto mask = nullable ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED;
     if (type.id() != type_id::STRING) {
       return make_fixed_width_column(type, 1, mask, stream, mr.get_output_mr());
     }
@@ -523,9 +523,9 @@ struct scope_t {
                                                         cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr)
   {
-    auto const nulls = output.null_count();
-    auto const bytes = nulls == 0 ? value.size_bytes() : size_type{0};
-    auto offsets     = detail::make_device_uvector(std::vector<size_type>{0, bytes}, stream, mr);
+    auto nulls   = output.null_count();
+    auto bytes   = nulls == 0 ? value.size_bytes() : size_type{0};
+    auto offsets = detail::make_device_uvector(std::vector<size_type>{0, bytes}, stream, mr);
     auto offsets_column =
       std::make_unique<column>(data_type{type_id::INT32},
                                2,
@@ -577,7 +577,7 @@ struct scope_t {
     detail::sync_stream(stream);
 
     auto append_inputs = [&](auto values, size_t offset) {
-      for (auto const i : std::views::iota(size_t{0}, values.size())) {
+      for (auto i : std::views::iota(size_t{0}, values.size())) {
         auto device =
           column_device_view::create(as_column_view(values[i]), stream, mr.get_temporary_mr());
         host_inputs.data()[offset + i] = *device;
@@ -590,8 +590,8 @@ struct scope_t {
 
     for (size_type segment = 0; segment < num_segments; ++segment) {
       for (auto type : types) {
-        auto output     = allocate_output(type, nullable, stream, mr);
-        auto const view = output->mutable_view();
+        auto output = allocate_output(type, nullable, stream, mr);
+        auto view   = output->mutable_view();
         host_outputs.data()[outputs.size()] =
           mutable_column_device_view::create(type, 1, view.head(), view.null_mask(), 0, nullptr, 0);
         outputs.push_back(std::move(output));
@@ -624,7 +624,7 @@ struct scope_t {
                                     device_span<errc const>{errors.data(), errors.size()},
                                     stream);
 
-    for (auto const col : std::views::iota(size_t{0}, outputs.size())) {
+    for (auto col : std::views::iota(size_t{0}, outputs.size())) {
       if (outputs[col]->nullable()) {
         detail::cuda_memcpy_async<bitmask_type>(
           host_span<bitmask_type>{host_masks.data() + col, 1, true},

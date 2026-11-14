@@ -47,8 +47,8 @@ __device__ errc boolean_filter(bool* selected, optional<bool> keep)
 
 __device__ errc mask_filter(size_type row, bool* selected, void* user_data)
 {
-  auto const* mask = static_cast<uint32_t const*>(user_data);
-  *selected        = (mask[row / 32] & (uint32_t{1} << (row % 32))) != 0;
+  auto* mask = static_cast<uint32_t const*>(user_data);
+  *selected  = (mask[row / 32] & (uint32_t{1} << (row % 32))) != 0;
   return errc::SUCCESS;
 }
 
@@ -108,7 +108,7 @@ __device__ errc user_data_update(size_type row,
                                  optional<int32_t> value,
                                  void* user_data)
 {
-  auto const* weights = static_cast<int64_t const*>(user_data);
+  auto* weights = static_cast<int64_t const*>(user_data);
   if (value) {
     *sum   = sum->value_or(0) + *value * weights[0] + weights[row + 1];
     *count = count->value() + 1;
@@ -292,7 +292,7 @@ __device__ errc wide_init(FIELDS(POINTER))
 
 __device__ errc wide_update(FIELDS(POINTER), optional<int32_t> input)
 {
-  auto const value = input.value_or(0);
+  auto value = input.value_or(0);
 #define UPDATE(i) *state##i = state##i->value_or(0) + int64_t{i + 1} * value
   FIELDS(UPDATE);
 #undef UPDATE

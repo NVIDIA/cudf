@@ -2739,7 +2739,7 @@ void copy_buffers(host_span<buffer_copy const> copies,
 {
   if (copies.empty()) { return; }
   // The upload reads `copies` in stream order, and callers free it once this returns.
-  auto const d_copies = cudf::detail::make_device_uvector(copies, stream, mr.get_temporary_mr());
+  auto const d_copies = cudf::detail::make_device_buffer(copies, stream, mr.get_temporary_mr());
   auto const sources  = cuda::make_transform_iterator(
     d_copies.begin(), cuda::proclaim_return_type<uint8_t const*>([] __device__(buffer_copy copy) {
       return copy.source;

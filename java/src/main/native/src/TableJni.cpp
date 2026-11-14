@@ -27,6 +27,7 @@
 #include <cudf/io/orc.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/join/conditional_join.hpp>
+#include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/filtered_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -3287,6 +3288,23 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctJoinGatherMa
       cudf::distinct_hash_join hash(right, nulleq, load_factor);
       return hash.inner_join(left);
     });
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_directInnerJoinGatherMaps(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_keys, jlong j_capacity)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys column is null", NULL);
+  JNI_NULL_CHECK(env, j_right_keys, "right keys column is null", NULL);
+  JNI_ARG_CHECK(env, j_capacity >= 0, "capacity must not be negative", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto left_keys  = reinterpret_cast<cudf::column_view const*>(j_left_keys);
+    auto right_keys = reinterpret_cast<cudf::column_view const*>(j_right_keys);
+    return cudf::jni::gather_maps_to_java(
+      env, cudf::direct_inner_join(*left_keys, *right_keys, static_cast<std::size_t>(j_capacity)));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctHashJoinGatherMaps(

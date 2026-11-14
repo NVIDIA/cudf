@@ -800,7 +800,21 @@ def test_cum_sum_over(
     order_by: pl.Expr | None,
 ) -> None:
     q = df.select(expr.cum_sum().over(group_key, order_by=order_by))
-    assert_gpu_result_equal(q, engine=engine)
+    assert_gpu_result_equal(q, engine=engine, check_dtypes=True)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int32, pl.UInt32, pl.Int16, pl.Int8])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cum_sum_over_order_by_dtype(
+    engine: pl.GPUEngine, dtype: pl.DataType, *, reverse: bool
+) -> None:
+    """Test cum_sum().over(order_by=...) preserves dtype for integer columns in forward and reverse modes."""
+    lf = pl.LazyFrame(
+        {"a": [10, 20, 30], "i": [0, 1, 2]},
+        schema={"a": dtype, "i": pl.Int64},
+    )
+    q = lf.select(pl.col("a").cum_sum(reverse=reverse).over(order_by="i"))
+    assert_gpu_result_equal(q, engine=engine, check_dtypes=True)
 
 
 @pytest.mark.parametrize("n", [1, -1, 2])

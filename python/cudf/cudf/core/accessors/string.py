@@ -208,20 +208,19 @@ class StringMethods(BaseAccessor):
 
         Returns
         -------
-        Series or Index of int
-            A Series or Index of integer values
-            indicating the length of each element in the Series or Index.
+        Series or Index
+            Number of characters in each string.
 
         Examples
         --------
         >>> import cudf
         >>> s = cudf.Series(["dog", "", "\n", None])
         >>> s.str.len()
-        0       3
-        1       0
-        2       1
-        3    <NA>
-        dtype: int32
+        0    3.0
+        1    0.0
+        2    1.0
+        3    NaN
+        dtype: float64
         """
         return self._return_integer(self._column.count_characters())
 
@@ -3642,14 +3641,14 @@ class StringMethods(BaseAccessor):
         >>> import cudf
         >>> s = cudf.Series(['A', 'B', 'Aaba', 'Baca', None, 'CABA', 'cat'])
         >>> s.str.count('a')
-        0       0
-        1       0
-        2       2
-        3       2
-        4    <NA>
-        5       0
-        6       1
-        dtype: int32
+        0    0.0
+        1    0.0
+        2    2.0
+        3    2.0
+        4    NaN
+        5    0.0
+        6    1.0
+        dtype: float64
 
         Escape ``'$'`` to find the literal dollar sign.
 
@@ -3661,13 +3660,13 @@ class StringMethods(BaseAccessor):
         3    2
         4    2
         5    0
-        dtype: int32
+        dtype: int64
 
         This is also available on Index.
 
         >>> index = cudf.Index(['A', 'A', 'Aaba', 'cat'])
         >>> index.str.count('a')
-        Index([0, 0, 2, 1], dtype='int32')
+        Index([0, 0, 2, 1], dtype='int64')
 
         .. pandas-compat::
             :meth:`pandas.Series.str.count`

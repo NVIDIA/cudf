@@ -217,7 +217,7 @@ context make_context(detail::init_flags flags)
   auto const disable_cuda_cache = detail::get_bool_env_or("LIBCUDF_JIT_DISABLE_CUDA_CACHE", false);
   auto const jit_verbose        = detail::get_bool_env_or("LIBCUDF_JIT_VERBOSE", false);
   auto const jit_pch_heap_size =
-    detail::getenv_or("LIBCUDF_JIT_PCH_HEAP_SIZE", std::size_t{512} * 1024 * 1024);
+    detail::getenv_or("LIBCUDF_JIT_PCH_HEAP_SIZE", default_jit_pch_heap_size);
   auto const dump_jit_trace = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
   auto const dump_jit_time_profile =
     detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TIME_PROFILE", false);

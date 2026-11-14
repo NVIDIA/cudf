@@ -24,8 +24,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Scalar_closeScalar(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    cudf::scalar* s = reinterpret_cast<cudf::scalar*>(scalar_handle);
-    delete s;
+    cudf::jni::safe_delete<cudf::scalar>(scalar_handle);
   }
   JNI_CATCH(env, );
 }

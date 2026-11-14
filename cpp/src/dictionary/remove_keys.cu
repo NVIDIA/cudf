@@ -22,12 +22,12 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 
 namespace cudf {
 namespace dictionary {
@@ -52,7 +52,7 @@ template <typename KeysKeeper>
 std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_column,
                                        KeysKeeper keys_to_keep_fn,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto const keys_view    = dictionary_column.keys();
   auto const indices_type = dictionary_column.indices().type();
@@ -138,7 +138,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
     },
     stream,
     mr);
-  cuda::device_buffer<std::byte> new_null_mask =
+  cuda::device_buffer<cudf::bitmask_type> new_null_mask =
     (new_nulls.second > 0) ? std::move(new_nulls.first)
                            : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);
 
@@ -152,7 +152,7 @@ std::unique_ptr<column> remove_keys_fn(dictionary_column_view const& dictionary_
 std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_column,
                                     column_view const& keys_to_remove,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!keys_to_remove.has_nulls(), "keys_to_remove must not have nulls");
   auto const keys_view = dictionary_column.keys();
@@ -170,7 +170,7 @@ std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_col
 
 std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& dictionary_column,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   // locate the keys to remove
   auto const keys_size     = dictionary_column.keys_size();
@@ -179,7 +179,8 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
   // search the indices values with key indices to look for any holes
   auto const matches = [&] {
     // build keys index to verify against indices values
-    rmm::device_uvector<int32_t> keys_positions(keys_size, stream);
+    cuda::device_buffer<int32_t> keys_positions(
+      stream, cudf::get_current_device_resource_ref(), keys_size, cuda::no_init);
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      keys_positions.begin(),
                      keys_positions.end());
@@ -202,7 +203,7 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
 std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_column,
                                     column_view const& keys_to_remove,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::remove_keys(dictionary_column, keys_to_remove, stream, mr);
@@ -210,7 +211,7 @@ std::unique_ptr<column> remove_keys(dictionary_column_view const& dictionary_col
 
 std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& dictionary_column,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::remove_unused_keys(dictionary_column, stream, mr);

@@ -27,6 +27,8 @@
 #include <cuco/detail/open_addressing/kernels.cuh>
 #include <cuco/static_multiset_ref.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
+#include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/copy.h>
@@ -38,7 +40,7 @@ namespace cudf {
 namespace detail {
 namespace {
 
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
   table_view const& input, cuda::stream_ref stream)
 {
   auto const nullable_columns = get_nullable_columns(input);
@@ -49,7 +51,7 @@ std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> build_row_bitmask
   if (nullable_columns.size() > 1) {
     auto row_bitmask =
       cudf::detail::bitmask_and(table_view{nullable_columns}, stream, temp_mr).first;
-    auto const row_bitmask_ptr = reinterpret_cast<cudf::bitmask_type const*>(row_bitmask.data());
+    auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
 
@@ -131,8 +133,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void compact_if_kernel(OutputType* out
   auto const warp              = cg::tiled_partition<warp_size>(block);
   auto const tid               = cudf::detail::grid_1d::global_thread_id<block_size>();
   auto const stride            = cudf::detail::grid_1d::grid_stride<block_size>();
-  auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(op.num_buckets()), stride);
+  auto const loop_bound = cuda::round_up(static_cast<thread_index_type>(op.num_buckets()), stride);
 
   constexpr int buffer_capacity_factor = 4;
   constexpr int buffer_capacity        = block_size * buffer_capacity_factor;
@@ -282,10 +283,9 @@ CUDF_KERNEL __launch_bounds__(block_size) void mark_retrieve_kernel(
   __shared__ cudf::size_type left_buffer[buffer_capacity];
   cuda::atomic_ref<cudf::size_type, cuda::thread_scope_device> global_off{*global_offset};
 
-  auto const tid    = cudf::detail::grid_1d::global_thread_id<block_size>();
-  auto const stride = cudf::detail::grid_1d::grid_stride<block_size>();
-  auto const loop_bound =
-    cudf::util::round_up_unsafe(static_cast<thread_index_type>(num_buckets), stride);
+  auto const tid        = cudf::detail::grid_1d::global_thread_id<block_size>();
+  auto const stride     = cudf::detail::grid_1d::grid_stride<block_size>();
+  auto const loop_bound = cuda::round_up(static_cast<thread_index_type>(num_buckets), stride);
 
   for (thread_index_type i = tid; i < loop_bound; i += stride) {
     bool has_match = false;
@@ -389,7 +389,7 @@ void mark_join::clear_marks(cuda::stream_ref stream)
   auto const num_buckets = static_cast<cudf::thread_index_type>(storage_ref.num_buckets());
   if (num_buckets == 0) return;
 
-  auto const grid_size = cudf::util::div_rounding_up_unsafe(num_buckets, mark_block_size);
+  auto const grid_size = cuda::ceil_div(num_buckets, mark_block_size);
   clear_marks_kernel<mark_block_size><<<grid_size, mark_block_size, 0, stream.get()>>>(
     storage_ref, static_cast<slot_type>(masked_empty_sentinel), num_buckets);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -401,10 +401,10 @@ cudf::size_type mark_join::mark_probe_without_prefilter(storage_ref_type storage
                                                         right_key_type const* right_rows,
                                                         cudf::size_type num_right_rows,
                                                         bitmask_type const* right_row_bitmask,
-                                                        cuda::stream_ref stream)
+                                                        cuda::stream_ref stream,
+                                                        cudf::memory_resources mr)
 {
-  cudf::detail::device_scalar<cudf::size_type> d_mark_counter(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<cudf::size_type> d_mark_counter(0, stream, mr.get_temporary_mr());
 
   if (num_right_rows > 0) {
     int grid_size = 0;
@@ -436,12 +436,13 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
                                                      cudf::size_type num_right_rows,
                                                      bitmask_type const* right_row_bitmask,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(_bloom_filter != nullptr, "Prefilter-enabled mark_join is missing bloom filter.");
 
-  auto filtered_right_rows = rmm::device_uvector<right_key_type>(num_right_rows, stream, mr);
-  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr);
+  auto filtered_right_rows =
+    cuda::device_buffer<right_key_type>(stream, mr.get_output_mr(), num_right_rows, cuda::no_init);
+  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_output_mr());
 
   auto const filter_ref = _bloom_filter->ref();
   using prefilter_operator_type =
@@ -465,8 +466,13 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
   CUDF_CUDA_TRY(cudaGetLastError());
 
   auto const filtered_count = d_filtered_count.value(stream);
-  return mark_probe_without_prefilter(
-    storage_ref, comparator, filtered_right_rows.data(), filtered_count, nullptr, stream);
+  return mark_probe_without_prefilter(storage_ref,
+                                      comparator,
+                                      filtered_right_rows.data(),
+                                      filtered_count,
+                                      nullptr,
+                                      stream,
+                                      cudf::get_current_device_resource_ref());
 }
 
 template <typename Comparator>
@@ -476,13 +482,14 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   join_kind kind,
   Comparator comparator,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   auto const temp_mr          = cudf::get_current_device_resource_ref();
   auto materialize_right_rows = [&](auto const& key_fn) {
-    rmm::device_uvector<right_key_type> right_rows(right.num_rows(), stream, temp_mr);
+    cuda::device_buffer<right_key_type> right_rows(
+      stream, temp_mr, right.num_rows(), cuda::no_init);
     cub::DeviceTransform::Transform(cuda::counting_iterator<size_type>{0},
                                     right_rows.begin(),
                                     right.num_rows(),
@@ -491,7 +498,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
     return right_rows;
   };
 
-  rmm::device_uvector<right_key_type> right_rows(0, stream, temp_mr);
+  cuda::device_buffer<right_key_type> right_rows(stream, temp_mr, 0, cuda::no_init);
   if (is_primitive_row_op_compatible(_left)) {
     auto const d_right_hasher = primitive_row_hasher{nullate::DYNAMIC{true}, preprocessed_right};
     right_rows =
@@ -524,8 +531,13 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
                                   right_bitmask_ptr,
                                   stream,
                                   mr)
-      : mark_probe_without_prefilter(
-          storage_ref, comparator, right_rows.data(), right.num_rows(), right_bitmask_ptr, stream);
+      : mark_probe_without_prefilter(storage_ref,
+                                     comparator,
+                                     right_rows.data(),
+                                     right.num_rows(),
+                                     right_bitmask_ptr,
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 
   auto const null_left_rows  = static_cast<size_type>(_left.num_rows()) - num_left_inserted();
   auto const is_anti         = (kind == join_kind::LEFT_ANTI_JOIN);
@@ -535,7 +547,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   auto const result_count =
     (kind == join_kind::LEFT_SEMI_JOIN) ? marked_count : (unmatched_valid + null_contribution);
 
-  auto result = rmm::device_uvector<size_type>(result_count, stream, mr);
+  auto result = rmm::device_uvector<size_type>(result_count, stream, mr.get_output_mr());
   if (result_count == 0) {
     return std::make_unique<rmm::device_uvector<size_type>>(std::move(result));
   }
@@ -675,7 +687,8 @@ mark_join::mark_join(cudf::table_view const& left,
 
   auto do_build_and_filter = [&](auto const& d_left_hasher, auto const& d_left_comparator) {
     if (_prefilter == cudf::join_prefilter::YES) {
-      rmm::device_uvector<hash_value_type> left_hashes(_left.num_rows(), stream, temp_mr);
+      cuda::device_buffer<hash_value_type> left_hashes(
+        stream, temp_mr, _left.num_rows(), cuda::no_init);
       cub::DeviceTransform::Transform(
         cuda::counting_iterator{size_type{0}},
         left_hashes.begin(),
@@ -737,10 +750,7 @@ mark_join::mark_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
-  cudf::table_view const& right,
-  join_kind kind,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, join_kind kind, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   clear_marks(stream);
 
@@ -787,23 +797,23 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   if (_left.num_rows() == 0 || right.num_rows() == 0) {
-    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
   }
   return semi_anti_join(right, join_kind::LEFT_SEMI_JOIN, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::anti_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   if (_left.num_rows() == 0) {
-    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
   }
   if (right.num_rows() == 0) {
-    auto result =
-      std::make_unique<rmm::device_uvector<cudf::size_type>>(_left.num_rows(), stream, mr);
+    auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
+      _left.num_rows(), stream, mr.get_output_mr());
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result->begin(),
                      result->end());
@@ -840,14 +850,14 @@ mark_join::mark_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> mark_join::semi_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"mark_join::semi_join"};
   return _impl->semi_join(right, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> mark_join::anti_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"mark_join::anti_join"};
   return _impl->anti_join(right, stream, mr);

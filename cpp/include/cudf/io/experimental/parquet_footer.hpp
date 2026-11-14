@@ -57,6 +57,11 @@ enum class thrift_mismatch_policy : bool { THROW, COMPAT };
  *
  * @param metadata The `FileMetaData` (footer) to serialize
  *
+ * @note Fields that the writer omits when default-valued cannot distinguish the default from
+ * absent on re-read (e.g., `created_by` and `ColumnChunk::file_path` read back as `""`). Fields
+ * modeled with presence (`std::optional`) round-trip faithfully. Unmodeled fields are dropped, and
+ * the footer signature is not recomputed.
+ *
  * @return The Thrift-compact-encoded bytes
  */
 [[nodiscard]] std::vector<uint8_t> write_parquet_footer_bytes(

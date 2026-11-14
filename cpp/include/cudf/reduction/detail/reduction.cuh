@@ -10,22 +10,30 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
+#include <cudf/reduction/detail/reduction_policy.cuh>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
+#include <cuda/execution>
+#include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
+#include <cstdint>
 #include <optional>
+#include <type_traits>
 
 namespace cudf {
 namespace reduction {
 namespace detail {
+
 /**
  * @brief Compute the specified simple reduction over the input range of elements.
  *
@@ -43,55 +51,38 @@ namespace detail {
  */
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_width OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(is_fixed_width<OutputType>() && not cudf::is_fixed_point<OutputType>())
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
   using ScalarType         = cudf::scalar_type_t<OutputType>;
   auto result              = std::make_unique<ScalarType>(initial_value, true, stream, mr);
 
-  // Allocate temporary storage
-  rmm::device_buffer d_temp_storage;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            result->data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
-  d_temp_storage = rmm::device_buffer{temp_storage_bytes, stream};
-
-  // Run reduction
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            result->data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
+  CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
+    d_in,
+    result->data(),
+    num_items,
+    binary_op,
+    initial_value,
+    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
   return result;
 }
 
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::fixed_point OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(is_fixed_point<OutputType>())
+                               cudf::memory_resources mr)
 {
   CUDF_FAIL(
     "This function should never be called. fixed_point reduce should always go through the reduce "
@@ -101,43 +92,26 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
 // @brief string_view specialization of simple reduction
 template <typename Op,
           typename InputIterator,
-          typename OutputType = cuda::std::iter_value_t<InputIterator>>
+          cudf::concepts::string_view OutputType = cuda::std::iter_value_t<InputIterator>>
 std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type num_items,
                                op::simple_op<Op> op,
                                std::optional<OutputType> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
-  requires(std::is_same_v<OutputType, string_view>)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<OutputType>(op.get_binary_op());
   auto const initial_value = init.value_or(op.template get_identity<OutputType>());
   auto dev_result          = cudf::detail::device_scalar<OutputType>{
     initial_value, stream, cudf::get_current_device_resource_ref()};
 
-  // Allocate temporary storage
-  rmm::device_buffer d_temp_storage;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            dev_result.data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
-  d_temp_storage =
-    rmm::device_buffer{temp_storage_bytes, stream, cudf::get_current_device_resource_ref()};
-
-  // Run reduction
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            dev_result.data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
+  CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
+    d_in,
+    dev_result.data(),
+    num_items,
+    binary_op,
+    initial_value,
+    cudf::detail::make_env(stream, cudf::get_current_device_resource_ref())));
 
   return std::make_unique<cudf::string_scalar>(dev_result.value(stream), true, stream, mr);
 }
@@ -172,7 +146,7 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
                                cudf::size_type valid_count,
                                cudf::size_type ddof,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   auto const binary_op     = cudf::detail::cast_functor<IntermediateType>(op.get_binary_op());
   auto const initial_value = op.template get_identity<IntermediateType>();
@@ -180,29 +154,19 @@ std::unique_ptr<scalar> reduce(InputIterator d_in,
   cudf::detail::device_scalar<IntermediateType> intermediate_result{
     initial_value, stream, cudf::get_current_device_resource_ref()};
 
-  // Allocate temporary storage
-  rmm::device_buffer d_temp_storage;
-  size_t temp_storage_bytes = 0;
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            intermediate_result.data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
-  d_temp_storage =
-    rmm::device_buffer{temp_storage_bytes, stream, cudf::get_current_device_resource_ref()};
-
-  // Run reduction
-  cub::DeviceReduce::Reduce(d_temp_storage.data(),
-                            temp_storage_bytes,
-                            d_in,
-                            intermediate_result.data(),
-                            num_items,
-                            binary_op,
-                            initial_value,
-                            stream.get());
+  auto const env = [&] {
+    if constexpr (std::is_same_v<Op, op::variance> || std::is_same_v<Op, op::standard_deviation>) {
+      return cudf::detail::make_env(
+        stream,
+        cudf::get_current_device_resource_ref(),
+        cuda::execution::tune(
+          variance_reduce_policy<IntermediateType, std::remove_cv_t<decltype(binary_op)>>{}));
+    } else {
+      return cudf::detail::make_env(stream, cudf::get_current_device_resource_ref());
+    }
+  }();
+  CUDF_CUDA_TRY(cub::DeviceReduce::Reduce(
+    d_in, intermediate_result.data(), num_items, binary_op, initial_value, env));
 
   // compute the result value from intermediate value in device
   using ScalarType = cudf::scalar_type_t<OutputType>;

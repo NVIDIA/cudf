@@ -91,7 +91,9 @@ async def concatenate_node(
         chs_out=(ch_out,),
         trace_ir=ir,
         ir_context=ir_context,
-    ) as tracer:
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Receive metadata.
         input_metadata = await recv_metadata(ch_in, context)
         nranks = comm.nranks

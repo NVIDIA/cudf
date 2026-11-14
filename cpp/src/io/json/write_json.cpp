@@ -25,6 +25,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -96,7 +97,7 @@ std::unique_ptr<column> make_column_names_column(host_span<column_name_info cons
 
 std::unique_ptr<column> timestamp_to_strings(column_view const& column,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   auto format = [&]() {
     switch (column.type().id()) {
@@ -117,7 +118,7 @@ std::unique_ptr<column> timestamp_to_strings(column_view const& column,
 
 std::unique_ptr<column> duration_to_strings(column_view const& column,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   auto duration_string = cudf::io::detail::csv::pandas_format_durations(column, stream, mr);
   auto d_column        = column_device_view::create(duration_string->view(), stream);
@@ -134,7 +135,7 @@ std::unique_ptr<column> duration_to_strings(column_view const& column,
 std::unique_ptr<column> string_to_strings(column_view const& column,
                                           bool escaped_utf8,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   auto d_column = column_device_view::create(column, stream);
   return make_escaped_json_strings(*d_column,
@@ -150,7 +151,7 @@ std::unique_ptr<column> string_to_strings(column_view const& column,
 std::unique_ptr<column> leaf_column_to_strings(column_view const& column,
                                                json_writer_options const& options,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   if (column.type().id() == type_id::STRING) {
     return string_to_strings(column, options.is_enabled_utf8_escaped(), stream, mr);
@@ -190,7 +191,7 @@ host_span<column_name_info const> child_column_names(
 struct column_to_strings_fn {
   explicit column_to_strings_fn(json_writer_options const& options,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
     : options_(options),
       stream_(stream),
       mr_(std::move(mr)),
@@ -211,16 +212,13 @@ struct column_to_strings_fn {
 
   template <typename column_type>
   std::unique_ptr<column> operator()(column_view const&, host_span<column_name_info const>) const
-    requires(!std::is_same_v<column_type, cudf::list_view> &&
-             !std::is_same_v<column_type, cudf::struct_view>)
   {
     CUDF_FAIL("Only nested columns should use this overload.");
   }
 
-  template <typename column_type>
+  template <cudf::concepts::list_view column_type>
   std::unique_ptr<column> operator()(column_view const& column,
                                      host_span<column_name_info const> children_names) const
-    requires(std::is_same_v<column_type, cudf::list_view>)
   {
     auto child_view            = lists_column_view(column).get_sliced_child(stream_);
     auto constexpr child_index = lists_column_view::child_column_index;
@@ -254,10 +252,9 @@ struct column_to_strings_fn {
                                 mr_);
   }
 
-  template <typename column_type>
+  template <cudf::concepts::struct_view column_type>
   std::unique_ptr<column> operator()(column_view const& column,
                                      host_span<column_name_info const> children_names) const
-    requires(std::is_same_v<column_type, cudf::struct_view>)
   {
     auto structs_view   = structs_column_view{column};
     auto const child_it = cudf::detail::make_counting_transform_iterator(
@@ -322,7 +319,7 @@ struct column_to_strings_fn {
  private:
   json_writer_options const& options_;
   cuda::stream_ref stream_;
-  rmm::device_async_resource_ref mr_;
+  cudf::memory_resources mr_;
   string_scalar const narep;
   string_scalar const struct_value_separator;
   string_scalar const struct_row_begin_wrap;

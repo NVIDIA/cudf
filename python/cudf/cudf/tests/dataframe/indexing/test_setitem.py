@@ -540,8 +540,8 @@ def test_empty_dataframe_setitem_empty_column_keeps_other_columns():
     )
     pdf = gdf.to_pandas()
     b = gdf._data["b"]
-    gdf["a"] = gdf["a"].str.strip()
-    pdf["a"] = pdf["a"].str.strip()
+    gdf["a"] = cudf.Series([], dtype="int64")
+    pdf["a"] = pd.Series([], dtype="int64")
     assert gdf._data["b"] is b
     assert_eq(pdf, gdf)
 

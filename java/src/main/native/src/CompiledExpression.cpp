@@ -648,8 +648,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_destroy(JNIEnv
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto ptr = reinterpret_cast<cudf::jni::ast::compiled_expr*>(jni_handle);
-    delete ptr;
+    cudf::jni::safe_delete<cudf::jni::ast::compiled_expr>(jni_handle);
   }
   JNI_CATCH(env, );
 }

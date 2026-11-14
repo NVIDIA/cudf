@@ -361,7 +361,9 @@ void test_read_parquet_and_apply_mask(
   };
 
   test_chunked_table_with_deletion_vector(512, 2048);
-  test_chunked_table_with_deletion_vector(1024, 10240);
+  // Both small limit pairs split these fixtures at row-group boundaries. Cover the
+  // second pair once rather than repeating the same splits for every source count.
+  if constexpr (num_concat == 1) { test_chunked_table_with_deletion_vector(1024, 10240); }
   test_chunked_table_with_deletion_vector(10240, 102400);
   test_chunked_table_with_deletion_vector(102400, 0);
   test_chunked_table_with_deletion_vector(0, 0);

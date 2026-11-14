@@ -231,11 +231,16 @@ class Merge:
             # the intersection of columns in both frames, in left-frame
             # column order like pandas (a set here would make the key
             # order -- and hence the sorted output of an outer merge --
-            # vary with the process hash seed).
+            # vary with the process hash seed). A cross join has no keys:
+            # same-named columns are kept from both sides and suffixed.
             right_names = set(rhs._column_names)
-            on_names = [
-                name for name in lhs._column_names if name in right_names
-            ]
+            on_names = (
+                []
+                if how == "cross"
+                else [
+                    name for name in lhs._column_names if name in right_names
+                ]
+            )
             self._left_keys = [_ColumnIndexer(name=on) for on in on_names]
             self._right_keys = [_ColumnIndexer(name=on) for on in on_names]
             self._using_left_index = False
@@ -486,8 +491,8 @@ class Merge:
         # (labels already duplicated in an input are allowed), or when a
         # suffixed label collides with a non-renamed label on the other side.
         def _within_frame_dups(labels, names):
-            seen_labels: set = set()
-            seen_names: set = set()
+            seen_labels = set()
+            seen_names = set()
             dups = []
             for label, name in zip(labels, names, strict=True):
                 if label in seen_labels and name not in seen_names:
@@ -519,9 +524,11 @@ class Merge:
     def _promote_column_with_nulls(col: ColumnBase) -> ColumnBase:
         # pandas upcasts a numpy integer column that has acquired missing
         # values (from unmatched rows) to float64. cudf represents nulls
-        # natively via a mask; upcast here to match pandas' output dtype.
+        # natively via a mask, so only upcast in pandas-compatible mode:
+        # float64 cannot represent every large int64/uint64 value.
         if (
-            isinstance(col.dtype, np.dtype)
+            get_option("mode.pandas_compatible")
+            and isinstance(col.dtype, np.dtype)
             and col.dtype.kind in "iu"
             and col.null_count
         ):

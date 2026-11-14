@@ -9,6 +9,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
@@ -56,8 +57,9 @@ expression_parser::expression_parser(
   std::optional<std::reference_wrapper<cudf::table_view const>> right,
   bool has_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
-  : _left{left},
+  cudf::memory_resources mr)
+  : _device_data_buffer{stream, mr.get_output_mr()},
+    _left{left},
     _right{right},
     _expression_count{0},
     _intermediate_counter{},
@@ -76,12 +78,12 @@ expression_parser::expression_parser(expression const& expr,
                                      cudf::table_view const& table,
                                      bool has_nulls,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   : expression_parser(expr, table, {}, has_nulls, stream, mr)
 {
 }
 
-void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+void expression_parser::move_to_device(cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::vector<cudf::size_type> sizes;
   std::vector<void const*> data_pointers;
@@ -102,21 +104,22 @@ void expression_parser::move_to_device(cuda::stream_ref stream, rmm::device_asyn
                          cudf::size_type{0},
                          [buffer_alignment](auto a, auto b) {
                            // align each component of the AST program
-                           return cudf::util::round_up_safe(a + b, buffer_alignment);
+                           return cudf::detail::round_up_safe(a + b, buffer_alignment);
                          });
 
   auto const buffer_size = buffer_offsets.empty() ? 0 : (buffer_offsets.back() + sizes.back());
-  auto host_data_buffer  = std::vector<char>(buffer_size);
+  auto host_data_buffer  = std::vector<std::byte>(buffer_size);
 
   for (unsigned int i = 0; i < data_pointers.size(); ++i) {
     std::memcpy(host_data_buffer.data() + buffer_offsets[i], data_pointers[i], sizes[i]);
   }
 
-  _device_data_buffer = rmm::device_buffer(host_data_buffer.data(), buffer_size, stream, mr);
+  _device_data_buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_output_mr(), host_data_buffer);
   cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan
-  auto device_data_buffer_ptr            = static_cast<char const*>(_device_data_buffer.data());
+  auto device_data_buffer_ptr            = _device_data_buffer.data();
   device_expression_data.data_references = device_span<detail::device_data_reference const>(
     reinterpret_cast<detail::device_data_reference const*>(device_data_buffer_ptr +
                                                            buffer_offsets[0]),

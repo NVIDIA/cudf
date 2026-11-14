@@ -3,9 +3,8 @@
 
 ```{warning}
 `engine.execute()` is **experimental**. Its API may change or be removed in a
-future release. Using it emits a `cudf_polars.UnstableWarning`; set the
-`CUDF_POLARS_WARN_UNSTABLE` environment variable to `1` to have that warning
-raised as an error instead. See {doc}`options`.
+future release. Set the `CUDF_POLARS_WARN_UNSTABLE` environment variable to `1`
+to emit a `cudf_polars.UnstableWarning` whenever it is used. See {doc}`options`.
 ```
 
 [`LazyFrame.collect`](https://docs.pola.rs/api/python/stable/reference/lazyframe/api/polars.LazyFrame.collect.html)
@@ -49,12 +48,7 @@ with RayEngine() as engine:
     )
 
     # Run more work on the GPU using the persisted result as input.
-    df = (
-        result.lazy()
-        .sort("amount")
-        .head(10)
-        .collect(engine=engine)
-    )
+    df = result.lazy().sort("amount").head(10).collect(engine=engine)
 ```
 
 The `LazyFrame` returned by `result.lazy()` can be collected **only** with the
@@ -100,11 +94,15 @@ with RayEngine() as engine:
     result = engine.execute(pl.scan_parquet("/data/*.parquet"))
     lazy = result.lazy()
 
-    df = lazy.collect(engine=engine)        # OK: consumes the partitions.
-    df = lazy.collect(engine=engine)        # RuntimeError: already consumed.
+    df = lazy.collect(engine=engine)  # OK: consumes the partitions.
+    df = lazy.collect(engine=engine)  # RuntimeError: already consumed.
 
     # Need it again? Re-run the query for a fresh result.
-    df = engine.execute(pl.scan_parquet("/data/*.parquet")).lazy().collect(engine=engine)
+    df = (
+        engine.execute(pl.scan_parquet("/data/*.parquet"))
+        .lazy()
+        .collect(engine=engine)
+    )
 ```
 
 ## Releasing partitions
@@ -128,3 +126,23 @@ On {class}`~cudf_polars.engine.spmd.SPMDEngine`, `execute()` is collective:
 every rank must call it with an equivalent query, and each rank's result holds
 that rank's own partition (see
 [Query symmetry requirement](spmd_engine.md#query-symmetry-requirement)).
+
+To hand that partition to another GPU library in the same process, call
+{meth}`~cudf_polars.engine.persisted_result.PersistedQueryResult.take_local`
+with the engine's rank. It returns the partition without a host copy and, like
+collecting, consumes it.
+
+Check {meth}`~cudf_polars.engine.persisted_result.PersistedQueryResult.local_is_duplicated`
+first when it matters which rows you hold. A result is either partitioned, each
+rank holding different rows, or duplicated, every rank holding the same complete
+copy, and the query alone does not say which. A duplicated result is what every
+rank needs for values such as lookup tables, but code that treats each rank's rows
+as its own share, a data-parallel training loop for instance, would process the
+same rows on every rank.
+
+```python
+with SPMDEngine() as engine:
+    result = engine.execute(lf)
+    duplicated = result.local_is_duplicated(engine.rank)
+    partition = result.take_local(engine.rank)
+```

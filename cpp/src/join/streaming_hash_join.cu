@@ -12,8 +12,9 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/row_operator/primitive_equality.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
@@ -67,7 +68,7 @@ auto make_device_comparators(
                  preprocessed_right.end(),
                  std::back_inserter(host_comparators),
                  factory);
-  auto d_comparators = cudf::detail::make_device_uvector_async(
+  auto d_comparators = cudf::detail::make_device_buffer_async(
     cudf::host_span<Equality const>{
       host_comparators.data(), host_comparators.size(), /*is_device_accessible=*/true},
     stream,
@@ -357,7 +358,7 @@ class streaming_hash_join_impl {
 
     auto preprocessed = row::equality::preprocessed_table::create(keys, stream, mr.get_output_mr());
     auto const batch_rows = keys.num_rows();
-    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<std::byte>> {
+    auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<cudf::bitmask_type>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && nullable(keys)) {
         return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
       }
@@ -394,12 +395,11 @@ class streaming_hash_join_impl {
         if (compare_nulls == null_equality::EQUAL || !nullable(keys)) {
           hash_table.insert_async(input_begin, input_begin + batch_rows, stream.get());
         } else {
-          hash_table.insert_if_async(
-            input_begin,
-            input_begin + batch_rows,
-            cuda::counting_iterator<size_type>{0},
-            row_is_valid{reinterpret_cast<bitmask_type const*>(row_bitmask->data())},
-            stream.get());
+          hash_table.insert_if_async(input_begin,
+                                     input_begin + batch_rows,
+                                     cuda::counting_iterator<size_type>{0},
+                                     row_is_valid{row_bitmask->data()},
+                                     stream.get());
         }
       };
 

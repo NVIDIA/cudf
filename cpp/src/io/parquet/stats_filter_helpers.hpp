@@ -5,23 +5,33 @@
 
 #pragma once
 
+#include "decimal_decode_utils.cuh"
 #include "expression_transform_helpers.hpp"
 #include "timestamp_utils.cuh"
 
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
+#include <cuda/std/concepts>
+
+#include <algorithm>
+#include <array>
 #include <bit>
+#include <cmath>
+#include <concepts>
 #include <numeric>
 #include <span>
 #include <string_view>
@@ -32,8 +42,25 @@ namespace cudf::io::parquet::detail {
 /// Initial capacity for the chars host vector in host_column
 constexpr size_t initial_chars_capacity = 1024;
 
-/// Number of statistics columns per input table column: min, max and all-nulls
-auto constexpr stats_cols_per_column = 3;
+/// Number of statistics columns per input table column: min, max, all-nulls and has-NaN
+auto constexpr stats_cols_per_column = 4;
+
+/**
+ * @brief Returns whether any `NaN` is present, or std::nullopt if `nan_count` is absent or negative
+ */
+[[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
+
+/**
+ * @brief Checks whether a column chunk is INT96 without `INT96_TIMESTAMP_ORDER`
+ *
+ * @param metadata File metadata
+ * @param physical_type Physical type of the column chunk
+ * @param leaf_idx Leaf column index
+ * @return Whether the column chunk's min/max statistics must be ignored
+ */
+[[nodiscard]] bool is_unordered_int96(FileMetaData const& metadata,
+                                      Type physical_type,
+                                      std::size_t leaf_idx);
 
 /**
  * @brief Base utilities for converting and casting stats values
@@ -43,9 +70,8 @@ auto constexpr stats_cols_per_column = 3;
  */
 class stats_caster_base {
  protected:
-  template <typename T>
+  template <cudf::concepts::integral_not_bool T>
   static inline T decode_fixed_width_decimal(uint8_t const* stats_val, size_t stats_size)
-    requires(cudf::is_integral<T>() and !cudf::is_boolean<T>())
   {
     // Decimal statistics with physical BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY are stored as
     // signed two's-complement values using big-endian byte order. The physical width may be
@@ -57,30 +83,12 @@ class stats_caster_base {
     CUDF_EXPECTS(stats_size <= sizeof(T),
                  "Parquet reader encountered a statistics vector larger than the type's size");
 
-    // Use std::type_identity to defer and avoid instantiating std::make_unsigned<__int128_t>::type
-    // which is not a standard integer type
-    // NOLINTNEXTLINE(modernize-type-traits)
-    using UnsignedT    = std::conditional_t<std::is_same_v<T, __int128_t>,
-                                            std::type_identity<unsigned __int128>,
-                                            std::make_unsigned<T>>::type;
-    auto const payload = std::span{stats_val, stats_size};
-    auto value         = std::accumulate(
-      payload.begin(), payload.end(), UnsignedT{0}, [](UnsignedT acc, uint8_t byte) {
-        return static_cast<UnsignedT>((acc << CHAR_BIT) | static_cast<UnsignedT>(byte));
-      });
-
-    // Check the sign of the first byte to determine if the value is negative
-    auto const is_negative_value = std::bit_cast<int8_t>(stats_val[0]) < 0;
-    // Sign-extension if negative value and the payload is smaller than the storage type
-    if (stats_size < sizeof(T) and is_negative_value) {
-      value = static_cast<UnsignedT>(value | (~UnsignedT{0} << (stats_size * CHAR_BIT)));
-    }
-    return std::bit_cast<T>(value);
+    return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
   }
 
   template <typename T>
   static inline T decode_fixed_width_value(uint8_t const* stats_val, size_t stats_size)
-    requires((cudf::is_integral<T>() and !cudf::is_boolean<T>()) or cudf::is_chrono<T>())
+    requires(cudf::concepts::integral_not_bool<T> or cudf::concepts::chrono<T>)
   {
     CUDF_EXPECTS(stats_size == sizeof(T),
                  "Parquet reader encountered a mismatch in size of statistics vector and the cudf "
@@ -88,6 +96,45 @@ class stats_caster_base {
     auto value = T{};
     std::memcpy(&value, stats_val, std::min(stats_size, sizeof(T)));
     return value;
+  }
+
+  /// Decodes an INT96 statistics value into nanoseconds of the day and Julian day
+  static inline cuda::std::pair<int64_t, int32_t> decode_int96_value(uint8_t const* stats_val,
+                                                                     size_t stats_size)
+  {
+    CUDF_EXPECTS(stats_size == static_cast<size_t>(int96_size),
+                 "Parquet reader encountered an invalid INT96 statistics vector size");
+    auto nanos = int64_t{};
+    auto days  = int32_t{};
+    std::memcpy(&nanos, stats_val, sizeof(nanos));
+    std::memcpy(&days, stats_val + sizeof(nanos), sizeof(days));
+    return {nanos, days};
+  }
+
+  /**
+   * @brief Checks whether INT96 min/max statistics cannot bound the timestamps of type `T`
+   *
+   * This is the case if either bound is missing, has nanoseconds outside of a day so that it no
+   * longer orders like the converted values, or overflows `T` so that its rows would wrap around.
+   */
+  template <typename T>
+  [[nodiscard]] static bool int96_minmax_unusable(Type type,
+                                                  std::optional<std::vector<uint8_t>> const& min,
+                                                  std::optional<std::vector<uint8_t>> const& max)
+  {
+    if constexpr (cudf::is_timestamp<T>()) {
+      if (type != Type::INT96) { return false; }
+      return std::ranges::any_of(std::array{&min, &max}, [](auto const* value) {
+        if (not value->has_value()) { return true; }
+        auto const [nanos, days] = decode_int96_value(value->value().data(), value->value().size());
+        auto const nanos_per_day =
+          cuda::std::chrono::duration_cast<cudf::duration_ns>(cudf::duration_D{1}).count();
+        return nanos < 0 or nanos >= nanos_per_day or
+               not int96_fits_duration<typename T::duration>(nanos, days);
+      });
+    } else {
+      return false;
+    }
   }
 
   template <typename ToType, typename FromType>
@@ -110,17 +157,16 @@ class stats_caster_base {
                           size_t stats_size,
                           Type const type,
                           int32_t ts_scale = 0)
-    requires(cudf::is_dictionary<T>() or cudf::is_nested<T>())
+    requires(cudf::concepts::dictionary<T> or cudf::concepts::nested<T>)
   {
     CUDF_FAIL("Unsupported type for stats casting");
   }
 
-  template <typename T>
+  template <cudf::concepts::boolean T>
   static inline T convert(uint8_t const* stats_val,
                           size_t stats_size,
                           Type const type,
                           int32_t ts_scale = 0)
-    requires(cudf::is_boolean<T>())
   {
     CUDF_EXPECTS(type == Type::BOOLEAN, "Invalid type and stats combination");
     return stats_caster_base::target_type<T>(*reinterpret_cast<bool const*>(stats_val));
@@ -132,8 +178,8 @@ class stats_caster_base {
                           size_t stats_size,
                           Type const type,
                           int32_t ts_scale = 0)
-    requires((cudf::is_integral<T>() and !cudf::is_boolean<T>()) or cudf::is_fixed_point<T>() or
-             cudf::is_chrono<T>())
+    requires(cudf::concepts::integral_not_bool<T> or cudf::concepts::fixed_point<T> or
+             cudf::concepts::chrono<T>)
   {
     switch (type) {
       case Type::INT32:
@@ -143,10 +189,12 @@ class stats_caster_base {
         return stats_caster_base::target_type<T>(
           decode_fixed_width_value<int64_t>(stats_val, stats_size), ts_scale);
       case Type::INT96:  // Deprecated in parquet specification
-        return stats_caster_base::target_type<T>(
-          static_cast<__int128_t>(decode_fixed_width_value<int64_t>(stats_val, stats_size)) << 32 |
-            decode_fixed_width_value<int32_t>(stats_val + sizeof(int64_t), stats_size),
-          ts_scale);
+        if constexpr (cudf::is_timestamp<T>()) {
+          auto const [nanos, days] = decode_int96_value(stats_val, stats_size);
+          return T{typename T::duration{int96_to_duration<typename T::duration>(nanos, days)}};
+        } else {
+          CUDF_FAIL("INT96 statistics are only supported for timestamp columns");
+        }
       case Type::BYTE_ARRAY: [[fallthrough]];
       case Type::FIXED_LEN_BYTE_ARRAY:
         // Handle chronos, decimals and UUIDs here
@@ -173,12 +221,11 @@ class stats_caster_base {
     }
   }
 
-  template <typename T>
+  template <cuda::std::floating_point T>
   static inline T convert(uint8_t const* stats_val,
                           size_t stats_size,
                           Type const type,
                           int32_t ts_scale = 0)
-    requires(cudf::is_floating_point<T>())
   {
     switch (type) {
       case Type::FLOAT:
@@ -189,12 +236,11 @@ class stats_caster_base {
     }
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   static inline T convert(uint8_t const* stats_val,
                           size_t stats_size,
                           Type const type,
                           int32_t ts_scale = 0)
-    requires(std::is_same_v<T, string_view>)
   {
     switch (type) {
       case Type::BYTE_ARRAY: [[fallthrough]];
@@ -220,9 +266,7 @@ class stats_caster_base {
     host_column(size_type total_row_groups, cuda::stream_ref stream)
       : val{cudf::detail::make_host_vector<T>(total_row_groups, stream)},
         chars{cudf::detail::make_empty_host_vector<char>(initial_chars_capacity, stream)},
-        null_mask(cudf::util::div_rounding_up_safe<cudf::size_type>(
-                    cudf::bitmask_allocation_size_bytes(total_row_groups), sizeof(bitmask_type)),
-                  ~bitmask_type{0})
+        null_mask(cudf::bitmask_allocation_size_words(total_row_groups), ~bitmask_type{0})
     {
     }
 
@@ -231,37 +275,68 @@ class stats_caster_base {
                           Type const type,
                           int32_t ts_scale = 0)
     {
-      if (binary_value.has_value()) {
-        // For strings, also insert the characters
-        if constexpr (std::is_same_v<T, string_view>) {
-          // Create a temporary string view from the binary value
-          std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                       binary_value.value().size()};
-          // Current offset into the chars vector
-          auto const current_chars_offset = chars.size();
-          chars.insert(chars.end(), input_value.begin(), input_value.end());
-          // Convert to the target type
-          val[index] = stats_caster_base::convert<T>(
-            reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-            binary_value.value().size(),
-            type);
-        } else {
-          val[index] = stats_caster_base::convert<T>(
-            binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        }
-      } else {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
         clear_bit_unsafe(null_mask.data(), index);
         null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
+      }
+    }
+
+    /**
+     * @brief Sets a boolean value, or null if it is std::nullopt
+     *
+     * @param index Row of the column chunk or page in this column
+     * @param value Optional value to set
+     */
+    void inline set_value(size_type index, std::optional<bool> value)
+      requires std::same_as<T, bool>
+    {
+      if (value.has_value()) {
+        val[index] = value.value();
+      } else {
+        set_index(index, std::nullopt, {});
       }
     }
 
     static inline std::tuple<rmm::device_uvector<char>,
                              rmm::device_uvector<size_type>,
-                             rmm::device_uvector<size_type>>
+                             cuda::device_buffer<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cudf::memory_resources mr)
     {
       auto offsets =
         cudf::detail::make_empty_host_vector<cudf::size_type>(host_strings.size() + 1, stream);
@@ -272,23 +347,26 @@ class stats_caster_base {
         offsets.push_back(offsets.back() + str.size_bytes());
         sizes.push_back(str.size_bytes());
       }
-      auto d_chars   = cudf::detail::make_device_uvector_async(host_chars, stream, mr);
-      auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr);
-      auto d_sizes   = cudf::detail::make_device_uvector_async(sizes, stream, mr);
+      auto d_chars =
+        cudf::detail::make_device_uvector_async(host_chars, stream, mr.get_output_mr());
+      auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr.get_output_mr());
+      auto d_sizes   = cudf::detail::make_device_buffer_async(sizes, stream, mr);
       stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
     }
 
     [[nodiscard]] std::unique_ptr<column> inline to_device(cudf::data_type dtype,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr) const
+                                                           cudf::memory_resources mr) const
     {
       if constexpr (std::is_same_v<T, string_view>) {
         auto [d_chars, d_offsets, _] = make_strings_children(val, chars, stream, mr);
         auto null_mask_buffer =
           cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
-        CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-          null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
+        CUDF_CUDA_TRY(cudf::detail::memcpy_async(null_mask_buffer.data(),
+                                                 null_mask.data(),
+                                                 null_mask_buffer.size() * sizeof(bitmask_type),
+                                                 stream));
         stream.sync();
         return cudf::make_strings_column(
           val.size(),
@@ -300,11 +378,13 @@ class stats_caster_base {
           null_count,
           std::move(null_mask_buffer));
       }
-      auto data = cudf::detail::make_device_uvector_async(val, stream, mr);
+      auto data = cudf::detail::make_device_uvector_async(val, stream, mr.get_output_mr());
       auto null_mask_buffer =
         cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
-      CUDF_CUDA_TRY(cudf::detail::memcpy_async(
-        null_mask_buffer.data(), null_mask.data(), null_mask_buffer.size(), stream));
+      CUDF_CUDA_TRY(cudf::detail::memcpy_async(null_mask_buffer.data(),
+                                               null_mask.data(),
+                                               null_mask_buffer.size() * sizeof(bitmask_type),
+                                               stream));
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
@@ -358,6 +438,13 @@ class stats_columns_collector final : public parquet_expression_simplifier {
     ast::literal const& literal) override;
 
  private:
+  /**
+   * @brief Collects the columns referenced by the simplified expression
+   *
+   * @param simplified_expr Simplified expression whose leaves are column references
+   */
+  void collect_surviving_predicates(ast::expression const& simplified_expr);
+
   thrust::host_vector<bool> _columns_mask;
 };
 
@@ -365,9 +452,10 @@ class stats_columns_collector final : public parquet_expression_simplifier {
  * @brief Converts AST expression to StatsAST for comparing with column statistics
  *
  * This is used in row group filtering based on predicate.
- * statistics min value of a column is referenced by column_index*3
- * statistics max value of a column is referenced by column_index*3+1
- * statistics all_nulls value of a column is referenced by column_index*3+2
+ * statistics min value of a column is referenced by column_index*stats_cols_per_column
+ * statistics max value of a column is referenced by column_index*stats_cols_per_column+1
+ * statistics all_nulls value of a column is referenced by column_index*stats_cols_per_column+2
+ * statistics has_nan value of a column is referenced by column_index*stats_cols_per_column+3
  */
 class stats_expression_converter final : public parquet_expression_simplifier {
  public:
@@ -427,6 +515,48 @@ class stats_expression_converter final : public parquet_expression_simplifier {
    */
   [[nodiscard]] ast::expression const& push_non_null_guard(size_type col_index,
                                                            ast::expression const& stats_expr);
+
+  /**
+   * @brief Wraps `stats_expr` so that a chunk that may hold a `NaN` is never pruned
+   *
+   * Min/max statistics exclude `NaN`s, but a `NaN` satisfies `col != x` and `NOT(col < x)`.
+   * For a floating-point column, this function wraps `stats_expr` as
+   * `(literal != literal OR has_nan) OR stats_expr`, where:
+   * - `literal != literal` is true only for a `NaN` literal
+   * - `has_nan` is true if the NaN count is > 0, false if 0, and null if absent, which keeps the
+   * chunk
+   *
+   * Returns `stats_expr` unchanged for other column types. An all-null chunk holds no `NaN`, so
+   * the caller's non-null guard around the result still prunes it.
+   *
+   * @param col_index Index of the column in the input table
+   * @param literal Literal the column is compared against, already pushed onto the tree
+   * @param stats_expr Statistics expression to guard, already pushed onto the tree
+   * @return The guarded statistics expression
+   */
+  [[nodiscard]] ast::expression const& push_nan_guard(size_type col_index,
+                                                      ast::expression const& literal,
+                                                      ast::expression const& stats_expr);
+
+  /**
+   * @brief Converts a prunable comparison to its statistics expression
+   *
+   * Returns `not_all_null AND (nan_matches OR stats_expr)`, where `nan_matches` is only included
+   * if `nan_satisfies` is true. For example:
+   * - `col < 5`      --> `stats_expr = vmin < 5`
+   * - `col != 5`     --> `stats_expr = vmin != vmax OR vmax != 5`, with `nan_matches`
+   * - `NOT(col < 5)` --> `stats_expr = vmax >= 5` (`op` is `>=`), with `nan_matches`
+   *
+   * @param op Prunable comparison operator
+   * @param col_index Input table column index
+   * @param literal_ref Reference to the literal
+   * @param nan_satisfies Whether a `NaN` value or literal satisfies the comparison
+   * @return Converted statistics expression
+   */
+  [[nodiscard]] ast::expression const& push_comparison(ast::ast_operator op,
+                                                       size_type col_index,
+                                                       ast::literal const& literal_ref,
+                                                       bool nan_satisfies);
 
   simplified_expression_opt _stats_expr;
 };

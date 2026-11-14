@@ -6,8 +6,21 @@
 #include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/type_lists.hpp>
+
+#include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/sorting.hpp>
+#include <cudf/table/table.hpp>
+#include <cudf/table/table_view.hpp>
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <vector>
 
 template <typename V>
 struct groupby_collect_list_test : public cudf::test::BaseFixture {};
@@ -70,6 +83,60 @@ TYPED_TEST(groupby_collect_list_test, CollectWithNullExclusion)
   test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
 }
 
+using GroupbyCollectListOwnershipTest = groupby_collect_list_test<int32_t>;
+
+TEST_F(GroupbyCollectListOwnershipTest, NullExclusionPreservesValuesForLaterAggregations)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{2, 1, 2, 1, 2, 1, 3, 3};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {23, 12, 0, 10, 21, 0, 0, 0}, {true, true, false, true, true, false, false, false}};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_nunique{2, 2, 0};
+  std::array const first_validity{true, true, false};
+  std::array const second_validity{true, false, true};
+  std::array const all_nulls{false, false};
+  cudf::test::lists_column_wrapper<int32_t> expected_include{{{12, 10, 0}, first_validity.begin()},
+                                                             {{23, 0, 21}, second_validity.begin()},
+                                                             {{0, 0}, all_nulls.begin()}};
+  cudf::test::lists_column_wrapper<int32_t> expected_exclude{{12, 10}, {23, 21}, {}};
+  cudf::test::fixed_width_column_wrapper<int32_t> expected_nth_include{{10, 0, 0},
+                                                                       {true, false, false}};
+
+  for (bool const include_first : {false, true}) {
+    SCOPED_TRACE(include_first);
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests.front().values = values;
+    auto& aggregations      = requests.front().aggregations;
+    aggregations.push_back(
+      cudf::make_nunique_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE));
+    std::vector<cudf::column_view> expected{expected_nunique};
+    if (include_first) {
+      aggregations.push_back(
+        cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+      expected.push_back(expected_include);
+    }
+    aggregations.push_back(
+      cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE));
+    aggregations.push_back(
+      cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(1, cudf::null_policy::INCLUDE));
+    expected.push_back(expected_exclude);
+    expected.push_back(expected_nth_include);
+
+    cudf::groupby::groupby gb(
+      cudf::table_view{{keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::NO);
+    auto result      = gb.aggregate(requests);
+    auto const order = cudf::sorted_order(result.first->view());
+    auto sorted_keys = cudf::gather(result.first->view(), order->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, sorted_keys->get_column(0));
+    auto const& outputs = result.second.front().results;
+    ASSERT_EQ(outputs.size(), expected.size());
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+      auto sorted = cudf::gather(cudf::table_view{{outputs[i]->view()}}, order->view());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected[i], sorted->get_column(0));
+    }
+  }
+}
+
 TYPED_TEST(groupby_collect_list_test, CollectOnEmptyInput)
 {
   using K = int32_t;
@@ -91,16 +158,13 @@ TYPED_TEST(groupby_collect_list_test, CollectLists)
   using K = int32_t;
   using V = TypeParam;
 
-  using LCW = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
-
   cudf::test::fixed_width_column_wrapper<K, int32_t> keys{1, 1, 2, 2, 3, 3};
-  cudf::test::lists_column_wrapper<V, int32_t> values{
-    {1, 2}, {3, 4}, {5, 6, 7}, LCW{}, {9, 10}, {11}};
+  cudf::test::lists_column_wrapper<V, int32_t> values{{1, 2}, {3, 4}, {5, 6, 7}, {}, {9, 10}, {11}};
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2, 3};
 
   cudf::test::lists_column_wrapper<V, int32_t> expect_vals{
-    {{1, 2}, {3, 4}}, {{5, 6, 7}, LCW{}}, {{9, 10}, {11}}};
+    {{1, 2}, {3, 4}}, {{5, 6, 7}, {}}, {{9, 10}, {11}}};
 
   auto agg = cudf::make_collect_list_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
@@ -115,12 +179,12 @@ TYPED_TEST(groupby_collect_list_test, CollectListsWithNullExclusion)
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> keys{1, 1, 2, 2, 3, 3, 4, 4};
   std::array const validity_mask{true, false, false, true, true, true, false, false};
-  LCW values{{{1, 2}, {3, 4}, {5, 6, 7}, LCW{}, {9, 10}, {11}, {20, 30, 40}, LCW{}},
+  LCW values{{{1, 2}, {3, 4}, {5, 6, 7}, {}, {9, 10}, {11}, {20, 30, 40}, {}},
              validity_mask.data()};
 
   cudf::test::fixed_width_column_wrapper<K, int32_t> expect_keys{1, 2, 3, 4};
 
-  LCW expect_vals{{{1, 2}}, {LCW{}}, {{9, 10}, {11}}, {}};
+  LCW expect_vals{{{1, 2}}, {{}}, {{9, 10}, {11}}, {}};
 
   auto agg =
     cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE);

@@ -19,9 +19,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <thrust/logical.h>
@@ -86,7 +86,8 @@ void post_process_list_overlap(cudf::column_view const& lhs,
   auto const overlap_cdv_ptr = column_device_view::create(overlap_cv, stream);
 
   // Create a new bitmask to satisfy Spark's arrays_overlap's special behavior.
-  auto validity = rmm::device_uvector<bool>(overlap_cv.size(), stream);
+  auto validity = cuda::device_buffer<bool>(
+    stream, cudf::get_current_device_resource_ref(), overlap_cv.size(), cuda::no_init);
   thrust::tabulate(
     rmm::exec_policy_nosync(stream),
     validity.begin(),
@@ -128,8 +129,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
     // new nullmask.
     if (overlap_cv.nullable()) {
       auto [null_mask, null_count] = cudf::bitmask_and(
-        std::vector<bitmask_type const*>{
-          overlap_cv.null_mask(), reinterpret_cast<bitmask_type const*>(new_null_mask->data())},
+        std::vector<bitmask_type const*>{overlap_cv.null_mask(), new_null_mask->data()},
         std::vector<cudf::size_type>{0, 0},
         overlap_cv.size(),
         stream,
@@ -137,7 +137,7 @@ void post_process_list_overlap(cudf::column_view const& lhs,
       overlap_result->set_null_mask(std::move(null_mask), null_count);
     } else {
       // Just set the output nullmask as the new nullmask.
-      overlap_result->set_null_mask(std::move(*new_null_mask.release()), new_null_count);
+      overlap_result->set_null_mask(std::move(*new_null_mask), new_null_count);
     }
   }
 }
@@ -150,9 +150,15 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
   auto const child = input.get_sliced_child(stream);
 
   // Generate labels for the input list elements.
-  auto labels = rmm::device_uvector<cudf::size_type>(child.size(), stream);
-  cudf::detail::label_segments(
-    input.offsets_begin(), input.offsets_end(), labels.begin(), labels.end(), stream);
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto labels               = cuda::device_buffer<cudf::size_type>(
+    stream, mr.get_temporary_mr(), child.size(), cuda::no_init);
+  cudf::detail::label_segments(input.offsets_begin(),
+                               input.offsets_end(),
+                               labels.begin(),
+                               labels.end(),
+                               stream,
+                               mr.as_temporary());
 
   // Use `cudf::duplicate_keep_option::KEEP_LAST` so this will produce the desired behavior when
   // being called in `create_map` in spark-rapids.
@@ -166,7 +172,7 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
                           cudf::null_equality::EQUAL,
                           cudf::nan_equality::ALL_EQUAL,
                           stream,
-                          cudf::get_current_device_resource_ref())
+                          mr.get_output_mr())
       ->release();
   auto const out_labels = out_columns.front()->view();
 
@@ -189,7 +195,8 @@ std::unique_ptr<cudf::column> lists_distinct_by_key(cudf::lists_column_view cons
                                   labels_begin + out_labels.size(),
                                   offsets_begin,
                                   offsets_begin + out_offsets->size(),
-                                  stream);
+                                  stream,
+                                  mr.as_temporary());
 
   return cudf::make_lists_column(
     input.size(),

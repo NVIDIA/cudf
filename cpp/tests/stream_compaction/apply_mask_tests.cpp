@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -21,6 +22,70 @@
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
+
+#include <tuple>
+
+enum class mask_selection { EMPTY, ALL, NONE, PARTIAL, NULLABLE };
+
+struct ApplyMaskMemoryResources
+  : public cudf::test::BaseFixtureWithHarness,
+    public ::testing::WithParamInterface<std::tuple<bool, mask_selection>> {};
+
+TEST_P(ApplyMaskMemoryResources, OutputAndTemporaryAllocations)
+{
+  auto const [is_retention, selection] = GetParam();
+  cudf::test::fixed_width_column_wrapper<int32_t> input{{10, 20, 30, 40}, {1, 0, 1, 1}};
+
+  auto const mask_size = selection == mask_selection::EMPTY ? 0 : 4;
+  auto const selected  = [selection](auto i) {
+    return selection == mask_selection::ALL ||
+           ((selection == mask_selection::PARTIAL || selection == mask_selection::NULLABLE) &&
+            i < 2);
+  };
+  auto const mask_values = cudf::detail::make_counting_transform_iterator(
+    0, [=](auto i) { return selected(i) == is_retention; });
+  auto const mask_validity = cudf::detail::make_counting_transform_iterator(
+    0, [=](auto i) { return selection != mask_selection::NULLABLE || i != 1; });
+  cudf::test::fixed_width_column_wrapper<bool> mask{
+    mask_values, mask_values + mask_size, mask_validity};
+
+  std::vector<int32_t> expected_values;
+  std::vector<bool> expected_validity;
+  for (auto i = 0; i < 4; ++i) {
+    if ((selection == mask_selection::EMPTY && !is_retention) ||
+        (selection != mask_selection::EMPTY && selected(i) && mask_validity[i])) {
+      expected_values.push_back((i + 1) * 10);
+      expected_validity.push_back(i != 1);
+    }
+  }
+  cudf::test::fixed_width_column_wrapper<int32_t> expected{
+    expected_values.begin(), expected_values.end(), expected_validity.begin()};
+
+  cudf::test::expect_api_uses_memory_resources(
+    harness(),
+    [&](cudf::memory_resources mr) {
+      return is_retention
+               ? cudf::apply_retention_mask(cudf::table_view{{input}}, mask, stream(), mr)
+               : cudf::apply_deletion_mask(cudf::table_view{{input}}, mask, stream(), mr);
+    },
+    [](auto const& result) { return result->get_column(0).alloc_size(); },
+    [&](auto const& result) {
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0).view());
+    },
+    {cudf::test::output_allocation_expectation::EXACT,
+     selection == mask_selection::EMPTY ? cudf::test::temporary_allocation_expectation::NONE
+                                        : cudf::test::temporary_allocation_expectation::SOME},
+    stream());
+}
+
+INSTANTIATE_TEST_SUITE_P(ApplyMask,
+                         ApplyMaskMemoryResources,
+                         ::testing::Combine(::testing::Bool(),
+                                            ::testing::Values(mask_selection::EMPTY,
+                                                              mask_selection::ALL,
+                                                              mask_selection::NONE,
+                                                              mask_selection::PARTIAL,
+                                                              mask_selection::NULLABLE)));
 
 struct ApplyRetentionMask : public cudf::test::BaseFixture {};
 
@@ -67,8 +132,14 @@ TEST_F(ApplyRetentionMask, NullBooleanMask)
   cudf::table_view expected{{col1_expected, col2_expected, col3_expected}};
 
   auto got = cudf::apply_retention_mask(input, boolean_mask);
-
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got->view());
+
+  cudf::test::fixed_width_column_wrapper<int16_t> col1_with_nulls{{true, true, true}, {1, 0, 1}};
+  cudf::test::fixed_width_column_wrapper<int32_t> col2_with_nulls{{10, 70, 2}, {1, 0, 1}};
+  cudf::test::fixed_width_column_wrapper<double> col3_with_nulls{{10, 70, 2}, {1, 0, 1}};
+  cudf::table_view expected_with_nulls{{col1_with_nulls, col2_with_nulls, col3_with_nulls}};
+  got = cudf::apply_retention_mask(input, boolean_mask, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_with_nulls, got->view());
 }
 
 TEST_F(ApplyRetentionMask, EmptyMask)
@@ -403,8 +474,15 @@ TEST_F(ApplyDeletionMask, NullDeletionMask)
   cudf::table_view expected{{col1_expected, col2_expected, col3_expected}};
 
   auto got = cudf::apply_deletion_mask(input, deletion_mask);
-
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, got->view());
+
+  cudf::test::fixed_width_column_wrapper<int16_t> col1_with_nulls{{true, false, false, false},
+                                                                  {1, 1, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<int32_t> col2_with_nulls{{10, 40, 5, 10}, {1, 1, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<double> col3_with_nulls{{10, 40, 5, 10}, {1, 1, 1, 0}};
+  cudf::table_view expected_with_nulls{{col1_with_nulls, col2_with_nulls, col3_with_nulls}};
+  got = cudf::apply_deletion_mask(input, deletion_mask, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected_with_nulls, got->view());
 }
 
 TEST_F(ApplyDeletionMask, EmptyMask)

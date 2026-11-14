@@ -11,10 +11,9 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/tdigest/tdigest.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/std/tuple>
 
@@ -47,11 +46,11 @@ void tdigest_sample_compare(cudf::tdigest::tdigest_column_view const& tdv,
     });
 
   auto d_expected_src =
-    cudf::detail::make_device_uvector_async(h_expected_src, stream, temporary_mr);
+    cudf::detail::make_device_buffer_async(h_expected_src, stream, temporary_mr);
   auto d_expected_mean =
-    cudf::detail::make_device_uvector_async(h_expected_mean, stream, temporary_mr);
+    cudf::detail::make_device_buffer_async(h_expected_mean, stream, temporary_mr);
   auto d_expected_weight =
-    cudf::detail::make_device_uvector_async(h_expected_weight, stream, temporary_mr);
+    cudf::detail::make_device_buffer_async(h_expected_weight, stream, temporary_mr);
 
   auto map                   = cudf::device_span<cudf::size_type const>(d_expected_src);
   auto sampled_result_mean   = std::move(cudf::gather(cudf::table_view({result_mean}),
@@ -82,7 +81,7 @@ std::unique_ptr<column> make_expected_tdigest_column(std::vector<expected_tdiges
                                                      cudf::memory_resources mr)
 {
   auto const temporary_mr        = mr.get_temporary_mr();
-  auto const temporary_resources = cudf::memory_resources{temporary_mr, temporary_mr};
+  auto const temporary_resources = mr.as_temporary();
   std::vector<std::unique_ptr<column>> tdigests;
 
   // make an individual digest

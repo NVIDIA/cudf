@@ -14,6 +14,7 @@
 #include <cudf/io/orc_types.hpp>
 
 #include <cuda/atomic>
+#include <cuda/cmath>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -64,8 +65,7 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
   CUDF_CUDA_TRY(
     cudaOccupancyMaxPotentialBlockSize(&min_grid_size, &block_size, rowgroup_char_counts_kernel));
   auto const num_blocks =
-    cudf::util::div_rounding_up_unsafe<unsigned int>(num_rowgroups, block_size) *
-    str_col_indexes.size();
+    cuda::ceil_div<unsigned int, unsigned int>(num_rowgroups, block_size) * str_col_indexes.size();
 
   rowgroup_char_counts_kernel<<<num_blocks, block_size, 0, stream.get()>>>(
     counts, orc_columns, rowgroup_bounds, str_col_indexes);
@@ -111,7 +111,7 @@ int blocks_per_dictionary(Kernel kernel,
   auto const budget =
     target_waves * blocks_per_sm * cudf::detail::num_multiprocessors() / num_dictionaries;
   auto const blocks_to_cover =
-    std::max(cudf::util::div_rounding_up_safe(max_dict_rows, block_size), size_type{1});
+    std::max(cudf::detail::div_rounding_up_safe(max_dict_rows, block_size), size_type{1});
   return std::clamp<int>(budget, 1, blocks_to_cover);
 }
 

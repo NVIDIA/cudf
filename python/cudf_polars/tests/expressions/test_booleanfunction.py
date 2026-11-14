@@ -13,10 +13,6 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_141,
-    POLARS_VERSION_LT_142,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -146,6 +142,33 @@ def test_boolean_finite(engine: pl.GPUEngine, expr):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").is_finite(),
+        pl.col("a").is_infinite(),
+        pl.col("a").is_nan(),
+        pl.col("a").is_not_nan(),
+        pl.col("b").is_finite(),
+        pl.col("b").is_infinite(),
+        pl.col("b").is_nan(),
+        pl.col("b").is_not_nan(),
+        pl.col("b").is_in(pl.Series([], dtype=pl.Int64())),
+    ],
+)
+def test_boolean_sliced_input(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    df = pl.LazyFrame(
+        {
+            "a": [0.0, None, 2.0, 3.0, float("inf"), float("nan"), None, 7.0, 8.0],
+            "b": [0, None, 2, 3, 4, 5, None, 7, 8],
+            "k": range(9),
+        }
+    )
+    q = df.sort("k").slice(3, 6).select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("closed", ["both", "left", "right", "none"])
 @pytest.mark.parametrize(
     "bounds", [(1, 2), (-1, 10), (11, 10), (pl.col("lo"), pl.col("hi"))]
@@ -213,8 +236,17 @@ def test_boolean_horizontal(engine: pl.GPUEngine, expr, has_nulls, wide):
         ),
         pytest.param(pl.col("a").is_in([1, 2, 3]), id="list_small"),
         pytest.param(pl.col("a").is_in([]), id="list_empty"),
+        pytest.param(pl.col("a").is_in(pl.col("e").last()), id="null_list_scalar"),
         pytest.param(pl.col("a").is_in([3, 4, 2]), id="list_shuffled"),
         pytest.param(pl.col("c").is_in([10, None, 11]), id="list_with_nulls"),
+        pytest.param(
+            pl.col("c").is_in([10, None, 11], nulls_equal=True),
+            id="list_with_nulls_nulls_equal",
+        ),
+        pytest.param(
+            pl.col("c").is_in([10, 11], nulls_equal=True),
+            id="list_without_nulls_nulls_equal",
+        ),
     ],
 )
 def test_boolean_is_in(engine: pl.GPUEngine, expr):
@@ -224,6 +256,7 @@ def test_boolean_is_in(engine: pl.GPUEngine, expr):
             "b": pl.Series([3, 4, 2], dtype=pl.Int64()),
             "c": pl.Series([1, None, 3], dtype=pl.Int64()),
             "d": pl.Series([10, None, 11], dtype=pl.Int64()),
+            "e": pl.Series([[1], [3], None], dtype=pl.List(pl.Int64())),
         }
     )
 
@@ -255,8 +288,7 @@ def test_boolean_is_in_raises_unsupported(engine: pl.GPUEngine):
 def test_boolean_is_in_with_nested_list_raises(engine: pl.GPUEngine):
     ldf = pl.LazyFrame({"x": [1, 2, 3], "y": [[1, 2], [2, 3], [4]]})
     q = ldf.select(pl.col("x").is_in(pl.col("y")))
-    with pytest.raises(AssertionError, match="DataFrames are different"):
-        assert_gpu_result_equal(q, engine=engine)
+    assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
 def test_expr_is_in_empty_list(engine: pl.GPUEngine):
@@ -268,6 +300,20 @@ def test_expr_is_in_empty_list(engine: pl.GPUEngine):
 def test_expr_is_in_empty_list_with_nulls(engine: pl.GPUEngine):
     ldf = pl.LazyFrame({"a": [1, None, 3]})
     q = ldf.select(pl.col("a").is_in([]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize("needles", [[1, 2, None, 4], [None, None], [1, 2]])
+def test_expr_is_in_only_null(engine: pl.GPUEngine, needles, nulls_equal):
+    ldf = pl.LazyFrame({"a": pl.Series(needles, dtype=pl.Int64())})
+    q = ldf.select(pl.col("a").is_in([None], nulls_equal=nulls_equal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": ["x", None, "y"]})
+    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=True))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -384,10 +430,6 @@ def test_boolean_is_close_invalid_dtype_raises(engine: pl.GPUEngine, dtype, data
     assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_141,
-    reason="has_nulls added to polars' BooleanFunction in 1.41",
-)
 @pytest.mark.parametrize("data", [[1, None, 3], [1, 2, 3], []])
 def test_boolean_has_nulls(engine: pl.GPUEngine, data):
     ldf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int64)})
@@ -395,10 +437,6 @@ def test_boolean_has_nulls(engine: pl.GPUEngine, data):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_141,
-    reason="is_empty added to polars' BooleanFunction in 1.41",
-)
 @pytest.mark.parametrize("data", [[1, 2, 3], [None, None], []])
 def test_boolean_is_empty(engine: pl.GPUEngine, data):
     ldf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Int64)})
@@ -419,9 +457,6 @@ def test_boolean_not_with_integers(engine: pl.GPUEngine, dtype, col):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_142, reason="IsSorted BooleanFunction was added in polars 1.42"
-)
 @pytest.mark.parametrize("descending", [False, True])
 @pytest.mark.parametrize("nulls_last", [False, True])
 def test_boolean_is_sorted(
@@ -446,3 +481,9 @@ def test_boolean_is_sorted(
     )
 
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_boolean_is_in_per_row_list_literal_raises(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"x": [1, 2, 3, 4]})
+    q = ldf.select(pl.col("x").is_in(pl.Series([[1], [2], [3], [4]])))
+    assert_ir_translation_raises(q, engine, NotImplementedError)

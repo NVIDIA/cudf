@@ -11,7 +11,7 @@ directory. No local `docker build` is required, and no GPU is required to build.
 ### Prerequisites
 
 1. Docker is installed and the current user can run `docker`.
-2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.11`.
+2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.12`.
 
 ### Local one-command shortcut
 
@@ -164,7 +164,7 @@ nvidia-docker run -it cudf-build:12.9.1-devel-rocky8 bash
 You can download the cuDF repo in the docker container or you can mount it into the container.
 Here I choose to download again in the container.
 ```bash
-git clone --recursive https://github.com/NVIDIA/cudf.git -b main
+git clone --recursive https://github.com/NVIDIA/cudf.git -b release/26.12
 ```
 
 ```bash

@@ -1,16 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Integration tests for structlog tracing with rapidsmpf."""
+"""Tests for streaming telemetry with rapidsmpf."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
-import subprocess
-import sys
-import textwrap
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -22,11 +19,12 @@ from rapidsmpf.streaming.chunks.arbitrary import ArbitraryChunk
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.ir import Empty
 from cudf_polars.streaming.actor_graph.io import Lineariser
-from cudf_polars.streaming.actor_graph.tracing import ActorTracer, send_chunk
-from cudf_polars.streaming.actor_graph.utils import shutdown_on_error
-from cudf_polars.utils.versions import POLARS_VERSION_LT_138
+from cudf_polars.streaming.actor_graph.tracing import (
+    ActorTracer,
+    record_channel_metrics,
+    send_chunk,
+)
 
 if TYPE_CHECKING:
     import pathlib
@@ -45,50 +43,30 @@ def chunk(spmd_engine: SPMDEngine) -> TableChunk:
 
 
 @pytest.mark.spmd
-def test_actor_tracer_counts_table_chunk_without_table_view(chunk: TableChunk) -> None:
+def test_actor_metrics_count_table_chunk_without_table_view(chunk: TableChunk) -> None:
     tracer = ActorTracer()
     tracer.add_chunk(chunk=chunk)
     assert tracer.chunk_count == 1
     assert tracer.row_count == 3
 
 
-@pytest.mark.spmd
-def test_send_and_recv_bytes(spmd_engine: SPMDEngine, chunk: TableChunk) -> None:
-    context = spmd_engine.context
-    ch = context.create_channel()
-    ir = Empty({})
+def test_record_channel_metrics_sums_all_memory_types() -> None:
+    input_channel = Mock()
+    input_channel.metrics.return_value.recv_bytes = {
+        MemoryType.DEVICE: 10,
+        MemoryType.HOST: 4,
+    }
+    output_channel = Mock()
+    output_channel.metrics.return_value.send_bytes = {
+        MemoryType.DEVICE: 7,
+        MemoryType.HOST: 3,
+    }
+    tracer = ActorTracer()
 
-    async def run() -> tuple[ActorTracer, ActorTracer]:
+    record_channel_metrics(tracer, chs_in=(input_channel,), chs_out=(output_channel,))
 
-        async def producer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_out=(ch,), trace_ir=ir) as tracer:
-                await send_chunk(context, ch, chunk, 11, tracer=tracer)
-                await ch.drain(context)
-            return tracer
-
-        async def consumer() -> ActorTracer:
-            async with shutdown_on_error(context, chs_in=(ch,), trace_ir=ir) as tracer:
-                msg = await ch.recv(context)
-                assert msg is not None
-            return tracer
-
-        async with asyncio.TaskGroup() as tg:
-            producer_tracer_task = tg.create_task(producer())
-            consumer_tracer_task = tg.create_task(consumer())
-
-        producer_tracer = await producer_tracer_task
-        consumer_tracer = await consumer_tracer_task
-
-        return producer_tracer, consumer_tracer
-
-    producer_tracer, consumer_tracer = asyncio.run(run())
-    metrics = ch.metrics()
-
-    assert producer_tracer.output_bytes == metrics.send_bytes
-    assert consumer_tracer.input_bytes == metrics.recv_bytes
-    assert producer_tracer.output_bytes[MemoryType.DEVICE] > 0
-    assert producer_tracer.output_bytes[MemoryType.HOST] == 0
-    assert producer_tracer.output_bytes[MemoryType.PINNED_HOST] == 0
+    assert sum(tracer.input_bytes.values()) == 14
+    assert sum(tracer.output_bytes.values()) == 10
 
 
 @pytest.mark.spmd
@@ -163,122 +141,12 @@ def test_lineariser_backpressures_each_producer(spmd_engine: SPMDEngine) -> None
     assert output == list(range(6))
 
 
-def test_structlog_streaming_actor_events_and_ir_types(timeout_seconds: int):
-    """Test actor tracing and IR-type logging in one isolated process."""
-    pytest.importorskip("structlog")
-    code = textwrap.dedent("""\
-    import polars as pl
-
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    df = pl.DataFrame({"x": range(100), "y": ["a", "b"] * 50})
-    q = df.lazy().filter(pl.col("x") > 50).group_by("y").agg(pl.col("x").sum())
-    with SPMDEngine(executor_options={"max_rows_per_partition": 10}) as engine:
-        q.collect(engine=engine)
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-
-    with subprocess.Popen(
-        [sys.executable, "-c", code],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    ) as proc:
-        result, _ = proc.communicate(timeout=timeout_seconds)
-
-    assert b"Streaming Actor" in result
-    assert b"scope=actor" in result or b"'scope': 'actor'" in result
-    assert b"actor_ir_id=" in result
-    assert b"actor_ir_type=" in result
-    assert b"chunk_count=" in result
-    assert b"ir_type=DataFrameScan" in result
-    assert b"ir_type=Filter" in result
-    assert b"ir_type=GroupBy" in result
-
-
-def test_io_tasks_wait_for_memory_admission(
-    tmp_path: pathlib.Path, timeout_seconds: int
-) -> None:
-    pytest.importorskip("structlog")
-
-    source = tmp_path / "data.parquet"
-    pl.DataFrame({"x": range(5_000)}).write_parquet(
-        source,
-        compression="uncompressed",
-        row_group_size=2_500,
-    )
-
-    code = textwrap.dedent(f"""\
-    import structlog
-    import polars as pl
-
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.JSONRenderer(),
-        ]
-    )
-    from cudf_polars.engine.options import StreamingOptions
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    q = pl.scan_parquet("{source}").select(pl.col("x").sum())
-    options = StreamingOptions(
-        allow_overbooking_by_default=False,
-        max_concurrent_io_tasks=2,
-        memory_reserve_timeout="10s",
-        spill_device_limit="65000",
-        target_partition_size=21_000,
-    )
-    with SPMDEngine.from_options(options) as engine:
-        q.collect(engine=engine)
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-
-    with subprocess.Popen(
-        [sys.executable, "-c", code],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    ) as proc:
-        result, _ = proc.communicate(timeout=timeout_seconds)
-        returncode = proc.returncode
-
-    assert returncode == 0, result.decode(errors="replace")
-
-    events = []
-    for line in result.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("event") == "IO Task":
-            events.append(event)
-
-    assert len(events) == 2, result.decode(errors="replace")
-    assert all(event["scope"] == "io_task" for event in events)
-    assert all(event["ir_type"] == "ParquetScanTask" for event in events)
-    assert all(
-        event["reservation_bytes"] == 2 * event["estimated_output_bytes"]
-        for event in events
-    )
-
-    first, second = sorted(events, key=lambda event: event["admitted"])
-    assert first["start"] <= first["admitted"] <= first["stop"]
-    assert second["start"] <= second["admitted"] <= second["stop"]
-    assert second["admitted"] >= first["stop"]
-
-
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="set_sorted lowers to unsupported hint ir"
-)
 def test_parquet_scan_ordering_trace_from_set_sorted(
-    tmp_path: pathlib.Path, timeout_seconds: int
+    tmp_path: pathlib.Path,
 ) -> None:
-    pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
+    from cudf_polars.engine.spmd import SPMDEngine
+    from cudf_polars.quent import QuentConfig
 
     source = tmp_path / "data.parquet"
     pl.DataFrame({"x": range(100), "y": range(100)}).write_parquet(
@@ -286,67 +154,48 @@ def test_parquet_scan_ordering_trace_from_set_sorted(
         row_group_size=10,
     )
 
-    code = textwrap.dedent(f"""\
-    import structlog
-    import polars as pl
-
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.JSONRenderer(),
-        ]
-    )
-    engine = pl.GPUEngine(
-        executor="streaming",
-        executor_options={{
-            "dynamic_planning": {{"infer_ordering": True}},
+    output_root = tmp_path / "quent-ordering"
+    with SPMDEngine(
+        executor_options={
+            "dynamic_planning": {"infer_ordering": True},
             "target_partition_size": 1024,
-        }},
-        raise_on_fail=True,
-    )
-    result = (
-        pl.scan_parquet({str(source)!r})
-        .set_sorted("x")
-        .select("x")
-        .collect(engine=engine)
-    )
-    print("RESULT_ROWS=" + str(result.height))
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-
-    with subprocess.Popen(
-        [sys.executable, "-c", code],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    ) as proc:
-        result, _ = proc.communicate(timeout=timeout_seconds)
-        returncode = proc.returncode
-
-    assert returncode == 0, result.decode(errors="replace")
-    assert b"RESULT_ROWS=100" in result
-
-    decisions = set()
-    for line in result.splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
+            "quent_context": QuentConfig(output_root=str(output_root)),
+        },
+    ) as engine:
+        result = (
+            pl.scan_parquet(source).set_sorted("x").select("x").collect(engine=engine)
+        )
+        event_root = engine._quent_output_root
+        assert event_root is not None
+    operator_events: dict[str, list[dict[str, Any]]] = {}
+    for path in event_root.rglob("*.ndjson"):
+        if path.parent.name != "Operator":
             continue
-        if event.get("event") == "Streaming Actor":
-            decisions.add((event.get("actor_ir_type"), event.get("decision")))
-
-    assert ("StreamingScan", "parquet_ordering") in decisions, result.decode(
-        errors="replace"
-    )
+        for line in path.read_text().splitlines():
+            event = json.loads(line)
+            operator_events.setdefault(event["id"], []).append(event["data"])
+    decisions: list[tuple[str, str]] = []
+    for events in operator_events.values():
+        type_name = next(
+            event["Declared"]["type_name"] for event in events if "Declared" in event
+        )
+        decisions.extend(
+            (type_name, event["Statistics"]["values"]["decision"])
+            for event in events
+            if "Statistics" in event
+        )
+    assert result.height == 100
+    assert ("StreamingScan", "parquet_ordering") in decisions
 
 
 def test_local_join_prefilter_trace_records_decision_and_effect(
-    tmp_path: pathlib.Path, timeout_seconds: int
+    tmp_path: pathlib.Path,
 ) -> None:
     """Trace a direct-input join prefilter selected through the public engine."""
-    pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
+    from cudf_polars.engine.spmd import SPMDEngine
+    from cudf_polars.quent import QuentConfig
+
     cases: list[tuple[str, bool, int, int, str, str, str, int | None, int | None]] = [
         ("bloom", False, 1, 32 * 1024 * 1024, "shuffle", "bloom", "bloom_fits", 1, 10),
         (
@@ -371,21 +220,18 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
             1,
             None,
         ),
+        (
+            "ordered-skip",
+            True,
+            1,
+            32 * 1024 * 1024,
+            "ordered_aligned",
+            "skip",
+            "target_not_redistributed",
+            None,
+            None,
+        ),
     ]
-    if not POLARS_VERSION_LT_138:
-        cases.append(
-            (
-                "ordered-skip",
-                True,
-                1,
-                32 * 1024 * 1024,
-                "ordered_aligned",
-                "skip",
-                "target_not_redistributed",
-                None,
-                None,
-            )
-        )
 
     domain_path = tmp_path / "domain.parquet"
     target_path = tmp_path / "target.parquet"
@@ -401,58 +247,72 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
             "value": range(1_000),
         }
     ).write_parquet(target_path)
-    code = textwrap.dedent(f"""\
-    import json
-
-    import polars as pl
-    import rmm
-    import structlog
-
-    rmm.mr.set_current_device_resource(rmm.mr.ManagedMemoryResource())
-
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    cases = {cases!r}
-    records = {{}}
-    for case_id, ordered, broadcast_limit, bloom_filter_max_size, *_ in cases:
+    records = {}
+    output_root = tmp_path / "quent-local-prefilters"
+    for (
+        case_id,
+        ordered,
+        broadcast_limit,
+        bloom_filter_max_size,
+        expected_join_strategy,
+        *_,
+    ) in cases:
         if ordered:
-            domain = pl.scan_parquet({str(domain_path)!r}).filter("active").select("key").set_sorted("key")
-            target = pl.scan_parquet({str(target_path)!r}).set_sorted("key")
+            domain = (
+                pl.scan_parquet(domain_path)
+                .filter("active")
+                .select("key")
+                .set_sorted("key")
+            )
+            target = pl.scan_parquet(target_path).set_sorted("key")
         else:
-            domain = pl.LazyFrame({{"key": [1, 99], "active": [True, False]}}).filter("active").select("key")
-            target = pl.LazyFrame({{"key": [i % 100 for i in range(1_000)], "value": range(1_000)}})
-        options = {{
-            "join_filter_pushdown": {{"threshold": 0.5, "bloom_filter_max_size": bloom_filter_max_size}},
+            domain = (
+                pl.LazyFrame({"key": [1, 99], "active": [True, False]})
+                .filter("active")
+                .select("key")
+            )
+            target = pl.LazyFrame(
+                {
+                    "key": [i % 100 for i in range(1_000)],
+                    "value": range(1_000),
+                }
+            )
+        options = {
+            "join_filter_pushdown": {
+                "threshold": 0.5,
+                "bloom_filter_max_size": bloom_filter_max_size,
+            },
             "broadcast_limit": broadcast_limit,
             "target_partition_size": 1 << 30 if ordered else 64,
             "max_rows_per_partition": 1_000_000 if ordered else 100,
-        }}
+            "quent_context": QuentConfig(output_root=str(output_root / case_id)),
+        }
         with SPMDEngine(executor_options=options) as engine:
-            with structlog.testing.capture_logs() as logs:
-                result = domain.join(target, on="key").collect(engine=engine)
-        (event,) = (log for log in logs if log.get("scope") == "actor" and "join_prefilters" in log)
-        records[case_id] = {{
+            result = domain.join(target, on="key").collect(engine=engine)
+            event_root = engine._quent_output_root
+            assert event_root is not None
+        statistics = []
+        prefilters = []
+        for path in event_root.rglob("*.ndjson"):
+            if path.parent.name != "Operator":
+                continue
+            for line in path.read_text().splitlines():
+                event = json.loads(line)["data"]
+                if "Statistics" in event:
+                    statistics.append(event["Statistics"]["values"])
+                if "RuntimePrefilterStatistics" in event:
+                    prefilters.append(event["RuntimePrefilterStatistics"]["values"])
+        (prefilter,) = prefilters
+        (join_statistics,) = (
+            values
+            for values in statistics
+            if values["decision"] == expected_join_strategy
+        )
+        records[case_id] = {
             "result_rows": result.height,
-            "join_strategy": event["decision"],
-            "prefilter": event["join_prefilters"][0],
-        }}
-    print("PREFILTER_TRACE=" + json.dumps(records))
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-    result = subprocess.check_output(
-        [sys.executable, "-c", code],
-        env=env,
-        stderr=subprocess.STDOUT,
-        timeout=timeout_seconds,
-    )
-    (payload,) = (
-        line.removeprefix(b"PREFILTER_TRACE=")
-        for line in result.splitlines()
-        if line.startswith(b"PREFILTER_TRACE=")
-    )
-    records = json.loads(payload)
+            "join_strategy": join_statistics["decision"],
+            "prefilter": prefilter,
+        }
     for (
         case_id,
         _,
@@ -477,8 +337,8 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
             expected_prefilter["domain_rows"] = domain_rows
         assert record["prefilter"].items() >= expected_prefilter.items()
         if output_rows is None:
-            assert "input_rows" not in record["prefilter"]
-            assert "output_rows" not in record["prefilter"]
+            assert record["prefilter"]["input_rows"] is None
+            assert record["prefilter"]["output_rows"] is None
         else:
             assert record["prefilter"]["estimated_cardinality"] == 1
             assert record["prefilter"]["input_rows"] == 1_000
@@ -486,53 +346,74 @@ def test_local_join_prefilter_trace_records_decision_and_effect(
 
 
 def test_standalone_prefilter_trace_records_decision_and_effect(
-    timeout_seconds: int,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Trace a prefilter pushed below an intervening join."""
-    pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
+    from cudf_polars.engine.spmd import SPMDEngine
+    from cudf_polars.quent import QuentConfig
+
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 20),
         ("exact", 64, 0, "broadcast_semi_join", "exact_domain_fits", 20),
         ("skip", 1, 0, "skip", "no_viable_filter", None),
     ]
-    code = textwrap.dedent(f"""\
-    import json
-
-    import polars as pl
-    import rmm
-    import structlog
-
-    rmm.mr.set_current_device_resource(rmm.mr.ManagedMemoryResource())
-
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    records = {{}}
-    for case_id, broadcast_limit, bloom_filter_max_size, *_ in {cases!r}:
-        domain = pl.LazyFrame({{"p_partkey": range(10), "active": [True] * 2 + [False] * 8}}).filter("active").select("p_partkey")
-        target = pl.LazyFrame({{"l_partkey": [i % 10 for i in range(100)], "bridge_key": range(100), "value": range(100)}}).join(pl.LazyFrame({{"bridge_key": range(100)}}), on="bridge_key").with_columns((pl.col("value") + 1).alias("derived"))
-        options = {{"join_filter_pushdown": {{"threshold": 0.5, "bloom_filter_max_size": bloom_filter_max_size}}, "broadcast_limit": broadcast_limit, "target_partition_size": 64, "max_rows_per_partition": 10}}
+    records = {}
+    output_root = tmp_path / "quent-standalone-prefilters"
+    for case_id, broadcast_limit, bloom_filter_max_size, *_ in cases:
+        domain = (
+            pl.LazyFrame(
+                {
+                    "p_partkey": range(10),
+                    "active": [True] * 2 + [False] * 8,
+                }
+            )
+            .filter("active")
+            .select("p_partkey")
+        )
+        target = (
+            pl.LazyFrame(
+                {
+                    "l_partkey": [i % 10 for i in range(100)],
+                    "bridge_key": range(100),
+                    "value": range(100),
+                }
+            )
+            .join(pl.LazyFrame({"bridge_key": range(100)}), on="bridge_key")
+            .with_columns((pl.col("value") + 1).alias("derived"))
+        )
+        options = {
+            "join_filter_pushdown": {
+                "threshold": 0.5,
+                "bloom_filter_max_size": bloom_filter_max_size,
+            },
+            "broadcast_limit": broadcast_limit,
+            "target_partition_size": 64,
+            "max_rows_per_partition": 10,
+            "quent_context": QuentConfig(output_root=str(output_root / case_id)),
+        }
         with SPMDEngine(executor_options=options) as engine:
-            with structlog.testing.capture_logs() as logs:
-                result = domain.join(target, left_on="p_partkey", right_on="l_partkey").collect(engine=engine)
-        (event,) = (log for log in logs if log.get("scope") == "actor" and log.get("prefilter", {{}}).get("placement") == "standalone")
-        records[case_id] = {{"result_rows": result.height, "decision": event["decision"], "prefilter": event["prefilter"]}}
-    print("PREFILTER_TRACE=" + json.dumps(records))
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-    result = subprocess.check_output(
-        [sys.executable, "-c", code],
-        env=env,
-        stderr=subprocess.STDOUT,
-        timeout=timeout_seconds,
-    )
-    (payload,) = (
-        line.removeprefix(b"PREFILTER_TRACE=")
-        for line in result.splitlines()
-        if line.startswith(b"PREFILTER_TRACE=")
-    )
-    records = json.loads(payload)
+            result = domain.join(
+                target, left_on="p_partkey", right_on="l_partkey"
+            ).collect(engine=engine)
+            event_root = engine._quent_output_root
+            assert event_root is not None
+        prefilters = []
+        for path in event_root.rglob("*.ndjson"):
+            if path.parent.name != "Operator":
+                continue
+            for line in path.read_text().splitlines():
+                event = json.loads(line)["data"]
+                if "RuntimePrefilterStatistics" in event:
+                    value = event["RuntimePrefilterStatistics"]["values"]
+                    if value["placement"] == "standalone":
+                        prefilters.append(value)
+        (prefilter,) = prefilters
+        records[case_id] = {
+            "result_rows": result.height,
+            "decision": prefilter["method"],
+            "prefilter": prefilter,
+        }
     for case_id, _, _, method, reason, output_rows in cases:
         record = records[case_id]
         assert record["result_rows"] == 20
@@ -547,8 +428,8 @@ def test_standalone_prefilter_trace_records_decision_and_effect(
             }.items()
         )
         if output_rows is None:
-            assert "input_rows" not in record["prefilter"]
-            assert "output_rows" not in record["prefilter"]
+            assert record["prefilter"]["input_rows"] is None
+            assert record["prefilter"]["output_rows"] is None
         else:
             assert record["prefilter"]["estimated_cardinality"] == 2
             assert record["prefilter"]["input_rows"] == 100
@@ -556,10 +437,13 @@ def test_standalone_prefilter_trace_records_decision_and_effect(
 
 
 def test_indirect_prefilter_trace_records_decision_and_effect(
-    timeout_seconds: int,
+    tmp_path: pathlib.Path,
 ) -> None:
     """Trace a composite prefilter pushed below an intervening join."""
-    pytest.importorskip("structlog")
+    pytest.importorskip("cudf_polars_quent")
+    from cudf_polars.engine.spmd import SPMDEngine
+    from cudf_polars.quent import QuentConfig
+
     cases = [
         ("bloom", 1, 32 * 1024 * 1024, "bloom", "bloom_fits", 15),
         ("exact", 512, 0, "broadcast_semi_join", "exact_domain_fits", 15),
@@ -572,47 +456,79 @@ def test_indirect_prefilter_trace_records_decision_and_effect(
             15,
         ),
     ]
-    code = textwrap.dedent(f"""\
-    import json
-
-    import polars as pl
-    import rmm
-    import structlog
-
-    rmm.mr.set_current_device_resource(rmm.mr.ManagedMemoryResource())
-
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    records = {{}}
-    for case_id, broadcast_limit, bloom_filter_max_size, *_ in {cases!r}:
-        nation = pl.LazyFrame({{"n_nationkey": range(10), "active": [True] * 5 + [False] * 5}}).filter("active").select("n_nationkey")
-        orders = pl.LazyFrame({{"o_orderkey": range(90), "n_nationkey": [i % 10 for i in range(90)]}})
-        lineitem = pl.LazyFrame({{"l_orderkey": [i % 90 for i in range(180)], "l_suppkey": [i % 60 for i in range(180)]}})
-        supplier = pl.LazyFrame({{"s_suppkey": range(30), "s_nationkey": [i % 10 for i in range(30)]}})
-        query = nation.join(orders, on="n_nationkey").join(lineitem, left_on="o_orderkey", right_on="l_orderkey", maintain_order="left").join(supplier, left_on=("l_suppkey", "n_nationkey"), right_on=("s_suppkey", "s_nationkey"))
-        options = {{"join_filter_pushdown": {{"threshold": 0.5, "bloom_filter_max_size": bloom_filter_max_size}}, "broadcast_limit": broadcast_limit, "target_partition_size": 64, "max_rows_per_partition": 100}}
+    records = {}
+    output_root = tmp_path / "quent-indirect-prefilters"
+    for case_id, broadcast_limit, bloom_filter_max_size, *_ in cases:
+        nation = (
+            pl.LazyFrame(
+                {
+                    "n_nationkey": range(10),
+                    "active": [True] * 5 + [False] * 5,
+                }
+            )
+            .filter("active")
+            .select("n_nationkey")
+        )
+        orders = pl.LazyFrame(
+            {
+                "o_orderkey": range(90),
+                "n_nationkey": [i % 10 for i in range(90)],
+            }
+        )
+        lineitem = pl.LazyFrame(
+            {
+                "l_orderkey": [i % 90 for i in range(180)],
+                "l_suppkey": [i % 60 for i in range(180)],
+            }
+        )
+        supplier = pl.LazyFrame(
+            {
+                "s_suppkey": range(30),
+                "s_nationkey": [i % 10 for i in range(30)],
+            }
+        )
+        query = (
+            nation.join(orders, on="n_nationkey")
+            .join(
+                lineitem,
+                left_on="o_orderkey",
+                right_on="l_orderkey",
+                maintain_order="left",
+            )
+            .join(
+                supplier,
+                left_on=("l_suppkey", "n_nationkey"),
+                right_on=("s_suppkey", "s_nationkey"),
+            )
+        )
+        options = {
+            "join_filter_pushdown": {
+                "threshold": 0.5,
+                "bloom_filter_max_size": bloom_filter_max_size,
+            },
+            "broadcast_limit": broadcast_limit,
+            "target_partition_size": 64,
+            "max_rows_per_partition": 100,
+            "quent_context": QuentConfig(output_root=str(output_root / case_id)),
+        }
         with SPMDEngine(executor_options=options) as engine:
-            with structlog.testing.capture_logs() as logs:
-                result = query.collect(engine=engine)
-        (event,) = (log for log in logs if log.get("scope") == "actor" and log.get("prefilter", {{}}).get("placement") == "standalone" and log.get("prefilter", {{}}).get("target_on") == ["l_suppkey"])
-        records[case_id] = {{"result_rows": result.height, "prefilter": event["prefilter"]}}
-    print("PREFILTER_TRACE=" + json.dumps(records))
-    """)
-
-    env = os.environ.copy()
-    env["CUDF_POLARS_LOG_TRACES"] = "1"
-    result = subprocess.check_output(
-        [sys.executable, "-c", code],
-        env=env,
-        stderr=subprocess.STDOUT,
-        timeout=timeout_seconds,
-    )
-    (payload,) = (
-        line.removeprefix(b"PREFILTER_TRACE=")
-        for line in result.splitlines()
-        if line.startswith(b"PREFILTER_TRACE=")
-    )
-    records = json.loads(payload)
+            result = query.collect(engine=engine)
+            event_root = engine._quent_output_root
+            assert event_root is not None
+        prefilters = []
+        for path in event_root.rglob("*.ndjson"):
+            if path.parent.name != "Operator":
+                continue
+            for line in path.read_text().splitlines():
+                event = json.loads(line)["data"]
+                if "RuntimePrefilterStatistics" in event:
+                    value = event["RuntimePrefilterStatistics"]["values"]
+                    if value["placement"] == "standalone" and value["target_on"] == [
+                        "l_suppkey"
+                    ]:
+                        prefilters.append(value)
+        (prefilter,) = prefilters
+        records[case_id] = {"result_rows": result.height, "prefilter": prefilter}
     for case_id, _, _, method, reason, domain_rows in cases:
         record = records[case_id]
         assert record["result_rows"] == 45
@@ -632,31 +548,3 @@ def test_indirect_prefilter_trace_records_decision_and_effect(
             assert record["prefilter"]["output_rows"] == 45
         else:
             assert 45 <= record["prefilter"]["output_rows"] < 180
-
-
-def test_structlog_disabled_by_default(timeout_seconds: int):
-    """Test that structlog does NOT emit events when CUDF_POLARS_LOG_TRACES is not set."""
-    pytest.importorskip("structlog")
-    code = textwrap.dedent("""\
-    import polars as pl
-
-    from cudf_polars.engine.spmd import SPMDEngine
-
-    df = pl.DataFrame({"x": range(10), "y": ["a", "b"] * 5})
-    q = df.lazy().filter(pl.col("x") > 5)
-    with SPMDEngine(executor_options={"max_rows_per_partition": 5}) as engine:
-        q.collect(engine=engine)
-    """)
-
-    env = os.environ.copy()
-    env.pop("CUDF_POLARS_LOG_TRACES", None)
-
-    with subprocess.Popen(
-        [sys.executable, "-c", code],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    ) as proc:
-        result, _ = proc.communicate(timeout=timeout_seconds)
-
-    assert b"Streaming Actor" not in result

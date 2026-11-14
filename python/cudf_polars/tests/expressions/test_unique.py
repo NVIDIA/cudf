@@ -24,6 +24,42 @@ def test_unique_counts(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "n_values, n_nulls",
+    [(6, 2), (0, 3), (1, 0), (0, 0)],
+    ids=["values_and_nulls", "all_nulls", "one_row", "empty"],
+)
+@pytest.mark.parametrize("dtype", ["int", "float"])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+def test_unique_counts_sorted(
+    engine: pl.GPUEngine,
+    *,
+    n_values: int,
+    n_nulls: int,
+    dtype: str,
+    descending: bool,
+    nulls_last: bool,
+) -> None:
+    if dtype == "float":
+        nan = float("nan")
+        ascending_values = [1.0, 2.0, 2.0, 3.0, nan, nan]
+        polars_dtype: pl.DataType = pl.Float64()
+    else:
+        ascending_values = [1, 2, 2, 3, 3, 3]
+        polars_dtype = pl.Int64()
+    values = ascending_values[:n_values]
+    if descending:
+        values.reverse()
+    nulls = [None] * n_nulls
+    df = pl.LazyFrame(
+        {"a": values + nulls if nulls_last else nulls + values},
+        schema={"a": polars_dtype},
+    )
+    q = df.select(pl.col("a").set_sorted(descending=descending).unique_counts())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("maintain_order", [False, True], ids=["unstable", "stable"])
 @pytest.mark.parametrize("pre_sorted", [False, True], ids=["unsorted", "sorted"])
 def test_unique(engine: pl.GPUEngine, maintain_order, pre_sorted):

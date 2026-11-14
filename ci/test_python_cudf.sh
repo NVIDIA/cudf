@@ -8,6 +8,13 @@ RUN_PYLIBCUDF_TESTS="${RUN_PYLIBCUDF_TESTS:-true}"
 RUN_CUDF_TESTS="${RUN_CUDF_TESTS:-true}"
 RUN_CUDF_BENCHMARK_TESTS="${RUN_CUDF_BENCHMARK_TESTS:-true}"
 
+pylibcudf_timeout=40m
+cudf_timeout=40m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+  pylibcudf_timeout=10m
+  cudf_timeout=20m
+fi
+
 # Support invoking test_python_cudf.sh outside the script directory
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
@@ -23,7 +30,7 @@ set +e
 
 if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" ]]; then
   rapids-logger "pytest pylibcudf"
-  timeout 40m ./ci/run_pylibcudf_pytests.sh \
+  timeout "${pylibcudf_timeout}" ./ci/run_pylibcudf_pytests.sh \
     --junitxml="${RAPIDS_TESTS_DIR}/junit-pylibcudf.xml" \
     --numprocesses=8 \
     --dist=worksteal \
@@ -40,7 +47,7 @@ version_gte() {
 
 if [[ "${RUN_CUDF_TESTS}" == "true" ]]; then
   rapids-logger "pytest cudf"
-  timeout 40m ./ci/run_cudf_pytests.sh \
+  timeout "${cudf_timeout}" ./ci/run_cudf_pytests.sh \
     --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf.xml" \
     --numprocesses=8 \
     --dist=worksteal \

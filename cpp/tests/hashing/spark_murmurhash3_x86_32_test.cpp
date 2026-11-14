@@ -754,7 +754,7 @@ TYPED_TEST(SparkMurmurHashTestChronoTyped, NestedChronoValues)
   using T   = TypeParam;
   using LCW = cudf::test::lists_column_wrapper<T, typename T::rep>;
   cudf::test::fixed_width_column_wrapper<T, typename T::rep> column{0, 1, -1};
-  LCW lists{LCW{0}, LCW{1}, LCW{-1}};
+  LCW lists{{0}, {1}, {-1}};
   cudf::test::structs_column_wrapper const structs{{column}};
   cudf::test::structs_column_wrapper const structs_of_lists{{lists}};
 

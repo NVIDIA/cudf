@@ -3,11 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "sort_radix.cuh"
+
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
@@ -19,31 +21,6 @@
 namespace cudf {
 namespace detail {
 namespace {
-
-template <typename F>
-struct float_pair {
-  size_type s;  // index bias for sorting nan
-  F f;          // actual float value to sort
-};
-
-template <typename F>
-struct float_decomposer {
-  __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
-};
-
-template <typename F>
-struct float_to_pair_fn {
-  F const* fs;
-  __device__ float_pair<F> operator()(cudf::size_type idx) const
-  {
-    auto const f = fs[idx];
-    auto const s = (isnan(f) * (idx + 1));  // multiplier helps keep the sort stable for NaNs
-    return float_pair<F>{s, f};
-  }
-};
 
 /**
  * @brief Sorts fixed-width columns using cub radix sort
@@ -84,16 +61,18 @@ struct sort_radix_fn {
   void operator()()
     requires(cudf::is_floating_point<T>())
   {
-    auto pair_in  = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_in     = pair_in.begin();
-    auto pair_out = rmm::device_uvector<float_pair<T>>(input.size(), stream);
-    auto d_out    = pair_out.begin();
+    auto pair_in = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_in     = pair_in.data();
+    auto pair_out = cuda::device_buffer<float_pair<T>>(
+      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    auto d_out = pair_out.data();
 
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_in,
-                      float_to_pair_fn<T>{input.begin<T>()});
+                      float_to_pair_fn<T>{input.begin<T>(), input.size(), ascending});
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;
@@ -156,7 +135,7 @@ bool is_radix_sortable(column_view const& column)
 std::unique_ptr<column> sort_radix(column_view const& input,
                                    bool ascending,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   auto result   = std::make_unique<column>(input, stream, mr);
   auto out_view = result->mutable_view();

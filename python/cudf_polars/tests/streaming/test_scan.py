@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import functools
 import math
 from typing import TYPE_CHECKING, cast
 
@@ -38,7 +37,6 @@ from cudf_polars.streaming.io import (
     ScanTask,
     StreamingScan,
     expand_scan_for_rank,
-    hybrid_scan_eligible,
     scan_partition_plan,
 )
 from cudf_polars.streaming.parallel import lower_ir_graph
@@ -51,7 +49,6 @@ from cudf_polars.utils.config import (
     MaxConcurrentIOTasks,
     ParquetOptions,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_142
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -778,6 +775,7 @@ def test_scan_path_mismatch_raises() -> None:
             scan.parquet_options,
             scan.hive_parts,
             [],
+            None,
             context=ctx,
         )
 
@@ -815,6 +813,7 @@ def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
         2,
         scan.parquet_options,
         scan.hive_parts,
+        scan.lake_options,
         context=IRExecutionContext(),
     )
 
@@ -1064,12 +1063,6 @@ def test_scan_partition_plan_nearest(
     assert plan.flavor == expected_flavor
 
 
-requires_hive_ir = pytest.mark.skipif(
-    POLARS_VERSION_LT_142,
-    reason="hive::HivePartitionedDf not exposed in the logical plan before 1.42",
-)
-
-
 @pytest.fixture
 def hive_root(tmp_path: Path) -> Path:
     """Hive dataset with several row groups per file, to allow file splitting."""
@@ -1083,14 +1076,17 @@ def hive_root(tmp_path: Path) -> Path:
     return root
 
 
-@requires_hive_ir
 @pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
+@pytest.mark.parametrize("use_hybrid_scan", [True, False])
 @pytest.mark.parametrize(
     "query",
     [
         lambda lf: lf,
         lambda lf: lf.select("part"),
         lambda lf: lf.filter(pl.col("x") > 400),
+        lambda lf: lf.filter(pl.col("x") > 400).select("part"),
+        lambda lf: lf.filter((pl.col("x") > 400) & (pl.col("part") == 2)),
+        lambda lf: lf.filter(pl.col("part") == 2),
     ],
 )
 def test_hive_partitioned_streaming_scan(
@@ -1098,15 +1094,19 @@ def test_hive_partitioned_streaming_scan(
     streaming_engine_factory: Callable[..., StreamingEngine],
     target_partition_size: int,
     query,
+    *,
+    use_hybrid_scan: bool,
 ) -> None:
     streaming_engine = streaming_engine_factory(
-        StreamingOptions(target_partition_size=target_partition_size),
+        StreamingOptions(
+            target_partition_size=target_partition_size,
+            parquet_options={"use_hybrid_scan": use_hybrid_scan},
+        ),
     )
     q = query(pl.scan_parquet(hive_root, hive_partitioning=True))
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_hive_partitioned_split_tasks_slice_partitions(
     hive_root: Path, streaming_engine: StreamingEngine
 ) -> None:
@@ -1139,7 +1139,6 @@ def test_hive_partitioned_split_tasks_slice_partitions(
     ]
 
 
-@requires_hive_ir
 def test_hive_partitioned_fused_tasks_slice_partitions(
     hive_root: Path, streaming_engine: StreamingEngine
 ) -> None:
@@ -1162,29 +1161,6 @@ def test_hive_partitioned_fused_tasks_slice_partitions(
     assert [parts.df.rows() for parts in hive_parts] == [[(0,), (1,)], [(2,)]]
 
 
-@requires_hive_ir
-def test_hive_partitioned_scan_skips_hybrid_scan(
-    hive_root: Path, streaming_engine: StreamingEngine
-) -> None:
-    # The hybrid reader cannot keep hive columns out of what it asks the file
-    # for, so a hive scan must fall back to the regular reader.
-    q = pl.scan_parquet(hive_root, hive_partitioning=True).filter(pl.col("x") > 400)
-    scan = cast("Scan", Translator(q._ldf.visit(), streaming_engine).translate_ir())
-    assert scan.hive_parts is not None
-    assert scan.predicate is not None
-
-    eligibility = functools.partial(
-        hybrid_scan_eligible,
-        ParquetOptions(use_hybrid_scan=True),
-        row_index=None,
-        include_file_paths=None,
-        predicate=scan.predicate,
-    )
-    assert eligibility(hive_parts=None) is True
-    assert eligibility(hive_parts=scan.hive_parts) is False
-
-
-@requires_hive_ir
 @pytest.mark.parametrize("target_partition_size", [1_000, 1_000_000])
 def test_hive_only_projection_with_prefetched_metadata(
     hive_root: Path,
@@ -1198,22 +1174,4 @@ def test_hive_only_projection_with_prefetched_metadata(
         ),
     )
     q = pl.scan_parquet(hive_root, hive_partitioning=True).select("part")
-    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
-
-
-@requires_hive_ir
-def test_hive_partitioned_scan_with_hybrid_scan_enabled(
-    hive_root: Path,
-    streaming_engine_factory: Callable[..., StreamingEngine],
-) -> None:
-    streaming_engine = streaming_engine_factory(
-        StreamingOptions(
-            target_partition_size=1_000,
-            parquet_options={
-                "prefetch_file_metadata": True,
-                "use_hybrid_scan": True,
-            },
-        ),
-    )
-    q = pl.scan_parquet(hive_root, hive_partitioning=True).filter(pl.col("x") > 400)
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)

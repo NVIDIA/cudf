@@ -14,9 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <exception>
 #include <functional>
 #include <future>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -365,6 +365,31 @@ class parquet_field_struct : public parquet_field {
 };
 
 /**
+ * @brief Functor to read a LogicalType and its payload from CompactProtocolReader
+ *
+ * @return true if the field was read, false if skipped on a type mismatch
+ */
+class parquet_field_logical_type : public parquet_field {
+  cuda::std::optional<LogicalType>& val;
+  LogicalTypePayload& payload;
+
+ public:
+  parquet_field_logical_type(int f, cuda::std::optional<LogicalType>& v, LogicalTypePayload& p)
+    : parquet_field(f), val(v), payload(p)
+  {
+  }
+
+  inline bool operator()(CompactProtocolReader* cpr, int field_type)
+  {
+    if (not cpr->check_field_type(field_type, FieldType::STRUCT)) { return false; }
+    LogicalType v;
+    cpr->read(&v, &payload);
+    val = v;
+    return true;
+  }
+};
+
+/**
  * @brief Functor to read optional structures in unions
  *
  * @return true if the field was read, false if skipped on a type mismatch
@@ -456,66 +481,53 @@ class parquet_field_struct_list : public parquet_field {
       auto const items_per_task = n / num_tasks;
       auto const remainder      = n % num_tasks;
 
-      std::vector<std::future<void>> tasks;
-      tasks.reserve(num_tasks);
-
       // Size once up front, then fill by index below: workers read already-filled slots while the
       // main thread fills later ones, so a size-mutating emplace_back would be a data race.
       std::vector<cudf::host_span<uint8_t const>> all_ranges;
       all_ranges.resize(n);
 
-      // Wait for every task before all_ranges/val die on any exit path: a throw during collection
-      // must not let a worker read freed memory (host-pool futures do not block on destruction).
-      try {
-        uint32_t struct_idx = 0;
-        for (uint32_t task_id = 0; task_id < num_tasks; ++task_id) {
-          auto const task_size = items_per_task + (task_id < remainder ? 1 : 0);
-          auto const start_idx = std::min(n, struct_idx);
-          auto const end_idx   = std::min(n, start_idx + task_size);
+      // Declared after all_ranges so that every task is waited on before all_ranges dies on any
+      // exit path (host-pool futures do not block on destruction)
+      std::vector<std::future<void>> tasks;
+      cudf::detail::futures_wait_guard tasks_guard{tasks};
+      tasks.reserve(num_tasks);
 
-          if (start_idx >= end_idx) { break; }
+      uint32_t struct_idx = 0;
+      for (uint32_t task_id = 0; task_id < num_tasks; ++task_id) {
+        auto const task_size = items_per_task + (task_id < remainder ? 1 : 0);
+        auto const start_idx = std::min(n, struct_idx);
+        auto const end_idx   = std::min(n, start_idx + task_size);
 
-          // Collect struct ranges for the next task
-          for (auto i = start_idx; i < end_idx; ++i) {
-            uint8_t const* const start = cpr->m_cur;
-            cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
-            all_ranges[i] =
-              cudf::host_span<uint8_t const>{start, static_cast<size_t>(cpr->m_cur - start)};
-          }
+        if (start_idx >= end_idx) { break; }
 
-          // Launch task immediately to parse the structs in parallel while the main thread collects
-          // the remaining ranges
-          tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
-            [&val = this->val, &all_ranges, start_idx, end_idx, mode]() {
-              CompactProtocolReader local_cpr{nullptr, 0, mode};
-              // end_idx alone bounds the loop: all_ranges[start_idx, end_idx) is fully populated
-              // before this task launches, so no concurrent read of all_ranges.size() is needed.
-              for (size_t i = start_idx; i < end_idx; ++i) {
-                local_cpr.init(all_ranges[i].data(), all_ranges[i].size());
-                local_cpr.read(&val[i]);
-              }
-            }));
-
-          struct_idx = end_idx;
+        // Collect struct ranges for the next task
+        for (auto i = start_idx; i < end_idx; ++i) {
+          uint8_t const* const start = cpr->m_cur;
+          cpr->skip_struct_field(static_cast<int>(FieldType::STRUCT));
+          all_ranges[i] =
+            cudf::host_span<uint8_t const>{start, static_cast<size_t>(cpr->m_cur - start)};
         }
-      } catch (...) {
-        for (auto& task : tasks) {
-          task.wait();
-        }
-        throw;
+
+        // Launch task immediately to parse the structs in parallel while the main thread collects
+        // the remaining ranges
+        tasks.emplace_back(cudf::detail::host_worker_pool().submit_task(
+          [&val = this->val, &all_ranges, start_idx, end_idx, mode]() {
+            CompactProtocolReader local_cpr{nullptr, 0, mode};
+            // end_idx alone bounds the loop: all_ranges[start_idx, end_idx) is fully populated
+            // before this task launches, so no concurrent read of all_ranges.size() is needed.
+            for (size_t i = start_idx; i < end_idx; ++i) {
+              local_cpr.init(all_ranges[i].data(), all_ranges[i].size());
+              local_cpr.read(&val[i]);
+            }
+          }));
+
+        struct_idx = end_idx;
       }
-      // Join EVERY task before leaving, then rethrow the first failure: task.get() throws on a
-      // strict-mode mismatch, and bailing out of this loop mid-way would abandon the remaining
-      // un-joined tasks, whose lambdas still reference all_ranges/val (use-after-free at exit).
-      std::exception_ptr first_error;
+      // Rethrows the first failure (e.g. a strict-mode mismatch); the guard waits for the
+      // remaining tasks, whose lambdas reference all_ranges/val, while unwinding
       for (auto& task : tasks) {
-        try {
-          task.get();
-        } catch (...) {
-          if (!first_error) { first_error = std::current_exception(); }
-        }
+        task.get();
       }
-      if (first_error) { std::rethrow_exception(first_error); }
     } else {
       // For small numbers of elements, use sequential processing to avoid overhead
       std::for_each(val.begin(), val.end(), [&cpr](auto& elem) { cpr->read(&elem); });
@@ -726,13 +738,18 @@ void CompactProtocolReader::read(FileMetaData* f)
 {
   using optional_list_column_order =
     parquet_field_optional<std::vector<ColumnOrder>, parquet_field_struct_list<ColumnOrder>>;
-  auto op = std::make_tuple(parquet_field_int32(1, f->version),
+  using optional_struct_blob =
+    parquet_field_optional<std::vector<uint8_t>, parquet_field_struct_blob>;
+  using optional_binary = parquet_field_optional<std::vector<uint8_t>, parquet_field_binary>;
+  auto op               = std::make_tuple(parquet_field_int32(1, f->version),
                             parquet_field_struct_list(2, f->schema),
                             parquet_field_int64(3, f->num_rows),
                             parquet_field_struct_list(4, f->row_groups),
                             parquet_field_struct_list(5, f->key_value_metadata),
                             parquet_field_string(6, f->created_by),
-                            optional_list_column_order(7, f->column_orders));
+                            optional_list_column_order(7, f->column_orders),
+                            optional_struct_blob(8, f->encryption_algorithm),
+                            optional_binary(9, f->footer_signing_key_metadata));
   function_builder(this, op);
   // Callers can check overread() after schema-init so a footer with no schema reports the
   // specific "Cannot initialize schema", not this generic error.
@@ -742,25 +759,25 @@ void CompactProtocolReader::read(SchemaElement* s)
 {
   using optional_converted_type =
     parquet_field_optional<ConvertedType, parquet_field_enum<ConvertedType>>;
-  using optional_logical_type = parquet_field_optional<LogicalType,
-                                                       parquet_field_struct<LogicalType>,
-                                                       cuda::std::optional<LogicalType>>;
-  auto op                     = std::make_tuple(parquet_field_enum<Type>(1, s->type),
-                            parquet_field_int32(2, s->type_length),
-                            parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
-                            parquet_field_string(4, s->name),
-                            parquet_field_int32(5, s->num_children),
-                            optional_converted_type(6, s->converted_type),
-                            parquet_field_int32(7, s->decimal_scale),
-                            parquet_field_int32(8, s->decimal_precision),
-                            parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
-                            optional_logical_type(10, s->logical_type));
+  auto op =
+    std::make_tuple(parquet_field_enum<Type>(1, s->type),
+                    parquet_field_int32(2, s->type_length),
+                    parquet_field_enum<FieldRepetitionType>(3, s->repetition_type),
+                    parquet_field_string(4, s->name),
+                    parquet_field_int32(5, s->num_children),
+                    optional_converted_type(6, s->converted_type),
+                    parquet_field_int32(7, s->decimal_scale),
+                    parquet_field_int32(8, s->decimal_precision),
+                    parquet_field_optional<int32_t, parquet_field_int32>(9, s->field_id),
+                    parquet_field_logical_type(10, s->logical_type, s->logical_type_payload));
   function_builder(this, op);
 }
 
-void CompactProtocolReader::read(LogicalType* l)
+void CompactProtocolReader::read(LogicalType* l, LogicalTypePayload* payload)
 {
-  auto op = std::make_tuple(
+  // Clear the destination so only the parsed union member is engaged.
+  *payload = LogicalTypePayload{};
+  auto op  = std::make_tuple(
     parquet_field_union_enumerator(1, l->type),
     parquet_field_union_enumerator(2, l->type),
     parquet_field_union_enumerator(3, l->type),
@@ -773,8 +790,44 @@ void CompactProtocolReader::read(LogicalType* l)
     parquet_field_union_enumerator(11, l->type),
     parquet_field_union_enumerator(12, l->type),
     parquet_field_union_enumerator(13, l->type),
-    parquet_field_union_enumerator(16, l->type));
+    parquet_field_union_enumerator(14, l->type),  // UUID
+    parquet_field_union_enumerator(15, l->type),  // FLOAT16
+    parquet_field_union_struct<LogicalType::Type, VariantType>(16, l->type, payload->variant_type),
+    parquet_field_union_struct<LogicalType::Type, GeometryType>(
+      17, l->type, payload->geometry_type),
+    parquet_field_union_struct<LogicalType::Type, GeographyType>(
+      18, l->type, payload->geography_type),
+    parquet_field_union_enumerator(19, l->type));  // FILE
   function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeometryType* g)
+{
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded, mirroring GeographyType.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
+}
+
+void CompactProtocolReader::read(VariantType* v)
+{
+  using optional_version = parquet_field_optional<int8_t, parquet_field_int8>;
+  auto op                = std::make_tuple(optional_version(1, v->specification_version));
+  function_builder(this, op);
+}
+
+void CompactProtocolReader::read(GeographyType* g)
+{
+  using optional_algorithm = parquet_field_optional<EdgeInterpolationAlgorithm,
+                                                    parquet_field_enum<EdgeInterpolationAlgorithm>>;
+  // Thrift field 1 is the `crs` string; only its PRESENCE is recorded while `algorithm` (id 2)
+  // round-trips.
+  std::optional<std::string> crs;
+  auto op = std::make_tuple(parquet_field_optional<std::string, parquet_field_string>(1, crs),
+                            optional_algorithm(2, g->algorithm));
+  function_builder(this, op);
+  g->has_crs = crs.has_value();
 }
 
 void CompactProtocolReader::read(DecimalType* d)
@@ -830,13 +883,18 @@ void CompactProtocolReader::read(RowGroup* r)
 
 void CompactProtocolReader::read(ColumnChunk* c)
 {
-  auto op = std::make_tuple(parquet_field_string(1, c->file_path),
+  using optional_struct_blob =
+    parquet_field_optional<std::vector<uint8_t>, parquet_field_struct_blob>;
+  using optional_binary = parquet_field_optional<std::vector<uint8_t>, parquet_field_binary>;
+  auto op               = std::make_tuple(parquet_field_string(1, c->file_path),
                             parquet_field_int64(2, c->file_offset),
                             parquet_field_struct(3, c->meta_data),
                             parquet_field_int64(4, c->offset_index_offset),
                             parquet_field_int32(5, c->offset_index_length),
                             parquet_field_int64(6, c->column_index_offset),
-                            parquet_field_int32(7, c->column_index_length));
+                            parquet_field_int32(7, c->column_index_length),
+                            optional_struct_blob(8, c->crypto_metadata),
+                            optional_binary(9, c->encrypted_column_metadata));
   function_builder(this, op);
 }
 
@@ -935,7 +993,8 @@ void CompactProtocolReader::read(DataPageHeaderV2* d)
 
 void CompactProtocolReader::read(KeyValue* k)
 {
-  auto op = std::make_tuple(parquet_field_string(1, k->key), parquet_field_string(2, k->value));
+  auto op = std::make_tuple(parquet_field_string(1, k->key),
+                            parquet_field_optional<std::string, parquet_field_string>(2, k->value));
   function_builder(this, op);
 }
 
@@ -977,7 +1036,8 @@ void CompactProtocolReader::read(ColumnIndex* c)
                             parquet_field_enum<BoundaryOrder>(4, c->boundary_order),
                             optional_list_i64(5, c->null_counts),
                             optional_list_i64(6, c->repetition_level_histogram),
-                            optional_list_i64(7, c->definition_level_histogram));
+                            optional_list_i64(7, c->definition_level_histogram),
+                            optional_list_i64(8, c->nan_counts));
   function_builder(this, op);
 }
 
@@ -994,13 +1054,16 @@ void CompactProtocolReader::read(Statistics* s)
                             optional_binary(5, s->max_value),
                             optional_binary(6, s->min_value),
                             optional_bool(7, s->is_max_value_exact),
-                            optional_bool(8, s->is_min_value_exact));
+                            optional_bool(8, s->is_min_value_exact),
+                            optional_int64(9, s->nan_count));
   function_builder(this, op);
 }
 
 void CompactProtocolReader::read(ColumnOrder* c)
 {
-  auto op = std::make_tuple(parquet_field_union_enumerator<ColumnOrder::Type>(1, c->type));
+  auto op = std::make_tuple(parquet_field_union_enumerator(1, c->type),
+                            parquet_field_union_enumerator(2, c->type),
+                            parquet_field_union_enumerator(3, c->type));
   function_builder(this, op);
 }
 
@@ -1106,7 +1169,7 @@ int CompactProtocolReader::WalkSchema(
   }
 }
 
-void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
+void decode_footer_bytes(std::span<uint8_t const> footer_bytes,
                          FileMetaData* metadata,
                          experimental::thrift_mismatch_policy mode)
 {
@@ -1115,8 +1178,7 @@ void decode_footer_bytes(cudf::host_span<uint8_t const> footer_bytes,
   CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
-void decode_footer_and_init_schema(cudf::host_span<uint8_t const> footer_bytes,
-                                   FileMetaData* metadata)
+void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata)
 {
   CompactProtocolReader reader{footer_bytes.data(), footer_bytes.size()};
   reader.read(metadata);

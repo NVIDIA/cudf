@@ -250,7 +250,7 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
   }
 
   // create this before we fork streams
-  kernel_error error_code(_stream);
+  kernel_error error_code(_stream, _mr.as_temporary());
 
   // Compute the routing masks in one walk over the pages. `mapped_kernel_mask` ORs the kernel masks
   // of pages with a map, so each consumer is launched only if its encoding has one;

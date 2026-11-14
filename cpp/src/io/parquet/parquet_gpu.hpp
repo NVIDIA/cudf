@@ -24,6 +24,7 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -571,10 +572,14 @@ struct ColumnChunkDesc {
 };
 
 /**
- * @brief A utility structure for use in decoding page headers.
+ * @brief Utility struct to record page discovery progress across column chunks
  */
 struct chunk_page_info {
-  PageInfo* pages;
+  uint8_t const* cursor;  ///< Cursor to next page header to discover, or end of last page once done
+  size_t num_values_found;  ///< Number of values in the pages before `cursor`
+  uint32_t num_data_pages;  ///< Number of data pages before `cursor`
+  uint32_t num_dict_pages;  ///< Number of dictionary pages before `cursor`
+  bool is_done;             ///< Whether all chunk pages have been recorded
 };
 
 /**
@@ -854,27 +859,24 @@ __device__ inline bool is_literal_run(int const run_header) { return (run_header
 __device__ inline bool is_repeated_run(int const run_header) { return !is_literal_run(run_header); }
 
 /**
- * @brief Launches kernel for counting page headers from column chunk data buffers
+ * @brief Launches kernel for counting page headers and recording where each page header starts
  *
- * @param[in] chunks Device span of column chunks
+ * Skips chunks that are done. Chunks that run out of page address slots keep counting and save
+ * where recording stopped so a later launch can resume.
+ *
+ * @param[in,out] chunks Device span of column chunks
+ * @param[in,out] chunk_page_infos Device span of chunk page discovery progress
+ * @param[out] page_starts Page header addresses, in no particular order
+ * @param[in,out] num_consumed_slots Number of page address slots consumed so far
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
-void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                        kernel_error::pointer error_code,
-                        cuda::stream_ref stream);
-/**
- * @brief Launches kernel for parsing the page headers in the column chunks
- *
- * @param[in] chunks Device span of column chunks
- * @param[in] chunk_pages List of pages associated with the chunks, in chunk-sorted order
- * @param[out] error_code Error code for kernel failures
- * @param[in] stream CUDA stream to use
- */
-void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
-                         cudf::device_span<chunk_page_info> chunk_pages,
-                         kernel_error::pointer error_code,
-                         cuda::stream_ref stream);
+void discover_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
+                           cudf::device_span<chunk_page_info> chunk_page_infos,
+                           cudf::device_span<cuda::std::uintptr_t> page_starts,
+                           size_t* num_consumed_slots,
+                           kernel_error::pointer error_code,
+                           cuda::stream_ref stream);
 
 /**
  * @brief Page metadata from the page index to be applied to pages during header parsing.

@@ -31,6 +31,8 @@
 #include <cstring>  // memset
 #include <future>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 namespace cudf::io::detail {
 
@@ -654,6 +656,55 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   if (di.type == compression_type::BROTLI) return get_gpu_debrotli_scratch_size(di.num_pages);
   // only Brotli kernel requires scratch memory
   return 0;
+}
+
+void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
+                                     host_span<size_t> sizes,
+                                     cuda::stream_ref stream)
+{
+  CUDF_EXPECTS(infos.size() == sizes.size(), "infos and sizes must have the same size");
+  // How the scratch size of a given compression type is computed. Resolving this requires reading
+  // environment variables and querying (mutex-protected) nvCOMP feature status, which is far too
+  // expensive to repeat for every page of a large file.
+  enum class scratch_kind : uint8_t { NONE, NVCOMP, BROTLI };
+  std::vector<std::pair<compression_type, scratch_kind>> kinds;
+  auto const kind_of = [&](compression_type type) {
+    for (auto const& [t, k] : kinds) {
+      if (t == type) { return k; }
+    }
+    auto kind = scratch_kind::NONE;
+    if (type != compression_type::NONE and get_host_engine_state(type) != host_engine_state::ON) {
+      auto const nvcomp_type     = to_nvcomp_compression(type);
+      auto const nvcomp_disabled = nvcomp_type.has_value()
+                                     ? nvcomp::is_decompression_disabled(*nvcomp_type)
+                                     : "invalid compression type";
+      if (not nvcomp_disabled) {
+        kind = scratch_kind::NVCOMP;
+      } else if (type == compression_type::BROTLI) {
+        kind = scratch_kind::BROTLI;
+      }
+    }
+    kinds.emplace_back(type, kind);
+    return kind;
+  };
+  for (size_t i = 0; i < infos.size(); ++i) {
+    auto const& di = infos[i];
+    if (di.num_pages == 0) {
+      sizes[i] = 0;
+      continue;
+    }
+    switch (kind_of(di.type)) {
+      case scratch_kind::NVCOMP:
+        sizes[i] = nvcomp::batched_decompress_temp_size(*to_nvcomp_compression(di.type),
+                                                        di.num_pages,
+                                                        di.max_page_decompressed_size,
+                                                        di.total_decompressed_size,
+                                                        stream);
+        break;
+      case scratch_kind::BROTLI: sizes[i] = get_gpu_debrotli_scratch_size(di.num_pages); break;
+      default: sizes[i] = 0;
+    }
+  }
 }
 
 [[nodiscard]] size_t get_decompression_scratch_size_ex(

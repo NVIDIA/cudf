@@ -276,11 +276,28 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   }
 
   /**
-   * @brief Stores the value in scalar
+   * @brief Stores the underlying representation in the scalar
    *
-   * @param value The value to store in scalar
+   * The scalar's scale and validity are unchanged.
+   *
+   * @param value The representation to store in the scalar
    */
-  __device__ void set_value(rep_type value) { *_data = value; }
+  __device__ void set_rep(rep_type value) { *_data = value; }
+
+  /**
+   * @brief Stores the underlying representation in the scalar
+   *
+   * @deprecated Deprecated in release 26.12 and will be removed in a future release.
+   * Use `set_rep()` instead.
+   *
+   * Equivalent to `set_rep(value)`.
+   *
+   * @param value The representation to store in the scalar
+   */
+  [[deprecated("Use set_rep() instead.")]] __device__ void set_value(rep_type value)
+  {
+    set_rep(value);
+  }
 
   /**
    * @brief Stores the fixed-point value in the scalar
@@ -292,7 +309,7 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   __device__ void set_value(T value)
   {
     cudf_assert(value.scale() == this->type().scale() && "fixed_point scale mismatch");
-    *_data = value.value();
+    set_rep(value.value());
   }
 
   /**

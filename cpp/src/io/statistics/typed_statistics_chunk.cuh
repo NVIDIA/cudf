@@ -103,6 +103,24 @@ using to_sum = cuda::std::conditional_t<cuda::std::is_floating_point_v<A>,
                                         cuda::std::identity,
                                         reduction::detail::to_sum_overflow<A>>;
 
+/**
+ * @brief Updates the min/max of a statistics chunk with an element, counting NaNs instead
+ */
+template <typename T, typename Chunk>
+__device__ void reduce_extrema(Chunk& chunk, T const& elem)
+{
+  if constexpr (cuda::std::is_floating_point_v<T>) {
+    if (cuda::std::isnan(elem)) {
+      chunk.nan_count++;
+      return;
+    }
+  }
+  using E             = typename extrema_type<T>::type;
+  chunk.minimum_value = cuda::std::min<E>(chunk.minimum_value, extrema_type<T>::convert(elem));
+  chunk.maximum_value = cuda::std::max<E>(chunk.maximum_value, extrema_type<T>::convert(elem));
+  chunk.has_minmax    = true;
+}
+
 }  // namespace detail
 
 /**
@@ -130,9 +148,10 @@ struct typed_statistics_chunk<T, true> {
   E maximum_value;
   S aggregate{};
 
+  uint32_t nan_count{0};  //!< number of NaN values in chunk (floating point only)
+
   uint8_t has_minmax{false};  //!< Nonzero if min_value and max_values are valid
   uint8_t has_sum{true};      //!< Nonzero if all merged chunks have a valid sum
-  uint8_t has_nan{false};     //!< Nonzero if a NaN was seen (floating point only)
 
   __device__ typed_statistics_chunk()
     : minimum_value(detail::minimum_identity<E>()), maximum_value(detail::maximum_identity<E>())
@@ -142,12 +161,9 @@ struct typed_statistics_chunk<T, true> {
   __device__ void reduce(T const& elem)
   {
     non_nulls++;
-    if constexpr (cuda::std::is_floating_point_v<T>) { has_nan |= cuda::std::isnan(elem); }
-    minimum_value = cuda::std::min<E>(minimum_value, detail::extrema_type<T>::convert(elem));
-    maximum_value = cuda::std::max<E>(maximum_value, detail::extrema_type<T>::convert(elem));
-    aggregate     = detail::sum_op<A>{}(
+    aggregate = detail::sum_op<A>{}(
       aggregate, detail::to_sum<A>{}(detail::aggregation_type<T>::convert(elem)));
-    has_minmax = true;
+    detail::reduce_extrema(*this, elem);
   }
 
   __device__ void reduce(statistics_chunk const& chunk)
@@ -161,7 +177,7 @@ struct typed_statistics_chunk<T, true> {
     has_sum &= chunk.has_sum;
     non_nulls += chunk.non_nulls;
     null_count += chunk.null_count;
-    has_nan |= chunk.has_nan;
+    nan_count += chunk.nan_count;
   }
 };
 
@@ -175,9 +191,10 @@ struct typed_statistics_chunk<T, false> {
   E minimum_value;
   E maximum_value;
 
+  uint32_t nan_count{0};  //!< number of NaN values in chunk (floating point only)
+
   uint8_t has_minmax{false};  //!< Nonzero if min_value and max_values are valid
   uint8_t has_sum{false};     //!< Nonzero if sum is valid
-  uint8_t has_nan{false};     //!< Nonzero if a NaN was seen (floating point only)
 
   __device__ typed_statistics_chunk()
     : minimum_value(detail::minimum_identity<E>()), maximum_value(detail::maximum_identity<E>())
@@ -187,10 +204,7 @@ struct typed_statistics_chunk<T, false> {
   __device__ void reduce(T const& elem)
   {
     non_nulls++;
-    if constexpr (cuda::std::is_floating_point_v<T>) { has_nan |= cuda::std::isnan(elem); }
-    minimum_value = cuda::std::min<E>(minimum_value, detail::extrema_type<T>::convert(elem));
-    maximum_value = cuda::std::max<E>(maximum_value, detail::extrema_type<T>::convert(elem));
-    has_minmax    = true;
+    detail::reduce_extrema(*this, elem);
   }
 
   __device__ void reduce(statistics_chunk const& chunk)
@@ -201,7 +215,7 @@ struct typed_statistics_chunk<T, false> {
     }
     non_nulls += chunk.non_nulls;
     null_count += chunk.null_count;
-    has_nan |= chunk.has_nan;
+    nan_count += chunk.nan_count;
   }
 };
 
@@ -235,13 +249,16 @@ __inline__ __device__ typed_statistics_chunk<T, include_aggregate> block_reduce(
   output_chunk.null_count =
     count_reduce(storage.template get<uint32_t>()).Sum(output_chunk.null_count);
   __syncthreads();
+  output_chunk.nan_count =
+    count_reduce(storage.template get<uint32_t>()).Sum(output_chunk.nan_count);
+  // `__syncthreads_or` below is also the barrier before `storage` is reused
   output_chunk.has_minmax = __syncthreads_or(output_chunk.has_minmax);
-  output_chunk.has_nan    = __syncthreads_or(output_chunk.has_nan);
 
   // FIXME : Is another syncthreads needed here?
   if constexpr (include_aggregate) {
     output_chunk.has_sum = __syncthreads_and(output_chunk.has_sum);
-    if (output_chunk.has_minmax) {
+    auto const has_nan   = __syncthreads_or(chunk.nan_count > 0);
+    if (output_chunk.has_minmax or has_nan) {
       using A                = typename detail::aggregation_type<T>::type;
       using S                = detail::sum_type<A>;
       using aggregate_reduce = cub::BlockReduce<S, block_size>;
@@ -267,7 +284,7 @@ get_untyped_chunk(typed_statistics_chunk<T, include_aggregate> const& chunk)
   stat.non_nulls  = chunk.non_nulls;
   stat.null_count = chunk.null_count;
   stat.has_minmax = chunk.has_minmax;
-  stat.has_nan    = chunk.has_nan;
+  stat.nan_count  = chunk.nan_count;
   if (chunk.has_minmax) {
     if constexpr (std::is_floating_point_v<E>) {
       union_member::get<E>(stat.min_value) =

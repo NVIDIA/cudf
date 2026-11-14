@@ -28,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -112,9 +113,23 @@ struct page_stats_caster : public stats_caster_base {
             std::ranges::find(row_group.columns, mapped_schema_idx, &ColumnChunk::schema_idx);
 
           auto const& colchunk               = *colchunk_iter;
-          auto const& column_index           = colchunk.column_index.value();
-          auto const num_pages_in_colchunk   = column_index.min_values.size();
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
+
+          // Without a column index (e.g. a float chunk with NaNs), no page can be pruned
+          if (not colchunk.column_index.has_value()) {
+            std::ranges::for_each(
+              std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
+              [&](auto column_page_idx) {
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                all_null.set_index(column_page_idx, std::nullopt, {});
+                has_nan.set_value(column_page_idx, std::nullopt);
+              });
+            return;
+          }
+
+          auto const& column_index         = colchunk.column_index.value();
+          auto const num_pages_in_colchunk = column_index.min_values.size();
 
           CUDF_EXPECTS(column_index.max_values.size() == num_pages_in_colchunk,
                        "Number of max values must match the number of pages in the column chunk",
@@ -288,12 +303,12 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
     return build_all_true_row_mask(row_group_indices, stream, mr);
   }
 
-  // We need both column and offset indexes to be present for each participating column.
-  auto const [has_column_index, has_offset_index] =
-    page_index_presence(row_group_indices, stats_column_schemas);
-  CUDF_EXPECTS(has_column_index and has_offset_index,
-               "Filter column page pruning using page-statistics requires both column and "
-               "offset indexes to be present",
+  // We need offset indexes for each participating column. Column indexes may be missing for some
+  // column chunks, whose pages are then kept.
+  auto const has_offset_index = page_index_presence(row_group_indices, stats_column_schemas).second;
+  CUDF_EXPECTS(has_offset_index,
+               "Filter column page pruning using page-statistics requires offset indexes to be "
+               "present",
                std::runtime_error);
 
   // Convert the filter to an expression over page statistics

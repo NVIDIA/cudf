@@ -424,7 +424,7 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   using T = float;
 
   // Four single-page row groups holding ascending values: [-100, -50], [-50, 0], [0, 49] and
-  // [50, 99]. The writer records no NaN counts, so they are patched into the metadata below.
+  // [50, 99]. The written NaN counts are replaced in the metadata below.
   auto [written_table, parquet_buffer] = create_parquet_with_stats<T, 1>();
 
   auto const stream = cudf::get_default_stream();
@@ -459,12 +459,14 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   auto col0_ne_nan     = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, nan);
 
   // Patches the NaN counts of the first column into the metadata, with `nan_count` NaNs in the
-  // first row group and its first page, and none elsewhere. std::nullopt leaves them absent. The
+  // first row group and its first page, and none elsewhere. std::nullopt removes them. The
   // first row group and page are also made constant at their minimum so that `!=` can prune them,
-  // or entirely null if `first_all_null` is set
+  // or entirely null if `first_all_null` is set. `drop_first_column_index` removes the first
+  // chunk's column index, as cudf writes for chunks with NaNs
   auto const prune = [&](cudf::ast::operation const& filter,
                          std::optional<int64_t> nan_count,
-                         bool first_all_null = false) {
+                         bool first_all_null          = false,
+                         bool drop_first_column_index = false) {
     auto patched      = metadata;
     auto& first_chunk = patched.row_groups.front().columns.front();
     if (first_all_null) {
@@ -475,16 +477,20 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
       first_chunk.meta_data.statistics.max_value   = first_chunk.meta_data.statistics.min_value;
       first_chunk.column_index->max_values.front() = first_chunk.column_index->min_values.front();
     }
-    if (nan_count.has_value()) {
-      for (auto& row_group : patched.row_groups) {
-        auto const is_first                  = &row_group == &patched.row_groups.front();
-        auto& chunk                          = row_group.columns.front();
-        auto const num_pages                 = chunk.column_index->min_values.size();
-        auto& page_nan_counts                = chunk.column_index->nan_counts.emplace(num_pages, 0);
-        chunk.meta_data.statistics.nan_count = is_first ? *nan_count : 0;
-        page_nan_counts.front()              = is_first ? *nan_count : 0;
+    for (auto& row_group : patched.row_groups) {
+      auto& chunk = row_group.columns.front();
+      if (not nan_count.has_value()) {
+        chunk.meta_data.statistics.nan_count.reset();
+        chunk.column_index->nan_counts.reset();
+        continue;
       }
+      auto const is_first                  = &row_group == &patched.row_groups.front();
+      auto const num_pages                 = chunk.column_index->min_values.size();
+      auto& page_nan_counts                = chunk.column_index->nan_counts.emplace(num_pages, 0);
+      chunk.meta_data.statistics.nan_count = is_first ? *nan_count : 0;
+      page_nan_counts.front()              = is_first ? *nan_count : 0;
     }
+    if (drop_first_column_index) { first_chunk.column_index.reset(); }
     auto const filter_options = cudf::io::parquet_reader_options::builder().filter(filter).build();
     auto patched_reader =
       cudf::io::parquet::experimental::hybrid_scan_reader(patched, filter_options);
@@ -532,6 +538,9 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
   EXPECT_EQ(prune(not_col0_lt_1, /*nan_count=*/std::nullopt, /*first_all_null=*/true),
             std::pair(row_groups_type{1, 2, 3}, int64_t{num_ordered_rows - rows_per_page}));
+  // A chunk without a column index keeps all its pages
+  EXPECT_EQ(prune(not_col0_lt_1, 0, /*first_all_null=*/false, /*drop_first_column_index=*/true),
+            std::pair(row_groups_type{2, 3}, int64_t{num_ordered_rows / 2 + rows_per_page}));
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)

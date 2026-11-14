@@ -3,13 +3,17 @@
 
 from pylibcudf.libcudf.types cimport bitmask_type
 from cython.operator import dereference
-from threading import current_thread
 
 from libc.stddef cimport size_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.optional cimport optional
 from libcpp.utility cimport move
+from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf cimport asof_join as cpp_asof_join
+from pylibcudf.libcudf.asof_join cimport (
+    asof_join_exact_matches,
+    asof_join_strategy,
+)
 from pylibcudf.libcudf cimport join as cpp_join
 from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column cimport column
@@ -20,9 +24,14 @@ from pylibcudf.libcudf.types cimport mask_state, null_equality
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from pylibcudf.experimental._join_streams cimport join_streams
 from rmm.librmm.cuda_stream_ref cimport stream_ref
+from rmm.librmm.memory_resource cimport device_async_resource_ref
+
+from pylibcudf.libcudf.asof_join import (
+    asof_join_exact_matches as AsofJoinExactMatches,  # no-cython-lint
+    asof_join_strategy as AsofJoinStrategy,  # no-cython-lint
+)
 
 from rmm.pylibrmm.stream cimport Stream
-from rmm.pylibrmm.stream import PER_THREAD_DEFAULT_STREAM
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -38,6 +47,8 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
     "AsofJoin",
+    "AsofJoinExactMatches",
+    "AsofJoinStrategy",
     "conditional_full_join",
     "conditional_inner_join",
     "conditional_left_anti_join",
@@ -58,16 +69,48 @@ __all__ = [
 ]
 
 
+cdef extern from * nogil:
+    """
+    #include <cudf/join/asof_join.hpp>
+    #include <cudf/column/column.hpp>
+    #include <cudf/column/column_view.hpp>
+    #include <cudf/types.hpp>
+    #include <cuda/stream>
+    #include <memory>
+
+    std::unique_ptr<cudf::column> asof_join_indices(
+      cudf::experimental::asof_join const& joiner,
+      cudf::table_view const& left_by, cudf::column_view const& left_on,
+      cudf::experimental::asof_join_strategy strategy,
+      cudf::experimental::asof_join_exact_matches exact_matches,
+      cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+    {
+      auto indices = joiner.join(
+        left_by, left_on, strategy, exact_matches, stream, mr);
+      // cudf::column stores an rmm::device_buffer, so copy the returned CUDA buffer.
+      cudf::column_view view{cudf::data_type{cudf::type_id::INT32},
+                             left_on.size(), indices.data(), nullptr, 0};
+      return std::make_unique<cudf::column>(view, stream, mr);
+    }
+    """
+    cdef unique_ptr[column] asof_join_indices(
+        const cpp_asof_join.asof_join& joiner,
+        const table_view& left_by,
+        const column_view& left_on,
+        asof_join_strategy strategy,
+        asof_join_exact_matches exact_matches,
+        stream_ref stream,
+        device_async_resource_ref mr,
+    ) except +libcudf_exception_handler
+
+
 cdef class AsofJoin:
-    """Prepared backward as-of join for repeated left-side probes.
+    """As-of join with reusable right-side preprocessing.
 
     The right keys must be sorted ascending by ``(right_by..., right_on)``
     with nulls first. This precondition is not checked. Left rows may be
-    unordered. Only backward matching with exact matches is supported.
-    The right input is retained and must not be modified while in use. When
-    constructed on the per-thread default stream, this object must be probed
-    and destroyed on the constructing thread. Use an explicit stream to share
-    it across threads.
+    unordered. The right input is retained and must not be modified while in
+    use.
     """
 
     def __cinit__(
@@ -94,12 +137,6 @@ cdef class AsofJoin:
         self._right_on = right_on
         self._stream = _get_stream(stream)
         self._mr = _get_memory_resource(mr)
-        cdef Stream ptds = PER_THREAD_DEFAULT_STREAM
-        self._ptds_thread = (
-            current_thread()
-            if self._stream.view().get() == ptds.view().get()
-            else None
-        )
         cdef table_view c_right_by = right_by.view()
         cdef column_view c_right_on = right_on.view()
         cdef stream_ref _cs = self._stream.view()
@@ -119,6 +156,8 @@ cdef class AsofJoin:
         self,
         Table left_by,
         Column left_on,
+        asof_join_strategy strategy=asof_join_strategy.BACKWARD,
+        asof_join_exact_matches exact_matches=asof_join_exact_matches.YES,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ) -> Column:
@@ -133,6 +172,10 @@ cdef class AsofJoin:
             Equality keys. An empty table selects an ungrouped join.
         left_on : Column
             Ordered key.
+        strategy : AsofJoinStrategy, optional
+            Match direction. Defaults to ``BACKWARD``.
+        exact_matches : AsofJoinExactMatches, optional
+            Whether equal ordered keys may match. Defaults to ``YES``.
         stream : Stream, optional
             Probe stream. Defaults to the construction stream.
         mr : DeviceMemoryResource, optional
@@ -143,11 +186,6 @@ cdef class AsofJoin:
         Column
             Right-row indices in left-row order.
         """
-        if self._ptds_thread is not None and current_thread() is not self._ptds_thread:
-            raise RuntimeError(
-                "AsofJoin using the per-thread default stream must be probed "
-                "on its construction thread"
-            )
         cdef Stream _stream = self._stream if stream is None else _get_stream(stream)
         cdef stream_ref _cs = _stream.view()
         mr = _get_memory_resource(mr)
@@ -158,8 +196,9 @@ cdef class AsofJoin:
             join_streams([self._stream], _stream)
         try:
             with nogil:
-                result = cpp_asof_join.asof_join_indices(
-                    dereference(self.c_obj), c_left_by, c_left_on, _cs, mr.get_mr()
+                result = asof_join_indices(
+                    dereference(self.c_obj), c_left_by, c_left_on,
+                    strategy, exact_matches, _cs, mr.get_mr()
                 )
         finally:
             if _stream is not self._stream:

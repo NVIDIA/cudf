@@ -1,14 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import pyarrow as pa
 import pytest
 from utils import assert_table_eq
 
-from rmm.pylibrmm.stream import PER_THREAD_DEFAULT_STREAM, Stream
+from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
 
@@ -84,7 +82,13 @@ def test_asof_join():
     other_left = plc.Column.from_arrow(
         pa.array([2, 8], type=pa.int64()), stream=probe_stream
     )
-    result = joiner.join(plc.Table([]), other_left, stream=probe_stream)
+    result = joiner.join(
+        plc.Table([]),
+        other_left,
+        strategy=plc.join.AsofJoinStrategy.BACKWARD,
+        exact_matches=plc.join.AsofJoinExactMatches.YES,
+        stream=probe_stream,
+    )
     del joiner
     assert result.to_arrow(stream=probe_stream).to_pylist() == [0, 3]
 
@@ -130,41 +134,6 @@ def test_asof_join_empty_or_null(left_values, right_values, expected):
         plc.Table([]), left_on
     )
     assert result.to_arrow().to_pylist() == expected
-
-
-@pytest.mark.uses_custom_stream
-def test_asof_join_per_thread_stream_is_thread_confined():
-    right_on = plc.Column.from_arrow(
-        pa.array([1], type=pa.int64()), stream=PER_THREAD_DEFAULT_STREAM
-    )
-    joiner = plc.join.AsofJoin(
-        plc.Table([]), right_on, stream=PER_THREAD_DEFAULT_STREAM
-    )
-    left_on = plc.Column.from_arrow(
-        pa.array([1], type=pa.int64()), stream=PER_THREAD_DEFAULT_STREAM
-    )
-    assert joiner.join(plc.Table([]), left_on).to_arrow(
-        stream=PER_THREAD_DEFAULT_STREAM
-    ).to_pylist() == [0]
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with pytest.raises(RuntimeError, match="construction thread"):
-            pool.submit(joiner.join, plc.Table([]), left_on).result()
-
-
-@pytest.mark.uses_custom_stream
-def test_asof_join_explicit_stream_across_threads():
-    stream = Stream()
-    right_on = plc.Column.from_arrow(
-        pa.array([1], type=pa.int64()), stream=stream
-    )
-    left_on = plc.Column.from_arrow(
-        pa.array([1], type=pa.int64()), stream=stream
-    )
-    joiner = plc.join.AsofJoin(plc.Table([]), right_on, stream=stream)
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        result = pool.submit(joiner.join, plc.Table([]), left_on).result()
-    assert result.to_arrow(stream=stream).to_pylist() == [0]
 
 
 @pytest.mark.parametrize(

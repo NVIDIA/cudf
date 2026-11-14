@@ -18,7 +18,6 @@ cdef class AsofJoin:
     cdef Column _right_on
     cdef Stream _stream
     cdef DeviceMemoryResource _mr
-    cdef object _ptds_thread
 
 
 cpdef tuple[Column, Column] inner_join(

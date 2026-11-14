@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from enum import IntEnum
+
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
 from pylibcudf.column import Column
@@ -8,6 +10,12 @@ from pylibcudf.expressions import Expression
 from pylibcudf.table import Table
 from pylibcudf.types import NullEquality
 from pylibcudf.utils import CudaStreamLike
+
+class AsofJoinStrategy(IntEnum):
+    BACKWARD = ...
+
+class AsofJoinExactMatches(IntEnum):
+    YES = ...
 
 class AsofJoin:
     def __init__(
@@ -21,6 +29,8 @@ class AsofJoin:
         self,
         left_by: Table,
         left_on: Column,
+        strategy: AsofJoinStrategy = AsofJoinStrategy.BACKWARD,
+        exact_matches: AsofJoinExactMatches = AsofJoinExactMatches.YES,
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
     ) -> Column: ...

@@ -994,6 +994,7 @@ void discover_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
   static_assert(discover_page_headers_block_size % cudf::detail::warp_size == 0,
                 "Block size for page header discovery kernel must be a multiple of warp size");
   CUDF_EXPECTS(chunk_page_infos.size() == chunks.size(), "Expected one page info per chunk");
+  if (chunks.empty()) { return; }
 
   auto constexpr num_warps_per_block = discover_page_headers_block_size / cudf::detail::warp_size;
   auto const num_blocks              = cuda::ceil_div<cudf::size_type, cudf::size_type>(

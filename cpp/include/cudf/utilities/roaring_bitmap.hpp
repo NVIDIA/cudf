@@ -101,8 +101,11 @@ class roaring_bitmap {
    * The serialized bitmap data span is cleared after this call.
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the materialized bitmap, which is held by this
+   * object
    */
-  void materialize(cuda::stream_ref stream = cudf::get_default_stream()) const;
+  void materialize(cuda::stream_ref stream   = cudf::get_default_stream(),
+                   cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns the roaring bitmap type
@@ -139,7 +142,8 @@ class roaring_bitmap {
    *
    * @param keys Key column to query
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource for the output column allocation
+   * @param mr Memory resources used to allocate the output column and, if the bitmap has not been
+   * materialized yet, the materialized bitmap held by this object
    *
    * @return A BOOL8 column indicating positions of the present keys
    *
@@ -160,12 +164,15 @@ class roaring_bitmap {
    * @param keys Key column to query
    * @param output Output column to store the result
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the materialized bitmap held by this object, if
+   * the bitmap has not been materialized yet
    *
    * @throw std::invalid_argument if the key or output column dtypes are invalid
    */
   void contains_async(cudf::column_view const& keys,
                       cudf::mutable_column_view const& output,
-                      cuda::stream_ref stream) const;
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   //! Forward declaration of the opaque wrapper of cuco's roaring bitmap

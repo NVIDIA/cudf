@@ -19,7 +19,9 @@
 
 namespace cudf::groupby {
 
-void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_ref stream)
+void streaming_groupby::impl::do_aggregate(table_view const& data,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   ensure_not_invalidated();
 
@@ -41,7 +43,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
   ensure_not_invalidated();
   bool insertion_started = false;
   try {
-    if (!_initialized) { initialize(data, stream); }
+    if (!_initialized) { initialize(data, stream, mr); }
     // An initial tiny batch must not permanently limit later batches to one partial. Increasing
     // the budget only after doubling bounds how often stable groups require a reshape.
     auto const batch_budget = std::max<size_type>(1, batch_size / partial_aggregation_block_size);
@@ -53,7 +55,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
     insertion_started  = true;
-    auto const targets = probe_and_insert(batch_keys, true, stream);
+    auto const targets = probe_and_insert(batch_keys, true, stream, mr);
     _insert_done.record(stream);
     _results_read_done.wait(stream);
 
@@ -62,7 +64,7 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
                             {targets.data(), targets.size()},
                             _agg_results->mutable_view(),
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr);
     record_aggregate_completion(stream);
   } catch (...) {
     if (insertion_started) { _invalidated = true; }

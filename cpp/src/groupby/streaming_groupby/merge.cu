@@ -8,12 +8,11 @@
 
 #include <cudf/detail/aggregation/device_aggregators.cuh>
 #include <cudf/detail/copy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -24,7 +23,9 @@
 
 namespace cudf::groupby {
 
-void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref stream)
+void streaming_groupby::impl::do_merge(impl const& other,
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   // Register the source read while both objects' host bookkeeping is stable. std::lock
   // avoids opposite-direction merge deadlocks; self-merge acquires its mutex only once.
@@ -59,19 +60,18 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
                "Cannot merge streaming_groupby objects with different null handling policies.",
                std::invalid_argument);
 
-  auto const mr          = cudf::get_current_device_resource_ref();
   bool insertion_started = false;
   try {
     // Source writes and earlier source reads must precede this snapshot. A later source
     // writer/resize observes record_result_read below before these locks are released.
     other._aggregate_done.wait(stream);
-    auto other_keys           = other.gather_distinct_keys(stream, mr);
+    auto other_keys           = other.gather_distinct_keys(stream, mr.as_temporary());
     auto const other_key_view = other_keys->view();
     update_nullable_state(other_key_view);
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
     insertion_started  = true;
-    auto const targets = probe_and_insert(other_key_view, false, stream);
+    auto const targets = probe_and_insert(other_key_view, false, stream, mr);
     _insert_done.record(stream);
     _results_read_done.wait(stream);
 
@@ -82,17 +82,18 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
       if (this == &other) {
         // Partials collapse into the first partial. A self-merge must snapshot first so its first
         // partial cannot observe contributions concurrently arriving from other partials.
-        source_snapshot           = other.gather_agg_results(stream, mr);
+        source_snapshot           = other.gather_agg_results(stream, mr.as_temporary());
         source_partials_per_group = 1;
         source_capacity           = other_distinct_keys;
         return source_snapshot->view();
       }
       return other._agg_results->view();
     }();
-    auto const d_source = table_device_view::create(other_aggs_view, stream);
-    auto const d_target = mutable_table_device_view::create(_agg_results->mutable_view(), stream);
+    auto const d_source = table_device_view::create(other_aggs_view, stream, mr.get_temporary_mr());
+    auto const d_target = mutable_table_device_view::create(
+      _agg_results->mutable_view(), stream, mr.get_temporary_mr());
     thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<int64_t>(0),
       static_cast<int64_t>(other_distinct_keys) * source_partials_per_group * _agg_kinds.size(),
       merge_partial_aggs_fn{targets.data(),

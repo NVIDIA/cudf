@@ -51,10 +51,13 @@ struct range_window_bounds {
    *
    * @param boundary Finite window boundary
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the stored copy of `boundary`
    * @return A bounded window boundary object
    */
-  static range_window_bounds get(scalar const& boundary,
-                                 cuda::stream_ref stream = cudf::get_default_stream());
+  static range_window_bounds get(
+    scalar const& boundary,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Factory method to construct a window boundary
@@ -62,10 +65,13 @@ struct range_window_bounds {
    *
    * @param type The datatype of the window boundary
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the stored scalar
    * @return  A "current row" window boundary object
    */
-  static range_window_bounds current_row(data_type type,
-                                         cuda::stream_ref stream = cudf::get_default_stream());
+  static range_window_bounds current_row(
+    data_type type,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Whether or not the window is bounded to the current row
@@ -80,10 +86,13 @@ struct range_window_bounds {
    *
    * @param type The datatype of the window boundary
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the stored scalar
    * @return  An unbounded window boundary object
    */
-  static range_window_bounds unbounded(data_type type,
-                                       cuda::stream_ref stream = cudf::get_default_stream());
+  static range_window_bounds unbounded(
+    data_type type,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Whether or not the window is unbounded

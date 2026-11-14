@@ -308,7 +308,7 @@ struct streaming_groupby::impl {
        null_policy null_handling,
        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-  void initialize(table_view const& data, cuda::stream_ref stream);
+  void initialize(table_view const& data, cuda::stream_ref stream, cudf::memory_resources temp_mr);
   void create_key_set(cuda::stream_ref stream);
   void ensure_aggregate_capacity(size_type required,
                                  cuda::stream_ref stream,
@@ -338,7 +338,8 @@ struct streaming_groupby::impl {
    */
   cuda::device_buffer<size_type> probe_and_insert(table_view const& batch_keys,
                                                   bool use_partials,
-                                                  cuda::stream_ref stream);
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr);
 
   /*
    * Template implementation of probe_and_insert, split by has_nested.
@@ -347,9 +348,10 @@ struct streaming_groupby::impl {
   template <bool has_nested>
   cuda::device_buffer<size_type> probe_and_insert_impl(table_view const& batch_keys,
                                                        bool use_partials,
-                                                       cuda::stream_ref stream);
+                                                       cuda::stream_ref stream,
+                                                       cudf::memory_resources mr);
 
-  void do_aggregate(table_view const& data, cuda::stream_ref stream);
+  void do_aggregate(table_view const& data, cuda::stream_ref stream, cudf::memory_resources mr);
 
   [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
                                                           cudf::memory_resources mr) const;
@@ -366,7 +368,7 @@ struct streaming_groupby::impl {
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
   do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr);
 
-  void do_merge(impl const& other, cuda::stream_ref stream);
+  void do_merge(impl const& other, cuda::stream_ref stream, cudf::memory_resources mr);
 };
 
 }  // namespace cudf::groupby

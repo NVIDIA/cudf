@@ -22,7 +22,9 @@ namespace {
  */
 struct range_scalar_constructor {
   template <typename T>
-  std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
+  std::unique_ptr<scalar> operator()(scalar const& range_scalar_,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
     CUDF_FAIL(
       "Unsupported range type. "
@@ -30,29 +32,30 @@ struct range_scalar_constructor {
   }
 
   template <cudf::concepts::duration T>
-  std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
+  std::unique_ptr<scalar> operator()(scalar const& range_scalar_,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
     return std::make_unique<duration_scalar<T>>(
-      static_cast<duration_scalar<T> const&>(range_scalar_),
-      stream,
-      cudf::get_current_device_resource_ref());
+      static_cast<duration_scalar<T> const&>(range_scalar_), stream, mr);
   }
 
   template <cudf::concepts::arithmetic_not_bool T>
-  std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
+  std::unique_ptr<scalar> operator()(scalar const& range_scalar_,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
-    return std::make_unique<numeric_scalar<T>>(static_cast<numeric_scalar<T> const&>(range_scalar_),
-                                               stream,
-                                               cudf::get_current_device_resource_ref());
+    return std::make_unique<numeric_scalar<T>>(
+      static_cast<numeric_scalar<T> const&>(range_scalar_), stream, mr);
   }
 
   template <cudf::concepts::fixed_point T>
-  std::unique_ptr<scalar> operator()(scalar const& range_scalar_, cuda::stream_ref stream) const
+  std::unique_ptr<scalar> operator()(scalar const& range_scalar_,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr) const
   {
     return std::make_unique<fixed_point_scalar<T>>(
-      static_cast<fixed_point_scalar<T> const&>(range_scalar_),
-      stream,
-      cudf::get_current_device_resource_ref());
+      static_cast<fixed_point_scalar<T> const&>(range_scalar_), stream, mr);
   }
 };
 }  // namespace
@@ -68,24 +71,30 @@ range_window_bounds::range_window_bounds(extent_type extent_,
                "Bounded Range window scalar must be valid.");
 }
 
-range_window_bounds range_window_bounds::unbounded(data_type type, cuda::stream_ref stream)
+range_window_bounds range_window_bounds::unbounded(data_type type,
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr)
 {
-  auto s = make_default_constructed_scalar(type, stream, cudf::get_current_device_resource_ref());
+  auto s = make_default_constructed_scalar(type, stream, mr);
   s->set_valid_async(true, stream);
   return {extent_type::UNBOUNDED, std::move(s), stream};
 }
 
-range_window_bounds range_window_bounds::current_row(data_type type, cuda::stream_ref stream)
+range_window_bounds range_window_bounds::current_row(data_type type,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
 {
-  auto s = make_default_constructed_scalar(type, stream, cudf::get_current_device_resource_ref());
+  auto s = make_default_constructed_scalar(type, stream, mr);
   s->set_valid_async(true, stream);
   return {extent_type::CURRENT_ROW, std::move(s), stream};
 }
 
-range_window_bounds range_window_bounds::get(scalar const& boundary, cuda::stream_ref stream)
+range_window_bounds range_window_bounds::get(scalar const& boundary,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   return {extent_type::BOUNDED,
-          cudf::type_dispatcher(boundary.type(), range_scalar_constructor{}, boundary, stream),
+          cudf::type_dispatcher(boundary.type(), range_scalar_constructor{}, boundary, stream, mr),
           stream};
 }
 

@@ -168,6 +168,34 @@ TEST_F(StreamingGroupbyTest, MemoryResource)
   EXPECT_GT(mr.get_bytes_counter().peak, 0);
 }
 
+TEST_F(StreamingGroupbyTest, AggregateAndMergeMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{{1, 2, 3, 1, 4}, {1, 1, 1, 1, 0}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{10, 20, 30, 40, 50};
+  cudf::table_view batch{{keys, values}};
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+
+  cudf::groupby::streaming_groupby lhs(
+    KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::EXCLUDE, harness.output_mr());
+  cudf::groupby::streaming_groupby rhs(
+    KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::EXCLUDE, harness.output_mr());
+  {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    lhs.aggregate(batch, stream, harness.resources());
+    rhs.aggregate(batch, stream, harness.resources());
+    lhs.merge(rhs, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_output_allocations_live(stream);
+  harness.expect_temporary_allocation_activity(stream);
+  harness.expect_temporary_allocations_released(stream);
+
+  auto [result_keys, results] = lhs.finalize(stream);
+  verify_against_groupby(result_keys, results, {batch, batch}, KEY_COL, reqs);
+}
+
 TEST_F(StreamingGroupbyTest, SumTwoBatches)
 {
   using K = int32_t;

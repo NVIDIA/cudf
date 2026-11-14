@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/rolling/range_window_bounds.hpp>
@@ -12,6 +13,8 @@
 #include <cuda/std/type_traits>
 
 #include <src/rolling/detail/range_window_bounds.hpp>
+
+#include <tuple>
 
 struct RangeWindowBoundsTest : public cudf::test::BaseFixture {};
 
@@ -36,6 +39,31 @@ TEST_F(RangeWindowBoundsTest, TestBasicTimestampRangeTypeMapping)
   static_assert(std::is_same_v<cudf::detail::range_rep_type<cudf::timestamp_ms>, int64_t>);
   static_assert(std::is_same_v<cudf::detail::range_rep_type<cudf::timestamp_us>, int64_t>);
   static_assert(std::is_same_v<cudf::detail::range_rep_type<cudf::timestamp_ns>, int64_t>);
+}
+
+TEST_F(RangeWindowBoundsTest, MemoryResources)
+{
+  auto harness        = cudf::test::memory_resource_test_harness{};
+  auto const stream   = cudf::get_default_stream();
+  auto const dtype    = cudf::data_type{cudf::type_id::INT32};
+  auto const boundary = cudf::numeric_scalar<int32_t>{3, true, stream};
+  {
+    auto const [bounded, unbounded, current_row] = [&] {
+      auto current_scope = harness.fail_on_current_device_resource_use();
+      auto bounds =
+        std::tuple{cudf::range_window_bounds::get(boundary, stream, harness.resources()),
+                   cudf::range_window_bounds::unbounded(dtype, stream, harness.resources()),
+                   cudf::range_window_bounds::current_row(dtype, stream, harness.resources())};
+      harness.synchronize(stream);
+      return bounds;
+    }();
+    harness.expect_output_allocations_live(stream);
+    EXPECT_EQ(harness.temporary_mr().get_bytes_counter().total, 0);
+    EXPECT_EQ(cudf::detail::range_comparable_value<int32_t>(bounded, dtype, stream), 3);
+    EXPECT_TRUE(unbounded.is_unbounded());
+    EXPECT_TRUE(current_row.is_current_row());
+  }
+  harness.expect_no_live_allocations(stream);
 }
 
 TYPED_TEST(TimestampRangeWindowBoundsTest, BoundsConstruction)

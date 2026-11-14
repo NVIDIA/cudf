@@ -18,16 +18,20 @@
 
 namespace cudf::groupby {
 
-void streaming_groupby::aggregate(table_view const& data, cuda::stream_ref stream)
+void streaming_groupby::aggregate(table_view const& data,
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  do_aggregate(data, stream);
+  do_aggregate(data, stream, mr);
 }
 
-void streaming_groupby::merge(streaming_groupby const& other, cuda::stream_ref stream)
+void streaming_groupby::merge(streaming_groupby const& other,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  do_merge(other, stream);
+  do_merge(other, stream, mr);
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::finalize(

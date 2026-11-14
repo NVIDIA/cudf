@@ -58,7 +58,7 @@ __device__ void update_row(State& state,
                            Context... context)
 {
   if constexpr (!NullAware) {
-    auto const valid = [&]<typename... A> { return (A::is_valid(inputs, row) && ... && true); };
+    auto valid = [&]<typename... A> { return (A::is_valid(inputs, row) && ... && true); };
     if (!Inputs::map(valid)) { return; }
   }
 
@@ -70,17 +70,17 @@ __device__ void update_row(State& state,
     }
   };
 
-  bool selected           = false;
-  auto const filter_error = FilterInputs::map([&]<typename... A> {
+  bool selected     = false;
+  auto filter_error = FilterInputs::map([&]<typename... A> {
     if constexpr (!NullAware) {
       if (!(A::is_valid(filter_inputs, row) && ... && true)) { return errc::SUCCESS; }
     }
     return filter(context..., row, &selected, load.template operator()<A>(filter_inputs)...);
   });
-  state.error             = cuda::std::max(state.error, filter_error);
+  state.error       = cuda::std::max(state.error, filter_error);
   if (filter_error != errc::SUCCESS || !selected) { return; }
 
-  auto const update_error = Inputs::map([&]<typename... A> {
+  auto update_error = Inputs::map([&]<typename... A> {
     return [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
       return update(context...,
                     row,
@@ -88,13 +88,13 @@ __device__ void update_row(State& state,
                     load.template operator()<A>(inputs)...);
     }(State::types::indexed);
   });
-  state.error             = cuda::std::max(state.error, update_error);
+  state.error       = cuda::std::max(state.error, update_error);
 }
 
 template <typename State, typename Merge, typename... Context>
 __device__ State merge(State a, State const& b, Merge&& fn, Context&&... context)
 {
-  auto const merge_error = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
+  auto merge_error = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
     return fn(context..., &cuda::std::get<I>(a.values)..., cuda::std::get<I>(b.values)...);
   }(State::types::indexed);
 
@@ -123,10 +123,10 @@ template <int GroupSize, typename State, typename Merge>
   requires(GroupSize > 0 && GroupSize <= detail::warp_size && (GroupSize & (GroupSize - 1)) == 0)
 __device__ State warp_combine(State local, Merge&& merge, bool active)
 {
-  auto const rank = threadIdx.x % GroupSize;
+  auto rank = threadIdx.x % GroupSize;
 #pragma unroll
   for (int offset = GroupSize / 2; offset != 0; offset /= 2) {
-    auto const other = shuffle_down(local, offset);
+    auto other = shuffle_down(local, offset);
     if (active && rank < offset) { local = merge(local, other); }
   }
   return local;
@@ -138,8 +138,8 @@ template <int BlockSize, typename State, typename Merge>
 __device__ State block_combine(State local, Merge&& merge)
 {
   constexpr int warps = BlockSize / detail::warp_size;
-  auto const lane     = threadIdx.x % detail::warp_size;
-  auto const warp     = threadIdx.x / detail::warp_size;
+  auto lane           = threadIdx.x % detail::warp_size;
+  auto warp           = threadIdx.x / detail::warp_size;
   local               = warp_combine<detail::warp_size>(local, merge, true);
 
   if constexpr (warps > 1) {
@@ -200,13 +200,13 @@ __device__ void finalize(State const& state,
       }
     }();
 
-    auto const err = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
+    auto err = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
       return finalize(
         context..., &cuda::std::get<A::index>(values)..., cuda::std::get<I>(state.values)...);
     }(State::types::indexed);
 
     auto assign = [&]<typename Out> {
-      auto const& value = cuda::std::get<Out::index>(values);
+      auto& value = cuda::std::get<Out::index>(values);
       Out::assign(outputs, 0, deref_value(value));
       Out::set_null_mask_word(outputs, 0, is_valid(value));
     };
@@ -300,8 +300,8 @@ __device__ void reduce_kernel(reduce::phase phase,
     return init(&cuda::std::get<I>(local.values)...);
   }(State::types::indexed);
 
-  auto const start  = detail::grid_1d::global_thread_id();
-  auto const stride = detail::grid_1d::grid_stride();
+  auto start  = detail::grid_1d::global_thread_id();
+  auto stride = detail::grid_1d::grid_stride();
 
   auto do_merge = [&](auto const& a, auto const& b) { return reduce::merge(a, b, merge); };
 

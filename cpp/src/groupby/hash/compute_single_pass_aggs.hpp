@@ -92,6 +92,7 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
  *
  * @param values One values column per aggregation
  * @param agg_kinds The aggregation to compute on each values column
+ * @param aggs The aggregation objects matching `agg_kinds`, used for their options
  * @param is_agg_intermediate Whether each aggregation is only an intermediate result
  * @param grouped The input rows grouped by key
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -101,6 +102,7 @@ grouped_rows make_grouped_rows(device_span<size_type const> rows,
 std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   table_view const& values,
   host_span<aggregation::Kind const> agg_kinds,
+  std::span<std::unique_ptr<aggregation> const> aggs,
   std::span<int8_t const> is_agg_intermediate,
   grouped_rows const& grouped,
   cuda::stream_ref stream,

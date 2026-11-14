@@ -6,6 +6,7 @@
 #include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -21,8 +22,10 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/limits>
 
 #include <algorithm>
+#include <string>
 #include <vector>
 
 using namespace cudf::test::iterators;
@@ -540,5 +543,198 @@ TEST(groupby_sum_overflow_error_test, UnsignedTypesNotSupported)
 
     // This should throw an exception since unsigned types are not supported
     EXPECT_THROW(gb_obj.aggregate(requests), cudf::logic_error);
+  }
+}
+
+// SUM_OVERFLOW with sum_overflow_output::COUNT: the overflow child is the INT64 net wrap count
+namespace {
+
+template <typename V>
+using rep_t = cudf::device_storage_type_t<V>;
+
+auto constexpr decimal_scale = scale_type{-2};
+
+std::unique_ptr<cudf::groupby_aggregation> make_sum_overflow_count_aggregation()
+{
+  return cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>(
+    cudf::sum_overflow_output::COUNT);
+}
+
+template <typename V>
+std::unique_ptr<cudf::column> make_values(std::vector<rep_t<V>> const& values,
+                                          std::vector<bool> const& validity = {})
+{
+  if constexpr (cudf::is_fixed_point<V>()) {
+    using wrapper = cudf::test::fixed_point_column_wrapper<rep_t<V>>;
+    return validity.empty()
+             ? wrapper(values.begin(), values.end(), decimal_scale).release()
+             : wrapper(values.begin(), values.end(), validity.begin(), decimal_scale).release();
+  } else {
+    using wrapper = cudf::test::fixed_width_column_wrapper<V, rep_t<V>>;
+    return validity.empty() ? wrapper(values.begin(), values.end()).release()
+                            : wrapper(values.begin(), values.end(), validity.begin()).release();
+  }
+}
+
+template <typename V>
+std::unique_ptr<cudf::column> make_expected(std::vector<rep_t<V>> const& sums,
+                                            std::vector<int64_t> const& overflows,
+                                            std::vector<bool> const& validity = {})
+{
+  std::vector<std::unique_ptr<cudf::column>> children;
+  children.push_back(make_values<V>(sums));
+  children.push_back(
+    cudf::test::fixed_width_column_wrapper<int64_t>(overflows.begin(), overflows.end()).release());
+  auto const num_rows = static_cast<cudf::size_type>(sums.size());
+  if (validity.empty()) {
+    return cudf::create_structs_hierarchy(
+      num_rows, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  }
+  auto [null_mask, null_count] =
+    cudf::test::detail::make_null_mask(validity.begin(), validity.end());
+  return cudf::create_structs_hierarchy(
+    num_rows, std::move(children), null_count, std::move(null_mask));
+}
+
+}  // namespace
+
+template <typename V>
+struct groupby_sum_overflow_count_test : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(groupby_sum_overflow_count_test, sum_overflow_supported_types);
+
+TYPED_TEST(groupby_sum_overflow_count_test, EmptyCols)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  cudf::test::fixed_width_column_wrapper<K> keys{};
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{};
+  auto const values = make_values<V>({});
+  auto const expect = make_expected<V>({}, {});
+
+  test_single_agg(keys, *values, expect_keys, *expect, make_sum_overflow_count_aggregation());
+}
+
+TYPED_TEST(groupby_sum_overflow_count_test, NullKeysAndValues)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  cudf::test::fixed_width_column_wrapper<K> keys(
+    {1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4},
+    {true, true, true, true, true, true, true, false, true, true, true});
+  auto const values =
+    make_values<V>({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 4}, {0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 0});
+
+  // Valid (key, value) rows: 1 -> {3, 6}, 2 -> {1, 4, 9}, 3 -> {2, 8}, 4 -> {}
+  cudf::test::fixed_width_column_wrapper<K> expect_keys({1, 2, 3, 4}, no_nulls());
+  auto const expect = make_expected<V>({9, 14, 10, 0}, {0, 0, 0, 0}, {true, true, true, false});
+
+  test_single_agg(keys, *values, expect_keys, *expect, make_sum_overflow_count_aggregation());
+}
+
+TYPED_TEST(groupby_sum_overflow_count_test, OverflowCounts)
+{
+  using K   = int32_t;
+  using V   = TypeParam;
+  using Rep = rep_t<V>;
+
+  auto constexpr hi = cuda::std::numeric_limits<Rep>::max();
+  auto constexpr lo = cuda::std::numeric_limits<Rep>::min();
+
+  // Row i belongs to group i % 4 + 1, so each group's rows are interleaved with the others.
+  //   group 1: 4 * max         = 2 * 2^W - 4  -> {sum: -4,  overflow:  2}
+  //   group 2: 4 * min         = -2 * 2^W     -> {sum:  0,  overflow: -2}
+  //   group 3: max, max, min, min = -2        -> {sum: -2,  overflow:  0}, wraps up then down
+  //   group 4: max + <NA> + 1  = 2^(W-1)      -> {sum: min, overflow:  1}
+  cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3};
+  auto const values = make_values<V>({hi, lo, hi, hi, hi, lo, hi, 0, hi, lo, lo, 1, hi, lo, lo},
+                                     {1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1});
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{1, 2, 3, 4};
+  auto const expect = make_expected<V>({-4, 0, -2, lo}, {2, -2, 0, 1});
+
+  test_single_agg(keys, *values, expect_keys, *expect, make_sum_overflow_count_aggregation());
+}
+
+TYPED_TEST(groupby_sum_overflow_count_test, FlagAndCountTogether)
+{
+  using K   = int32_t;
+  using V   = TypeParam;
+  using Rep = rep_t<V>;
+
+  auto constexpr hi = cuda::std::numeric_limits<Rep>::max();
+
+  // group 1: 2 * max + 1 = 2^W - 1 -> FLAG true, COUNT {sum: -1, overflow: 1}
+  // group 2: 1                     -> FLAG false, COUNT {sum: 1, overflow: 0}
+  cudf::test::fixed_width_column_wrapper<K> keys{1, 2, 1, 2, 1};
+  auto const values = make_values<V>({hi, 1, hi, 2, 1}, {1, 1, 1, 0, 1});
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{1, 2};
+  cudf::test::fixed_width_column_wrapper<bool> expect_flags{true, false};
+  auto const expect_count = make_expected<V>({-1, 1}, {1, 0});
+
+  // Both variants share a kind; each must still get its own result, whether they are requested
+  // together or in separate requests.
+  auto const check = [&](bool same_request) {
+    SCOPED_TRACE(same_request ? "same request" : "separate requests");
+    std::vector<cudf::groupby::aggregation_request> requests(same_request ? 1 : 2);
+    for (auto& request : requests) {
+      request.values = *values;
+    }
+    requests.front().aggregations.push_back(
+      cudf::make_sum_overflow_aggregation<cudf::groupby_aggregation>());
+    requests.back().aggregations.push_back(make_sum_overflow_count_aggregation());
+
+    auto const [result_keys, results] =
+      cudf::groupby::groupby(cudf::table_view{{keys}}).aggregate(requests);
+    auto const& flag_result = results.front().results.front();
+    auto const& count_result =
+      same_request ? results.front().results[1] : results.back().results[0];
+
+    auto const order  = cudf::sorted_order(result_keys->view());
+    auto const sorted = cudf::gather(
+      cudf::table_view{{result_keys->get_column(0).view(),
+                        cudf::structs_column_view{flag_result->view()}.get_sliced_child(1),
+                        count_result->view()}},
+      *order);
+
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted->get_column(0).view(), expect_keys);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted->get_column(1).view(), expect_flags);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted->get_column(2).view(), *expect_count);
+  };
+  check(true);
+  check(false);
+}
+
+TEST(groupby_sum_overflow_count_error_test, StreamingAndScanNotSupported)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int64_t> values{1, 2, 3};
+
+  auto const run_streaming = [&] {
+    std::vector<cudf::size_type> const key_indices{0};
+    std::vector<cudf::groupby::streaming_aggregation_request> requests(1);
+    requests[0].column_index = 1;
+    requests[0].aggregation  = make_sum_overflow_count_aggregation();
+    cudf::groupby::streaming_groupby sgb(key_indices, requests, 64);
+    sgb.aggregate(cudf::table_view{{keys, values}});
+  };
+  EXPECT_ANY_THROW(run_streaming());
+
+  for (auto const output : {cudf::sum_overflow_output::FLAG, cudf::sum_overflow_output::COUNT}) {
+    std::vector<cudf::groupby::scan_request> scan_requests(1);
+    scan_requests[0].values = values;
+    scan_requests[0].aggregations.push_back(
+      cudf::make_sum_overflow_aggregation<cudf::groupby_scan_aggregation>(output));
+    try {
+      cudf::groupby::groupby(cudf::table_view({keys})).scan(scan_requests);
+      ADD_FAILURE() << "groupby scan accepted SUM_OVERFLOW";
+    } catch (cudf::logic_error const& e) {
+      EXPECT_NE(std::string{e.what()}.find("SUM_OVERFLOW is not supported by groupby scan"),
+                std::string::npos)
+        << e.what();
+    }
   }
 }

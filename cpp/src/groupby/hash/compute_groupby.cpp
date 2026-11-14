@@ -116,8 +116,13 @@ void compute_groupby(std::span<aggregation_request const> requests,
   // The helper caches the reduction schedule over its grouped rows for later callers.
   std::vector<std::unique_ptr<column>> results;
   if (needs_reduction) {
-    results = compute_single_pass_aggs(
-      values, agg_kinds, is_agg_intermediate, helper.reduction_groups(stream, mr), stream, mr);
+    results = compute_single_pass_aggs(values,
+                                       agg_kinds,
+                                       aggs,
+                                       is_agg_intermediate,
+                                       helper.reduction_groups(stream, mr),
+                                       stream,
+                                       mr);
   } else {
     auto const grouped =
       grouped_rows{device_span<size_type const>{},
@@ -126,7 +131,8 @@ void compute_groupby(std::span<aggregation_request const> requests,
                    cuda::device_buffer<size_type>{stream, temp_mr},
                    cuda::device_buffer<cuda::std::array<size_type, 2>>{stream, temp_mr},
                    cuda::device_buffer<size_type>{stream, temp_mr}};
-    results = compute_single_pass_aggs(values, agg_kinds, is_agg_intermediate, grouped, stream, mr);
+    results =
+      compute_single_pass_aggs(values, agg_kinds, aggs, is_agg_intermediate, grouped, stream, mr);
   }
   for (std::size_t i = 0; i < results.size(); ++i) {
     cache->add_result(values.column(i), *aggs[i], std::move(results[i]));

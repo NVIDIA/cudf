@@ -89,7 +89,27 @@ class sum_overflow_aggregation final
                                                             reduce_aggregation,
                                                             segmented_reduce_aggregation> {
  public:
-  sum_overflow_aggregation() : aggregation(SUM_OVERFLOW) {}
+  sum_overflow_aggregation(sum_overflow_output output = sum_overflow_output::FLAG)
+    : aggregation(SUM_OVERFLOW), _output{output}
+  {
+  }
+
+  sum_overflow_output _output;  ///< type of the overflow child
+
+  [[nodiscard]] bool is_equal(aggregation const& _other) const override
+  {
+    if (!this->aggregation::is_equal(_other)) { return false; }
+    auto const& other = dynamic_cast<sum_overflow_aggregation const&>(_other);
+    return _output == other._output;
+  }
+
+  [[nodiscard]] size_t do_hash() const override
+  {
+    return this->aggregation::do_hash() ^ hash_impl();
+  }
+
+ private:
+  [[nodiscard]] size_t hash_impl() const { return std::hash<int>{}(static_cast<int>(_output)); }
 };
 
 /**
@@ -935,8 +955,8 @@ template <typename Source>
 concept sum_overflow_supported =
   cuda::std::signed_integral<Source> or cudf::concepts::fixed_point<Source>;
 
-// SUM_OVERFLOW outputs a struct {sum: Source, overflow: bool} where the sum matches the input
-// type
+// SUM_OVERFLOW outputs a struct {sum: Source, overflow} where the sum matches the input type and
+// the overflow child is BOOL8 or INT64, depending on the aggregation's `sum_overflow_output`
 template <sum_overflow_supported Source>
 struct target_type_impl<Source, aggregation::SUM_OVERFLOW> {
   using type = struct_view;  // SUM_OVERFLOW outputs a struct with sum and overflow fields

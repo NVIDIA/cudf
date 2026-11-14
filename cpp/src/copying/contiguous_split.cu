@@ -3278,12 +3278,10 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
       auto const next = std::ranges::upper_bound(offsets, offset);
       auto const end =
         next == offsets.end() ? input.payload.size() : static_cast<std::size_t>(*next);
-      // A payload span longer than the packed data would otherwise oversize its last buffer.
-      auto const bytes = next == offsets.end() && required_bytes > 0
-                           ? std::min(required_bytes, end - offset)
-                           : end - offset;
-      CUDF_EXPECTS(bytes >= required_bytes, "Packed column buffer is smaller than its column");
-      return bytes;
+      CUDF_EXPECTS(end - offset >= required_bytes,
+                   "Packed column buffer is smaller than its column");
+      // Known sizes exclude the alignment padding that precedes the next buffer.
+      return required_bytes > 0 ? required_bytes : end - offset;
     },
     [&](int64_t offset, device_span<uint8_t> destination) {
       payload_ranges.push_back(input.payload.subspan(offset, destination.size()));
@@ -4198,7 +4196,7 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
                      std::to_string(offset));
       CUDF_EXPECTS(entry->data_bytes >= required_bytes,
                    "Compressed region holds less data than its column buffer");
-      return static_cast<std::size_t>(entry->uncompressed_bytes);
+      return static_cast<std::size_t>(entry->data_bytes);
     },
     [&](int64_t offset, device_span<uint8_t> destination) {
       submit_decompression(*find_entry(offset), destination.data());

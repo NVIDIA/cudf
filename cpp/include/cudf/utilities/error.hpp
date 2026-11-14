@@ -11,9 +11,11 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+#include <format>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 
 /**
  * @file
@@ -168,25 +170,42 @@ struct evaluation_error : public std::exception {
  *
  * // throws std::runtime_error
  * CUDF_EXPECTS(p != nullptr, "Unexpected nullptr", std::runtime_error);
+ *
+ * // throws cudf::evaluation_error, preserving its error code
+ * CUDF_EXPECTS(error == cudf::errc::SUCCESS,
+ *              "UDF evaluation failed",
+ *              cudf::evaluation_error,
+ *              error);
  * ```
- * @param ... This macro accepts either two or three arguments:
+ * @param ... This macro accepts two, three, or four arguments:
  *   - The first argument must be an expression that evaluates to true or
  *     false, and is the condition being checked.
  *   - The second argument is an expression that produces the error message used to construct the
  *     `what` of the exception. This can be a string literal or a dynamic expression (e.g.,
- *     `std::to_string(x) + " is invalid"`). The expression is only evaluated when the condition
+ *     `std::format("{} is invalid", x)`). The expression is only evaluated when the condition
  *     fails.
  *   - When given, the third argument is the exception to be thrown. When not
  *     specified, defaults to `cudf::logic_error`.
+ *   - The optional fourth argument is passed to the exception constructor before the message,
+ *     for example an `errc` when throwing `cudf::evaluation_error`.
  * @throw `_exception_type` if the condition evaluates to 0 (false).
  */
-#define CUDF_EXPECTS(...)                                             \
-  GET_CUDF_EXPECTS_MACRO(__VA_ARGS__, CUDF_EXPECTS_3, CUDF_EXPECTS_2) \
+#define CUDF_EXPECTS(...)                                                             \
+  GET_CUDF_EXPECTS_MACRO(__VA_ARGS__, CUDF_EXPECTS_4, CUDF_EXPECTS_3, CUDF_EXPECTS_2) \
   (__VA_ARGS__)
 
 /// @cond
 
-#define GET_CUDF_EXPECTS_MACRO(_1, _2, _3, NAME, ...) NAME
+#define GET_CUDF_EXPECTS_MACRO(_1, _2, _3, _4, NAME, ...) NAME
+
+#define CUDF_EXPECTS_4(_condition, _reason, _exception_type, _argument)           \
+  do {                                                                            \
+    static_assert(std::is_base_of_v<std::exception, _exception_type>);            \
+    if (!(_condition)) {                                                          \
+      cudf::detail::cudf_fail<_exception_type>(                                   \
+        [&]() -> std::string { return _reason; }, __LINE__, __FILE__, _argument); \
+    }                                                                             \
+  } while (0)
 
 #define CUDF_EXPECTS_3(_condition, _reason, _exception_type)           \
   do {                                                                 \
@@ -216,7 +235,7 @@ struct evaluation_error : public std::exception {
  * @param ... This macro accepts either one or two arguments:
  *   - The first argument is an expression that produces the error message used to construct the
  *     `what` of the exception. This can be a string literal or a dynamic expression (e.g.,
- *     `std::to_string(x) + " is invalid"`).
+ *     `std::format("{} is invalid", x)`).
  *   - When given, the second argument is the exception to be thrown. When not
  *     specified, defaults to `cudf::logic_error`.
  * @throw `_exception_type` if the condition evaluates to 0 (false).
@@ -246,13 +265,16 @@ inline void throw_cuda_error(cudaError_t error, char const* file, unsigned int l
   // occurred if it still returns the same error after a cleanup.
   cudaGetLastError();
   auto const last = cudaFree(nullptr);
-  auto const msg  = std::string{"CUDA error encountered at: " + std::string{file} + ":" +
-                               std::to_string(line) + ": " + std::to_string(error) + " " +
-                               cudaGetErrorName(error) + " " + cudaGetErrorString(error)};
+  auto const msg  = std::format("CUDA error encountered at: {}:{}: {} {} {}",
+                               file,
+                               line,
+                               static_cast<int>(error),
+                               cudaGetErrorName(error),
+                               cudaGetErrorString(error));
   // Call cudaDeviceSynchronize to ensure `last` did not result from an asynchronous error.
   // between two calls.
   if (error == last && last == cudaDeviceSynchronize()) {
-    throw fatal_cuda_error{"Fatal " + msg, error};
+    throw fatal_cuda_error{std::format("Fatal {}", msg), error};
   } else {
     throw cuda_error{msg, error};
   }
@@ -260,12 +282,17 @@ inline void throw_cuda_error(cudaError_t error, char const* file, unsigned int l
 // @endcond
 
 // @cond
-template <typename Exception, typename MsgFunc>
-[[noreturn]] void cudf_fail(MsgFunc&& msg_func, int line_number, char const* filename)
+template <typename Exception, typename MsgFunc, typename... Args>
+[[noreturn]] void cudf_fail(MsgFunc&& msg_func,
+                            int line_number,
+                            char const* filename,
+                            Args&&... args)
 {
   std::string const msg = std::forward<MsgFunc>(msg_func)();
-  throw Exception{std::string{"CUDF failure at: "} + filename + ":" + std::to_string(line_number) +
-                  ": " + (msg.empty() ? "(no message)" : msg)};
+  throw Exception{
+    std::forward<Args>(args)...,
+    std::format(
+      "CUDF failure at: {}:{}: {}", filename, line_number, msg.empty() ? "(no message)" : msg)};
 }
 // @endcond
 }  // namespace detail

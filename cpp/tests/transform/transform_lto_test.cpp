@@ -16,6 +16,9 @@
 
 #include <cudf_test_fragments.hpp>
 
+#include <format>
+#include <string>
+
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
 template <typename T>
@@ -23,6 +26,66 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
+
+TEST_F(TransformLTOTest, UdfAbiLayouts)
+{
+  // Canonical physical types and the additional values used in callback signatures.
+  constexpr char const* types[]{"uint8_t",
+                                "uint16_t",
+                                "uint32_t",
+                                "uint64_t",
+                                "numeric::decimal32",
+                                "numeric::decimal64",
+                                "numeric::decimal128",
+                                "cudf::string_view",
+                                "cuda::std::span<char>",
+                                "cudf::size_type",
+                                "cudf::errc",
+                                "cudf::voidptr_t"};
+  std::string source = R"CUDA(
+#include <cudf/errc.hpp>
+#include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/strings/string_view.cuh>
+#include <cudf/user_data.hpp>
+#include <cuda/std/optional>
+#include <cuda/std/span>
+#include "jit/udf_abi.cuh"
+#pragma nv_hdrstop
+)CUDA";
+  for (auto const* type : types) {
+    source += std::format(R"CUDA(
+static_assert(sizeof({0}) == sizeof({1}), "ABI size: {0}");
+static_assert(alignof({0}) == alignof({1}), "ABI alignment: {0}");
+static_assert(sizeof(cuda::std::optional<{0}>) ==
+              sizeof(cudf_udf_abi::cuda::std::optional<{1}>), "optional ABI size: {0}");
+static_assert(alignof(cuda::std::optional<{0}>) ==
+              alignof(cudf_udf_abi::cuda::std::optional<{1}>), "optional ABI alignment: {0}");
+)CUDA",
+                          type,
+                          std::format("cudf_udf_abi::{}", type));
+  }
+  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source.c_str(), {}, {}, {})));
+
+  // optional privately inherits its storage. Expose that storage only in this compilation.
+  constexpr char optional_offsets[] = R"CUDA(
+#include <cuda/std/cstddef>
+#define private public
+#include <cuda/std/optional>
+#undef private
+#include "jit/udf_abi.cuh"
+using uint128_t = unsigned __int128;
+using actual_optional = cuda::std::optional<uint128_t>;
+using forwarding_optional = cudf_udf_abi::cuda::std::optional<uint128_t>;
+static_assert(__builtin_offsetof(actual_optional, __storage_.__val_) == 0);
+static_assert(__builtin_offsetof(actual_optional, __engaged_) == sizeof(uint128_t));
+static_assert(__builtin_offsetof(actual_optional, __storage_.__val_) ==
+              __builtin_offsetof(forwarding_optional, value));
+static_assert(__builtin_offsetof(actual_optional, __engaged_) ==
+              __builtin_offsetof(forwarding_optional, engaged));
+)CUDA";
+  EXPECT_NO_THROW(
+    static_cast<void>(cudf::compile_cuda_to_lto_ir(optional_offsets, {}, {}, {}, false)));
+}
 
 TEST_F(TransformLTOTest, CompileUdfWithIncludes)
 {

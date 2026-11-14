@@ -7,12 +7,32 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/types.hpp>
+#include <cudf/user_data.hpp>
 
 #include <cuda/std/optional>
 #include <cuda/std/type_traits>
 
 namespace cudf {
 namespace jit {
+
+/** @brief An opaque pointer input, broadcast to every row without optional wrapping. */
+template <int32_t Index>
+struct user_data_accessor {
+  using element_type             = voidptr_t;
+  static constexpr int32_t index = Index;
+
+  static __device__ voidptr_t element(column_device_view_core const* cols, size_type)
+  {
+    return const_cast<void*>(cols[index].head());
+  }
+
+  static __device__ voidptr_t nullable_element(column_device_view_core const* cols, size_type row)
+  {
+    return element(cols, row);
+  }
+
+  static __device__ bool is_valid(column_device_view_core const*, size_type) { return true; }
+};
 
 template <int32_t Index, typename Element, bool AsScalar, int32_t TableIndex>
 struct column_accessor {

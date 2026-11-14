@@ -20,7 +20,6 @@ from cudf.api.types import (
     is_scalar,
     is_string_dtype,
 )
-from cudf.core._compat import PANDAS_GE_31
 from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.accessors.lists import ListMethods
 from cudf.core.column.column import ColumnBase, as_column, column_empty
@@ -4151,12 +4150,10 @@ class StringMethods(BaseAccessor):
 
         new_col: ColumnBase = self._column.find(method, sub, start, end)
         if (
-            not PANDAS_GE_31
-            and isinstance(self._column.dtype, pd.ArrowDtype)
+            isinstance(self._column.dtype, pd.ArrowDtype)
             and new_col.is_all_null
         ):
-            # Before pandas 3.1, empty/all-null Arrow find results inferred
-            # the null dtype instead of retaining the integer result dtype.
+            # Pandas infers Arrow's null dtype when no positions are present.
             new_col = column_empty(
                 len(new_col), dtype=pd.ArrowDtype(pa.null())
             )

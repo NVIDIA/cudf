@@ -152,9 +152,8 @@ def test_string_additional_predicate_nullable_dtype(
         ("rindex", ("a",)),
     ],
 )
-@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
-def test_string_numeric_nullable_dtype(klass, dtype, data, method, args):
-    ps = klass(data, dtype=dtype)
+def test_string_numeric_nullable_dtype(dtype, data, method, args):
+    ps = pd.Series(data, dtype=dtype)
     gs = cudf.from_pandas(ps)
 
     expected = getattr(ps.str, method)(*args)

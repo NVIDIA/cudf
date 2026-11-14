@@ -9,12 +9,15 @@
 #include "io/parquet/reader_impl_preprocess_utils.cuh"
 #include "io/utilities/time_utils.hpp"
 
+#include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/algorithms/reduce.cuh>
+#include <cudf/detail/fill.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -65,7 +68,7 @@ void decode_dictionary_page_headers(
                    chunk_page_offsets.end(),
                    0);
 
-  parquet::kernel_error error_code(stream);
+  parquet::kernel_error error_code(stream, cudf::get_current_device_resource_ref());
 
   // Decode dictionary page headers, one thread per page
   parquet::detail::decode_page_headers_from_page_data(
@@ -201,19 +204,14 @@ void hybrid_scan_reader_impl::setup_compressed_data(
   // This function should never be called if `num_rows == 0`.
   CUDF_EXPECTS(_pass_itm_data->num_rows > 0, "Number of reading rows must not be zero.");
 
-  auto& chunks = pass.chunks;
-
   pass.has_compressed_data = setup_column_chunks(column_chunk_data);
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                             : count_page_headers(chunks, _stream);
-  if (total_pages <= 0) { return; }
-  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
-    total_pages, _stream, _mr.as_temporary());
-
-  // decoding of column/page information
-  parquet::detail::decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  auto const unsorted_pages =
+    _has_offset_index
+      ? parquet::detail::decode_page_headers_with_pgidx(pass, _stream, _mr.as_temporary())
+      : parquet::detail::decode_page_headers(pass, _stream, _mr.as_temporary());
+  if (unsorted_pages.size() == 0) { return; }
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -245,11 +243,12 @@ void hybrid_scan_reader_impl::setup_sparse_compressed_data(
     page_idx += num_pages;
   }
 
-  // `decode_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
+  // `decode_sparse_page_headers` may not write every byte of each PageInfo, and `sort_pages` copies
   // PageInfo as whole objects.
   auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
     total_pages, _stream, _mr.as_temporary());
-  parquet::detail::decode_page_headers(pass, unsorted_pages, page_data, _stream);
+  parquet::detail::decode_sparse_page_headers(
+    pass, unsorted_pages, page_data, _stream, _mr.as_temporary());
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -359,32 +358,40 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 namespace {
 
 /**
- * @brief Computes the updated row mask value such that out_row_mask[i] = true, iff in_row_mask[i]
- * is valid and true. This is inline with the masking behavior of cudf::apply_retention_mask.
+ * @brief Checks if a row of a boolean column is valid and true
  */
-struct row_mask_update_fn {
-  bool is_nullable;
-  bool const* in_row_mask;
-  bitmask_type const* in_bitmask;
+__device__ __forceinline__ bool is_valid_and_true(column_device_view const& col,
+                                                  cudf::size_type row_idx)
+{
+  return col.is_valid(row_idx) and col.element<bool>(row_idx);
+}
 
-  __device__ bool operator()(cudf::size_type row_idx) const
+/**
+ * @brief Computes the updated row mask value such that it is true iff both predicate_row_mask[i]
+ * and input_row_mask[i + input_row_mask_offset] are valid and true. This is inline with the
+ * masking behavior of cudf::apply_retention_mask.
+ */
+struct row_masks_and_fn {
+  column_device_view predicate_row_mask;
+  column_device_view input_row_mask;
+  cudf::size_type input_row_mask_offset;
+
+  __device__ bool operator()(cudf::size_type row_idx) const noexcept
   {
-    if (is_nullable and not bit_is_set(in_bitmask, row_idx)) { return false; }
-    return in_row_mask[row_idx];
+    return is_valid_and_true(predicate_row_mask, row_idx) and
+           is_valid_and_true(input_row_mask, input_row_mask_offset + row_idx);
   }
 };
 
 /**
- * @brief Checks if a row is pruned (valid and false)
+ * @brief Checks if a row is pruned (null or false)
  */
 struct is_row_pruned_fn {
-  bool is_nullable;
-  bool const* row_mask;
-  bitmask_type const* bitmask;
-  __device__ bool operator()(cudf::size_type row_idx) const
+  column_device_view row_mask;
+
+  __device__ bool operator()(cudf::size_type row_idx) const noexcept
   {
-    if (is_nullable and not bit_is_set(bitmask, row_idx)) { return false; }
-    return not row_mask[row_idx];
+    return not is_valid_and_true(row_mask, row_idx);
   }
 };
 
@@ -396,12 +403,11 @@ bool hybrid_scan_reader_impl::are_all_rows_pruned(cudf::column_view const& row_m
   CUDF_EXPECTS(row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
   cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  return cudf::detail::all_of(
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{row_mask.size()},
-    is_row_pruned_fn{row_mask.nullable(), row_mask.begin<bool>(), row_mask.null_mask()},
-    stream,
-    mr.as_temporary());
+  return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
+                              cuda::counting_iterator{row_mask.size()},
+                              is_row_pruned_fn{*column_device_view::create(row_mask, stream)},
+                              stream,
+                              mr.as_temporary());
 }
 
 void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_mask,
@@ -421,23 +427,35 @@ void hybrid_scan_reader_impl::update_row_mask(cudf::column_view const& in_row_ma
   CUDF_EXPECTS(in_row_mask.type().id() == type_id::BOOL8,
                "Input row mask column must be a boolean column");
 
+  // All rows were pruned upfront and nothing was read so mark them all as pruned
+  if (_file_itm_data.num_passes() == 0) {
+    if (out_row_mask.has_nulls()) {
+      cudf::detail::fill_in_place(out_row_mask,
+                                  0,
+                                  out_row_mask.size(),
+                                  numeric_scalar<bool>(false, true, stream),
+                                  stream,
+                                  _mr);
+    }
+    return;
+  }
+
+  auto const d_in_row_mask  = column_device_view::create(in_row_mask, stream);
+  auto const d_out_row_mask = column_device_view::create(out_row_mask, stream);
   CUDF_CUDA_TRY(cub::DeviceTransform::Transform(
     cuda::counting_iterator<cudf::size_type>{0},
     out_row_mask.begin<bool>() + out_row_mask_offset,
     total_rows,
-    row_mask_update_fn{in_row_mask.nullable(), in_row_mask.begin<bool>(), in_row_mask.null_mask()},
+    row_masks_and_fn{*d_in_row_mask, *d_out_row_mask, out_row_mask_offset},
     stream.get()));
 
-  // Make sure the null mask of the output row mask column is all valid after the update. This is
-  // to correctly assess if a payload column data page can be pruned. An invalid row in the row mask
-  // column means the corresponding data page cannot be pruned.
+  // Null rows are pruned above so mark the updated range of the output row mask as all valid
   if (out_row_mask.nullable()) {
     cudf::set_null_mask(out_row_mask.null_mask(),
-                        out_row_mask_offset,
-                        out_row_mask_offset + total_rows,
+                        out_row_mask.offset() + out_row_mask_offset,
+                        out_row_mask.offset() + out_row_mask_offset + total_rows,
                         true,
                         stream);
-    out_row_mask.set_null_count(out_row_mask.null_count(0, out_row_mask.size(), stream));
   }
 }
 

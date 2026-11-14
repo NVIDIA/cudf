@@ -26,6 +26,7 @@
 
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/tabulate.h>

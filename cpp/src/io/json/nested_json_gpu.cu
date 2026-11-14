@@ -31,6 +31,7 @@
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
+#include <thrust/fill.h>
 
 #include <limits>
 #include <stack>
@@ -1505,7 +1506,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
   }
 }
 
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
   cuda::stream_ref stream,
@@ -1547,9 +1548,10 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
     stream);
 
   auto const num_total_tokens = d_num_selected_tokens.value(stream);
-  rmm::device_uvector<PdaTokenT> tokens_out{num_total_tokens, stream, mr.get_output_mr()};
-  rmm::device_uvector<SymbolOffsetT> token_indices_out{
-    num_total_tokens, stream, mr.get_output_mr()};
+  cuda::device_buffer<PdaTokenT> tokens_out{
+    stream, mr.get_output_mr(), num_total_tokens, cuda::no_init};
+  cuda::device_buffer<SymbolOffsetT> token_indices_out{
+    stream, mr.get_output_mr(), num_total_tokens, cuda::no_init};
   thrust::copy(rmm::exec_policy_nosync(stream, temp_mr),
                filtered_tokens_out.end() - num_total_tokens,
                filtered_tokens_out.end(),
@@ -1562,7 +1564,7 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> pr
   return std::make_pair(std::move(tokens_out), std::move(token_indices_out));
 }
 
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> get_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> get_token_stream(
   device_span<SymbolT const> json_in,
   cudf::io::json_reader_options const& options,
   cuda::stream_ref stream,
@@ -1660,8 +1662,10 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                stream);
 
   auto const num_total_tokens = num_written_tokens.value(stream) + delimiter_offset;
-  rmm::device_uvector<PdaTokenT> tokens{num_total_tokens, stream, mr.get_output_mr()};
-  rmm::device_uvector<SymbolOffsetT> tokens_indices{num_total_tokens, stream, mr.get_output_mr()};
+  cuda::device_buffer<PdaTokenT> tokens{
+    stream, mr.get_output_mr(), num_total_tokens, cuda::no_init};
+  cuda::device_buffer<SymbolOffsetT> tokens_indices{
+    stream, mr.get_output_mr(), num_total_tokens, cuda::no_init};
 
   // Run FST to translate the input JSON string into tokens and indices at which they occur
   json_to_tokens_fst.Transduce(zip_in,
@@ -1673,7 +1677,8 @@ std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> ge
                                stream);
 
   if (delimiter_offset == 1) {
-    tokens.set_element(0, token_t::LineEnd, stream);
+    thrust::fill_n(
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), tokens.begin(), 1, token_t::LineEnd);
     validate_token_stream(
       json_in, tokens, tokens_indices, options, stream, cudf::get_current_device_resource_ref());
     auto [filtered_tokens, filtered_tokens_indices] =

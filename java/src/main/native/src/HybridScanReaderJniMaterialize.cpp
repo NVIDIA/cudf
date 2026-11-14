@@ -64,6 +64,7 @@ Java_ai_rapids_cudf_HybridScanReader_materializeFilterColumns(JNIEnv* env,
     auto result =
       std::make_unique<cudf::io::table_with_metadata>(wrapper->reader->materialize_filter_columns(
         holder.span(), spans, mut_view, mode, wrapper->options, stream, mr));
+    row_mask_col->set_null_count(mut_view.null_count());
     // Hold both owned until the output array exists and its elements are pinned, so that the
     // only throw points come before either is released.
     cudf::jni::native_jlongArray out(env, 2);
@@ -207,6 +208,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeFil
     }
     auto mut_view = wrapper->chunked_filter_row_mask->mutable_view();
     auto result   = wrapper->reader->materialize_filter_columns_chunk(mut_view);
+    wrapper->chunked_filter_row_mask->set_null_count(mut_view.null_count());
     return cudf::jni::convert_table_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);

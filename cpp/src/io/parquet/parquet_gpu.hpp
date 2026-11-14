@@ -24,6 +24,7 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
 #include <cuda/stream>
@@ -571,10 +572,14 @@ struct ColumnChunkDesc {
 };
 
 /**
- * @brief A utility structure for use in decoding page headers.
+ * @brief Utility struct to record page discovery progress across column chunks
  */
 struct chunk_page_info {
-  PageInfo* pages;
+  uint8_t const* cursor;  ///< Cursor to next page header to discover, or end of last page once done
+  size_t num_values_found;  ///< Number of values in the pages before `cursor`
+  uint32_t num_data_pages;  ///< Number of data pages before `cursor`
+  uint32_t num_dict_pages;  ///< Number of dictionary pages before `cursor`
+  bool is_done;             ///< Whether all chunk pages have been recorded
 };
 
 /**
@@ -854,27 +859,24 @@ __device__ inline bool is_literal_run(int const run_header) { return (run_header
 __device__ inline bool is_repeated_run(int const run_header) { return !is_literal_run(run_header); }
 
 /**
- * @brief Launches kernel for counting page headers from column chunk data buffers
+ * @brief Launches kernel for counting page headers and recording where each page header starts
  *
- * @param[in] chunks Device span of column chunks
+ * Skips chunks that are done. Chunks that run out of page address slots keep counting and save
+ * where recording stopped so a later launch can resume.
+ *
+ * @param[in,out] chunks Device span of column chunks
+ * @param[in,out] chunk_page_infos Device span of chunk page discovery progress
+ * @param[out] page_starts Page header addresses, in no particular order
+ * @param[in,out] num_consumed_slots Number of page address slots consumed so far
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream to use
  */
-void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                        kernel_error::pointer error_code,
-                        cuda::stream_ref stream);
-/**
- * @brief Launches kernel for parsing the page headers in the column chunks
- *
- * @param[in] chunks Device span of column chunks
- * @param[in] chunk_pages List of pages associated with the chunks, in chunk-sorted order
- * @param[out] error_code Error code for kernel failures
- * @param[in] stream CUDA stream to use
- */
-void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
-                         cudf::device_span<chunk_page_info> chunk_pages,
-                         kernel_error::pointer error_code,
-                         cuda::stream_ref stream);
+void discover_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
+                           cudf::device_span<chunk_page_info> chunk_page_infos,
+                           cudf::device_span<cuda::std::uintptr_t> page_starts,
+                           size_t* num_consumed_slots,
+                           kernel_error::pointer error_code,
+                           cuda::stream_ref stream);
 
 /**
  * @brief Page metadata from the page index to be applied to pages during header parsing.
@@ -1088,11 +1090,11 @@ void write_final_offsets(host_span<size_type const> offsets,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
- * @param[in] has_flat_nz_map Whether any page of this subpass carries a flat nz map
+ * @param[in] has_flat_nz_map Whether any DELTA_BINARY page of this subpass carries a flat nz map
  * @param[in] needs_level_decoder Whether any DELTA_BINARY page of this subpass lacks a flat nz map
  * @param[out] error_code Error code for kernel failures
  * @param[in] stream CUDA stream for the level-decoding kernel
- * @param[in] nz_map_stream Stream the producer ran on, which orders the consumer behind it
+ * @param[in] consumer_stream Stream for the nz map consumer, ordered after the producer
  */
 void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1104,7 +1106,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
                          bool needs_level_decoder,
                          kernel_error::pointer error_code,
                          cuda::stream_ref stream,
-                         cuda::stream_ref nz_map_stream);
+                         cuda::stream_ref consumer_stream);
 
 /**
  * @brief Launches kernel for reading the DELTA_BYTE_ARRAY column data stored in the pages
@@ -1144,9 +1146,14 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
  * @param[in] min_row Minimum number of rows to read
  * @param[in] level_type_size Size in bytes of the type for level decoding
  * @param[in] page_mask Boolean vector indicating which pages need to be decoded
+ * @param[in] has_flat_nz_map Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass carries a
+ * flat nz map
+ * @param[in] needs_level_decoder Whether any DELTA_LENGTH_BYTE_ARRAY page of this subpass lacks a
+ * flat nz map
  * @param[out] initial_str_offsets Vector to store the initial offsets for large nested string cols
  * @param[out] error_code Error code for kernel failures
- * @param[in] stream CUDA stream to use
+ * @param[in] stream CUDA stream for the level-decoding kernel
+ * @param[in] consumer_stream Stream for the nz map consumer, ordered after the producer
  */
 void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                                     cudf::detail::hostdevice_span<ColumnChunkDesc const> chunks,
@@ -1154,9 +1161,12 @@ void decode_delta_length_byte_array(cudf::detail::hostdevice_span<PageInfo> page
                                     size_t min_row,
                                     int level_type_size,
                                     cudf::device_span<bool const> page_mask,
+                                    bool has_flat_nz_map,
+                                    bool needs_level_decoder,
                                     cudf::device_span<size_t> initial_str_offsets,
                                     kernel_error::pointer error_code,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    cuda::stream_ref consumer_stream);
 
 /**
  * @brief Launches pre-processing kernel to fill string offsets for non-dictionary columns

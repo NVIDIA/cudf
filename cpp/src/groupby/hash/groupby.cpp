@@ -33,7 +33,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <unordered_map>
 #include <utility>
 
 namespace cudf {
@@ -138,13 +137,10 @@ auto column_view_with_common_nulls(column_view const& column_0,
 }  // namespace
 
 /**
- * @brief Functor to dispatch aggregation with
+ * @brief Functor to compute groupby aggregations with `aggregation_dispatcher`
  *
- * This functor is to be used with `aggregation_dispatcher` to compute the
- * appropriate aggregation. If the values on which to run the aggregation are
- * unchanged, then this functor should be re-used. This is because it stores
- * memoised sorted and/or grouped values and re-using will save on computation
- * of these values.
+ * Reuse one instance for every aggregation on the same values so that they share the memoized
+ * grouped and sorted values.
  */
 struct aggregate_result_functor final : store_result_functor {
   aggregate_result_functor(column_view const& values,
@@ -673,9 +669,17 @@ void aggregate_result_functor::operator()<aggregation::MERGE_TDIGEST>(aggregatio
 
   auto const max_centroids =
     dynamic_cast<cudf::detail::merge_tdigest_aggregation const&>(agg).max_centroids;
+  // tdigest_column_view reads its children without the offset and size of a sliced column, so
+  // merge a copy of sliced presorted values. A prefix slice has no offset, but its children still
+  // hold the rows after its end.
+  auto const grouped = get_grouped_values();
+  auto const sliced  = grouped.offset() != 0 ||
+                      (grouped.num_children() > 0 && grouped.child(0).size() != grouped.size());
+  auto const copy =
+    sliced ? std::make_unique<column>(grouped, stream, mr.get_temporary_mr()) : nullptr;
   cache.add_result(values,
                    agg,
-                   cudf::tdigest::detail::group_merge_tdigest(get_grouped_values(),
+                   cudf::tdigest::detail::group_merge_tdigest(copy ? copy->view() : grouped,
                                                               helper.group_offsets(stream, mr),
                                                               helper.group_labels(stream, mr),
                                                               helper.num_groups(stream, mr),

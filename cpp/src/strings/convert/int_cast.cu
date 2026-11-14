@@ -21,7 +21,8 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/functional>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>

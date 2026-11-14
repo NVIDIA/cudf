@@ -50,8 +50,10 @@ namespace {
  */
 [[nodiscard]] nz_map_kind classify_nz_map_kind(PageInfo const& page, ColumnChunkDesc const& chunk)
 {
-  // DELTA_BINARY_PACKED is the only encoding with an nz map consumer today.
-  bool const has_consumer = BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
+  // The encodings with an nz map consumer.
+  bool const has_consumer =
+    BitAnd(page.kernel_mask,
+           BitOr(decode_kernel_mask::DELTA_BINARY, decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
   if (!has_consumer) { return nz_map_kind::NONE; }
 
   // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta
@@ -131,7 +133,7 @@ void reader_impl::build_string_dict_indices()
       pass.str_dict_index.data(), str_dict_index_offsets, pass.chunks, _sparse_page_io});
 
   // compute the indices
-  kernel_error error_code(_stream);
+  kernel_error error_code(_stream, _mr.as_temporary());
   build_string_dictionary_index(
     pass.chunks.device_ptr(), pass.chunks.size(), error_code.data(), _stream);
   pass.chunks.device_to_host(_stream);
@@ -591,7 +593,7 @@ void reader_impl::compute_page_string_offset_indices(size_t skip_rows, size_t nu
   _stream.sync();
 
   // Pre-process string offsets for non-dictionary string columns
-  kernel_error error_code(_stream);
+  kernel_error error_code(_stream, _mr.as_temporary());
   detail::preprocess_string_offsets(subpass.pages,
                                     pass.chunks,
                                     subpass.page_string_offset_indices,
@@ -680,25 +682,16 @@ void reader_impl::read_compressed_data()
   // This function should never be called if `num_rows == 0`.
   CUDF_EXPECTS(_pass_itm_data->num_rows > 0, "Number of reading rows must not be zero.");
 
-  auto& chunks = pass.chunks;
-
   auto [has_compressed_data, read_chunks_tasks] = read_column_chunks();
   pass.has_compressed_data                      = has_compressed_data;
 
   read_chunks_tasks.get();
 
   // Process dataset chunk pages into output columns
-  auto const total_pages = _has_offset_index ? count_page_headers_with_pgidx(chunks, _stream)
-                                             : count_page_headers(chunks, _stream);
-  if (total_pages <= 0) { return; }
-
-  // Zero out the vector before `decode_page_headers` as it may not write every byte of the buffer,
-  // and`sort_pages` copies `PageInfo` as whole objects.
-  auto unsorted_pages = cudf::detail::make_zeroed_device_buffer_async<PageInfo>(
-    total_pages, _stream, _mr.as_temporary());
-
-  // decoding of column/page information
-  decode_page_headers(pass, unsorted_pages, _has_offset_index, _stream);
+  auto const unsorted_pages = _has_offset_index
+                                ? decode_page_headers_with_pgidx(pass, _stream, _mr.as_temporary())
+                                : decode_page_headers(pass, _stream, _mr.as_temporary());
+  if (unsorted_pages.size() == 0) { return; }
   CUDF_EXPECTS(pass.page_offsets.size() - 1 == static_cast<size_t>(_input_columns.size()),
                "Encountered page_offsets / num_columns mismatch");
 }
@@ -1065,12 +1058,24 @@ void reader_impl::preprocess_subpass_pages(read_mode mode, size_t chunk_read_lim
   compute_output_chunks_for_subpass();
 }
 
-void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows)
+void reader_impl::allocate_columns(read_mode mode,
+                                   size_t skip_rows,
+                                   size_t num_rows,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   auto& pass    = *_pass_itm_data;
   auto& subpass = *pass.subpass;
+
+  // Memory resource for a column buffer at nesting depth `l_idx`
+  auto const buffer_mr = [&](auto const& out_buf, auto const& input_col, auto l_idx) {
+    // Only top-level buffers have a top-level column index
+    auto const top_level_index =
+      l_idx == 0 ? std::make_optional<size_t>(input_col.nesting[0]) : std::nullopt;
+    return is_intermediate_column(out_buf, top_level_index) ? mr.get_temporary_mr()
+                                                            : mr.get_output_mr();
+  };
 
   // Should not reach here if there is no page data.
   CUDF_EXPECTS(subpass.pages.size() > 0, "There are no pages present in the subpass");
@@ -1123,8 +1128,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
         CUDF_EXPECTS(out_buf_size <= std::numeric_limits<cudf::size_type>::max(),
                      "Number of rows exceeds cudf's column size limit",
                      std::overflow_error);
-        out_buf.create_with_mask(
-          out_buf_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
+        out_buf.create_with_mask(out_buf_size,
+                                 cudf::mask_state::UNINITIALIZED,
+                                 false,
+                                 _stream,
+                                 buffer_mr(out_buf, input_col, l_idx));
         nullmask_bufs.emplace_back(
           out_buf.null_mask(),
           cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /
@@ -1257,8 +1265,11 @@ void reader_impl::allocate_columns(read_mode mode, size_t skip_rows, size_t num_
                        std::overflow_error);
           // allocate
           // we're going to start null mask as all valid and then turn bits off if necessary
-          out_buf.create_with_mask(
-            buffer_size, cudf::mask_state::UNINITIALIZED, false, _stream, _mr.get_output_mr());
+          out_buf.create_with_mask(buffer_size,
+                                   cudf::mask_state::UNINITIALIZED,
+                                   false,
+                                   _stream,
+                                   buffer_mr(out_buf, input_col, l_idx));
           nullmask_bufs.emplace_back(
             out_buf.null_mask(),
             cudf::detail::round_up_safe(out_buf.null_mask_size(), sizeof(cudf::bitmask_type)) /

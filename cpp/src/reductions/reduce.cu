@@ -3,12 +3,20 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "jit/cache.hpp"
+#include "jit/helpers.hpp"
+#include "jit/reflect.hpp"
+#include "jit/util.hpp"
+#include "reductions/jit/reduce_kernel.cuh"
+#include "runtime/context.hpp"
+
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/detail/utilities/layout.hpp>
 #include <cudf/detail/utilities/strings.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/errc.hpp>
@@ -16,7 +24,6 @@
 #include <cudf/reduction.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/memory_layout.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -27,13 +34,7 @@
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
 
-#include <jit/cache.hpp>
-#include <jit/helpers.hpp>
-#include <jit/reflect.hpp>
-#include <jit/util.hpp>
-#include <reductions/jit/reduce_kernel.cuh>
 #include <rtcx/rtcx.hpp>
-#include <runtime/context.hpp>
 
 #include <algorithm>
 #include <bit>
@@ -91,7 +92,7 @@ struct kernel_reflection {
   std::string filter_inputs{};
   std::string outputs{};
   std::string state{};
-  detail::memory_layout state_layout{};
+  detail::layout state_layout{};
   int32_t block_size = default_block_size;
   bool warp_reduce   = true;
 };
@@ -212,31 +213,29 @@ std::pair<std::vector<std::string>, std::string> reflect_outputs(
 
 // Reserve a conservative ABI-independent bound: every field may need alignment padding.
 // is_optional contains one flag per state field; nonzero flags select optional storage.
-std::tuple<detail::memory_layout, std::vector<std::string>> reflect_state(
+std::tuple<detail::layout, std::vector<std::string>> reflect_state(
   std::span<data_type const> states, std::span<uint8_t const> is_optional)
 {
   // An empty tuple is still a member object and occupies storage before the error code.
   std::vector<std::string> state_types;
 
-  auto layout =
-    states.empty() ? detail::memory_layout_of<cuda::std::tuple<>> : detail::memory_layout{};
+  auto layout = states.empty() ? detail::layout_of<cuda::std::tuple<>> : detail::layout{};
 
   for (size_t i = 0; i < states.size(); ++i) {
     auto physical = jit::physical_type_of(states[i]);
     state_types.push_back(type_to_name(physical));
     auto field_layout = type_dispatcher(physical, [&]<typename T> {
-      return is_optional[i] ? detail::memory_layout_of<cuda::std::optional<T>>
-                            : detail::memory_layout_of<T>;
+      return is_optional[i] ? detail::layout_of<cuda::std::optional<T>> : detail::layout_of<T>;
     });
-    layout            = layout.append(field_layout);
+    layout            = layout.extend(field_layout);
   }
 
-  layout = layout.aligned().append(detail::memory_layout_of<errc>).aligned();
+  layout = layout.aligned().extend(detail::layout_of<errc>).aligned();
 
   return {layout, reflect_value_parameters(state_types, is_optional)};
 }
 
-constexpr int32_t block_size_from_layout(detail::memory_layout const& layout)
+constexpr int32_t block_size_from_layout(detail::layout const& layout)
 {
   // Select block size based on the layout size.
   if (layout.size <= small_state_bytes) return default_block_size;
@@ -245,7 +244,7 @@ constexpr int32_t block_size_from_layout(detail::memory_layout const& layout)
   return detail::warp_size;
 }
 
-bool use_warp_reduce(detail::memory_layout const& layout)
+bool use_warp_reduce(detail::layout const& layout)
 {
   return layout.size <= max_shuffle_state_bytes;
 }

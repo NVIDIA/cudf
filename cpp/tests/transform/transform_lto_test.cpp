@@ -49,7 +49,7 @@ TEST_F(TransformLTOTest, UdfAbiLayouts)
 #include <cudf/user_data.hpp>
 #include <cuda/std/optional>
 #include <cuda/std/span>
-#include <jit/udf_abi.cuh>
+#include "jit/udf_abi.cuh"
 #pragma nv_hdrstop
 )CUDA";
   for (auto const* type : types) {
@@ -72,7 +72,7 @@ static_assert(alignof(cuda::std::optional<{0}>) ==
 #define private public
 #include <cuda/std/optional>
 #undef private
-#include <jit/udf_abi.cuh>
+#include "jit/udf_abi.cuh"
 using uint128_t = unsigned __int128;
 using actual_optional = cuda::std::optional<uint128_t>;
 using forwarding_optional = cudf_udf_abi::cuda::std::optional<uint128_t>;
@@ -83,8 +83,8 @@ static_assert(__builtin_offsetof(actual_optional, __storage_.__val_) ==
 static_assert(__builtin_offsetof(actual_optional, __engaged_) ==
               __builtin_offsetof(forwarding_optional, engaged));
 )CUDA";
-  EXPECT_NO_THROW(static_cast<void>(
-    cudf::compile_cuda_to_lto_ir(optional_offsets, {}, {}, {}, false)));
+  EXPECT_NO_THROW(
+    static_cast<void>(cudf::compile_cuda_to_lto_ir(optional_offsets, {}, {}, {}, false)));
 }
 
 TEST_F(TransformLTOTest, CompileUdfWithIncludes)

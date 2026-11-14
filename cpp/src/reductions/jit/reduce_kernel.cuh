@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "jit/type_list.cuh"
+
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -12,16 +14,13 @@
 #include <cudf/errc.hpp>
 #include <cudf/types.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/cstddef>
 #include <cuda/std/cstdint>
 #include <cuda/std/cstring>
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
-#include <cuda/std/type_traits>
 #include <cuda/std/utility>
-
-#include <jit/type_list.cuh>
 
 namespace cudf::jit {
 

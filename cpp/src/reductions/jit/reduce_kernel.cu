@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "jit/column_accessor.cuh"
+#include "jit/type_list.cuh"
+#include "reductions/jit/reduce_kernel.cuh"
+
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/errc.hpp>
 #include <cudf/types.hpp>
-
-#include <jit/column_accessor.cuh>
-#include <jit/type_list.cuh>
-#include <reductions/jit/reduce_kernel.cuh>
 
 #pragma nv_hdrstop  // Generated kernel configuration and UDF declarations vary per compilation.
 

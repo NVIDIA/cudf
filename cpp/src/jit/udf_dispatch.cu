@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <jit/udf_abi.cuh>
+#include "jit/udf_abi.cuh"
 
 namespace cudf_udf_abi {
 

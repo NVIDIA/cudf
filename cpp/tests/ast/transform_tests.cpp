@@ -1731,9 +1731,9 @@ TYPED_TEST(TransformTest, OperatorParityDecimalCastsAndRescale)
     auto table = cudf::table_view{{input}};
     for (auto const& [op, type_id] : casts) {
       auto expression = cudf::ast::operation{op, ref};
-      auto equal = cudf::ast::operation{cudf::ast::ast_operator::EQUAL, expression, expression};
       if constexpr (std::is_same_v<Executor, executor_ast>) {
         if (type_id == cudf::type_id::DECIMAL128) {
+          auto equal = cudf::ast::operation{cudf::ast::ast_operator::EQUAL, expression, expression};
           EXPECT_THROW(Executor::compute_column(table, expression), cudf::data_type_error);
           EXPECT_THROW(Executor::compute_column(table, equal), cudf::data_type_error);
           continue;

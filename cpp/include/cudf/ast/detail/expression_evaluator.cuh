@@ -703,12 +703,7 @@ struct expression_evaluator {
      * @param output Output data reference.
      */
     template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires((op == ast_operator::RESCALE &&
-                requires(detail::operator_functor<op> f,
-                         possibly_null_value_t<Input, has_nulls> v) { f(v, int32_t{}); }) ||
-               (op != ast_operator::RESCALE &&
-                detail::is_valid_unary_op<detail::operator_functor<op>,
-                                          possibly_null_value_t<Input, has_nulls>>))
+      requires(detail::is_valid_ast_unary_op<op, possibly_null_value_t<Input, has_nulls>>)
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,

@@ -283,8 +283,7 @@ cudf::size_type expression_parser::visit(operation const& expr)
       if (!cudf::is_fixed_width(data_type)) {
         CUDF_FAIL(
           "The output data type is not a fixed-width type but must be stored in an intermediate.");
-      } else if (cudf::size_of(data_type) > (_has_nulls ? sizeof(IntermediateDataType<true>)
-                                                        : sizeof(IntermediateDataType<false>))) {
+      } else if (cudf::size_of(data_type) > sizeof(IntermediateDataType<false>)) {
         CUDF_FAIL("The output data type is too large to be stored in an intermediate.");
       }
       return detail::device_data_reference(

@@ -82,7 +82,7 @@ std::unique_ptr<column> compute_lead_lag_for_nested(aggregation::Kind op,
                                                     FollowingIter following,
                                                     size_type row_offset,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
   CUDF_EXPECTS(op == aggregation::LEAD || op == aggregation::LAG,

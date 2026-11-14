@@ -896,6 +896,7 @@ add_library(
   src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
+  src/join/asof_join.cu
   src/join/conditional_join.cu
   src/join/cross_join.cu
   src/join/direct_join.cu
@@ -1161,6 +1162,7 @@ add_library(
   src/text/minhash.cu
   src/text/ngrams_tokenize.cu
   src/text/normalize.cu
+  src/text/normalize_spaces.cu
   src/text/replace.cu
   src/text/stemmer.cu
   src/text/bpe/byte_pair_encoding.cu

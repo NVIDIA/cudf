@@ -31,6 +31,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
 
@@ -436,13 +437,13 @@ cudf::size_type mark_join::mark_probe_with_prefilter(storage_ref_type storage_re
                                                      cudf::size_type num_right_rows,
                                                      bitmask_type const* right_row_bitmask,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(_bloom_filter != nullptr, "Prefilter-enabled mark_join is missing bloom filter.");
 
   auto filtered_right_rows =
-    cuda::device_buffer<right_key_type>(stream, mr, num_right_rows, cuda::no_init);
-  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr);
+    cuda::device_buffer<right_key_type>(stream, mr.get_output_mr(), num_right_rows, cuda::no_init);
+  cudf::detail::device_scalar<cudf::size_type> d_filtered_count(0, stream, mr.get_output_mr());
 
   auto const filter_ref = _bloom_filter->ref();
   using prefilter_operator_type =
@@ -482,7 +483,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   join_kind kind,
   Comparator comparator,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -547,7 +548,7 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::mark_probe_and_
   auto const result_count =
     (kind == join_kind::LEFT_SEMI_JOIN) ? marked_count : (unmatched_valid + null_contribution);
 
-  auto result = rmm::device_uvector<size_type>(result_count, stream, mr);
+  auto result = rmm::device_uvector<size_type>(result_count, stream, mr.get_output_mr());
   if (result_count == 0) {
     return std::make_unique<rmm::device_uvector<size_type>>(std::move(result));
   }
@@ -750,10 +751,7 @@ mark_join::mark_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
-  cudf::table_view const& right,
-  join_kind kind,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, join_kind kind, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   clear_marks(stream);
 
@@ -800,23 +798,23 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_anti_join(
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::semi_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   if (_left.num_rows() == 0 || right.num_rows() == 0) {
-    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
   }
   return semi_anti_join(right, join_kind::LEFT_SEMI_JOIN, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<cudf::size_type>> mark_join::anti_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   if (_left.num_rows() == 0) {
-    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr);
+    return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
   }
   if (right.num_rows() == 0) {
-    auto result =
-      std::make_unique<rmm::device_uvector<cudf::size_type>>(_left.num_rows(), stream, mr);
+    auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
+      _left.num_rows(), stream, mr.get_output_mr());
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      result->begin(),
                      result->end());
@@ -853,14 +851,14 @@ mark_join::mark_join(cudf::table_view const& left,
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> mark_join::semi_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"mark_join::semi_join"};
   return _impl->semi_join(right, stream, mr);
 }
 
 std::unique_ptr<rmm::device_uvector<size_type>> mark_join::anti_join(
-  cudf::table_view const& right, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cudf::table_view const& right, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   cudf::scoped_range range{"mark_join::anti_join"};
   return _impl->anti_join(right, stream, mr);

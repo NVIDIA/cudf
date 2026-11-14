@@ -3392,9 +3392,30 @@ def test_parquet_bss_round_trip(tmp_path):
     i64_data = pa.array(list(range(num_rows)), type=pa.int64())
     f32_data = pa.array([float(i) for i in range(num_rows)], type=pa.float32())
     f64_data = pa.array([float(i) for i in range(num_rows)], type=pa.float64())
+
+    # 8- and 16-bit integers are stored as INT32. Every third value is null.
+    def narrow(pa_type, value):
+        return pa.array(
+            [None if i % 3 == 0 else value(i) for i in range(num_rows)],
+            type=pa_type,
+        )
+
+    narrow_data = {
+        "i8": narrow(pa.int8(), lambda i: i - 100),
+        "u8": narrow(pa.uint8(), lambda i: i),
+        "i16": narrow(pa.int16(), lambda i: 300 * i - 30000),
+        "u16": narrow(pa.uint16(), lambda i: 300 * i),
+    }
     padf = pa.Table.from_arrays(
-        [fixed_data, i32_data, i64_data, f32_data, f64_data],
-        names=["flba", "i32", "i64", "f32", "f64"],
+        [
+            fixed_data,
+            i32_data,
+            i64_data,
+            f32_data,
+            f64_data,
+            *narrow_data.values(),
+        ],
+        names=["flba", "i32", "i64", "f32", "f64", *narrow_data],
     )
     padf_fname = tmp_path / "padf.parquet"
     pq.write_table(
@@ -3417,13 +3438,19 @@ def test_parquet_bss_round_trip(tmp_path):
             "i64": "BYTE_STREAM_SPLIT",
             "f32": "BYTE_STREAM_SPLIT",
             "f64": "BYTE_STREAM_SPLIT",
+            "i8": "BYTE_STREAM_SPLIT",
+            "u8": "BYTE_STREAM_SPLIT",
+            "i16": "BYTE_STREAM_SPLIT",
+            "u16": "BYTE_STREAM_SPLIT",
         },
         row_group_size_rows=rows_per_rowgroup,
     )
 
-    # now read back in with pyarrow to test it was written properly by cudf
+    # now read back in with pyarrow to test it was written properly by cudf.
+    # Drop the pandas metadata that cudf writes, which would convert the
+    # nullable 8- and 16-bit columns to nullable pandas types, unlike padf2.
     padf2 = pq.read_table(padf_fname)
-    padf3 = pq.read_table(cdf_fname)
+    padf3 = pq.read_table(cdf_fname).replace_schema_metadata()
     assert_eq(padf2, padf3)
     assert_eq(padf2.schema[0].type, padf3.schema[0].type)
 
@@ -5618,3 +5645,77 @@ def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
     )
 
     assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)
+
+
+def test_dataset_writer_closes_rotated(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    for _ in range(4):
+        writer.write_table(df)
+
+    # Writers from earlier appends were closed once their files rotated out
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert len(open_writers) == 1
+
+    # Footer metadata of early-closed writers is still returned
+    meta = writer.close(return_metadata=True)
+    assert pq.ParquetFile(BytesIO(meta)).metadata.num_rows == 4 * len(df)
+    expect = cudf.concat([df] * 4).sort_values("x").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
+def test_dataset_writer_stale_partition(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+    df0 = df[df["centroid"] == 0]
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    writer.write_table(df)
+    for _ in range(3):
+        writer.write_table(df0)
+
+    # Partitions 1..15 never rotate, so the first writer stays open until
+    # close(); writers holding only partition 0 are closed as it rotates
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert writer._chunked_writers[0] is not None
+    assert len(open_writers) == 2
+
+    writer.close()
+    expect = (
+        cudf.concat([df, df0, df0, df0])
+        .sort_values("x")
+        .reset_index(drop=True)
+    )
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)

@@ -42,7 +42,12 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.binary_search.h>
+#include <cuda/std/algorithm.copy_n.h>
+#include <cuda/std/algorithm.lower_bound.h>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/algorithm.rotate.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>

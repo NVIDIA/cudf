@@ -15,11 +15,14 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
+#include <cuda/atomic>
 #include <cuda/cmath>
 #include <cuda/iterator>
 #include <cuda/std/array>
+#include <cuda/std/cstdint>
 #include <cuda/std/cstring>
 #include <cuda/std/iterator>
+#include <cuda/std/optional>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -28,8 +31,7 @@ namespace cudf::io::parquet::detail {
 
 namespace {
 
-auto constexpr decode_page_headers_block_size     = 4 * cudf::detail::warp_size;
-auto constexpr count_page_headers_block_size      = 4 * cudf::detail::warp_size;
+auto constexpr discover_page_headers_block_size   = 4 * cudf::detail::warp_size;
 auto constexpr build_string_dict_index_block_size = 2 * cudf::detail::warp_size;
 
 // Shared-memory window size in bytes for parsing BYTE_ARRAY string dictionaries.
@@ -296,7 +298,7 @@ struct ParquetFieldBool {
 };
 
 /**
- * @brief Functor to set value to 32 bit integer read from byte stream
+ * @brief Set value to 32 bit integer read from byte stream
  *
  * @return True if field type is not int32
  */
@@ -314,7 +316,7 @@ struct ParquetFieldInt32 {
 };
 
 /**
- * @brief Functor to set value to enum read from byte stream
+ * @brief Set value to enum read from byte stream
  *
  * @return True if field type is not int32
  */
@@ -333,7 +335,7 @@ struct ParquetFieldEnum {
 };
 
 /**
- * @brief Functor to run operator on byte stream
+ * @brief Run operator on byte stream
  *
  * @return True if field type is not struct type or if the calling operator
  * fails
@@ -352,17 +354,11 @@ struct ParquetFieldStruct {
 };
 
 /**
- * @brief Functor to run an operator
+ * @brief Run the operator whose field matches `field` with the byte stream and field type
  *
- * The purpose of this functor is to replace a switch case. If the field in
- * the argument is equal to the field specified in any element of the tuple
- * of operators then it is run with the byte stream and field type arguments.
+ * Replaces a switch case. If no operator matches, the field is skipped via `skip_struct_field`.
  *
- * If the field does not match any of the functors then skip_struct_field is
- * called over the byte stream.
- *
- * @return Return value of the selected operator or false if no operator
- * matched the field value
+ * @return Return value of the matched operator, or false if none matched
  */
 template <int index>
 struct FunctionSwitchImpl {
@@ -398,7 +394,7 @@ struct FunctionSwitchImpl<0> {
 };
 
 /**
- * @brief Function to parse page header based on the tuple of functors provided
+ * @brief Parse page header based on the tuple of functors provided
  *
  * Bytes are read from the byte stream and the field delta and field type are
  * matched up against user supplied reading functors. If they match then the
@@ -425,7 +421,7 @@ inline __device__ bool parse_header(cuda::std::tuple<Operator...>& op, byte_stre
 }
 
 /**
- * @brief Functor to parse v1 data page header
+ * @brief Parse v1 data page header
  *
  * @param bs Byte stream
  *
@@ -444,7 +440,7 @@ struct parse_data_page_header_fn {
 };
 
 /**
- * @brief Functor to parse dictionary page header
+ * @brief Parse dictionary page header
  *
  * @param bs Byte stream
  *
@@ -460,7 +456,7 @@ struct parse_dictionary_page_header_fn {
 };
 
 /**
- * @brief Functor to parse V2 data page header
+ * @brief Parse V2 data page header
  *
  * @param bs Byte stream
  *
@@ -482,7 +478,7 @@ struct parse_data_page_header_v2_fn {
 };
 
 /**
- * @brief Functor to parse page header from byte stream
+ * @brief Parse page header from byte stream
  *
  * @param bs Byte stream
  *
@@ -529,19 +525,22 @@ void __forceinline__ __device__ zero_out_page_header_info(byte_stream_s* bs)
 }
 
 /**
- * @brief Kernel for outputting page headers from the specified column chunks
+ * @brief Discover (count and record addresses of) page headers across column chunks
  *
- * @param[in] chunks Device span of column chunks
- * @param[out] chunk_pages List of chunk-sorted page info (headers)
+ * @param[in,out] chunks Device span of column chunks
+ * @param[in,out] chunk_page_infos Device span of chunk page discovery progress
+ * @param[out] page_starts Page header addresses, in no particular order
+ * @param[in,out] num_consumed_slots Number of page address slots consumed so far
  * @param[out] error_code Pointer to the error code for kernel failures
  */
-CUDF_KERNEL
-void __launch_bounds__(decode_page_headers_block_size)
-  decode_page_headers_kernel(device_span<ColumnChunkDesc const> chunks,
-                             device_span<chunk_page_info> chunk_pages,
-                             kernel_error::pointer error_code)
+CUDF_KERNEL void __launch_bounds__(discover_page_headers_block_size)
+  discover_page_headers_kernel(cudf::device_span<ColumnChunkDesc> chunks,
+                               cudf::device_span<chunk_page_info> chunk_page_infos,
+                               cudf::device_span<cuda::std::uintptr_t> page_starts,
+                               size_t* num_consumed_slots,
+                               kernel_error::pointer error_code)
 {
-  auto constexpr num_warps_per_block = decode_page_headers_block_size / cudf::detail::warp_size;
+  auto constexpr num_warps_per_block = discover_page_headers_block_size / cudf::detail::warp_size;
 
   auto const block = cg::this_thread_block();
   auto const warp  = cg::tiled_partition<cudf::detail::warp_size>(block);
@@ -552,157 +551,43 @@ void __launch_bounds__(decode_page_headers_block_size)
     static_cast<cudf::size_type>((cg::this_grid().block_rank() * num_warps_per_block) + warp_id);
   auto const num_chunks = static_cast<cudf::size_type>(chunks.size());
 
-  if (chunk_idx >= num_chunks) { return; }
+  if (chunk_idx >= num_chunks or chunk_page_infos[chunk_idx].is_done) { return; }
 
   __shared__ byte_stream_s bs_g[num_warps_per_block];
   __shared__ kernel_error::value_type error[num_warps_per_block];
 
-  auto const bs = &bs_g[warp_id];
-
-  cg::invoke_one(warp, [&]() {
-    bs->ck         = chunks[chunk_idx];
-    error[warp_id] = 0;
-  });
-  warp.sync();
-
-  cg::invoke_one(warp, [&]() {
-    bs->base = bs->cur = bs->ck.compressed_data;
-    bs->end            = bs->base + bs->ck.compressed_size;
-    // Clear page header info before writing known fields
-    zero_out_page_header_info(bs);
-    bs->page.chunk_idx      = chunk_idx;
-    bs->page.src_col_schema = bs->ck.src_col_schema;
-  });
-  size_t const num_values        = bs->ck.num_values;
-  size_t values_found            = 0;
-  uint32_t data_page_count       = 0;
-  uint32_t dictionary_page_count = 0;
-  auto* page_info                = chunk_pages[chunk_idx].pages;
-  auto const max_num_pages       = bs->ck.num_data_pages + bs->ck.num_dict_pages;
-  auto const num_dict_pages      = bs->ck.num_dict_pages;
-  warp.sync();
-
-  while (values_found < num_values and bs->cur < bs->end) {
-    int index_out = -1;
-    // Let all threads read before `parse_page_header_fn{}`
-    warp.sync();
-
-    // Must be lane 0 here as `shuffle(values_found)` assumes lane 0 is the root
-    if (lane_id == 0) {
-      // this computation is only valid for flat schemas. for nested schemas,
-      // they will be recomputed in the preprocess step by examining repetition and
-      // definition levels
-      bs->page.chunk_row += bs->page.num_rows;
-      bs->page.num_rows      = 0;
-      bs->page.flags         = 0;
-      bs->page.str_bytes     = 0;
-      bs->page.str_bytes_all = 0;
-      // zero out V2 info
-      bs->page.is_compressed                     = true;
-      bs->page.num_nulls                         = 0;
-      bs->page.lvl_bytes[level_type::DEFINITION] = 0;
-      bs->page.lvl_bytes[level_type::REPETITION] = 0;
-      if (parse_valid_page_header(bs)) {
-        if (not is_supported_encoding(bs->page.encoding)) {
-          error[warp_id] |=
-            static_cast<kernel_error::value_type>(decode_error::UNSUPPORTED_ENCODING);
-        }
-        switch (bs->page_type) {
-          case PageType::DATA_PAGE:
-            index_out = num_dict_pages + data_page_count;
-            data_page_count++;
-            // this computation is only valid for flat schemas. for nested schemas,
-            // they will be recomputed in the preprocess step by examining repetition and
-            // definition levels
-            bs->page.num_rows = bs->page.num_input_values;
-            values_found += bs->page.num_input_values;
-            break;
-          case PageType::DATA_PAGE_V2:
-            index_out = num_dict_pages + data_page_count;
-            data_page_count++;
-            bs->page.flags |= PAGEINFO_FLAGS_V2;
-            values_found += bs->page.num_input_values;
-            // V2 only uses RLE, so it was removed from the header
-            bs->page.definition_level_encoding = Encoding::RLE;
-            bs->page.repetition_level_encoding = Encoding::RLE;
-            break;
-          case PageType::DICTIONARY_PAGE:
-            index_out = dictionary_page_count;
-            dictionary_page_count++;
-            bs->page.flags |= PAGEINFO_FLAGS_DICTIONARY;
-            break;
-          default:
-            error[warp_id] |=
-              static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_TYPE);
-            bs->cur = bs->end;
-            break;
-        }
-        bs->page.page_data = const_cast<uint8_t*>(bs->cur);
-        bs->cur += bs->page.compressed_page_size;
-        if (bs->cur > bs->end) {
-          error[warp_id] |=
-            static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
-        }
-        bs->page.kernel_mask = kernel_mask_for_page(bs->page, bs->ck);
-      } else {
-        error[warp_id] |= static_cast<kernel_error::value_type>(decode_error::INVALID_PAGE_HEADER);
-        bs->cur = bs->end;
-      }
-      if (index_out >= 0 and index_out < max_num_pages) { page_info[index_out] = bs->page; }
-    }
-    values_found = shuffle(values_found);
-    warp.sync();
-  }
-  cg::invoke_one(warp, [&]() {
-    if (error[warp_id] != 0) { set_error(error[warp_id], error_code); }
-  });
-}
-
-/**
- * @brief Kernel for counting the number of page headers from the specified column chunks
- *
- * @param[in] chunks Device span of column chunks
- * @param[out] error_code Pointer to the error code for kernel failures
- */
-CUDF_KERNEL void __launch_bounds__(count_page_headers_block_size)
-  count_page_headers_kernel(cudf::device_span<ColumnChunkDesc> chunks,
-                            kernel_error::pointer error_code)
-{
-  auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
-
-  auto const block = cg::this_thread_block();
-  auto const warp  = cg::tiled_partition<cudf::detail::warp_size>(block);
-
-  auto const warp_id = warp.meta_group_rank();
-  auto const lane_id = warp.thread_rank();
-  auto const chunk_idx =
-    static_cast<cudf::size_type>((cg::this_grid().block_rank() * num_warps_per_block) + warp_id);
-  auto const num_chunks = static_cast<cudf::size_type>(chunks.size());
-
-  if (chunk_idx >= num_chunks) { return; }
-
-  __shared__ byte_stream_s bs_g[num_warps_per_block];
-  __shared__ kernel_error::value_type error[num_warps_per_block];
-
-  auto const bs = &bs_g[warp_id];
+  auto const bs         = &bs_g[warp_id];
+  auto const start_info = chunk_page_infos[chunk_idx];
 
   cg::invoke_one(warp, [&] {
     bs->ck         = chunks[chunk_idx];
     error[warp_id] = 0;
-    bs->base = bs->cur = bs->ck.compressed_data;
-    bs->end            = bs->base + bs->ck.compressed_size;
+    bs->base       = bs->ck.compressed_data;
+    bs->cur        = start_info.cursor;
+    bs->end        = bs->base + bs->ck.compressed_size;
   });
   warp.sync();
   size_t const num_values        = bs->ck.num_values;
-  size_t values_found            = 0;
-  uint32_t data_page_count       = 0;
-  uint32_t dictionary_page_count = 0;
+  size_t values_found            = start_info.num_values_found;
+  uint32_t data_page_count       = start_info.num_data_pages;
+  uint32_t dictionary_page_count = start_info.num_dict_pages;
+
+  // Where recording stopped if page start slots ran out (lane 0 only)
+  cuda::std::optional<chunk_page_info> resume_info;
+  cuda::atomic_ref<size_t, cuda::thread_scope_device> const num_consumed_slots_ref{
+    *num_consumed_slots};
+
   warp.sync();
   while (values_found < num_values and bs->cur < bs->end) {
     // Let all threads read before `parse_page_header_fn{}`
     warp.sync();
     // Must be lane 0 here as `shuffle(values_found)` assumes lane 0 is the root
     if (lane_id == 0) {
+      auto const current_info = chunk_page_info{.cursor           = bs->cur,
+                                                .num_values_found = values_found,
+                                                .num_data_pages   = data_page_count,
+                                                .num_dict_pages   = dictionary_page_count,
+                                                .is_done          = false};
       if (parse_valid_page_header(bs)) {
         if (not is_supported_encoding(bs->page.encoding)) {
           error[warp_id] |=
@@ -724,6 +609,14 @@ CUDF_KERNEL void __launch_bounds__(count_page_headers_block_size)
             bs->cur = bs->end;
             break;
         }
+        if (not resume_info.has_value()) {
+          if (auto const slot = num_consumed_slots_ref.fetch_add(1, cuda::memory_order_relaxed);
+              slot < page_starts.size()) {
+            page_starts[slot] = reinterpret_cast<cuda::std::uintptr_t>(current_info.cursor);
+          } else {
+            resume_info = current_info;
+          }
+        }
         bs->cur += bs->page.compressed_page_size;
         if (bs->cur > bs->end) {
           error[warp_id] |=
@@ -737,11 +630,18 @@ CUDF_KERNEL void __launch_bounds__(count_page_headers_block_size)
     values_found = shuffle(values_found);
     warp.sync();
   }
-  cg::invoke_one(warp, [&] {
+  if (lane_id == 0) {
     chunks[chunk_idx].num_data_pages = data_page_count;
     chunks[chunk_idx].num_dict_pages = dictionary_page_count;
+    // Once all pages are recorded, `cursor` is the end of the last page
+    auto const final_info       = chunk_page_info{.cursor           = bs->cur,
+                                                  .num_values_found = values_found,
+                                                  .num_data_pages   = data_page_count,
+                                                  .num_dict_pages   = dictionary_page_count,
+                                                  .is_done          = true};
+    chunk_page_infos[chunk_idx] = resume_info.value_or(final_info);
     if (error[warp_id] != 0) { set_error(error[warp_id], error_code); }
-  });
+  }
 }
 
 /**
@@ -1084,43 +984,27 @@ CUDF_KERNEL void __launch_bounds__(build_string_dict_index_block_size)
 
 }  // namespace
 
-void count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                        kernel_error::pointer error_code,
-                        cuda::stream_ref stream)
+void discover_page_headers(cudf::device_span<ColumnChunkDesc> chunks,
+                           cudf::device_span<chunk_page_info> chunk_page_infos,
+                           cudf::device_span<cuda::std::uintptr_t> page_starts,
+                           size_t* num_consumed_slots,
+                           kernel_error::pointer error_code,
+                           cuda::stream_ref stream)
 {
-  static_assert(count_page_headers_block_size % cudf::detail::warp_size == 0,
-                "Block size for decode page headers kernel must be a multiple of warp size");
+  static_assert(discover_page_headers_block_size % cudf::detail::warp_size == 0,
+                "Block size for page header discovery kernel must be a multiple of warp size");
+  CUDF_EXPECTS(chunk_page_infos.size() == chunks.size(), "Expected one page info per chunk");
+  if (chunks.empty()) { return; }
 
-  auto constexpr num_warps_per_block = count_page_headers_block_size / cudf::detail::warp_size;
+  auto constexpr num_warps_per_block = discover_page_headers_block_size / cudf::detail::warp_size;
   auto const num_blocks              = cuda::ceil_div<cudf::size_type, cudf::size_type>(
     chunks.size(), num_warps_per_block);  // 1 warp per chunk
 
-  dim3 dim_block(count_page_headers_block_size, 1);
+  dim3 dim_block(discover_page_headers_block_size, 1);
   dim3 dim_grid(num_blocks, 1);
 
-  count_page_headers_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(chunks, error_code);
-  CUDF_CUDA_TRY(cudaGetLastError());
-}
-
-void decode_page_headers(cudf::device_span<ColumnChunkDesc const> chunks,
-                         cudf::device_span<chunk_page_info> chunk_pages,
-                         kernel_error::pointer error_code,
-                         cuda::stream_ref stream)
-{
-  static_assert(decode_page_headers_block_size % cudf::detail::warp_size == 0,
-                "Block size for decode page headers kernel must be a multiple of warp size");
-  CUDF_EXPECTS(chunk_pages.size() == chunks.size(),
-               "Chunk page info must contain one entry per chunk");
-
-  auto const num_chunks              = static_cast<cudf::size_type>(chunks.size());
-  auto constexpr num_warps_per_block = decode_page_headers_block_size / cudf::detail::warp_size;
-  auto const num_blocks = cuda::ceil_div(num_chunks, num_warps_per_block);  // 1 warp per chunk
-
-  dim3 dim_block(decode_page_headers_block_size, 1);
-  dim3 dim_grid(num_blocks, 1);
-
-  decode_page_headers_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(
-    chunks, chunk_pages, error_code);
+  discover_page_headers_kernel<<<dim_grid, dim_block, 0, stream.get()>>>(
+    chunks, chunk_page_infos, page_starts, num_consumed_slots, error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

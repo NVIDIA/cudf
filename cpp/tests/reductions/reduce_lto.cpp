@@ -160,7 +160,7 @@ TEST_F(ReduceUdf, NullHandling)
 
   for (auto& test : cases) {
     cudf::reduce_input inputs[]{test.input};
-    wrapper<int64_t> expected_raw_sum{{test.expected_sum}, {true}};
+    wrapper<int64_t> expected_raw_sum{test.expected_sum};
     auto udf    = sum_count_avg_udf("sum_update");
     auto result = cudf::reduce(udf, inputs, state_types, output_types);
 
@@ -255,7 +255,7 @@ TEST_F(ReduceUdf, FilterPushDownReduction)
                        .is_null_aware  = cudf::null_aware::NO,
                        .indexed_filter = true};
   result = cudf::reduce(raw, inputs, raw_types, raw_types, mask_inputs);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], (wrapper<int64_t>{{expected_sum}, {true}}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0], (wrapper<int64_t>{expected_sum}));
 }
 
 TEST_F(ReduceUdf, ErrorHandling)
@@ -440,9 +440,11 @@ TEST_F(ReduceUdf, StringStateAndOutput)
       auto input = cudf::test::strings_column_wrapper(
                      test.values.begin(), test.values.end(), test.valid.begin())
                      .release();
-      auto valid = test.expected_valid || nulls == cudf::null_aware::NO;
-      cudf::test::strings_column_wrapper expected_max({test.expected_max}, {valid});
-      wrapper<int32_t> expected_length{{static_cast<int32_t>(test.expected_max.size())}, {valid}};
+      auto valid           = test.expected_valid || nulls == cudf::null_aware::NO;
+      auto expected_max    = na ? cudf::test::strings_column_wrapper{test.expected_max}
+                                : cudf::test::strings_column_wrapper({test.expected_max}, {valid});
+      auto length          = static_cast<int32_t>(test.expected_max.size());
+      auto expected_length = na ? wrapper<int32_t>{length} : wrapper<int32_t>{{length}, {valid}};
       cudf::reduce_input inputs[]{input->view()};
 
       auto result = cudf::reduce(udf, inputs, states, outputs, {}, cudf::fallible::NO);

@@ -766,7 +766,7 @@ void aggregate_result_functor::operator()<aggregation::HOST_UDF>(aggregation con
     };
   }
 
-  cache.add_result(values, agg, (*udf_ptr)(stream, mr.get_output_mr()));
+  cache.add_result(values, agg, (*udf_ptr)(stream, mr));
 }
 
 }  // namespace detail

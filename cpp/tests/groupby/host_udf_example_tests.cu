@@ -38,14 +38,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
   host_udf_groupby_example() = default;
 
   [[nodiscard]] std::unique_ptr<cudf::column> get_empty_output(
-    cuda::stream_ref, rmm::device_async_resource_ref) const override
+    cuda::stream_ref, cudf::memory_resources) const override
   {
     return cudf::make_empty_column(
       cudf::data_type{cudf::type_to_id<typename groupby_fn::OutputType>()});
   }
 
-  [[nodiscard]] std::unique_ptr<cudf::column> operator()(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const override
+  [[nodiscard]] std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
+                                                         cudf::memory_resources mr) const override
   {
     auto const values = get_grouped_values();
     return cudf::type_dispatcher(values.type(), groupby_fn{*this}, stream, mr);
@@ -79,7 +79,7 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
 
     template <cuda::std::same_as<InputType> T>
     std::unique_ptr<cudf::column> operator()(cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr) const
+                                             cudf::memory_resources mr) const
     {
       auto const values = parent.get_grouped_values();
       if (values.size() == 0) { return parent.get_empty_output(stream, mr); }
@@ -98,14 +98,14 @@ struct host_udf_groupby_example : cudf::groupby_host_udf {
                                                     num_groups,
                                                     cudf::mask_state::UNALLOCATED,
                                                     stream,
-                                                    mr);
+                                                    mr.as_temporary());
 
       // Store row index if it is valid, otherwise store a negative value denoting a null row.
       cuda::device_buffer<cudf::size_type> valid_idx(
-        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
+        stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
 
       thrust::transform(
-        rmm::exec_policy_nosync(stream),
+        rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
         cuda::counting_iterator<cudf::size_type>{0},
         cuda::counting_iterator{num_groups},
         cuda::make_zip_iterator(output->mutable_view().begin<OutputType>(), valid_idx.begin()),

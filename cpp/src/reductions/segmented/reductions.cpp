@@ -95,8 +95,7 @@ struct segmented_reduce_dispatch_functor {
           dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;
         auto const udf_ptr = dynamic_cast<segmented_reduce_host_udf const*>(udf_base_ptr.get());
         CUDF_EXPECTS(udf_ptr != nullptr, "Invalid HOST_UDF instance for segmented reduction.");
-        return (*udf_ptr)(
-          col, offsets, output_dtype, null_handling, init, stream, mr.get_output_mr());
+        return (*udf_ptr)(col, offsets, output_dtype, null_handling, init, stream, mr);
       }  // case aggregation::HOST_UDF
       default: CUDF_FAIL("Unsupported aggregation type.");
     }

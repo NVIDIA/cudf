@@ -1326,7 +1326,7 @@ def test_read_parquet_sources_from_different_writers(
     )
     paths = [pyarrow_path, polars_path]
     result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
-    assert plc.interop.to_arrow(result).column(0).to_pylist() == [t, t]
+    assert result.columns()[0].to_arrow().to_pylist() == [t, t]
 
 
 @pytest.mark.parametrize("pyarrow_first", [True, False])

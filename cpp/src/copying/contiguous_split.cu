@@ -2243,14 +2243,22 @@ std::vector<packed_table> contiguous_split(cudf::table_view const& input,
 chunked_pack::chunked_pack(cudf::table_view const& input,
                            std::size_t user_buffer_size,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref temp_mr)
+                           cudf::memory_resources mr)
 {
   CUDF_EXPECTS(user_buffer_size >= desired_batch_size,
                "The output buffer size must be at least 1MB in size");
   // We pass `std::nullopt` for the first `mr` in `contiguous_split_state` to indicate
   // that it does not allocate any user-bound data for the `chunked_pack` case.
   state = std::make_unique<detail::contiguous_split_state>(
-    input, user_buffer_size, stream, std::nullopt, temp_mr);
+    input, user_buffer_size, stream, std::nullopt, mr.get_temporary_mr());
+}
+
+chunked_pack::chunked_pack(cudf::table_view const& input,
+                           std::size_t user_buffer_size,
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref temp_mr)
+  : chunked_pack(input, user_buffer_size, stream, cudf::memory_resources{temp_mr, temp_mr})
+{
 }
 
 // required for the unique_ptr to work with a incomplete type (contiguous_split_state)
@@ -2276,23 +2284,38 @@ std::unique_ptr<std::vector<uint8_t>> chunked_pack::build_metadata() const
 std::unique_ptr<chunked_pack> chunked_pack::create(cudf::table_view const& input,
                                                    std::size_t user_buffer_size,
                                                    cuda::stream_ref stream,
+                                                   cudf::memory_resources mr)
+{
+  return std::make_unique<chunked_pack>(input, user_buffer_size, stream, mr);
+}
+
+std::unique_ptr<chunked_pack> chunked_pack::create(cudf::table_view const& input,
+                                                   std::size_t user_buffer_size,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref temp_mr)
 {
-  return std::make_unique<chunked_pack>(input, user_buffer_size, stream, temp_mr);
+  return create(input, user_buffer_size, stream, cudf::memory_resources{temp_mr, temp_mr});
+}
+
+std::size_t packed_size(cudf::table_view const& input,
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
+{
+  // Handle empty table cases
+  if (input.num_columns() == 0 || input.num_rows() == 0) { return 0; }
+
+  auto result = compute_num_bufs_and_splits(input, {}, stream, mr.get_temporary_mr());
+  auto const& partition_buf_size_and_dst_buf_info = std::get<2>(result);
+
+  // Return the total size for the single partition
+  return partition_buf_size_and_dst_buf_info->h_buf_sizes[0];
 }
 
 std::size_t packed_size(cudf::table_view const& input,
                         cuda::stream_ref stream,
                         rmm::device_async_resource_ref temp_mr)
 {
-  // Handle empty table cases
-  if (input.num_columns() == 0 || input.num_rows() == 0) { return 0; }
-
-  auto result = compute_num_bufs_and_splits(input, {}, stream, temp_mr);
-  auto const& partition_buf_size_and_dst_buf_info = std::get<2>(result);
-
-  // Return the total size for the single partition
-  return partition_buf_size_and_dst_buf_info->h_buf_sizes[0];
+  return packed_size(input, stream, cudf::memory_resources{temp_mr, temp_mr});
 }
 
 };  // namespace cudf

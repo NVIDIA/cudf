@@ -8,6 +8,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/contiguous_split.hpp>
@@ -647,6 +648,32 @@ TEST_F(PackUnpackTest, EmptyBuffersPreserveStreamAndResource)
       verify_buffer(partition.data);
     }
   }
+}
+
+TEST_F(PackUnpackTest, PackedSizeUsesTemporaryResource)
+{
+  auto harness = cudf::test::memory_resource_test_harness{};
+  auto stream  = cudf::test::get_default_stream();
+  auto setup   = cudf::memory_resources{harness.setup_mr(), harness.setup_mr()};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{
+    {1, 2, 3, 4}, {true, false, true, true}, stream, setup};
+  cudf::test::strings_column_wrapper strings{
+    {"one", "two", "three", "four"}, {true, false, true, true}, stream, setup};
+  cudf::table_view input{{values, strings}};
+  auto const expected = cudf::pack(input, stream, setup).gpu_data->size();
+
+  std::size_t result{};
+  {
+    auto const scope = harness.fail_on_current_device_resource_use();
+    result           = cudf::packed_size(input, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+
+  EXPECT_EQ(result, expected);
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
 }
 
 TEST_F(PackUnpackTest, UnpackMetadataSpan)

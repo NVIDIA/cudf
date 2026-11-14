@@ -4481,8 +4481,11 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_makeChunkedPack(
       memoryResourceHandle != 0
         ? rmm::device_async_resource_ref{cudf::jni::get_resource(memoryResourceHandle)}
         : cudf::get_current_device_resource_ref();
-    auto chunked_pack =
-      cudf::chunked_pack::create(*n_table, bounce_buffer_size, cudf::get_default_stream(), temp_mr);
+    // `chunked_pack` returns no device memory, so `temp_mr` is passed for both resources.
+    auto chunked_pack = cudf::chunked_pack::create(*n_table,
+                                                   bounce_buffer_size,
+                                                   cudf::get_default_stream(),
+                                                   cudf::memory_resources{temp_mr, temp_mr});
     return reinterpret_cast<jlong>(chunked_pack.release());
   }
   JNI_CATCH(env, 0);

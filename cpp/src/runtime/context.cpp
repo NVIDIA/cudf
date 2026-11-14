@@ -80,6 +80,7 @@ void context::initialize_jit()
 
   _nvrtc_version     = rtcx::nvrtc_version();
   _nvjitlink_version = rtcx::nvjitlink_version();
+  rtcx::set_nvrtc_pch_heap_size(_config.jit_pch_heap_size);
 
   auto limits = rtcx::cache_limits{.num_mem_blobs     = _config.kernel_cache_limit_process,
                                    .num_mem_libraries = _config.kernel_cache_limit_process};
@@ -215,7 +216,9 @@ context make_context(detail::init_flags flags)
   auto const clear_jit_cache    = detail::get_bool_env_or("LIBCUDF_KERNEL_CACHE_CLEAR", false);
   auto const disable_cuda_cache = detail::get_bool_env_or("LIBCUDF_JIT_DISABLE_CUDA_CACHE", false);
   auto const jit_verbose        = detail::get_bool_env_or("LIBCUDF_JIT_VERBOSE", false);
-  auto const dump_jit_trace     = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
+  auto const jit_pch_heap_size =
+    detail::getenv_or("LIBCUDF_JIT_PCH_HEAP_SIZE", std::size_t{512} * 1024 * 1024);
+  auto const dump_jit_trace = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
   auto const dump_jit_time_profile =
     detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TIME_PROFILE", false);
   auto const preload_nvcomp = detail::get_bool_env_or("LIBCUDF_NVCOMP_PRELOAD", false);
@@ -239,6 +242,7 @@ context make_context(detail::init_flags flags)
                      .jit_verbose                = jit_verbose,
                      .dump_jit_trace             = dump_jit_trace,
                      .dump_jit_time_profile      = dump_jit_time_profile,
+                     .jit_pch_heap_size          = jit_pch_heap_size,
                      .rtcx_cache_dir             = rtcx_cache_dir,
                      .jit_bundle_dir             = jit_bundle_dir,
                      .jit_tmp_dir                = jit_tmp_dir,

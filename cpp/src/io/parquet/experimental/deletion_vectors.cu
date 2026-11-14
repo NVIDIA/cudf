@@ -112,7 +112,12 @@ namespace detail {
   // Filter the table using the deletion vector
   return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, stream, mr),
+    cudf::detail::apply_mask(table_with_index->view(),
+                             row_mask->view(),
+                             mask_type,
+                             cudf::null_policy::EXCLUDE,
+                             stream,
+                             mr),
     std::move(metadata)};
 }
 
@@ -327,7 +332,12 @@ table_with_metadata chunked_parquet_reader::read_chunk()
     _are_retentions ? cudf::detail::mask_type::RETENTION : cudf::detail::mask_type::DELETION;
   return cudf::io::table_with_metadata{
     // Supply user-provided mr to apply deletion mask to allocate output table's memory
-    cudf::detail::apply_mask(table_with_index->view(), row_mask->view(), mask_type, _stream, _mr),
+    cudf::detail::apply_mask(table_with_index->view(),
+                             row_mask->view(),
+                             mask_type,
+                             cudf::null_policy::EXCLUDE,
+                             _stream,
+                             _mr),
     std::move(metadata)};
 }
 

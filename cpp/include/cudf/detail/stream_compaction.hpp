@@ -54,6 +54,7 @@ enum class mask_type : bool {
  * @param input The input table to filter
  * @param boolean_mask A nullable BOOL8 column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
+ * @param null_handling Whether to keep or drop rows with null mask elements
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Memory resources used for temporary allocations and the returned table
  * @return A table containing the rows of @p input selected by @p boolean_mask and @p mask_kind
@@ -61,6 +62,7 @@ enum class mask_type : bool {
 std::unique_ptr<table> apply_mask(table_view const& input,
                                   column_view const& boolean_mask,
                                   mask_type mask_kind,
+                                  null_policy null_handling,
                                   cuda::stream_ref stream,
                                   cudf::memory_resources mr);
 

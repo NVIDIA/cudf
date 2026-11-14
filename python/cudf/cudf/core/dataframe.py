@@ -4434,18 +4434,48 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
     @_performance_tracking
     def add_prefix(self, prefix, axis=None):
-        if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+        axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
-        out.columns = [prefix + col_name for col_name in self._column_names]
+        if axis == 0:
+            index = self.index
+            if isinstance(index, MultiIndex):
+                out.index = MultiIndex.from_arrays(
+                    [
+                        prefix
+                        + index.get_level_values(
+                            index._column_names[i]
+                        ).astype(str)
+                        for i in range(index.nlevels)
+                    ],
+                    names=index.names,
+                )
+            else:
+                out.index = prefix + index.astype(str)
+        else:
+            out.columns = [prefix + col_name for col_name in self._column_names]
         return out
 
     @_performance_tracking
     def add_suffix(self, suffix, axis=None):
-        if axis is not None:
-            raise NotImplementedError("axis is currently not implemented.")
+        axis = 1 if axis is None else self._get_axis_from_axis_arg(axis)
         out = self.copy(deep=False)
-        out.columns = [col_name + suffix for col_name in self._column_names]
+        if axis == 0:
+            index = self.index
+            if isinstance(index, MultiIndex):
+                out.index = MultiIndex.from_arrays(
+                    [
+                        index.get_level_values(
+                            index._column_names[i]
+                        ).astype(str)
+                        + suffix
+                        for i in range(index.nlevels)
+                    ],
+                    names=index.names,
+                )
+            else:
+                out.index = index.astype(str) + suffix
+        else:
+            out.columns = [col_name + suffix for col_name in self._column_names]
         return out
 
     @_performance_tracking

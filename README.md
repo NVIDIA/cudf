@@ -25,7 +25,7 @@ Examples of projects that use cuDF:
 * [cuGraph](https://docs.nvidia.com/cugraph/latest/) (NVIDIA): cuDF edge-list inputs for GPU graph construction and analytics.
 * [NeMo Curator](https://docs.nvidia.com/nemo/curator/latest/reference/infra/gpu-processing) (NVIDIA): cuDF-backed GPU processing for text curation and deduplication.
 * [Velox-cuDF](https://github.com/facebookincubator/velox/blob/main/velox/experimental/cudf/README.md): An experimental [Velox](https://velox-lib.io/) extension that executes supported query operators on GPUs using libcudf.
-* [Polars](https://docs.pola.rs/user-guide/gpu-support/): A cuDF-backed GPU engine for supported Lazy API queries (open beta).
+* [Polars](https://docs.pola.rs/user-guide/gpu-support/): A cuDF-backed GPU engine for supported Lazy API queries.
 * [Sirius](https://www.sirius-db.com/): A GPU-native SQL engine providing extensions for libraries like [DuckDB](https://duckdb.org/)
 * [Starburst Torin](https://docs.starburst.io/latest/admin/gpu-acceleration.html): GPU execution for Starburst Enterprise SQL using cuDF.
 * [Presto GPU](https://github.com/prestodb/prestorials/tree/main/docker-compose-native/cpu-and-gpu): Experimental GPU-accelerated Presto query processing through Velox and cuDF, with public evaluation notebooks.

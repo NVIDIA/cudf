@@ -26,6 +26,7 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/scatter.h>
 
@@ -291,8 +292,8 @@ size_type find_first_delimiter(device_span<char const> d_data,
  * @returns A pair of data source owning buffers together enclosing the bytes read. The second
  * buffer may or may not be empty depending on the condition described above.
  */
-std::pair<datasource::owning_buffer<rmm::device_buffer>,
-          std::optional<datasource::owning_buffer<rmm::device_buffer>>>
+std::pair<datasource::owning_buffer<cuda::device_buffer<char>>,
+          std::optional<datasource::owning_buffer<cuda::device_buffer<char>>>>
 get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                            json_reader_options const& reader_opts,
                            cuda::stream_ref stream,
@@ -316,7 +317,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   std::size_t buffer_size =
     std::min(total_source_size, chunk_size + num_subchunks_prealloced * size_per_subchunk) +
     num_extra_delimiters;
-  rmm::device_buffer buffer(buffer_size, stream);
+  cuda::device_buffer<char> buffer{stream, mr.get_temporary_mr(), buffer_size, cuda::no_init};
   device_span<char> bufspan(reinterpret_cast<char*>(buffer.data()), buffer.size());
 
   // Offset within buffer indicating first read position
@@ -344,9 +345,9 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   // entire line until the first delimiter is encountered at the end of the line.
   if (first_delim_pos == -1) {
     // return empty owning datasource buffer
-    auto empty_buf = rmm::device_buffer(0, stream);
-    return std::make_pair(datasource::owning_buffer<rmm::device_buffer>(std::move(empty_buf)),
-                          std::nullopt);
+    auto empty_buf = cuda::device_buffer<char>{stream, mr.get_temporary_mr()};
+    return std::make_pair(
+      datasource::owning_buffer<cuda::device_buffer<char>>(std::move(empty_buf)), std::nullopt);
   } else if (!should_load_till_last_source) {
     // Pulled out of the post-loop block below so we can also use it as an upper bound on the
     // reallocate-and-retry buffer growth (see safeguard inside the loop).
@@ -390,8 +391,15 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
           auto const trailing_bytes = buffer_size - chunk_size - num_extra_delimiters;
           CUDF_EXPECTS(trailing_bytes < batch_size,
                        "A single JSON line cannot be larger than the batch size limit");
-          buffer.resize(buffer_size, stream);
-          bufspan = device_span<char>(reinterpret_cast<char*>(buffer.data()), buffer.size());
+          // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+          if (buffer_size > buffer.size()) {
+            auto grown_buffer =
+              cuda::device_buffer<char>{stream, mr.get_temporary_mr(), buffer_size, cuda::no_init};
+            CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+              grown_buffer.data(), buffer.data(), buffer.size(), stream));
+            buffer  = std::move(grown_buffer);
+            bufspan = device_span<char>(buffer.data(), buffer.size());
+          }
         }
       }
     }
@@ -408,7 +416,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
         batch_size) {
       auto buffer_data = buffer.data();
       return std::make_pair(
-        datasource::owning_buffer<rmm::device_buffer>(
+        datasource::owning_buffer<cuda::device_buffer<char>>(
           std::move(buffer),
           reinterpret_cast<uint8_t*>(buffer_data) + first_delim_pos + shift_for_nonzero_offset,
           next_delim_pos - first_delim_pos - shift_for_nonzero_offset + 1),
@@ -429,23 +437,27 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
     CUDF_EXPECTS(last_line_size < batch_size,
                  "A single JSON line cannot be larger than the batch size limit");
 
-    rmm::device_buffer second_buffer(
+    auto second_buffer =
+      cuda::device_buffer<char>{stream, mr.get_temporary_mr(), last_line_size + 1, cuda::no_init};
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(
+      second_buffer.data(),
       bufsubspan.data() +
         static_cast<std::size_t>(cuda::std::distance(second_last_delimiter_it, rev_it_end)),
       last_line_size + 1,
-      stream);
+      stream));
 
     auto buffer_data        = buffer.data();
     auto second_buffer_data = second_buffer.data();
     auto second_buffer_size = second_buffer.size();
     return std::make_pair(
-      datasource::owning_buffer<rmm::device_buffer>(
+      datasource::owning_buffer<cuda::device_buffer<char>>(
         std::move(buffer),
         reinterpret_cast<uint8_t*>(buffer_data) + first_delim_pos + shift_for_nonzero_offset,
         next_delim_pos - first_delim_pos - shift_for_nonzero_offset - last_line_size),
-      datasource::owning_buffer<rmm::device_buffer>(std::move(second_buffer),
-                                                    reinterpret_cast<uint8_t*>(second_buffer_data),
-                                                    second_buffer_size));
+      datasource::owning_buffer<cuda::device_buffer<char>>(
+        std::move(second_buffer),
+        reinterpret_cast<uint8_t*>(second_buffer_data),
+        second_buffer_size));
   }
 
   // Add delimiter to end of buffer - possibly adding an empty line to the input buffer - iff we are
@@ -460,7 +472,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
 
   auto buffer_data = buffer.data();
   return std::make_pair(
-    datasource::owning_buffer<rmm::device_buffer>(
+    datasource::owning_buffer<cuda::device_buffer<char>>(
       std::move(buffer),
       reinterpret_cast<uint8_t*>(buffer_data) + first_delim_pos + shift_for_nonzero_offset,
       num_chars),
@@ -475,7 +487,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cudf::memory_resources mr,
   read_json_diagnostics* diagnostics_out = nullptr)
 {
   CUDF_FUNC_RANGE();
@@ -541,7 +553,7 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
 table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> sources,
                                    json_reader_options const& reader_opts,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr,
+                                   cudf::memory_resources mr,
                                    read_json_diagnostics* diagnostics_out = nullptr)
 {
   std::size_t const total_source_size = sources_size(sources, 0, 0);
@@ -845,7 +857,7 @@ namespace {
 table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> sources,
                                        json_reader_options const& reader_opts,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr,
+                                       cudf::memory_resources mr,
                                        read_json_diagnostics* diagnostics_out)
 {
   if (reader_opts.get_byte_range_offset() != 0 or reader_opts.get_byte_range_size() != 0) {
@@ -884,7 +896,7 @@ table_with_metadata read_json_dispatch(host_span<std::unique_ptr<datasource>> so
 table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
                               json_reader_options const& reader_opts,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return read_json_dispatch(sources, reader_opts, stream, mr, /*diagnostics_out=*/nullptr);
@@ -893,7 +905,7 @@ table_with_metadata read_json(host_span<std::unique_ptr<datasource>> sources,
 json_reader_result read_json_with_diagnostics(host_span<std::unique_ptr<datasource>> sources,
                                               json_reader_options const& reader_opts,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   read_json_diagnostics diagnostics;
@@ -907,7 +919,7 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
   host_span<std::unique_ptr<datasource>> sources,
   json_reader_options const& reader_opts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   read_json_diagnostics diagnostics;

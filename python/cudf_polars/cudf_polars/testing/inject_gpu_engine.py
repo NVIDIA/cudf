@@ -479,33 +479,6 @@ ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
-    "tests/unit/io/test_iceberg.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_iceberg_filter_bool_26474": "The GPU engine pushes a boolean XOR into the parquet filter, which libcudf's AST does not support. Plain scan_parquet fails the same way",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_filter_float_nan_ordering": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg.py::test_scan_iceberg_reader_filter_float_nan[None]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type0]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type1]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg_plugin.py::test_iceberg_plugin_nan_is_not_pruned": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate0-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate1-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate2-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float32-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_nan_comparisons[predicate3-<lambda>-Float64-native]": "The GPU engine compares NaN with IEEE semantics, but polars treats NaN as equal to NaN. Plain scan_parquet and in-memory frames return the same wrong rows",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_filter_float_nan_ordering": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_scan_iceberg_reader_filter_float_nan[None]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type0]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_identity_partition_nan_and_signed_zero[iceberg_type1]": "The GPU engine compares NaN with IEEE semantics, but polars orders NaN above all other values",
     "tests/unit/io/test_io_plugin.py::test_datetime_io_predicate_pushdown_21790": "cudf-polars validates the IO source schema exactly and does not coerce datetime time units (us vs ns)",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[small.parquet-4]": "Debug output on stderr doesn't match",
     "tests/unit/io/test_lazy_count_star.py::test_count_parquet[foods*.parquet-54]": "Debug output on stderr doesn't match",
@@ -580,8 +553,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values3-expr3]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values5-expr5]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_gives_null_keeps_null_filter[values6-expr6]": "Overflowing non-strict casts and temporal arithmetic wrap around in libcudf instead of producing null (or raising) as polars does: https://github.com/NVIDIA/cudf/issues/24839",
-    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[UInt32-expr0]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
-    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[Date-expr1]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[dtype4-expr4]": "Overflowing arithmetic on the GPU does not raise as polars does: https://github.com/NVIDIA/cudf/issues/24839",
     "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys0]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
     "tests/unit/io/test_parquet_encryption.py::test_write_plaintext_footer_readable_without_keys[column_keys1]": "libcudf does not support Parquet modular encryption: the footer parse fails on plaintext-footer encrypted files, and the GPU engine cannot detect encryption at translation: https://github.com/NVIDIA/cudf/issues/24837",
@@ -609,6 +580,8 @@ TESTS_TO_SKIP: dict[str, str] = {
     "tests/unit/lazyframe/test_query_monitoring.py::test_metrics_handle_snapshot": "Checks verbose logs or metrics specific to the Polars CPU streaming engine",
     "tests/unit/sql/test_correlated_subqueries.py::test_correlated_aggregate_unknown_outer_size_not_restricted": "Asserts that the polars streaming engine stops reading an IO source early after a LIMIT; the GPU engine reads the whole source",
     "tests/unit/io/test_delta.py::test_scan_delta_loads_aws_profile_endpoint_url": "Does not use the GPU engine; fails whenever AWS_DEFAULT_REGION is set, as in CI",
+    "tests/unit/io/test_delta.py::test_scan_delta_timestamp_version": "deltalake 1.6.6 excludes a commit whose log mtime exactly equals the requested timestamp",
+    "tests/unit/io/test_delta.py::test_read_delta_timestamp_version": "deltalake 1.6.6 excludes a commit whose log mtime exactly equals the requested timestamp",
     # CI has shown two different failure modes across runs (a PanicException on
     # an invalid datetime, and garbage/uninitialized-looking datetime values),
     # suggesting a real non-deterministic bug in CSV datetime fallback parsing
@@ -785,6 +758,7 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[UInt32-expr0]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",
@@ -847,6 +821,8 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/benchmark/test_join_where.py::test_strict_inequalities": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_lazy_parquet.py::test_parquet_many_row_groups_12297": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_hive.py::test_hive_write_multiple_files": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[False]": "Too slow with --inject-gpu-engine-blocksize=small",
+    "tests/unit/io/test_parquet.py::test_fixed_len_byte_array_decimal[True]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_o_direct_matches_buffered": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[0]": "Too slow with --inject-gpu-engine-blocksize=small",
     "tests/unit/io/test_parquet.py::test_parquet_defer_cached_reads[1]": "Too slow with --inject-gpu-engine-blocksize=small",
@@ -999,8 +975,6 @@ STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
 STREAMING_ENGINE_EXPECTED_FAILURES_SMALL_BLOCKSIZE: Mapping[str, str] = {
     "tests/unit/operations/test_slice.py::test_slice_pushdown_literal_projection_14349": "https://github.com/NVIDIA/cudf/issues/22072",
     "tests/unit/functions/range/test_linear_space.py::test_linear_space_num_samples_expr": "https://github.com/NVIDIA/cudf/issues/22072",
-    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[1]": "https://github.com/NVIDIA/cudf/issues/22075",
-    "tests/unit/operations/test_group_by.py::test_unique_head_tail_26429[4]": "https://github.com/NVIDIA/cudf/issues/22075",
 }
 
 

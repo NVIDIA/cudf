@@ -15,6 +15,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -22,7 +23,7 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/buffer>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/cstdint>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -357,6 +358,6 @@ hash_csr_retrieve(bool is_outer,
                   size_type left_index_offset,
                   std::size_t extra_capacity,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr);
+                  cudf::memory_resources mr);
 
 }  // namespace cudf::detail

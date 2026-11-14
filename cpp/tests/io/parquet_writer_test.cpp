@@ -1616,6 +1616,27 @@ TEST_F(ParquetWriterTest, DictionaryAlwaysTest)
   EXPECT_TRUE(used_dict(1));
 }
 
+TEST_F(ParquetWriterTest, DISABLED_DictionaryMoreColumnsThanMaxGridY)
+{
+  // More columns than the CUDA grid y-dimension limit (65535)
+  constexpr cudf::size_type num_cols = 70'000;
+
+  auto const col      = cudf::test::strings_column_wrapper({"a", "b", "a", "c"});
+  auto const expected = table_view{std::vector<cudf::column_view>(num_cols, col)};
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryMoreColumnsThanMaxGridY.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetWriterTest, DictionaryPageSizeEst)
 {
   // one page
@@ -1834,6 +1855,41 @@ TEST_P(ParquetCompressionTest, SkipCompression)
             cudf::io::parquet::Compression::UNCOMPRESSED);
   EXPECT_NE(fmd.row_groups[0].columns[1].meta_data.codec,
             cudf::io::parquet::Compression::UNCOMPRESSED);
+}
+
+TEST_P(ParquetCompressionTest, V2AllNullPages)
+{
+  auto const compression_type = std::get<1>(GetParam());
+  SKIP_IF_NVCOMP_GZIP_UNSUPPORTED();
+
+  // One-row V2 pages, so that pages with no data to compress are followed by pages of the same
+  // column chunk and of the next one
+  column_wrapper<double> all_nulls_col({1., 2.}, cudf::test::iterators::all_nulls());
+  column_wrapper<double> first_null_col({1., 2.}, cudf::test::iterators::null_at(0));
+  // A repeated value, so that ALWAYS writes a dictionary page
+  column_wrapper<double> repeated_col({3., 3.});
+  table_view expected({all_nulls_col, first_null_col, repeated_col});
+
+  for (auto const dict_policy :
+       {cudf::io::dictionary_policy::NEVER, cudf::io::dictionary_policy::ALWAYS}) {
+    SCOPED_TRACE(dict_policy == cudf::io::dictionary_policy::NEVER ? "NEVER" : "ALWAYS");
+    std::vector<char> buffer;
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .compression(compression_type)
+        .write_v2_headers(true)
+        .dictionary_policy(dict_policy)
+        .max_page_size_rows(1)
+        .max_page_fragment_size(1);
+    cudf::io::write_parquet(out_opts);
+
+    cudf::io::parquet_reader_options in_opts = cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}});
+    auto result = cudf::io::read_parquet(in_opts);
+
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+  }
 }
 
 INSTANTIATE_TEST_CASE_P(Nvcomp,
@@ -2394,22 +2450,35 @@ make_byte_stream_split_table(bool as_struct)
   auto col1_data = random_values<int64_t>(num_rows);
   auto col2_data = random_values<float>(num_rows);
   auto col3_data = random_values<double>(num_rows);
+  auto col4_data = random_values<int8_t>(num_rows);
+  auto col5_data = random_values<int16_t>(num_rows);
+  auto col6_data = random_values<uint8_t>(num_rows);
+  auto col7_data = random_values<uint16_t>(num_rows);
 
   column_wrapper<int32_t> col0{col0_data.begin(), col0_data.end(), no_nulls()};
   column_wrapper<int64_t> col1{col1_data.begin(), col1_data.end(), no_nulls()};
   column_wrapper<float> col2{col2_data.begin(), col2_data.end(), no_nulls()};
   column_wrapper<double> col3{col3_data.begin(), col3_data.end(), no_nulls()};
+  // 8- and 16-bit integers are stored as INT32
+  column_wrapper<int8_t> col4{col4_data.begin(), col4_data.end(), no_nulls()};
+  column_wrapper<int16_t> col5{col5_data.begin(), col5_data.end(), no_nulls()};
+  column_wrapper<uint8_t> col6{col6_data.begin(), col6_data.end(), no_nulls()};
+  column_wrapper<uint16_t> col7{col7_data.begin(), col7_data.end(), no_nulls()};
 
   // throw in a list to make sure both decoders are working
-  auto col4 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
+  auto col8 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
 
   std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.reserve(5);
+  columns.reserve(9);
   columns.push_back(col0.release());
   columns.push_back(col1.release());
   columns.push_back(col2.release());
   columns.push_back(col3.release());
-  columns.push_back(std::move(col4));
+  columns.push_back(col4.release());
+  columns.push_back(col5.release());
+  columns.push_back(col6.release());
+  columns.push_back(col7.release());
+  columns.push_back(std::move(col8));
 
   return [&]() -> std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata> {
     auto const encoding = cudf::io::column_encoding::BYTE_STREAM_SPLIT;
@@ -2434,11 +2503,15 @@ make_byte_stream_split_table(bool as_struct)
       expected_metadata.column_metadata[0].child(1).set_name("int64s");
       expected_metadata.column_metadata[0].child(2).set_name("floats");
       expected_metadata.column_metadata[0].child(3).set_name("doubles");
-      expected_metadata.column_metadata[0].child(4).set_name("int32list");
-      for (int idx = 0; idx <= 3; idx++) {
+      expected_metadata.column_metadata[0].child(4).set_name("int8s");
+      expected_metadata.column_metadata[0].child(5).set_name("int16s");
+      expected_metadata.column_metadata[0].child(6).set_name("uint8s");
+      expected_metadata.column_metadata[0].child(7).set_name("uint16s");
+      expected_metadata.column_metadata[0].child(8).set_name("int32list");
+      for (int idx = 0; idx <= 7; idx++) {
         expected_metadata.column_metadata[0].child(idx).set_encoding(encoding);
       }
-      expected_metadata.column_metadata[0].child(4).child(1).set_encoding(encoding);
+      expected_metadata.column_metadata[0].child(8).child(1).set_encoding(encoding);
 
       return {std::move(tbl), expected_metadata};
     }
@@ -2452,12 +2525,16 @@ make_byte_stream_split_table(bool as_struct)
     expected_metadata.column_metadata[1].set_name("int64s");
     expected_metadata.column_metadata[2].set_name("floats");
     expected_metadata.column_metadata[3].set_name("doubles");
-    expected_metadata.column_metadata[4].set_name("int32list");
-    for (int idx = 0; idx <= 3; idx++) {
+    expected_metadata.column_metadata[4].set_name("int8s");
+    expected_metadata.column_metadata[5].set_name("int16s");
+    expected_metadata.column_metadata[6].set_name("uint8s");
+    expected_metadata.column_metadata[7].set_name("uint16s");
+    expected_metadata.column_metadata[8].set_name("int32list");
+    for (int idx = 0; idx <= 7; idx++) {
       expected_metadata.column_metadata[idx].set_encoding(encoding);
     }
 
-    expected_metadata.column_metadata[4].child(1).set_encoding(encoding);
+    expected_metadata.column_metadata[8].child(1).set_encoding(encoding);
     return {std::move(tbl), expected_metadata};
   }();
 }

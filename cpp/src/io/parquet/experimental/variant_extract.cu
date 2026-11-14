@@ -1149,14 +1149,14 @@ struct cast_variant_fn {
   cuda::device_buffer<cudf::bitmask_type> null_mask{
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)};
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
   // In-out status tracking; null when no status was requested.
   op_status* d_status{nullptr};
 
   template <variant_fixed_width T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(T), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(T), stream, mr.get_output_mr()};
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
@@ -1179,7 +1179,7 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
   {
     using Rep = typename T::rep;
-    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr.get_output_mr()};
     auto const grid = cudf::detail::grid_1d{num_rows, block_size};
     auto const d_out =
       device_span<Rep>{static_cast<Rep*>(data.data()), static_cast<std::size_t>(num_rows)};
@@ -1201,7 +1201,7 @@ struct cast_variant_fn {
   template <cudf::concepts::boolean T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr};
+    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr.get_output_mr()};
 
     auto* dp_s = d_status;
 
@@ -1309,7 +1309,7 @@ __device__ cuda::std::optional<variant_logical_type> logical_type_of(device_span
 
 std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> steps,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   auto const depth = steps.size();
 
@@ -1321,7 +1321,8 @@ std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> ste
   }
   host_offsets[depth] = host_chars.size();
 
-  auto d_offsets = cudf::detail::make_device_uvector_async(host_offsets, stream, mr);
+  auto d_offsets =
+    cudf::detail::make_device_uvector_async(host_offsets, stream, mr.get_output_mr());
   auto offsets_col =
     std::make_unique<column>(data_type{type_id::INT32},
                              static_cast<size_type>(host_offsets.size()),
@@ -1330,7 +1331,7 @@ std::unique_ptr<column> build_path_column(cudf::host_span<std::string const> ste
                              0);
 
   auto d_chars = cudf::detail::make_device_uvector(
-    host_span<char const>{host_chars.data(), host_chars.size()}, stream, mr);
+    host_span<char const>{host_chars.data(), host_chars.size()}, stream, mr.get_output_mr());
   return cudf::make_strings_column(depth,
                                    std::move(offsets_col),
                                    d_chars.release(),
@@ -1346,7 +1347,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
                                           std::optional<mutable_column_view> status,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(variant_column.type().id() == type_id::STRUCT,
                "VARIANT column must be struct type",
@@ -1469,7 +1470,7 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
                                      std::optional<mutable_column_view> status,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   validate_variant_child(values);
 
@@ -1530,7 +1531,7 @@ std::unique_ptr<column> cast_variant(column_view const& values,
 
 std::unique_ptr<column> get_variant_type_id(column_view const& values,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   validate_variant_child(values);
   size_type const num_rows = values.size();
@@ -1544,7 +1545,8 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = null_mask.data();
 
-  rmm::device_buffer data{static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr};
+  rmm::device_buffer data{
+    static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr.get_output_mr()};
 
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
@@ -1575,7 +1577,7 @@ std::unique_ptr<column> get_variant_field(column_view const& variant_column,
                                           std::string_view path,
                                           std::optional<mutable_column_view> status,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_variant_field(variant_column, path, status, stream, mr);
@@ -1585,7 +1587,7 @@ std::unique_ptr<column> cast_variant(column_view const& values,
                                      data_type desired_type,
                                      std::optional<mutable_column_view> status,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::cast_variant(values, desired_type, status, stream, mr);
@@ -1593,7 +1595,7 @@ std::unique_ptr<column> cast_variant(column_view const& values,
 
 std::unique_ptr<column> get_variant_type_id(column_view const& values,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_variant_type_id(values, stream, mr);
@@ -1604,7 +1606,7 @@ std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
                                               data_type desired_type,
                                               std::optional<mutable_column_view> status,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto const temp_mr = cudf::get_current_device_resource_ref();

@@ -224,24 +224,7 @@ files:
     extras:
       table: build-system
     includes:
-      - rapids_build_skbuild
-  py_rapids_build_cudf:
-    output: pyproject
-    matrix:
-      use_cuda_wheels: ["true"]
-      cuda_suffixed: ["false"]
-    pyproject_dir: python/cudf
-    extras:
-      table: tool.rapids-build-backend
-      key: requires
-    includes:
-      - build_base
-      - build_python_common
-      - depends_on_numba_cuda_mlir
-      - depends_on_pylibcudf
-      - depends_on_libcudf
-      - depends_on_librmm
-      - depends_on_rmm
+      - rapids_build_setuptools
   py_run_cudf:
     output: pyproject
     matrix:

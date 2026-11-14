@@ -76,8 +76,14 @@ add_wheel_constraint() {
 ) &
 wait_for_builds "$!" libcudf-serial-build.log
 
+# libcudf-streaming and pylibcudf both depend only on libcudf, so build them in
+# parallel. RAPIDS_PY_API only affects --stable builds (pylibcudf), so exporting
+# it here is a no-op for the libcudf-streaming C++ wheel.
+export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
+
 (
-  setup_build_log libcudf-streaming-serial-build.log
+  setup_build_log libcudf-streaming-parallel-build.log
+  export SCCACHE_SERVER_PORT=4227
   build_package_wheel libcudf_streaming libcudf_streaming python/libcudf_streaming
 
   repair_wheel python/libcudf_streaming/dist/*
@@ -90,13 +96,11 @@ wait_for_builds "$!" libcudf-serial-build.log
 
   add_wheel_constraint libcudf-streaming "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/libcudf_streaming_*.whl"
 ) &
-wait_for_builds "$!" libcudf-streaming-serial-build.log
-
-# All wheels in this stage use the stable Python ABI.
-export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
+libcudf_streaming_pid=$!
 
 (
-  setup_build_log pylibcudf-serial-build.log
+  setup_build_log pylibcudf-parallel-build.log
+  export SCCACHE_SERVER_PORT=4228
   build_package_wheel \
     pylibcudf \
     pylibcudf \
@@ -115,22 +119,8 @@ export RAPIDS_PY_API="cp${RAPIDS_PY_VERSION//./}"
 
   add_wheel_constraint pylibcudf "${RAPIDS_WHEEL_BLD_OUTPUT_DIR}/pylibcudf_*.whl"
 ) &
-wait_for_builds "$!" pylibcudf-serial-build.log
-(
-  setup_build_log cudf-parallel-build.log
-  export SCCACHE_SERVER_PORT=4227
-  build_package_wheel cudf cudf python/cudf --stable
-
-  repair_wheel python/cudf/dist/*
-
-  finalize_package_wheel \
-    cudf \
-    python/cudf \
-    5M \
-    "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
-) &
-cudf_pid=$!
-
+pylibcudf_pid=$!
+wait_for_builds "${libcudf_streaming_pid}" libcudf-streaming-parallel-build.log "${pylibcudf_pid}" pylibcudf-parallel-build.log
 (
   setup_build_log cudf-streaming-parallel-build.log
   export SCCACHE_SERVER_PORT=4228
@@ -150,5 +140,4 @@ cudf_pid=$!
     2M \
     "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "${RAPIDS_CUDA_VERSION}")"
 ) &
-streaming_pid=$!
-wait_for_builds "${cudf_pid}" cudf-parallel-build.log "${streaming_pid}" cudf-streaming-parallel-build.log
+wait_for_builds "$!" cudf-streaming-parallel-build.log

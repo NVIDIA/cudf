@@ -40,7 +40,7 @@ RATTLER_CHANNELS=("--channel" "${RAPIDS_CONDA_BLD_OUTPUT_DIR}" "${RATTLER_CHANNE
 # Stable build prefixes preserve sccache hits across CI runs.
 PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"
 builds=()
-packages=(cudf cudf_kafka cudf_streaming)
+packages=(cudf_kafka cudf_streaming)
 for index in "${!packages[@]}"; do
   SCCACHE_SERVER_PORT=$((4227 + index)) \
     run_logged_build "${packages[index]}-parallel-build.log" \

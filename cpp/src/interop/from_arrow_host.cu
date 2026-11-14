@@ -41,6 +41,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 
 namespace cudf {
@@ -233,10 +234,7 @@ template <>
 std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::string_view>(
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
 {
-  CUDF_EXPECTS(
-    input->length + 1 <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-    std::overflow_error);
+  checked_row_count(input->length, true);
 
   if (input->length == 0) { return make_empty_column(type_id::STRING); }
   auto [mask, null_count] =
@@ -325,11 +323,7 @@ template <>
 std::unique_ptr<column> dispatch_copy_from_arrow_host::operator()<cudf::list_view>(
   ArrowSchemaView const* schema, ArrowArray const* input, data_type type, bool skip_mask)
 {
-  CUDF_EXPECTS(input->length >= 0, "Number of rows must be non-negative.", std::invalid_argument);
-  constexpr auto max_row_count = static_cast<int64_t>(std::numeric_limits<size_type>::max()) - 1;
-  CUDF_EXPECTS(input->length <= max_row_count,
-               "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-               std::overflow_error);
+  checked_row_count(input->length, true);
 
   auto const fixed_size                 = is_fixed_size_list(schema);
   auto [offsets_column, offset, length] = fixed_size
@@ -390,10 +384,7 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
 {
-  CUDF_EXPECTS(
-    input->length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-    "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-    std::overflow_error);
+  checked_row_count(input->length);
 
   if (type.id() == type_id::EMPTY) {
     return std::make_unique<column>(data_type(type_id::EMPTY),
@@ -497,24 +488,15 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   CUDF_EXPECTS(schema->type == NANOARROW_TYPE_LARGE_LIST, "Unknown offsets parent type");
 
   // Large-lists must be copied to int32 column
-  auto int32_offsets = std::vector<int32_t>();
-  int32_offsets.reserve(input->length + 1);
   auto int64_offsets = static_cast<int64_t const*>(offsets_buffer);
   auto const offset  = int64_offsets[input->offset];
   auto const length  = int64_offsets[input->offset + input->length] - offset;
+  // Left uninitialized, rebase_offsets checks the bounds and then writes every entry
+  auto int32_offsets = std::make_unique_for_overwrite<int32_t[]>(input->length + 1);
+  rebase_offsets(int64_offsets, input->offset, input->length, int32_offsets.get());
 
-  constexpr auto max_offset = static_cast<int64_t>(std::numeric_limits<int32_t>::max());
-  CUDF_EXPECTS(
-    length <= max_offset, "large list offsets exceed 32-bit integer bounds", std::overflow_error);
-
-  // normalize the offsets while copying from int64 to int32
-  std::transform(int64_offsets + input->offset,
-                 int64_offsets + input->offset + input->length + 1,
-                 std::back_inserter(int32_offsets),
-                 [offset](int64_t o) { return static_cast<int32_t>(o - offset); });
-
-  offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.data();
-  offsets_array.offset                         = 0;  // already accounted for by the above transform
+  offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.get();
+  offsets_array.offset                         = 0;  // already accounted for by rebase_offsets
   auto result = dispatch_copy_from_arrow_host{stream, mr}.template operator()<int32_t>(
     schema, &offsets_array, data_type(type_id::INT32), true);
   cudf::detail::sync_stream(stream);
@@ -556,11 +538,7 @@ std::unique_ptr<table> from_arrow_host(ArrowSchema const* schema,
 
   // A zero-column struct still has a length, preserve it as the table row count.
   if (columns.empty()) {
-    CUDF_EXPECTS(
-      input->array.length <= static_cast<std::int64_t>(std::numeric_limits<cudf::size_type>::max()),
-      "Number of rows exceeds cuDF's maximum supported row count (cudf::size_type).",
-      std::overflow_error);
-    return std::make_unique<table>(std::move(columns), static_cast<size_type>(input->array.length));
+    return std::make_unique<table>(std::move(columns), checked_row_count(input->array.length));
   }
   cudf::detail::sync_stream(stream);
   return std::make_unique<table>(std::move(columns));

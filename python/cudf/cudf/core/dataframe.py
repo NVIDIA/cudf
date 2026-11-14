@@ -42,6 +42,7 @@ from cudf.api.extensions import no_default
 from cudf.api.types import (
     _is_categorical_dtype,
     _is_scalar_or_zero_d_array,
+    is_bool_dtype,
     is_decimal32_dtype,
     is_decimal64_dtype,
     is_decimal128_dtype,
@@ -334,7 +335,12 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
             )
 
     @_performance_tracking
-    def _setitem_tuple_arg(self, key, value):
+    def __setitem__(self, key, value):
+        indexing_utils.check_dict_or_set_indexers(key)
+        row_only = not isinstance(key, tuple)
+        if row_only:
+            key = (key, slice(None))
+
         if (
             isinstance(self._frame.index, MultiIndex)
             or self._frame._data.multiindex
@@ -343,6 +349,10 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 "Setting values using df.loc[] not supported on "
                 "DataFrames with a MultiIndex"
             )
+
+        if isinstance(key[0], Iterator):
+            # Validation and per-column assignment must reuse the same labels.
+            key = (list(key[0]), key[1])
 
         try:
             columns_df = self._frame._get_columns_by_label(key[1])
@@ -387,15 +397,50 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
         else:
             if is_scalar(value):
                 try:
-                    if columns_df._num_columns:
-                        self._frame[
-                            columns_df._column_names[0]
-                        ].loc._loc_to_iloc(key[0])
+                    # Row indexers must be validated even when no columns
+                    # are selected. Use the index as a Series in that case.
+                    row_series = (
+                        self._frame[columns_df._column_names[0]]
+                        if columns_df._num_columns
+                        else self._frame.index.to_series()
+                    )
+                    row_key = row_series.loc._loc_to_iloc(key[0])
+                    # Empty positional selections are no-ops before
+                    # validating the scalar's dtype. A full-column
+                    # assignment can still change an empty frame's dtype.
+                    if isinstance(row_key, slice):
+                        if (
+                            key[0] != slice(None)
+                            and not range(len(self._frame))[row_key]
+                        ):
+                            return
+                    elif not is_scalar(row_key):
+                        if row_key.dtype.kind == "b":
+                            mask = BooleanMask(
+                                row_key, len(self._frame)
+                            ).column
+                            # pandas converts a bare .loc mask to
+                            # positions, but retains masks in tuples.
+                            # Nulls require an explicitly boolean dtype;
+                            # untyped/object indexers still need validation.
+                            if len(mask) == 0 or (
+                                row_only
+                                and (
+                                    not mask.has_nulls()
+                                    or is_bool_dtype(key[0])
+                                )
+                                and not mask.any()
+                            ):
+                                return
+                        elif len(row_key) == 0:
+                            return
                     for col in columns_df._column_names:
                         self._frame[col].loc[key[0]] = value
                 except KeyError:
                     if not is_scalar(key[0]):
                         raise
+                    if not columns_df._num_columns:
+                        return
                     # TODO: There is a potential bug here if the inplace modifications
                     # done above fail half-way we are left with a partially modified
                     # frame. Need to handle this case better.
@@ -570,7 +615,7 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
 
         else:
             # TODO: consolidate code path with identical counterpart
-            # in `_DataFrameLocIndexer._setitem_tuple_arg`
+            # in `_DataFrameLocIndexer.__setitem__`
             if not is_column_like(value):
                 value = cupy.asarray(value)
             if getattr(value, "ndim", 1) == 2:

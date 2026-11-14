@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <numeric>
 #include <ranges>
 #include <type_traits>
@@ -2676,6 +2677,128 @@ TEST_F(OrcStatisticsTest, AllNulls)
   check_all_null_stats<cudf::io::integer_statistics>(stats.file_stats[1]);
   check_all_null_stats<cudf::io::double_statistics>(stats.file_stats[2]);
   check_all_null_stats<cudf::io::string_statistics>(stats.file_stats[3]);
+}
+
+namespace {
+// A protobuf field: either a varint value or a byte payload
+struct pb_field {
+  uint64_t number;
+  uint64_t value;
+  cudf::host_span<uint8_t const> bytes;
+};
+
+std::vector<pb_field> parse_protobuf(cudf::host_span<uint8_t const> buf)
+{
+  std::vector<pb_field> fields;
+  size_t pos       = 0;
+  auto read_varint = [&] {
+    uint64_t v = 0;
+    for (int shift = 0;; shift += 7) {
+      auto const b = buf[pos++];
+      v |= static_cast<uint64_t>(b & 0x7f) << shift;
+      if ((b & 0x80) == 0) { return v; }
+    }
+  };
+  while (pos < buf.size()) {
+    auto const key = read_varint();
+    pb_field f{key >> 3, 0, {}};
+    auto const wire_type = key & 7;
+    if (wire_type == 0) {
+      f.value = read_varint();
+    } else {
+      auto const len = wire_type == 1 ? 8 : wire_type == 5 ? 4 : read_varint();
+      f.bytes        = buf.subspan(pos, len);
+      pos += len;
+    }
+    fields.push_back(f);
+  }
+  return fields;
+}
+
+std::optional<pb_field> find_field(std::vector<pb_field> const& fields, uint64_t number)
+{
+  auto const it = std::ranges::find(fields, number, &pb_field::number);
+  return it == fields.end() ? std::nullopt : std::optional{*it};
+}
+
+// Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
+std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
+  std::vector<char> const& file)
+{
+  auto const data =
+    cudf::host_span<uint8_t const>{reinterpret_cast<uint8_t const*>(file.data()), file.size()};
+  auto const ps_len     = data.back();
+  auto const ps         = parse_protobuf(data.subspan(data.size() - 1 - ps_len, ps_len));
+  auto const footer_len = find_field(ps, 1)->value;
+  auto const footer =
+    parse_protobuf(data.subspan(data.size() - 1 - ps_len - footer_len, footer_len));
+  auto const stripe = parse_protobuf(find_field(footer, 3)->bytes);
+
+  auto const stripe_offset = find_field(stripe, 1)->value;
+  auto const stripe_footer = parse_protobuf(
+    data.subspan(stripe_offset + find_field(stripe, 2)->value + find_field(stripe, 3)->value,
+                 find_field(stripe, 4)->value));
+
+  // Streams are laid out in the order the stripe footer lists them
+  auto stream_offset = stripe_offset;
+  for (auto const& stream_field : stripe_footer) {
+    if (stream_field.number != 1) { continue; }
+    auto const stream = parse_protobuf(stream_field.bytes);
+    auto const length = find_field(stream, 3)->value;
+    auto const column = find_field(stream, 2);
+    if (find_field(stream, 1)->value == cudf::io::orc::ROW_INDEX and column and
+        column->value == 1) {
+      std::vector<cudf::io::minmax_statistics<double>> result;
+      for (auto const& entry : parse_protobuf(data.subspan(stream_offset, length))) {
+        auto& minmax         = result.emplace_back();
+        auto const col_stats = parse_protobuf(find_field(parse_protobuf(entry.bytes), 2)->bytes);
+        auto const dbl_stats = find_field(col_stats, 3);
+        if (not dbl_stats) { continue; }
+        auto const fields      = parse_protobuf(dbl_stats->bytes);
+        auto const read_double = [&](uint64_t number) -> std::optional<double> {
+          auto const f = find_field(fields, number);
+          if (not f) { return std::nullopt; }
+          double v;
+          std::memcpy(&v, f->bytes.data(), sizeof(v));
+          return v;
+        };
+        minmax.minimum = read_double(1);
+        minmax.maximum = read_double(2);
+      }
+      return result;
+    }
+    stream_offset += length;
+  }
+  return {};
+}
+}  // namespace
+
+TEST_F(OrcStatisticsTest, RowGroupNaN)
+{
+  auto constexpr stride = 512;
+  auto constexpr nan    = std::numeric_limits<double>::quiet_NaN();
+  // Row groups: no NaN, half NaN, all NaN
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    if (i < stride) { return static_cast<double>(i); }
+    if (i < 2 * stride) { return i % 2 == 0 ? nan : -static_cast<double>(i); }
+    return nan;
+  });
+  float64_col col(values, values + 3 * stride);
+  table_view const tbl({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::write_orc(cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, tbl)
+                        .compression(cudf::io::compression_type::NONE)
+                        .row_index_stride(stride));
+
+  auto const row_groups = read_row_index_double_minmax(out_buffer);
+  ASSERT_EQ(row_groups.size(), 3ul);
+  EXPECT_EQ(row_groups[0].minimum, 0.);
+  EXPECT_EQ(row_groups[0].maximum, stride - 1.);
+  EXPECT_EQ(row_groups[1].minimum, -(2 * stride - 1.));
+  EXPECT_EQ(row_groups[1].maximum, -(stride + 1.));
+  EXPECT_FALSE(row_groups[2].minimum.has_value());
+  EXPECT_FALSE(row_groups[2].maximum.has_value());
 }
 
 TEST_F(OrcWriterTest, UnorderedDictionary)

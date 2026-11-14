@@ -11,6 +11,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/combine.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -57,7 +56,7 @@ std::unique_ptr<column> concatenate_lists_ignore_null(column_view const& input,
   // into row offsets of the root column. Those entry offsets are subtracted by the first entry
   // offset to output zero-based offsets.
   auto const iter = cuda::counting_iterator<size_type>{0};
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     iter,
                     iter + num_rows + 1,
                     d_out_offsets,
@@ -119,8 +118,8 @@ generate_list_offsets_and_validities(column_view const& input,
   auto const d_list_offsets = lists_column_view(lists_column_view(input).child()).offsets_begin();
 
   // The array of int8_t stores validities for the output list elements.
-  auto validities = cuda::device_buffer<int8_t>(
-    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
+  auto validities =
+    cuda::device_buffer<int8_t>(stream, mr.get_temporary_mr(), num_rows, cuda::no_init);
 
   // Compute output list sizes and validities.
   auto sizes_itr = cudf::detail::make_counting_transform_iterator(
@@ -172,11 +171,11 @@ std::unique_ptr<column> gather_list_entries(column_view const& input,
   auto const d_row_offsets  = lists_column_view(input).offsets_begin();
   auto const d_list_offsets = lists_column_view(child_col).offsets_begin();
   auto gather_map           = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_output_entries, cuda::no_init);
 
   // Fill the gather map with indices of the lists from the child column of the input column.
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     num_rows,
     [d_row_offsets,

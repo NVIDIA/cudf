@@ -174,10 +174,10 @@ std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
   }
   CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");
   CUDF_EXPECTS(s.is_valid(stream), "cannot create a dictionary with a null key");
-  auto const temp_mr = mr.get_temporary_mr();
   return make_dictionary_column(
     make_column_from_scalar(s, 1, stream, mr),
-    make_column_from_scalar(numeric_scalar<int32_t>(0, true, stream, temp_mr), size, stream, mr),
+    make_column_from_scalar(
+      numeric_scalar<int32_t>(0, true, stream, mr.as_temporary()), size, stream, mr),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 }

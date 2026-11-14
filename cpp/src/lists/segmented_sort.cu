@@ -9,13 +9,12 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/lists/sorting.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -37,7 +36,7 @@ std::unique_ptr<column> build_output_offsets(lists_column_view const& input,
 {
   auto output_offset = make_numeric_column(
     input.offsets().type(), input.size() + 1, mask_state::UNALLOCATED, stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input.offsets_begin(),
                     input.offsets_end(),
                     output_offset->mutable_view().begin<int32_t>(),

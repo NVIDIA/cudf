@@ -60,7 +60,7 @@ struct get_element_functor {
   {
     auto device_col = column_device_view::create(input, stream);
 
-    auto const temp_mr = cudf::get_current_device_resource_ref();
+    auto const temp_mr = mr.get_temporary_mr();
     cudf::detail::device_scalar<string_view> temp_data(stream, temp_mr);
     cudf::detail::device_scalar<bool> temp_valid(stream, temp_mr);
 
@@ -86,8 +86,7 @@ struct get_element_functor {
   {
     auto dict_view    = dictionary_column_view(input);
     auto indices_iter = detail::indexalator_factory::make_input_iterator(dict_view.indices());
-    numeric_scalar<size_type> key_index_scalar{
-      index, true, stream, cudf::get_current_device_resource_ref()};
+    numeric_scalar<size_type> key_index_scalar{index, true, stream, mr.as_temporary()};
     auto d_key_index = get_scalar_device_view(key_index_scalar);
     auto d_col       = column_device_view::create(input, stream);
 

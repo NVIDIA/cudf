@@ -17,6 +17,7 @@
 #include <cudf/detail/replace.hpp>
 #include <cudf/detail/replace/nulls.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/replace.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/null_mask.hpp>
@@ -122,8 +123,7 @@ struct replace_nulls_column_kernel_forwarder {
     auto device_out         = cudf::mutable_column_device_view::create(output_view, stream);
     auto device_replacement = cudf::column_device_view::create(replacement, stream);
 
-    cudf::detail::device_scalar<cudf::size_type> valid_counter(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<cudf::size_type> valid_counter(0, stream, mr.get_temporary_mr());
     cudf::size_type* valid_count = valid_counter.data();
 
     replace<<<grid.num_blocks, BLOCK_SIZE, 0, stream.get()>>>(
@@ -215,7 +215,7 @@ struct replace_nulls_scalar_kernel_forwarder {
     auto device_in   = cudf::column_device_view::create(input, stream);
 
     auto func = replace_nulls_functor<col_type>{s1.data()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.data<col_type>(),
                       input.data<col_type>() + input.size(),
                       cudf::detail::make_validity_iterator(*device_in),
@@ -274,13 +274,13 @@ std::unique_ptr<cudf::column> replace_nulls_policy_impl(cudf::column_view const&
   auto in_begin  = cuda::make_zip_iterator(cuda::std::make_tuple(index, valid_it));
 
   cuda::device_buffer<cudf::size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   auto gm_begin = cuda::make_zip_iterator(
     cuda::std::make_tuple(gather_map.begin(), cuda::make_discard_iterator()));
 
   auto func = cudf::detail::replace_policy_functor();
   if (replace_policy == cudf::replace_policy::PRECEDING) {
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            in_begin,
                            in_begin + input.size(),
                            gm_begin,
@@ -288,7 +288,7 @@ std::unique_ptr<cudf::column> replace_nulls_policy_impl(cudf::column_view const&
   } else {
     auto in_rbegin = cuda::std::make_reverse_iterator(in_begin + input.size());
     auto gm_rbegin = cuda::std::make_reverse_iterator(gm_begin + gather_map.size());
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            in_rbegin,
                            in_rbegin + input.size(),
                            gm_rbegin,

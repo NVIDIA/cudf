@@ -220,7 +220,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
   // concatenate the input table into one column.
   std::vector<column_view> cols(input.num_columns());
   std::copy(input.begin(), input.end(), cols.begin());
-  auto concat = cudf::detail::concatenate(cols, stream, cudf::get_current_device_resource_ref());
+  auto concat = cudf::detail::concatenate(cols, stream, mr.as_temporary());
 
   // whether or not we should be generating a null mask at all
   auto const build_null_mask = concat->has_nulls();
@@ -231,9 +231,8 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
   // count is the number of columns that contain a null for a given row.
   auto row_null_counts =
     build_null_mask
-      ? generate_null_counts(*input_dv, stream, cudf::get_current_device_resource_ref())
-      : cuda::device_buffer<size_type>{
-          stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+      ? generate_null_counts(*input_dv, stream, mr.as_temporary())
+      : cuda::device_buffer<size_type>{stream, mr.get_temporary_mr(), 0, cuda::no_init};
 
   // if we have nulls, overlay an appropriate null mask onto the
   // concatenated column so that gather() sanitizes out the child data of rows that will ultimately
@@ -255,7 +254,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
               return row_null_counts[row_index] != num_columns;
             }),
           stream,
-          cudf::get_current_device_resource_ref());
+          mr.as_temporary());
       }
       // NULLIFY_OUTPUT_ROW.  Output row is nullfied if any input row is null
       return cudf::detail::valid_if(
@@ -268,7 +267,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
             return row_null_counts[row_index] == 0;
           }),
         stream,
-        cudf::get_current_device_resource_ref());
+        mr.as_temporary());
     }();
     concat->set_null_mask(std::move(null_mask), null_count);
   }

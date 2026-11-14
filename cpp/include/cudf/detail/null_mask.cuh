@@ -8,6 +8,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/block/block_reduce.cuh>
@@ -607,7 +606,7 @@ cuda::device_buffer<size_type> segmented_count_bits(bitmask_type const* bitmask,
         auto const end   = cuda::std::get<1>(segment);
         return end - begin;
       }));
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       segment_length_iterator,
                       segment_length_iterator + num_ranges,
                       d_bit_counts.data(),

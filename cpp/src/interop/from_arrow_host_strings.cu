@@ -13,6 +13,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -84,7 +85,7 @@ std::unique_ptr<column> from_arrow_stringview(
     cudf::host_span<ArrowBinaryView const>{items + input->offset,
                                            static_cast<std::size_t>(input->length)},
     stream,
-    cudf::get_current_device_resource_ref());
+    mr.get_temporary_mr());
 
   // then copy variadic buffers to device
   auto variadics     = std::vector<cuda::device_buffer<char>>();
@@ -94,13 +95,13 @@ std::unique_ptr<column> from_arrow_stringview(
     variadics.emplace_back(cudf::detail::make_device_buffer_async(
       cudf::host_span<char const>{data, static_cast<std::size_t>(view.variadic_buffer_sizes[i])},
       stream,
-      cudf::get_current_device_resource_ref()));
+      mr.get_temporary_mr()));
     variadic_ptrs.push_back(variadics.back().data());
   }
 
   // copy variadic device pointers to device
-  auto d_variadic_ptrs = cudf::detail::make_device_buffer_async(
-    variadic_ptrs, stream, cudf::get_current_device_resource_ref());
+  auto d_variadic_ptrs =
+    cudf::detail::make_device_buffer_async(variadic_ptrs, stream, mr.get_temporary_mr());
   auto d_ptrs = d_variadic_ptrs.data();
   auto d_mask = mask->data();
 
@@ -108,9 +109,9 @@ std::unique_ptr<column> from_arrow_stringview(
 
   // create indices to string fragments for the make_strings_column gather
   auto d_indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input->length, cuda::no_init);
+    stream, mr.get_temporary_mr(), input->length, cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{static_cast<cudf::size_type>(input->length)},
     d_indices.begin(),

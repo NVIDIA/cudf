@@ -10,6 +10,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/unary.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/concepts>
@@ -161,10 +160,9 @@ std::unique_ptr<column> rescale(column_view input,
   using namespace numeric;
   using RepType = device_storage_type_t<T>;
 
-  auto const temp_mr = mr.get_temporary_mr();
-  auto const type    = cudf::data_type{cudf::type_to_id<T>(), scale};
+  auto const type = cudf::data_type{cudf::type_to_id<T>(), scale};
   if (input.type().scale() >= scale) {
-    auto const scalar = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, temp_mr);
+    auto const scalar = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, mr.as_temporary());
     return detail::binary_operation(input, *scalar, binary_operator::ADD, type, stream, mr);
   } else {
     auto const diff = input.type().scale() - scale;
@@ -172,7 +170,8 @@ std::unique_ptr<column> rescale(column_view input,
     // max digits of underlying integral type. Under this condition, the output values can be
     // nothing other than zero value. Therefore, we simply return a zero column.
     if (-diff > cuda::std::numeric_limits<RepType>::digits10) {
-      auto const scalar  = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, temp_mr);
+      auto const scalar =
+        make_fixed_point_scalar<T>(0, scale_type{scale}, stream, mr.as_temporary());
       auto output_column = make_column_from_scalar(*scalar, input.size(), stream, mr);
       if (input.nullable()) {
         auto null_mask = detail::copy_bitmask(input, stream, mr);
@@ -186,7 +185,8 @@ std::unique_ptr<column> rescale(column_view input,
       scalar_value *= 10;
     }
 
-    auto const scalar = make_fixed_point_scalar<T>(scalar_value, scale_type{diff}, stream, temp_mr);
+    auto const scalar =
+      make_fixed_point_scalar<T>(scalar_value, scale_type{diff}, stream, mr.as_temporary());
     return detail::binary_operation(input, *scalar, binary_operator::DIV, type, stream, mr);
   }
 };
@@ -235,7 +235,7 @@ struct dispatch_unary_cast_to {
 
     mutable_column_view output_mutable = *output;
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<SourceT>(),
                       input.end<SourceT>(),
                       output_mutable.begin<TargetT>(),
@@ -262,7 +262,7 @@ struct dispatch_unary_cast_to {
     using DeviceT    = device_storage_type_t<SourceT>;
     auto const scale = numeric::scale_type{input.type().scale()};
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<DeviceT>(),
                       input.end<DeviceT>(),
                       output_mutable.begin<TargetT>(),
@@ -290,7 +290,7 @@ struct dispatch_unary_cast_to {
 
     auto const scale = numeric::scale_type{type.scale()};
 
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       input.begin<SourceT>(),
                       input.end<SourceT>(),
                       output_mutable.begin<DeviceT>(),
@@ -322,7 +322,7 @@ struct dispatch_unary_cast_to {
              cuda::std::same_as<SourceT, TargetT>)
   {
     if (input.type() == type) {
-      return std::make_unique<column>(input, stream, mr.get_output_mr());  // TODO add test for this
+      return std::make_unique<column>(input, stream, mr);  // TODO add test for this
     }
 
     return detail::rescale<TargetT>(input, numeric::scale_type{type.scale()}, stream, mr);
@@ -351,7 +351,7 @@ struct dispatch_unary_cast_to {
 
       mutable_column_view output_mutable = *output;
 
-      thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         input.begin<SourceDeviceT>(),
                         input.end<SourceDeviceT>(),
                         output_mutable.begin<TargetDeviceT>(),

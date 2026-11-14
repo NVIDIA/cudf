@@ -8,6 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/explode.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -16,7 +17,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -111,7 +111,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -125,7 +125,7 @@ std::unique_ptr<table> explode(table_view const& input_table,
   // This looks like an off-by-one bug, but what is going on here is that we need to reduce each
   // result from `lower_bound` by 1 to build the correct gather map. This can be accomplished by
   // skipping the first entry and using the result of `lower_bound` directly.
-  thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                       offsets_minus_one,
                       offsets_minus_one + explode_col.size(),
                       counting_iter,
@@ -150,7 +150,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -167,7 +167,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
   // result from `lower_bound` by 1 to build the correct gather map. This can be accomplished by
   // skipping the first entry and using the result of `lower_bound` directly.
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     counting_iter,
     counting_iter + gather_map.size(),
     gather_map.begin(),
@@ -206,7 +206,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
   // number of nulls or empty lists found so far in the explode column
   cuda::device_buffer<size_type> null_or_empty_offset(
-    stream, cudf::get_current_device_resource_ref(), explode_col.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), explode_col.size(), cuda::no_init);
 
   auto null_or_empty = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
@@ -214,7 +214,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
       [offsets, offsets_size = explode_col.size() - 1] __device__(int idx) {
         return (idx > offsets_size || (offsets[idx + 1] != offsets[idx])) ? 0 : 1;
       }));
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          null_or_empty,
                          null_or_empty + explode_col.size(),
                          null_or_empty_offset.begin());
@@ -238,9 +238,9 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   auto gather_map_size = sliced_child.size() + null_or_empty_count;
 
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), gather_map_size, cuda::no_init);
   cuda::device_buffer<size_type> explode_col_gather_map(
-    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+    stream, mr.get_temporary_mr(), gather_map_size, cuda::no_init);
   rmm::device_uvector<size_type> pos(
     include_position ? gather_map_size : 0, stream, mr.get_output_mr());
 
@@ -288,7 +288,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   auto loop_count = std::max(sliced_child.size(), explode_col.size());
 
   // Fill in gather map with all the child column's entries
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    counting_iter,
                    counting_iter + loop_count,
                    fill_gather_maps);

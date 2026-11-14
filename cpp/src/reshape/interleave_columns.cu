@@ -8,6 +8,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/reshape.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/detail/interleave_columns.hpp>
 #include <cudf/reshape.hpp>
@@ -19,8 +20,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -172,8 +171,8 @@ struct interleave_columns_impl<T, std::enable_if_t<std::is_same_v<T, cudf::strin
     auto num_strings = num_columns * strings_count;
 
     cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
-      stream, cudf::get_current_device_resource_ref(), num_strings, cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      stream, mr.get_temporary_mr(), num_strings, cuda::no_init);
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{num_strings},
                       indices.begin(),
@@ -205,7 +204,7 @@ struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
       });
 
     if (not create_mask) {
-      thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                         index_begin,
                         index_end,
                         device_output->begin<T>(),
@@ -219,7 +218,7 @@ struct interleave_columns_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
       return input.column(idx % divisor).is_valid(idx / divisor);
     };
 
-    thrust::transform_if(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform_if(cudf::detail::exec_policy_nosync(stream, mr),
                          index_begin,
                          index_end,
                          device_output->begin<T>(),

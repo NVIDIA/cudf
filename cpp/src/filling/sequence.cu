@@ -8,6 +8,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/tabulate.h>
@@ -70,7 +69,7 @@ struct sequence_functor {
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
     // which is undesirable from a performance perspective.
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
                      tabulator<T>{n_init, n_step});
@@ -94,7 +93,7 @@ struct sequence_functor {
     // not using thrust::sequence because it requires init and step to be passed as
     // constants, not iterators. to do that we would have to retrieve the scalar values off the gpu,
     // which is undesirable from a performance perspective.
-    thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                      result_device_view->begin<T>(),
                      result_device_view->end<T>(),
                      const_tabulator<T>{n_init});

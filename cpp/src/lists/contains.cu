@@ -8,6 +8,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/contains.hpp>
 #include <cudf/lists/detail/contains.hpp>
@@ -20,8 +21,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -163,7 +162,7 @@ void index_of(InputIterator input_it,
 {
   auto const keys_dv_ptr       = column_device_view::create(search_keys, stream);
   auto const key_validity_iter = cudf::detail::make_validity_iterator<true>(*keys_dv_ptr);
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input_it,
                     input_it + num_rows,
                     output_it,
@@ -212,7 +211,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
   auto const child_tview = cudf::table_view{{child}};
   auto const has_nulls   = has_nested_nulls(child_tview) || has_nested_nulls(keys_tview);
   auto const comparator  = cudf::detail::row::equality::two_table_comparator(
-    child_tview, keys_tview, stream, cudf::get_current_device_resource_ref());
+    child_tview, keys_tview, stream, mr.get_temporary_mr());
   if (cudf::is_nested(search_keys.type())) {
     auto const d_comp = comparator.equal_to<true>(nullate::DYNAMIC{has_nulls});
     index_of(input_it,
@@ -223,7 +222,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
              find_option,
              d_comp,
              stream,
-             cudf::get_current_device_resource_ref());
+             mr.as_temporary());
   } else {
     auto const d_comp = comparator.equal_to<false>(nullate::DYNAMIC{has_nulls});
     index_of(input_it,
@@ -234,7 +233,7 @@ std::unique_ptr<column> dispatch_index_of(lists_column_view const& lists,
              find_option,
              d_comp,
              stream,
-             cudf::get_current_device_resource_ref());
+             mr.as_temporary());
   }
 
   if (search_keys_have_nulls || lists.has_nulls()) {
@@ -262,7 +261,7 @@ std::unique_ptr<column> to_contains(std::unique_ptr<column>&& key_positions,
   auto const positions_begin = key_positions->view().template begin<size_type>();
   auto result                = make_numeric_column(
     data_type{type_id::BOOL8}, key_positions->size(), mask_state::UNALLOCATED, stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     positions_begin,
                     positions_begin + key_positions->size(),
                     result->mutable_view().template begin<bool>(),
@@ -320,11 +319,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  auto key_indices = detail::index_of(lists,
-                                      search_key,
-                                      duplicate_find_option::FIND_FIRST,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+  auto key_indices =
+    detail::index_of(lists, search_key, duplicate_find_option::FIND_FIRST, stream, mr);
   return to_contains(std::move(key_indices), stream, mr);
 }
 
@@ -336,11 +332,8 @@ std::unique_ptr<column> contains(lists_column_view const& lists,
   CUDF_EXPECTS(search_keys.size() == lists.size(),
                "Number of search keys must match list column size.");
 
-  auto key_indices = detail::index_of(lists,
-                                      search_keys,
-                                      duplicate_find_option::FIND_FIRST,
-                                      stream,
-                                      cudf::get_current_device_resource_ref());
+  auto key_indices =
+    detail::index_of(lists, search_keys, duplicate_find_option::FIND_FIRST, stream, mr);
   return to_contains(std::move(key_indices), stream, mr);
 }
 
@@ -359,7 +352,7 @@ std::unique_ptr<column> contains_nulls(lists_column_view const& lists,
   auto const lists_cdv_ptr = column_device_view::create(lists_cv, stream);
 
   thrust::tabulate(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     out_begin,
     out_begin + lists.size(),
     cuda::proclaim_return_type<bool>(

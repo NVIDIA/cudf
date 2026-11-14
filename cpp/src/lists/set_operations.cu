@@ -13,14 +13,13 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/search.hpp>
 #include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/combine.hpp>
 #include <cudf/lists/detail/set_operations.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/set_operations.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/std/functional>
@@ -68,14 +67,14 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
 
   auto const lhs_child  = lhs.get_sliced_child(stream);
   auto const rhs_child  = rhs.get_sliced_child(stream);
-  auto const lhs_labels = generate_labels(lhs, lhs_child.size(), stream, temp_mr);
-  auto const rhs_labels = generate_labels(rhs, rhs_child.size(), stream, temp_mr);
+  auto const lhs_labels = generate_labels(lhs, lhs_child.size(), stream, mr.as_temporary());
+  auto const rhs_labels = generate_labels(rhs, rhs_child.size(), stream, mr.as_temporary());
   auto const lhs_table  = table_view{{lhs_labels->view(), lhs_child}};
   auto const rhs_table  = table_view{{rhs_labels->view(), rhs_child}};
 
   // Check existence for each row of the rhs_table in lhs_table.
-  auto const contained =
-    cudf::detail::contains(lhs_table, rhs_table, nulls_equal, nans_equal, stream, temp_mr);
+  auto const contained = cudf::detail::contains(
+    lhs_table, rhs_table, nulls_equal, nans_equal, stream, mr.as_temporary());
 
   auto const num_rows = lhs.size();
 
@@ -106,8 +105,8 @@ std::unique_ptr<column> have_overlap(lists_column_view const& lhs,
   // `overlap_results` only stores the results of non-empty lists.
   // We need to initialize `false` for the entire output array then scatter these results over.
   thrust::uninitialized_fill(
-    rmm::exec_policy_nosync(stream, temp_mr), result_begin, result_begin + num_rows, false);
-  thrust::scatter(rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr), result_begin, result_begin + num_rows, false);
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   overlap_results.begin(),
                   overlap_results.begin() + num_non_empty_segments,
                   list_indices.begin(),
@@ -135,23 +134,21 @@ std::unique_ptr<column> intersect_distinct(lists_column_view const& lhs,
   // - Extract rows of the rhs table using the existence results computed in the previous step.
   // - Remove duplicate rows, and build the output lists.
 
-  auto const lhs_child = lhs.get_sliced_child(stream);
-  auto const rhs_child = rhs.get_sliced_child(stream);
-  auto const lhs_labels =
-    generate_labels(lhs, lhs_child.size(), stream, cudf::get_current_device_resource_ref());
-  auto const rhs_labels =
-    generate_labels(rhs, rhs_child.size(), stream, cudf::get_current_device_resource_ref());
-  auto const lhs_table = table_view{{lhs_labels->view(), lhs_child}};
-  auto const rhs_table = table_view{{rhs_labels->view(), rhs_child}};
+  auto const lhs_child  = lhs.get_sliced_child(stream);
+  auto const rhs_child  = rhs.get_sliced_child(stream);
+  auto const lhs_labels = generate_labels(lhs, lhs_child.size(), stream, mr.as_temporary());
+  auto const rhs_labels = generate_labels(rhs, rhs_child.size(), stream, mr.as_temporary());
+  auto const lhs_table  = table_view{{lhs_labels->view(), lhs_child}};
+  auto const rhs_table  = table_view{{rhs_labels->view(), rhs_child}};
 
   auto const contained = cudf::detail::contains(
-    lhs_table, rhs_table, nulls_equal, nans_equal, stream, cudf::get_current_device_resource_ref());
+    lhs_table, rhs_table, nulls_equal, nans_equal, stream, mr.as_temporary());
 
   auto const intersect_table = cudf::detail::copy_if(
     rhs_table,
     [contained = contained.begin()] __device__(auto const idx) -> bool { return contained[idx]; },
     stream,
-    cudf::get_current_device_resource_ref());
+    mr.as_temporary());
 
   // A stable algorithm is required to ensure that list labels remain contiguous.
   auto out_table = cudf::detail::stable_distinct(intersect_table->view(),
@@ -193,7 +190,7 @@ std::unique_ptr<column> union_distinct(lists_column_view const& lhs,
     lists::detail::concatenate_rows(table_view{{lhs.parent(), rhs.parent()}},
                                     concatenate_null_policy::NULLIFY_OUTPUT_ROW,
                                     stream,
-                                    cudf::get_current_device_resource_ref());
+                                    mr.as_temporary());
 
   return cudf::lists::detail::distinct(lists_column_view{union_col->view()},
                                        nulls_equal,
@@ -220,23 +217,21 @@ std::unique_ptr<column> difference_distinct(lists_column_view const& lhs,
   // - Extract rows of the lhs table using that difference results.
   // - Remove duplicate rows, and build the output lists.
 
-  auto const lhs_child = lhs.get_sliced_child(stream);
-  auto const rhs_child = rhs.get_sliced_child(stream);
-  auto const lhs_labels =
-    generate_labels(lhs, lhs_child.size(), stream, cudf::get_current_device_resource_ref());
-  auto const rhs_labels =
-    generate_labels(rhs, rhs_child.size(), stream, cudf::get_current_device_resource_ref());
-  auto const lhs_table = table_view{{lhs_labels->view(), lhs_child}};
-  auto const rhs_table = table_view{{rhs_labels->view(), rhs_child}};
+  auto const lhs_child  = lhs.get_sliced_child(stream);
+  auto const rhs_child  = rhs.get_sliced_child(stream);
+  auto const lhs_labels = generate_labels(lhs, lhs_child.size(), stream, mr.as_temporary());
+  auto const rhs_labels = generate_labels(rhs, rhs_child.size(), stream, mr.as_temporary());
+  auto const lhs_table  = table_view{{lhs_labels->view(), lhs_child}};
+  auto const rhs_table  = table_view{{rhs_labels->view(), rhs_child}};
 
   auto const contained = cudf::detail::contains(
-    rhs_table, lhs_table, nulls_equal, nans_equal, stream, cudf::get_current_device_resource_ref());
+    rhs_table, lhs_table, nulls_equal, nans_equal, stream, mr.as_temporary());
 
   auto const difference_table = cudf::detail::copy_if(
     lhs_table,
     [contained = contained.begin()] __device__(auto const idx) -> bool { return !contained[idx]; },
     stream,
-    cudf::get_current_device_resource_ref());
+    mr.as_temporary());
 
   // A stable algorithm is required to ensure that list labels remain contiguous.
   auto out_table = cudf::detail::stable_distinct(difference_table->view(),

@@ -9,14 +9,13 @@
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -52,14 +51,12 @@ generate_list_offsets_and_validities(table_view const& input,
   auto const d_offsets = list_offsets->mutable_view().template begin<int32_t>();
 
   // The array of int8_t to store validities for list elements.
-  cuda::device_buffer<int8_t> validities(stream,
-                                         cudf::get_current_device_resource_ref(),
-                                         has_null_mask ? num_output_lists : 0,
-                                         cuda::no_init);
+  cuda::device_buffer<int8_t> validities(
+    stream, mr.get_temporary_mr(), has_null_mask ? num_output_lists : 0, cuda::no_init);
 
   // Compute list sizes and validities.
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_output_lists},
     d_offsets,
@@ -97,7 +94,7 @@ std::unique_ptr<column> concatenate_and_gather_lists(host_span<column_view const
 {
   // Concatenate all columns into a single (temporary) column.
   auto const concatenated_col =
-    cudf::detail::concatenate(columns_to_concat, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::concatenate(columns_to_concat, stream, mr.as_temporary());
 
   // The number of input columns is known to be non-zero thus it's safe to call `front()` here.
   auto const num_cols       = columns_to_concat.size();
@@ -198,10 +195,10 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
     auto const d_list_offsets = output_list_offsets.template begin<int32_t>();
 
     cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
-      stream, cudf::get_current_device_resource_ref(), num_output_entries, cuda::no_init);
+      stream, mr.get_temporary_mr(), num_output_entries, cuda::no_init);
     auto comp_fn =
       compute_string_sizes_and_interleave_lists_fn{*table_dv_ptr, d_list_offsets, indices.data()};
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<size_type>{0},
                        num_output_lists,
                        comp_fn);
@@ -231,13 +228,11 @@ struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>(
     auto output_dv_ptr = mutable_column_device_view::create(*output, stream);
 
     // The array of int8_t to store entry validities.
-    auto validities = cuda::device_buffer<int8_t>(stream,
-                                                  cudf::get_current_device_resource_ref(),
-                                                  data_has_null_mask ? num_output_entries : 0,
-                                                  cuda::no_init);
+    auto validities = cuda::device_buffer<int8_t>(
+      stream, mr.get_temporary_mr(), data_has_null_mask ? num_output_entries : 0, cuda::no_init);
 
     thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<size_type>{0},
       num_output_lists,
       [num_cols,

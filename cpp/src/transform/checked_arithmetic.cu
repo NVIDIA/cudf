@@ -164,9 +164,9 @@ struct binary_launcher {
   {
     if constexpr (is_supported_type<T>) {
       auto const temp_mr = mr.get_temporary_mr();
-      auto lhs_device    = column_device_view::create(lhs, stream, temp_mr);
-      auto rhs_device    = column_device_view::create(rhs, stream, temp_mr);
-      auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
+      auto lhs_device    = column_device_view::create(lhs, stream, mr.as_temporary());
+      auto rhs_device    = column_device_view::create(rhs, stream, mr.as_temporary());
+      auto out_device    = mutable_column_device_view::create(out, stream, mr.as_temporary());
       cudf::detail::device_scalar<int32_t> max_error{
         static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
 
@@ -195,8 +195,8 @@ struct unary_launcher {
   {
     if constexpr (is_supported_type<T>) {
       auto const temp_mr = mr.get_temporary_mr();
-      auto input_device  = column_device_view::create(input, stream, temp_mr);
-      auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
+      auto input_device  = column_device_view::create(input, stream, mr.as_temporary());
+      auto out_device    = mutable_column_device_view::create(out, stream, mr.as_temporary());
       cudf::detail::device_scalar<int32_t> max_error{
         static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
 

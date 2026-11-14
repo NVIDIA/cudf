@@ -7,6 +7,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/copying.hpp>
@@ -18,8 +19,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -131,11 +130,8 @@ struct shift_functor {
         return out_of_bounds(size, src_idx) ? *fill : input.element<T>(src_idx);
       };
 
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                      index_begin,
-                      index_end,
-                      data,
-                      func_value);
+    thrust::transform(
+      cudf::detail::exec_policy_nosync(stream, mr), index_begin, index_end, data, func_value);
 
     return output;
   }

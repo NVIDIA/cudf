@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 namespace cudf::lists::detail {
@@ -17,11 +18,8 @@ std::unique_ptr<column> generate_labels(lists_column_view const& input,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
 {
-  auto labels             = make_numeric_column(data_type(type_to_id<size_type>()),
-                                    n_elements,
-                                    cudf::mask_state::UNALLOCATED,
-                                    stream,
-                                    mr.get_output_mr());
+  auto labels = make_numeric_column(
+    data_type(type_to_id<size_type>()), n_elements, cudf::mask_state::UNALLOCATED, stream, mr);
   auto const labels_begin = labels->mutable_view().template begin<size_type>();
   cudf::detail::label_segments(input.offsets_begin(),
                                input.offsets_end(),
@@ -39,7 +37,7 @@ std::unique_ptr<column> reconstruct_offsets(column_view const& labels,
 
 {
   auto out_offsets = make_numeric_column(
-    data_type{type_id::INT32}, n_lists + 1, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+    data_type{type_id::INT32}, n_lists + 1, mask_state::UNALLOCATED, stream, mr);
 
   auto const labels_begin  = labels.template begin<size_type>();
   auto const offsets_begin = out_offsets->mutable_view().template begin<int32_t>();
@@ -58,12 +56,9 @@ std::unique_ptr<column> get_normalized_offsets(lists_column_view const& input,
 {
   if (input.is_empty()) { return empty_like(input.offsets()); }
 
-  auto out_offsets = make_numeric_column(data_type(type_id::INT32),
-                                         input.size() + 1,
-                                         cudf::mask_state::UNALLOCATED,
-                                         stream,
-                                         mr.get_output_mr());
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  auto out_offsets = make_numeric_column(
+    data_type(type_id::INT32), input.size() + 1, cudf::mask_state::UNALLOCATED, stream, mr);
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input.offsets_begin(),
                     input.offsets_end(),
                     out_offsets->mutable_view().begin<int32_t>(),

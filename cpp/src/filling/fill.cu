@@ -116,10 +116,9 @@ struct out_of_place_fill_range_dispatch {
           0);
       }
 
-      auto ret_view    = p_ret->mutable_view();
-      using DeviceType = cudf::device_storage_type_t<T>;
-      // TODO: route through the caller's memory resources once fill is migrated
-      auto const temp_mr = cudf::get_current_device_resource_ref();
+      auto ret_view      = p_ret->mutable_view();
+      using DeviceType   = cudf::device_storage_type_t<T>;
+      auto const temp_mr = mr.get_temporary_mr();
       in_place_fill<DeviceType>(
         ret_view, begin, end, value, stream, cudf::memory_resources{temp_mr, temp_mr});
       p_ret->set_null_count(ret_view.null_count());
@@ -159,16 +158,15 @@ std::unique_ptr<cudf::column> out_of_place_fill_range_dispatch::operator()<cudf:
   }
 
   // add the scalar to get the output dictionary key-set
-  auto scalar_column =
-    cudf::make_column_from_scalar(value, 1, stream, cudf::get_current_device_resource_ref());
+  auto scalar_column = cudf::make_column_from_scalar(value, 1, stream, mr.as_temporary());
   auto target_matched =
     cudf::dictionary::detail::add_keys(target, scalar_column->view(), stream, mr);
   cudf::column_view const target_indices =
     cudf::dictionary_column_view(target_matched->view()).get_indices_annotated();
 
   // get the index of the key just added
-  auto index_of_value = cudf::dictionary::detail::get_index(
-    target_matched->view(), value, stream, cudf::get_current_device_resource_ref());
+  auto index_of_value =
+    cudf::dictionary::detail::get_index(target_matched->view(), value, stream, mr.as_temporary());
   // now call fill using just the indices column and the new index
   auto new_indices =
     cudf::type_dispatcher(target_indices.type(),

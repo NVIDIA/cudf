@@ -57,8 +57,8 @@ std::unique_ptr<column> decode(dictionary_column_view const& source,
   auto output_column = std::unique_ptr<column>(std::move(table_column.front()));
 
   // apply any nulls to the output column
-  output_column->set_null_mask(
-    cudf::detail::copy_bitmask(source.parent(), stream, mr.get_output_mr()), source.null_count());
+  output_column->set_null_mask(cudf::detail::copy_bitmask(source.parent(), stream, mr),
+                               source.null_count());
 
   return output_column;
 }

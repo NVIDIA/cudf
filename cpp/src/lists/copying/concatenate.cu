@@ -12,11 +12,10 @@
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/concatenate.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -66,7 +65,7 @@ std::unique_ptr<column> merge_offsets(host_span<lists_column_view const> columns
         (c.offset() > 0 ? cudf::detail::get_value<int32_t>(c.offsets(), c.offset(), stream) : 0);
       column_device_view offsets(c.offsets(), nullptr, nullptr);
       thrust::transform(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        cudf::detail::exec_policy_nosync(stream, mr),
         offsets.begin<int32_t>() + c.offset(),
         offsets.begin<int32_t>() + c.offset() + c.size() + 1,
         d_merged_offsets.begin<int32_t>() + count,
@@ -119,7 +118,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     total_list_count, has_nulls ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED, stream, mr);
   auto null_mask_data = null_mask.data();
   auto const null_count =
-    has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream) : size_type{0};
+    has_nulls ? cudf::detail::concatenate_masks(columns, null_mask_data, stream, mr) : size_type{0};
 
   // assemble into outgoing list column
   return make_lists_column(

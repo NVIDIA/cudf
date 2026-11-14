@@ -15,6 +15,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/interop.hpp>
@@ -30,7 +31,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -442,7 +442,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
   // count the number of long-ish strings -- ones that cannot be inlined
   auto const num_longer_strings = thrust::count_if(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator<cudf::size_type>{col.size()},
     [d_offsets] __device__(auto idx) {
@@ -468,7 +468,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
                    : cudf::strings::detail::string_index_pair{"", 0};
         }));
     auto longer_strings = cudf::strings::detail::make_strings_column(
-      indices, indices + col.size(), stream, cudf::get_current_device_resource_ref());
+      indices, indices + col.size(), stream, mr.as_temporary());
     cudf::detail::sync_stream(stream);
     auto const sv = cudf::strings_column_view(longer_strings->view());
     return std::pair{std::move(longer_strings), sv};
@@ -482,24 +482,24 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   // using max/2 here ensures no buffer is greater than 2GB
   constexpr int64_t max_size = std::numeric_limits<int32_t>::max() / 2;
   auto const num_buffers     = cudf::detail::div_rounding_up_safe(longer_chars_size, max_size);
-  auto buffer_offsets        = cuda::device_buffer<int64_t>(
-    stream, cudf::get_current_device_resource_ref(), num_buffers, cuda::no_init);
+  auto buffer_offsets =
+    cuda::device_buffer<int64_t>(stream, mr.get_temporary_mr(), num_buffers, cuda::no_init);
   // copy the bytes for the longer strings into Arrow variadic buffers
   if (longer_chars_size > 0) {
     // compute buffer boundaries (less than 2GB per buffer)
-    auto buffer_indices = cuda::device_buffer<int64_t>(
-      stream, cudf::get_current_device_resource_ref(), num_buffers, cuda::no_init);
+    auto buffer_indices =
+      cuda::device_buffer<int64_t>(stream, mr.get_temporary_mr(), num_buffers, cuda::no_init);
     auto const bound_itr = make_counting_transform_iterator(
       0, cuda::proclaim_return_type<int64_t>([] __device__(auto idx) {
         return (idx + 1) * max_size;
       }));
-    thrust::lower_bound(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                         d_offsets,
                         d_offsets + longer_strings.size(),
                         bound_itr,
                         bound_itr + num_buffers,
                         buffer_indices.begin());
-    thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                    buffer_indices.begin(),
                    buffer_indices.end(),
                    d_offsets,
@@ -521,9 +521,9 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
   }
 
   // now build BinaryView objects from the strings in device memory
-  auto d_items = cuda::device_buffer<ArrowBinaryView>(
-    stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto d_items =
+    cuda::device_buffer<ArrowBinaryView>(stream, mr.get_temporary_mr(), col.size(), cuda::no_init);
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<cudf::size_type>{0},
                      col.size(),
                      strings_to_binary_view{*d_strings, d_offsets, buffer_offsets, d_items.data()});

@@ -6,9 +6,8 @@
 #pragma once
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/stream>
@@ -47,7 +46,7 @@ std::unique_ptr<column> true_if(InputIterator begin,
   auto output_mutable_view = output->mutable_view();
   auto output_data         = output_mutable_view.data<bool>();
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     begin,
                     end,
                     output_data,

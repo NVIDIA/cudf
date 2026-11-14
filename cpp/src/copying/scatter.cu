@@ -13,6 +13,7 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/lists/list_view.hpp>
@@ -113,7 +114,7 @@ struct column_scalar_scatterer_impl {
     auto scalar_iter =
       cuda::make_permutation_iterator(scalar_impl->data(), cuda::make_constant_iterator(0));
 
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                     scalar_iter,
                     scalar_iter + scatter_rows,
                     scatter_iter,
@@ -179,19 +180,18 @@ struct column_scalar_scatterer_impl<dictionary32, MapIterator> {
   {
     auto dict_target = dictionary::detail::add_keys(
       dictionary_column_view(target),
-      make_column_from_scalar(source.get(), 1, stream, cudf::get_current_device_resource_ref())
-        ->view(),
+      make_column_from_scalar(source.get(), 1, stream, mr.as_temporary())->view(),
       stream,
       mr);
-    auto dict_view    = dictionary_column_view(dict_target->view());
-    auto scalar_index = dictionary::detail::get_index(
-      dict_view, source.get(), stream, cudf::get_current_device_resource_ref());
+    auto dict_view = dictionary_column_view(dict_target->view());
+    auto scalar_index =
+      dictionary::detail::get_index(dict_view, source.get(), stream, mr.as_temporary());
     auto scalar_iter = cuda::make_permutation_iterator(
       indexalator_factory::make_input_iterator(*scalar_index), cuda::make_constant_iterator(0));
     auto new_indices = std::make_unique<column>(dict_view.get_indices_annotated(), stream, mr);
     auto target_iter = indexalator_factory::make_output_iterator(new_indices->mutable_view());
 
-    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                     scalar_iter,
                     scalar_iter + scatter_rows,
                     scatter_iter,
@@ -245,8 +245,7 @@ struct column_scalar_scatterer_impl<struct_view, MapIterator> {
 
     auto scatter_functor   = column_scalar_scatterer<decltype(scatter_iter)>{};
     auto fields_iter_begin = make_counting_transform_iterator(0, [&](auto const& i) {
-      auto row_slr = detail::get_element(
-        typed_s->view().column(i), 0, stream, cudf::get_current_device_resource_ref());
+      auto row_slr = detail::get_element(typed_s->view().column(i), 0, stream, mr.as_temporary());
       return type_dispatcher<dispatch_storage_type>(row_slr->type(),
                                                     scatter_functor,
                                                     *row_slr,
@@ -380,24 +379,18 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
                                              cuda::stream_ref stream,
                                              cudf::memory_resources mr)
 {
-  auto indices         = cudf::make_numeric_column(data_type{type_id::INT32},
-                                           target.size(),
-                                           mask_state::UNALLOCATED,
-                                           stream,
-                                           cudf::get_current_device_resource_ref());
+  auto indices = cudf::make_numeric_column(
+    data_type{type_id::INT32}, target.size(), mask_state::UNALLOCATED, stream, mr.as_temporary());
   auto mutable_indices = indices->mutable_view();
 
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices.begin<size_type>(),
                    mutable_indices.end<size_type>(),
                    0);
 
   // The scatter map is actually a table with only one column, which is scatter map.
-  auto scatter_map  = detail::apply_mask(table_view{{indices->view()}},
-                                        boolean_mask,
-                                        mask_type::RETENTION,
-                                        stream,
-                                        cudf::get_current_device_resource_ref());
+  auto scatter_map = detail::apply_mask(
+    table_view{{indices->view()}}, boolean_mask, mask_type::RETENTION, stream, mr.as_temporary());
   auto output_table = detail::scatter(
     table_view{{input}}, scatter_map->get_column(0).view(), table_view{{target}}, stream, mr);
 
@@ -440,18 +433,15 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
                                            target.num_rows(),
                                            mask_state::UNALLOCATED,
                                            stream,
-                                           cudf::get_current_device_resource_ref());
+                                           mr.as_temporary());
   auto mutable_indices = indices->mutable_view();
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    mutable_indices.begin<size_type>(),
                    mutable_indices.end<size_type>(),
                    0);
 
-  auto scatter_map = detail::apply_mask(table_view{{indices->view()}},
-                                        boolean_mask,
-                                        mask_type::RETENTION,
-                                        stream,
-                                        cudf::get_current_device_resource_ref());
+  auto scatter_map = detail::apply_mask(
+    table_view{{indices->view()}}, boolean_mask, mask_type::RETENTION, stream, mr.as_temporary());
   return detail::scatter(input, scatter_map->get_column(0).view(), target, stream, mr);
 }
 

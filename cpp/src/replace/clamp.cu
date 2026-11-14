@@ -11,6 +11,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -26,8 +27,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -86,8 +85,8 @@ std::unique_ptr<cudf::column> clamp_string_column(strings_column_view const& inp
   auto fn = clamp_strings_fn<OptionalScalarIterator, ReplaceScalarIterator>{
     d_input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr};
   cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     indices.begin(),
@@ -133,8 +132,7 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
       if (key.is_valid(stream)) {
         result = dictionary::detail::add_keys(
           matched_view,
-          make_column_from_scalar(key_replace, 1, stream, cudf::get_current_device_resource_ref())
-            ->view(),
+          make_column_from_scalar(key_replace, 1, stream, mr.as_temporary())->view(),
           stream,
           mr);
         matched_view = dictionary_column_view(result->view());
@@ -145,13 +143,12 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
     return result;
   }();
   auto matched_view = dictionary_column_view(matched_column->view());
-  auto default_mr   = cudf::get_current_device_resource_ref();
 
   // get the indexes for lo_replace and for hi_replace
   auto lo_replace_index =
-    dictionary::detail::get_index(matched_view, lo_replace, stream, default_mr);
+    dictionary::detail::get_index(matched_view, lo_replace, stream, mr.as_temporary());
   auto hi_replace_index =
-    dictionary::detail::get_index(matched_view, hi_replace, stream, default_mr);
+    dictionary::detail::get_index(matched_view, hi_replace, stream, mr.as_temporary());
   auto lo_index_itr = cudf::detail::indexalator_factory::make_input_iterator(*lo_replace_index);
   auto hi_index_itr = cudf::detail::indexalator_factory::make_input_iterator(*hi_replace_index);
 
@@ -169,7 +166,7 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
 
   auto fn = clamp_dictionary_fn<T, OptionalIterator, ReplaceIterator>{
     *d_input, lo_itr, lo_index_itr, hi_itr, hi_index_itr};
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
                     indices_itr,
@@ -225,7 +222,7 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
 
   auto input_pair_iterator =
     make_optional_iterator<T>(*input_device_view, nullate::DYNAMIC{input.has_nulls()});
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     input_pair_iterator,
                     input_pair_iterator + input.size(),
                     scalar_zip_itr,

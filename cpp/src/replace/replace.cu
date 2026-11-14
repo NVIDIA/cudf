@@ -171,8 +171,7 @@ struct replace_kernel_forwarder {
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
   {
-    cudf::detail::device_scalar<cudf::size_type> valid_counter(
-      0, stream, cudf::get_current_device_resource_ref());
+    cudf::detail::device_scalar<cudf::size_type> valid_counter(0, stream, mr.get_temporary_mr());
     cudf::size_type* valid_count = valid_counter.data();
 
     auto replace = [&] {
@@ -253,14 +252,14 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::diction
     auto new_keys = cudf::detail::concatenate(
       std::vector<cudf::column_view>({values.keys(), replacements.keys()}),
       stream,
-      cudf::get_current_device_resource_ref());
+      mr.as_temporary());
     return cudf::dictionary::detail::add_keys(input, new_keys->view(), stream, mr);
   }();
-  auto matched_view   = cudf::dictionary_column_view(matched_input->view());
-  auto matched_values = cudf::dictionary::detail::set_keys(
-    values, matched_view.keys(), stream, cudf::get_current_device_resource_ref());
+  auto matched_view = cudf::dictionary_column_view(matched_input->view());
+  auto matched_values =
+    cudf::dictionary::detail::set_keys(values, matched_view.keys(), stream, mr.as_temporary());
   auto matched_replacements = cudf::dictionary::detail::set_keys(
-    replacements, matched_view.keys(), stream, cudf::get_current_device_resource_ref());
+    replacements, matched_view.keys(), stream, mr.as_temporary());
 
   auto indices_type = matched_view.indices().type();
   auto new_indices  = cudf::type_dispatcher<cudf::dispatch_storage_type>(

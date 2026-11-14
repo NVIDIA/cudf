@@ -211,7 +211,7 @@ multisource_device_data fetch_multisource_device_data(
   std::pair<std::vector<cudf::io::text::byte_range_info>, std::vector<cudf::size_type>> const&
     byte_ranges_and_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const byte_ranges_per_source =
     group_byte_ranges_by_source(byte_ranges_and_source_map, inputs.datasources.size());
@@ -233,7 +233,7 @@ multisource_device_data fetch_multisource_device_data(
 
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>>&& tables,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   if (tables.size() == 1) { return std::move(tables[0]); }
 
@@ -255,7 +255,7 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
                                               ReaderType& reader,
                                               cudf::io::parquet_reader_options const& options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   reader.reset_column_selection();
   auto const row_group_indices = reader.all_row_groups(options);
@@ -318,7 +318,7 @@ std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
   cudf::io::parquet::experimental::hybrid_scan_reader& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return filter_row_groups_with_dictionaries_impl(datasource, reader, options, stream, mr);
 }
@@ -328,7 +328,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   cudf::io::parquet::experimental::hybrid_scan_multifile& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return filter_row_groups_with_dictionaries_impl(inputs, reader, options, stream, mr);
 }

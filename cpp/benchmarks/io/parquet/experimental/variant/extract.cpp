@@ -266,7 +266,7 @@ void pad_to_equal_size(std::vector<uint8_t>& hit_val, std::vector<uint8_t>& miss
 std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t const>> meta_rows,
                                                    std::span<std::span<uint8_t const>> val_rows,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   auto const n = static_cast<cudf::size_type>(meta_rows.size());
 
@@ -284,9 +284,10 @@ std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t c
       offsets[i + 1] = static_cast<int32_t>(flat.size());
     }
 
-    auto d_offsets =
-      rmm::device_buffer{offsets.data(), offsets.size() * sizeof(int32_t), stream, mr};
-    auto d_data = rmm::device_buffer{flat.data(), flat.size() * sizeof(uint8_t), stream, mr};
+    auto d_offsets = rmm::device_buffer{
+      offsets.data(), offsets.size() * sizeof(int32_t), stream, mr.get_output_mr()};
+    auto d_data =
+      rmm::device_buffer{flat.data(), flat.size() * sizeof(uint8_t), stream, mr.get_output_mr()};
 
     auto off_col =
       std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},

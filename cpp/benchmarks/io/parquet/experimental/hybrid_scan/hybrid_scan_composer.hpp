@@ -43,4 +43,4 @@ enum class hybrid_scan_filter_type : uint8_t {
 std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const& options,
                                          std::unordered_set<hybrid_scan_filter_type> const& filters,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cudf::memory_resources mr);

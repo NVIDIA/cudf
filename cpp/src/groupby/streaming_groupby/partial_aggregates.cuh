@@ -36,12 +36,14 @@ struct merge_element_aggregator {
       }
       cudf::detail::atomic_add(&target.element<size_type>(target_index),
                                source.element<size_type>(source_index));
-    } else if constexpr ((k == aggregation::SUM || k == aggregation::SUM_OF_SQUARES ||
-                          k == aggregation::PRODUCT || k == aggregation::MIN ||
-                          k == aggregation::MAX) &&
+    } else if constexpr ((k == aggregation::SUM || k == aggregation::MEAN ||
+                          k == aggregation::SUM_OF_SQUARES || k == aggregation::PRODUCT ||
+                          k == aggregation::MIN || k == aggregation::MAX) &&
                          cudf::detail::is_valid_aggregation<Source, k>()) {
-      // SUM_OF_SQUARES partials are already squared and promoted to their result type.
-      constexpr auto merge_kind = k == aggregation::SUM_OF_SQUARES ? aggregation::SUM : k;
+      // SUM_OF_SQUARES partials are already squared and promoted to their result type, and MEAN
+      // partials are sums in theirs, so both merge as SUMs.
+      constexpr auto merge_kind =
+        k == aggregation::SUM_OF_SQUARES || k == aggregation::MEAN ? aggregation::SUM : k;
       cudf::detail::element_aggregator{}.template operator()<Source, merge_kind>(
         target, target_index, source, source_index);
     }

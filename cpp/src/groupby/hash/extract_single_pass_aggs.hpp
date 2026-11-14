@@ -23,7 +23,8 @@ enum class aggregation_mode { GROUPED_REDUCTION, STREAMING_ATOMIC };
  *
  * During extraction, compound (i.e., multi-pass) aggregations will be replaced by their
  * corresponding single pass aggregations dependencies. For example, a MEAN aggregation will be
- * replaced by a SUM and a COUNT_VALID aggregation.
+ * replaced by a single-pass MEAN, which sums the values in the MEAN result type, and a COUNT_VALID
+ * aggregation. Dividing the sum by the count then finalizes the MEAN in place.
  *
  * For some single-pass aggregations, we also try to reduce overhead by forcing their results
  * columns to be non-nullable. For example, a SUM aggregation needed only as the intermediate result

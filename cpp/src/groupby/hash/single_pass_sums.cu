@@ -72,20 +72,35 @@ struct grouped_fused_sums_fn {
 template <typename Result>
 struct split_fused_sums_fn {
   Result* sum;
+  Result* mean;
   Result* sum_of_squares;
   size_type* count;
 
   __device__ void operator()(cuda::std::ptrdiff_t group, fused_sums<Result> const& sums) const
   {
     if (sum != nullptr) { sum[group] = sums.sum; }
+    if (mean != nullptr) { mean[group] = sums.sum; }
     if (sum_of_squares != nullptr) { sum_of_squares[group] = sums.sum_of_squares; }
     if (count != nullptr) { count[group] = sums.count; }
   }
 };
 
-/// Computes additive aggregations on one column, including the SUM and COUNT_VALID dependencies
-/// of MEAN, M2, VARIANCE and STD, with a single grouped reduction.
+/// Computes additive aggregations on one column, including the dependencies of MEAN, M2, VARIANCE
+/// and STD, with a single grouped reduction. The fused aggregations share one accumulator type.
 struct fused_sums_fn {
+  /**
+   * @brief Computes the fused sums of `ctx.values` in the accumulator type of `kinds`
+   *
+   * A run with MEAN accumulates in the MEAN result type (e.g. double for integers), and any other
+   * run in the SUM result type. The caller only fuses kinds that share this accumulator type.
+   *
+   * @param ctx The values and their grouped rows
+   * @param kinds The fused aggregations, each at most once
+   * @param is_intermediate Whether each aggregation is only an intermediate result
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resources used to allocate the returned columns
+   * @return One result column per element of `kinds`, in the same order
+   */
   template <typename T>
     requires(cudf::detail::is_product_supported<T>())
   std::vector<std::unique_ptr<column>> operator()(reduction_context const& ctx,
@@ -94,11 +109,48 @@ struct fused_sums_fn {
                                                   cuda::stream_ref stream,
                                                   cudf::memory_resources mr) const
   {
-    using Source = rep_type_t<T>;
-    using Result = rep_type_t<cudf::detail::target_type_t<T, aggregation::SUM>>;
     static_assert(
-      cuda::std::
-        is_same_v<Result, rep_type_t<cudf::detail::target_type_t<T, aggregation::SUM_OF_SQUARES>>>);
+      cuda::std::is_same_v<cudf::detail::target_type_t<T, aggregation::SUM>,
+                           cudf::detail::target_type_t<T, aggregation::SUM_OF_SQUARES>>);
+    if (std::ranges::find(kinds, aggregation::MEAN) != kinds.end()) {
+      return compute<T, rep_type_t<cudf::detail::target_type_t<T, aggregation::MEAN>>>(
+        ctx, kinds, is_intermediate, stream, mr);
+    }
+    return compute<T, rep_type_t<cudf::detail::target_type_t<T, aggregation::SUM>>>(
+      ctx, kinds, is_intermediate, stream, mr);
+  }
+
+  template <typename T>
+    requires(!cudf::detail::is_product_supported<T>())
+  std::vector<std::unique_ptr<column>> operator()(reduction_context const&,
+                                                  host_span<aggregation::Kind const>,
+                                                  std::span<int8_t const>,
+                                                  cuda::stream_ref,
+                                                  cudf::memory_resources) const
+  {
+    CUDF_FAIL("Unsupported type for fused hash groupby sums");
+  }
+
+ private:
+  /**
+   * @brief Reduces each group to its sum, sum of squares and valid count in `Result`, then
+   * splits the requested ones into result columns
+   *
+   * Each result except COUNT_VALID is nullable when the values have nulls and it is requested,
+   * with a null for each group without valid values.
+   *
+   * @tparam T The values type
+   * @tparam Result The accumulator type shared by the fused sums
+   * @copydetails operator()
+   */
+  template <typename T, typename Result>
+  static std::vector<std::unique_ptr<column>> compute(reduction_context const& ctx,
+                                                      host_span<aggregation::Kind const> kinds,
+                                                      std::span<int8_t const> is_intermediate,
+                                                      cuda::stream_ref stream,
+                                                      cudf::memory_resources mr)
+  {
+    using Source = rep_type_t<T>;
 
     auto const needs_validity = [&] {
       if (!ctx.values.has_nulls()) { return false; }
@@ -120,6 +172,7 @@ struct fused_sums_fn {
                                      requested ? mr.get_output_mr() : mr.get_temporary_mr());
     };
     auto sum            = make_output(aggregation::SUM);
+    auto mean           = make_output(aggregation::MEAN);
     auto sum_of_squares = make_output(aggregation::SUM_OF_SQUARES);
     auto count          = make_output(aggregation::COUNT_VALID, needs_validity);
     // Moving a requested count column into results preserves the allocation used by later masks.
@@ -131,6 +184,7 @@ struct fused_sums_fn {
           ctx.grouped.rows.data(), ctx.accessor<Source>(), ctx.values.has_nulls()});
       auto const outputs = cuda::tabulate_output_iterator{split_fused_sums_fn<Result>{
         sum ? sum->mutable_view().template begin<Result>() : nullptr,
+        mean ? mean->mutable_view().template begin<Result>() : nullptr,
         sum_of_squares ? sum_of_squares->mutable_view().template begin<Result>() : nullptr,
         counts}};
       reduce_groups(ctx.grouped,
@@ -146,6 +200,7 @@ struct fused_sums_fn {
     column const* masked = nullptr;
     for (std::size_t i = 0; i < kinds.size(); ++i) {
       auto result = kinds[i] == aggregation::SUM              ? std::move(sum)
+                    : kinds[i] == aggregation::MEAN           ? std::move(mean)
                     : kinds[i] == aggregation::SUM_OF_SQUARES ? std::move(sum_of_squares)
                                                               : std::move(count);
       // A sum is null when its group has no valid row, which the valid count already tells.
@@ -169,22 +224,14 @@ struct fused_sums_fn {
     }
     return results;
   }
-
-  template <typename T>
-    requires(!cudf::detail::is_product_supported<T>())
-  std::vector<std::unique_ptr<column>> operator()(reduction_context const&,
-                                                  host_span<aggregation::Kind const>,
-                                                  std::span<int8_t const>,
-                                                  cuda::stream_ref,
-                                                  cudf::memory_resources) const
-  {
-    CUDF_FAIL("Unsupported type for fused hash groupby sums");
-  }
 };
 
 template std::unique_ptr<column> compute_reduction<aggregation::SUM>(reduction_context const& ctx,
                                                                      cuda::stream_ref stream,
                                                                      cudf::memory_resources mr);
+template std::unique_ptr<column> compute_reduction<aggregation::MEAN>(reduction_context const& ctx,
+                                                                      cuda::stream_ref stream,
+                                                                      cudf::memory_resources mr);
 template std::unique_ptr<column> compute_reduction<aggregation::SUM_OF_SQUARES>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
 
@@ -198,6 +245,12 @@ std::vector<std::unique_ptr<column>> compute_fused_sums(reduction_context const&
 }
 
 template std::vector<std::unique_ptr<column>> compute_reductions<aggregation::SUM>(
+  host_span<reduction_context const>,
+  std::span<int8_t const>,
+  cuda::stream_ref,
+  cudf::memory_resources);
+
+template std::vector<std::unique_ptr<column>> compute_reductions<aggregation::MEAN>(
   host_span<reduction_context const>,
   std::span<int8_t const>,
   cuda::stream_ref,

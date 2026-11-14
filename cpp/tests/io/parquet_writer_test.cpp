@@ -30,6 +30,7 @@
 
 #include <cuda/iterator>
 
+#include <src/io/parquet/compact_protocol_reader.hpp>
 #include <src/io/parquet/parquet_common.hpp>
 
 #include <algorithm>
@@ -42,6 +43,7 @@
 #include <random>
 #include <ranges>
 #include <stdexcept>
+#include <utility>
 
 using cudf::test::iterators::no_nulls;
 
@@ -1002,6 +1004,34 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
   EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 1);
   column_wrapper<float> expected_rt{{nanf, 3.0f, 2.0f}};
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected_rt}}, result.tbl->view());
+
+  // Page statistics count NaNs and omit min/max for pages with any NaN
+  column_wrapper<double> col_pg{{1.0, 2.0, 3.0, 4.0, nand, 5.0, nand, 6.0, nand, nand, nand, nand}};
+  auto const pg_filepath = temp_env->get_temp_filepath("FloatingPointWithNaNPageStats.parquet");
+  cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
+                            cudf::io::sink_info{pg_filepath}, table_view{{col_pg}})
+                            .stats_level(cudf::io::statistics_freq::STATISTICS_PAGE)
+                            .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+                            .max_page_size_rows(4)
+                            .max_page_fragment_size(4));
+  auto const pg_source = cudf::io::datasource::create(pg_filepath);
+  cudf::io::parquet::FileMetaData pg_fmd;
+  read_footer(pg_source, &pg_fmd);
+  auto const& pg_chunk = pg_fmd.row_groups[0].columns[0].meta_data;
+  auto const chunk_buf =
+    pg_source->host_read(pg_chunk.data_page_offset, pg_chunk.total_compressed_size);
+  cudf::io::parquet::detail::CompactProtocolReader cp(chunk_buf->data(), chunk_buf->size());
+  std::vector<int64_t> page_nan_counts;
+  while (std::cmp_less(cp.bytecount(), chunk_buf->size())) {
+    cudf::io::parquet::PageHeader ph;
+    cp.read(&ph);
+    auto const& stats = ph.data_page_header.statistics.value();
+    page_nan_counts.push_back(stats.nan_count.value());
+    EXPECT_EQ(stats.min_value.has_value(), stats.nan_count == 0);
+    EXPECT_EQ(stats.max_value.has_value(), stats.nan_count == 0);
+    cp.skip_bytes(ph.compressed_page_size);
+  }
+  EXPECT_EQ(page_nan_counts, (std::vector<int64_t>{0, 2, 4}));
 }
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)

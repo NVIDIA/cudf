@@ -965,10 +965,12 @@ void CompactProtocolReader::read(PageHeader* p)
 
 void CompactProtocolReader::read(DataPageHeader* d)
 {
-  auto op = std::make_tuple(parquet_field_int32(1, d->num_values),
+  using optional_statistics = parquet_field_optional<Statistics, parquet_field_struct<Statistics>>;
+  auto op                   = std::make_tuple(parquet_field_int32(1, d->num_values),
                             parquet_field_enum<Encoding>(2, d->encoding),
                             parquet_field_enum<Encoding>(3, d->definition_level_encoding),
-                            parquet_field_enum<Encoding>(4, d->repetition_level_encoding));
+                            parquet_field_enum<Encoding>(4, d->repetition_level_encoding),
+                            optional_statistics(5, d->statistics));
   function_builder(this, op);
 }
 
@@ -981,13 +983,15 @@ void CompactProtocolReader::read(DictionaryPageHeader* d)
 
 void CompactProtocolReader::read(DataPageHeaderV2* d)
 {
-  auto op = std::make_tuple(parquet_field_int32(1, d->num_values),
+  using optional_statistics = parquet_field_optional<Statistics, parquet_field_struct<Statistics>>;
+  auto op                   = std::make_tuple(parquet_field_int32(1, d->num_values),
                             parquet_field_int32(2, d->num_nulls),
                             parquet_field_int32(3, d->num_rows),
                             parquet_field_enum<Encoding>(4, d->encoding),
                             parquet_field_int32(5, d->definition_levels_byte_length),
                             parquet_field_int32(6, d->repetition_levels_byte_length),
-                            parquet_field_bool(7, d->is_compressed));
+                            parquet_field_bool(7, d->is_compressed),
+                            optional_statistics(8, d->statistics));
   function_builder(this, op);
 }
 

@@ -167,8 +167,9 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
-  // https://github.com/NVIDIA/cccl/issues/11167.
-  constexpr cudf::size_type num_rows    = 1000;
+  // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
+  // counting page headers without an offset index (1M).
+  constexpr cudf::size_type num_rows    = 300'000;
   constexpr cudf::size_type num_columns = 4;
 
   std::vector<std::string> values;
@@ -195,6 +196,53 @@ TEST_F(ParquetReaderTest, ManyTinyStringPages)
   auto const result = cudf::io::read_parquet(read_options);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+}
+
+TEST_F(ParquetReaderTest, PlainStringOffsetsAcrossPageGroups)
+{
+  constexpr cudf::size_type num_rows  = 1027;
+  constexpr cudf::size_type page_rows = 37;
+  std::vector<std::string> short_values;
+  std::vector<std::string> long_values;
+  std::vector<bool> validity;
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    // Keep the page's average length below the buffering cutoff, but put a prefix
+    // near the 1 KiB refill boundary. Other lengths vary the prefix alignment.
+    auto const length = i % page_rows == 0 ? 1019 + (i / page_rows) % 3 : (i * 17) % 49;
+    short_values.emplace_back(length, static_cast<char>('a' + i % 26));
+    long_values.emplace_back(256 + i % 64, static_cast<char>('A' + i % 26));
+    validity.push_back((i / page_rows) % 7 != 2 && i % 11 != 0);
+  }
+  cudf::test::strings_column_wrapper short_strings(short_values.begin(), short_values.end());
+  cudf::test::strings_column_wrapper nullable_strings(
+    short_values.begin(), short_values.end(), validity.begin());
+  cudf::test::strings_column_wrapper long_strings(long_values.begin(), long_values.end());
+  cudf::table_view const input{{short_strings, nullable_strings, long_strings}};
+
+  auto const filepath = temp_env->get_temp_filepath("PlainStringOffsetsAcrossPageGroups.parquet");
+  auto const write_options =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, input)
+      .compression(cudf::io::compression_type::NONE)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .row_group_size_rows(num_rows)
+      .max_page_size_rows(page_rows)
+      .max_page_fragment_size(page_rows)
+      .build();
+  cudf::io::write_parquet(write_options);
+
+  // Exercise a partial final page group, and crops spanning page boundaries.
+  for (auto const [first, count] : std::array<std::pair<cudf::size_type, cudf::size_type>, 4>{
+         {{0, num_rows}, {36, 5}, {38, 77}, {996, 31}}}) {
+    SCOPED_TRACE(first);
+    auto const read_options =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(first)
+        .num_rows(count)
+        .build();
+    auto const result   = cudf::io::read_parquet(read_options);
+    auto const expected = cudf::slice(input, {first, first + count});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected.front(), result.tbl->view());
+  }
 }
 
 // TODO: delete this test once the nz map is on by default.
@@ -6630,44 +6678,64 @@ TEST_F(ParquetReaderTest, InvalidFooterMagic)
 
 TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
 {
-  // A PLAIN BYTE_ARRAY length that overruns the page must fail loudly instead of
-  // silently decoding the corrupt tail as empty strings.
-  auto const col = cudf::test::strings_column_wrapper{
-    "unique_string_aaa", "unique_string_bbb", "unique_string_ccc", "unique_string_ddd"};
-  auto const expected = table_view{{col}};
+  // Cover a partial window, the sequential scan (>64-byte average), and a full-window refill.
+  // In the last case, the corrupt prefix is beyond the first 1 KiB of a >2 KiB page.
+  for (auto const [num_rows, string_length, target_row] :
+       std::array<std::array<cudf::size_type, 3>, 3>{{{4, 17, 2}, {4, 256, 2}, {128, 17, 64}}}) {
+    SCOPED_TRACE(num_rows);
+    SCOPED_TRACE(string_length);
+    std::vector<std::string> values;
+    for (cudf::size_type row = 0; row < num_rows; ++row) {
+      auto value = "unique_string_" + std::to_string(row);
+      value.resize(string_length, 'x');
+      values.push_back(value);
+    }
+    cudf::test::strings_column_wrapper const col(values.begin(), values.end());
+    auto const expected = table_view{{col}};
 
-  std::vector<char> buffer;
-  cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
-      .compression(cudf::io::compression_type::NONE)
-      .dictionary_policy(cudf::io::dictionary_policy::NEVER);
-  cudf::io::write_parquet(out_opts);
+    std::vector<char> buffer;
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .compression(cudf::io::compression_type::NONE)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .row_group_size_rows(num_rows)
+        .max_page_size_rows(num_rows)
+        .max_page_fragment_size(num_rows);
+    cudf::io::write_parquet(out_opts);
 
-  // PLAIN BYTE_ARRAY layout is [4-byte little-endian length][string bytes]... So the 4 bytes
-  // immediately preceding a known string value are that value's length prefix. Locate the third
-  // string's bytes, then step back sizeof(int32_t) to land on its length prefix.
-  std::string const target = "unique_string_ccc";
-  auto const it = std::search(buffer.begin(), buffer.end(), target.begin(), target.end());
-  ASSERT_NE(it, buffer.end());
-  auto const length_pos = static_cast<size_t>(std::distance(buffer.begin(), it) - sizeof(int32_t));
+    // PLAIN BYTE_ARRAY layout is [4-byte little-endian length][string bytes]... So the 4 bytes
+    // immediately preceding a known string value are that value's length prefix. Locate the target
+    // string's bytes, then step back sizeof(int32_t) to land on its length prefix.
+    auto const& target = values[target_row];
+    auto const it      = std::search(buffer.begin(), buffer.end(), target.begin(), target.end());
+    ASSERT_NE(it, buffer.end());
+    auto const length_pos =
+      static_cast<size_t>(std::distance(buffer.begin(), it) - sizeof(int32_t));
 
-  // Sanity check that we found the length prefix: it should hold the real string length.
-  int32_t orig_len{};
-  std::memcpy(&orig_len, buffer.data() + length_pos, sizeof(orig_len));
-  ASSERT_EQ(orig_len, static_cast<int32_t>(target.size()));
+    // Sanity check that we found the length prefix: it should hold the real string length.
+    int32_t orig_len{};
+    std::memcpy(&orig_len, buffer.data() + length_pos, sizeof(orig_len));
+    ASSERT_EQ(orig_len, static_cast<int32_t>(target.size()));
 
-  // Overwrite the length prefix with a value that runs past the end of the page. This mimics the
-  // real-world corruption where a stray byte shifts the length window, producing a bogus length.
-  // The offset preprocessor detects `string_offset + len > dict_size` and must raise
-  // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
-  int32_t const bad_len = 1'000'000;
-  std::memcpy(buffer.data() + length_pos, &bad_len, sizeof(bad_len));
+    auto const read_opts = cudf::io::parquet_reader_options::builder(
+                             cudf::io::source_info{cudf::host_span<std::byte const>{
+                               reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+                             .build();
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, cudf::io::read_parquet(read_opts).tbl->view());
 
-  auto const read_opts = cudf::io::parquet_reader_options::builder(
-                           cudf::io::source_info{cudf::host_span<std::byte const>{
-                             reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
-                           .build();
-  EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+    // Overwrite the length prefix with a value that runs past the end of the page. This mimics the
+    // real-world corruption where a stray byte shifts the length window, producing a bogus length.
+    // The offset preprocessor detects `string_offset + len > dict_size` and must raise
+    // decode_error::STRING_DATA_OVERRUN rather than truncating and back-filling empty strings.
+    for (int32_t const bad_len : {1'000'000,
+                                  -1,
+                                  std::numeric_limits<int32_t>::min(),
+                                  std::numeric_limits<int32_t>::max()}) {
+      SCOPED_TRACE(bad_len);
+      std::memcpy(buffer.data() + length_pos, &bad_len, sizeof(bad_len));
+      EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
+    }
+  }
 }
 
 TEST_F(ParquetReaderTest, DecimalTypeOption)
@@ -6920,7 +6988,50 @@ struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   {
     return convert<T>(bytes.begin(), bytes.size(), type);
   }
+
+  template <typename T>
+  static T decode_int96(int64_t nanos, int32_t julian_days)
+  {
+    auto const bytes = to_int96_bytes({nanos, julian_days});
+    return convert<T>(bytes.data(), bytes.size(), cudf::io::parquet::Type::INT96);
+  }
 };
+
+TEST_F(ParquetReaderTest, DecodeInt96Stats)
+{
+  // 1969-12-31T23:59:58.999999999, flooring to each output unit
+  auto constexpr nanos       = int64_t{86'398'999'999'999};
+  auto constexpr julian_days = int32_t{2'440'587};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(nanos, julian_days),
+            cudf::timestamp_ns{cudf::duration_ns{-1'000'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_us>(nanos, julian_days),
+            cudf::timestamp_us{cudf::duration_us{-1'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ms>(nanos, julian_days),
+            cudf::timestamp_ms{cudf::duration_ms{-1'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_s>(nanos, julian_days),
+            cudf::timestamp_s{cudf::duration_s{-2}});
+
+  // The `timestamp_ns` limits, whose midnight overflows at the minimum, and their neighbors
+  using cudf::io::parquet::detail::int96_fits_duration;
+  auto constexpr min_nanos = int64_t{763'145'224'192};
+  auto constexpr min_days  = int32_t{2'333'836};
+  auto constexpr max_nanos = int64_t{85'636'854'775'807};
+  auto constexpr max_days  = int32_t{2'547'339};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(min_nanos, min_days),
+            cudf::timestamp_ns::min());
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(max_nanos, max_days),
+            cudf::timestamp_ns::max());
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(min_nanos, min_days));
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(max_nanos, max_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(min_nanos - 1, min_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(max_nanos + 1, max_days));
+  // Coarser units have a wider range
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_us>(min_nanos - 1, min_days));
+
+  EXPECT_THROW(
+    ParquetStatsDecoder::decode<cudf::timestamp_ns>({0x00}, cudf::io::parquet::Type::INT96),
+    cudf::logic_error);
+}
 
 TEST_F(ParquetReaderTest, DecodeVariableWidthDecimalStats)
 {

@@ -51,6 +51,7 @@ test = [
     "boto3>=1.21.21",
     "botocore>=1.24.21",
     "cramjam",
+    "cuda-core[cu13]>=1.0,<2",
     "fastavro>=0.22.9",
     "hypothesis>=6.131.7",
     "msgpack",
@@ -124,7 +125,7 @@ build-backend = "scikit_build_core.build"
 dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [
-    "cmake>=4.0",
+    "cmake>=4.0,<4.5",
     "cython>=3.2.2,<3.3.0a0",
     "libcudf==27.2.*,>=0.0.0a0",
     "librmm==27.2.*,>=0.0.0a0",

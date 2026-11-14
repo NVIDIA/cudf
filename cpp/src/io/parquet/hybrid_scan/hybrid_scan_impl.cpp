@@ -12,7 +12,8 @@
 #include "page_index_filter_utils.hpp"
 #include "runtime/context.hpp"
 
-#include <cudf/copying.hpp>
+#include <cudf/detail/copy.hpp>
+#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/transform.hpp>
@@ -864,6 +865,14 @@ table_with_metadata hybrid_scan_reader_impl::materialize_table_chunk(
   return read_chunk_internal(read_mode::CHUNKED_READ, mode, row_mask);
 }
 
+void hybrid_scan_reader_impl::update_row_mask_null_count(cudf::mutable_column_view& row_mask) const
+{
+  if (row_mask.nullable()) {
+    row_mask.set_null_count(cudf::detail::null_count(
+      row_mask.null_mask(), row_mask.offset(), row_mask.offset() + row_mask.size(), _stream));
+  }
+}
+
 std::pair<std::vector<std::vector<cudf::size_type>>, std::vector<cudf::size_type>>
 hybrid_scan_reader_impl::construct_row_group_passes(
   read_columns_mode columns_mode,
@@ -1269,30 +1278,25 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 
-    // Apply the final row mask to get the final output table
-    auto output_table = cudf::detail::apply_mask(
-      read_table->view(), *final_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
-
     // Update the input row mask to reflect the final row mask.
     update_row_mask(final_row_mask->view(), row_mask, mask_offset, _stream);
-
-    // Return the final output table and metadata
-    return {std::move(output_table), std::move(out_metadata)};
-  }
-  // For payload columns, simply apply the input row mask to the table.
-  else {
+  } else {
     CUDF_EXPECTS(columns_mode == read_columns_mode::PAYLOAD_COLUMNS, "Invalid read mode");
-
-    CUDF_EXPECTS(mask_offset + read_table->num_rows() <= row_mask.size(),
-                 "Encountered invalid sized row mask to apply");
-    auto effective_row_mask =
-      (read_table->num_rows() == row_mask.size())
-        ? row_mask
-        : cudf::split(row_mask, {mask_offset, mask_offset + read_table->num_rows()}, _stream)[1];
-    auto output_table = cudf::detail::apply_mask(
-      read_table->view(), effective_row_mask, cudf::detail::mask_type::RETENTION, _stream, _mr);
-    return {std::move(output_table), std::move(out_metadata)};
   }
+
+  CUDF_EXPECTS(mask_offset + read_table->num_rows() <= row_mask.size(),
+               "Encountered invalid sized row mask to apply");
+
+  // Apply the corresponding range of the row mask to the table
+  auto const effective_row_mask = cudf::detail::slice(
+    cudf::column_view{row_mask}, mask_offset, mask_offset + read_table->num_rows(), _stream);
+  auto output_table = cudf::detail::apply_mask(read_table->view(),
+                                               effective_row_mask,
+                                               cudf::detail::mask_type::RETENTION,
+                                               cudf::null_policy::EXCLUDE,
+                                               _stream,
+                                               _mr);
+  return {std::move(output_table), std::move(out_metadata)};
 }
 
 void hybrid_scan_reader_impl::set_pass_page_mask(std::span<bool const> data_page_mask)

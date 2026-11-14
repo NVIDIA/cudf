@@ -203,6 +203,24 @@ TYPED_TEST(ApplyRetentionMaskTypedTest, NullsInBooleanMask)
   auto filtered   = apply_retention_mask(lists_column_view{input}, lists_column_view{*mask});
   auto expected   = lists<T>{{10, 30}, {}, {80}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
+
+  // kept (null OR true):         {10, 20, 30}, {50},     {60, 80}
+  filtered = apply_retention_mask(
+    lists_column_view{input}, lists_column_view{*mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{10, 20, 30}, {50}, {60, 80}});
+
+  // Sliced input and mask: rows 1 and 2
+  auto const sliced_input = cudf::slice(input, {1, 3}).front();
+  auto const sliced_mask  = cudf::slice(*mask, {1, 3}).front();
+  filtered                = apply_retention_mask(
+    lists_column_view{sliced_input}, lists_column_view{sliced_mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{50}, {60, 80}});
+
+  // Mask without nulls
+  auto const no_nulls_mask = filter_t{{1, 0, 1}, {0, 1}, {1, 0, 0, 1}};
+  filtered                 = apply_retention_mask(
+    lists_column_view{input}, lists_column_view{no_nulls_mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{10, 30}, {50}, {60, 90}});
 }
 
 TEST_F(ApplyRetentionMaskTest, Trivial)
@@ -363,6 +381,24 @@ TYPED_TEST(ApplyDeletionMaskTypedTest, NullsInDeletionMask)
   auto filtered   = apply_deletion_mask(lists_column_view{input}, lists_column_view{*mask});
   auto expected   = lists<T>{{}, {40}, {70, 90}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, expected);
+
+  // kept (null OR false):        {20},         {40, 50}, {60, 70, 90}
+  filtered = apply_deletion_mask(
+    lists_column_view{input}, lists_column_view{*mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{20}, {40, 50}, {60, 70, 90}});
+
+  // Sliced input and mask: rows 1 and 2
+  auto const sliced_input = cudf::slice(input, {1, 3}).front();
+  auto const sliced_mask  = cudf::slice(*mask, {1, 3}).front();
+  filtered                = apply_deletion_mask(
+    lists_column_view{sliced_input}, lists_column_view{sliced_mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{40, 50}, {60, 70, 90}});
+
+  // Mask without nulls
+  auto const no_nulls_mask = filter_t{{1, 0, 1}, {0, 1}, {1, 0, 0, 1}};
+  filtered                 = apply_deletion_mask(
+    lists_column_view{input}, lists_column_view{no_nulls_mask}, cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, lists<T>{{20}, {40}, {70, 80}});
 }
 
 TEST_F(ApplyDeletionMaskTest, Trivial)

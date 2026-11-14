@@ -190,16 +190,28 @@ The following are required to build the documentation:
   If you are only making changes to documentation we recommend following the
   [Documentation contributions guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
   [build instructions](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
-- Sphinx, numpydoc, and MyST-NB.
+- Sphinx, numpydoc, MyST-NB, Breathe, and Doxygen.
   Assuming you follow the instructions in the previous step, these should automatically be installed into your environment.
 
 ### Building and viewing docs
 
-Once you have a working copy of cudf, building the docs is straightforward:
-1. Navigate to `/path/to/cudf/docs/cudf/`.
-2. Execute `make html`
+The libcudf C++ and cuDF Java API pages are rendered from Doxygen XML,
+which is not checked into the repository. Generate it before running Sphinx,
+otherwise the build fails. Starting from the root of your cudf checkout:
 
-This will run Sphinx in your shell and generate outputs at `build/html/index.html`.
+```bash
+cd cpp/doxygen && doxygen Doxyfile
+cd ../../java/doxygen && doxygen Doxyfile
+cd ../../docs/cudf && make html
+```
+
+The two `doxygen` commands write `cpp/doxygen/xml`, `cpp/doxygen/html`, and
+`java/doxygen/xml`, which are ignored by Git. Rerun them after changing C++
+headers or Java sources to see your changes in the API reference.
+Doxygen may warn that the `rmm.tag` tag file is missing; this only removes links
+to the RMM documentation and does not affect the build.
+
+`make html` runs Sphinx in your shell and generates outputs at `build/html/index.html`.
 To view the results.
 1. Navigate to `build/html`
 2. Execute `python -m http.server`

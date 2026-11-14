@@ -1548,8 +1548,13 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_containsVector(JNIEnv* en
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
-  JNIEnv* env, jobject j_object, jlong handle, jstring j_udf, jboolean j_is_ptx)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
+                                                                 jobject j_object,
+                                                                 jlong handle,
+                                                                 jstring j_udf,
+                                                                 jboolean j_is_ptx,
+                                                                 jint j_dtype,
+                                                                 jint j_scale)
 {
   JNI_TRY
   {
@@ -1564,7 +1569,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
                       cudf::null_aware::NO,
                       std::nullopt,
                       inputs,
-                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                      std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                         cudf::output_nullability::PRESERVE}},
                       {},
                       std::nullopt)

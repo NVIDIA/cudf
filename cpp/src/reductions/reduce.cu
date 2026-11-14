@@ -8,7 +8,6 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
-#include <cudf/detail/utilities/host_staging_resource.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/strings.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -553,8 +552,8 @@ struct scope_t {
     : input_views(
         stream, mr.get_temporary_mr(), inputs.size() + filter_inputs.size(), cuda::no_init),
       output_views(stream, mr.get_temporary_mr(), num_segments * types.size(), cuda::no_init),
-      host_inputs(stream, detail::host_staging_resource{}, input_views.size(), cuda::no_init),
-      host_outputs(stream, detail::host_staging_resource{}, output_views.size(), cuda::no_init),
+      host_inputs(stream, get_pinned_memory_resource(), input_views.size(), cuda::no_init),
+      host_outputs(stream, get_pinned_memory_resource(), output_views.size(), cuda::no_init),
       host_masks(
         stream, get_pinned_memory_resource(), nullable ? output_views.size() : 0, cuda::no_init),
       host_strings(
@@ -574,6 +573,9 @@ struct scope_t {
       stream(stream),
       mr(mr)
   {
+    // Complete stream-ordered allocations before initializing the staging buffers on the CPU.
+    detail::sync_stream(stream);
+
     auto append_inputs = [&](auto values, size_t offset) {
       for (auto const i : std::views::iota(size_t{0}, values.size())) {
         auto device =

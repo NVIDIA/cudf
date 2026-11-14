@@ -1149,6 +1149,21 @@ class TemporalFunction(Expr):
         Name.Millennium: 1_000,
         Name.Century: 100,
     }
+    # Functions that read calendar fields; on a time-zone-aware column polars
+    # reads them from the local wall clock, not from the UTC instant.
+    _LOCAL_FIELDS: ClassVar[frozenset[Name]] = frozenset(
+        {
+            *_COMPONENT_MAP.keys(),
+            Name.Date,
+            Name.DaysInMonth,
+            Name.IsLeapYear,
+            Name.IsoYear,
+            Name.OrdinalDay,
+            Name.Quarter,
+            Name.Week,
+            *_CENTURY_MILLENNIUM_DIVISOR.keys(),
+        }
+    )
     _valid_ops: ClassVar[set[Name]] = {
         *_COMPONENT_MAP.keys(),
         Name.Combine,
@@ -1221,8 +1236,11 @@ class TemporalFunction(Expr):
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
             self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
-        elif self.name is TemporalFunction.Name.ToString:
-            # polars formats time zone aware datetimes in local wall time.
+        elif (
+            self.name in self._LOCAL_FIELDS
+            or self.name is TemporalFunction.Name.ToString
+        ):
+            # Calendar fields and formatted datetimes use the column's local wall clock.
             child_dtype = self.children[0].dtype.polars_type
             if isinstance(child_dtype, pl.Datetime):
                 self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
@@ -1266,6 +1284,14 @@ class TemporalFunction(Expr):
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
         columns = [child.evaluate(df, context=context) for child in self.children]
+        if self.name in self._LOCAL_FIELDS and self.tz_descs[0] is not None:
+            (column,) = columns
+            columns = [
+                Column(
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
+                    dtype=column.dtype,
+                )
+            ]
         if self.name is TemporalFunction.Name.ConvertTimeZone:
             (column,) = columns
             return Column(

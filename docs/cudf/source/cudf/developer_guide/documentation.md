@@ -195,9 +195,9 @@ The following are required to build the documentation:
 
 ### Building and viewing docs
 
-The libcudf C++ and cuDF Java API pages are rendered from Doxygen XML,
-which is not checked into the repository. Generate it before running Sphinx,
-otherwise the build fails. Starting from the root of your cudf checkout:
+The libcudf C++ and cuDF Java API pages are rendered from Doxygen XML files.
+These files must be generated before building the docs, otherwise the build fails.
+Generate them and build the docs from the root of your cudf checkout:
 
 ```bash
 cd cpp/doxygen && doxygen Doxyfile

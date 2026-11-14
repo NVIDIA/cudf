@@ -18,8 +18,8 @@ OPTIONAL_DEPENDENCY_TEST_ARGS=(--ignore=py-polars/tests/unit/ml/test_torch.py)
 if [[ "${CI:-false}" == "true" ]]; then
     # GitHub exposes the job name but not its numeric ID to steps; the audit
     # matches each report to that ID to detect missing matrix jobs and shards.
-    producer_json=$(gh api --paginate \
-        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
+    producer_json=$(rapids-retry --quiet gh api --paginate \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=50" \
         | jq -c --arg runner "${RUNNER_NAME}" \
             '.jobs[] | select(.runner_name == $runner and .status == "in_progress") | {id, configuration: (.name | split(" / ") | last)}')
     CUDF_POLARS_REPORT_PRODUCER=$(printf '%s' "${producer_json}" | jq -r .id)

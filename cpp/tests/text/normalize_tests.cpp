@@ -15,6 +15,7 @@
 
 #include <cuda/iterator>
 
+#include <string>
 #include <vector>
 
 struct TextNormalizeTest : public cudf::test::BaseFixture {};
@@ -51,6 +52,49 @@ TEST_F(TextNormalizeTest, NormalizeSpaces)
 
   auto const results = nvtext::normalize_spaces(strings_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeSpacesLong)
+{
+  // rows and whitespace runs that span multiple warps and blocks
+  auto const spaces = std::string(5000, ' ');
+  auto const words  = std::string("the\tquíck\n\nbröwn  fox ñ ");
+  std::string long_row;
+  for (int i = 0; i < 200; ++i) {
+    long_row += words;
+  }
+  std::string long_expected;
+  for (int i = 0; i < 200; ++i) {
+    long_expected += "the quíck bröwn fox ñ ";
+  }
+  long_expected.pop_back();
+
+  auto validity = {true, true, true, true, false, true, true, true, true};
+  auto input    = cudf::test::strings_column_wrapper({" a",
+                                                      long_row,
+                                                      spaces + "b" + spaces + "c" + spaces,
+                                                      spaces,
+                                                      "",
+                                                      "",
+                                                      "x" + spaces,
+                                                      long_row + spaces + long_row,
+                                                      "d\t"},
+                                                  validity);
+  auto expected = cudf::test::strings_column_wrapper(
+    {"a", long_expected, "b c", "", "", "", "x", long_expected + " " + long_expected, "d"},
+    validity);
+  auto results = nvtext::normalize_spaces(cudf::strings_column_view(input));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  auto sliced          = cudf::slice(input, {1, 8}).front();
+  auto sliced_expected = cudf::slice(expected, {1, 8}).front();
+  results              = nvtext::normalize_spaces(cudf::strings_column_view(sliced));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, sliced_expected);
+
+  sliced          = cudf::slice(input, {3, 6}).front();
+  sliced_expected = cudf::slice(expected, {3, 6}).front();
+  results         = nvtext::normalize_spaces(cudf::strings_column_view(sliced));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, sliced_expected);
 }
 
 TEST_F(TextNormalizeTest, NormalizeEmptyTest)

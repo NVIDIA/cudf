@@ -82,7 +82,7 @@ gh run view "$RUN_ID" --repo NVIDIA/cudf --job "$JOB_ID" --log > /tmp/ci_job_log
 
 Read through the log to identify:
 1. The **container image** — look for the `Initialize Containers` step or docker pull lines (e.g. `rapidsai/ci-conda:<tag>`)
-2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python.sh`)
+2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python_cudf.sh`)
 3. The **final outcome** — whether the job passed or failed
 4. If failed, the **exact failure** — error messages, test names, assertion text
 

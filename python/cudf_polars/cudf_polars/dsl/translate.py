@@ -47,6 +47,26 @@ if TYPE_CHECKING:
     from cudf_polars.typing import NodeTraverser, Slice as Zlice
 
 _ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
+_NULL_PASSTHROUGH_ERROR = "Only pass-through of Null columns is supported"
+# IR nodes that may carry a Time or Null column without computing on it.
+_PASSTHROUGH_NODES = (
+    plrs._ir_nodes.Select,
+    plrs._ir_nodes.HStack,
+    plrs._ir_nodes.Filter,
+    plrs._ir_nodes.Slice,
+    plrs._ir_nodes.Sort,
+    plrs._ir_nodes.Cache,
+    plrs._ir_nodes.SimpleProjection,
+    plrs._ir_nodes.Union,
+    plrs._ir_nodes.HConcat,
+    plrs._ir_nodes.Join,
+    plrs._ir_nodes.GroupBy,
+)
+_NULL_PASSTHROUGH_NODES = (
+    *_PASSTHROUGH_NODES,
+    plrs._ir_nodes.DataFrameScan,
+    plrs._ir_nodes.Distinct,
+)
 
 __all__ = ["Translator", "translate_named_expr"]
 
@@ -81,6 +101,14 @@ def _contains_array_input(expression: expr.Expr) -> bool:
     """Return whether an expression consumes an Array-typed input."""
     return any(
         _contains_dtype(node.dtype.polars_type, (pl.Array,))
+        for node in traversal([expression])
+    )
+
+
+def _contains_null_column_input(expression: expr.Expr) -> bool:
+    """Return whether an expression reads a column of the Null dtype."""
+    return any(
+        isinstance(node, expr.Col) and isinstance(node.dtype.polars_type, pl.Null)
         for node in traversal([expression])
     )
 
@@ -257,22 +285,7 @@ class Translator:
             except Exception as e:
                 self.errors.append(e)
                 return ir.ErrorNode(schema, str(e))
-            if not isinstance(
-                node,
-                (
-                    plrs._ir_nodes.Select,
-                    plrs._ir_nodes.HStack,
-                    plrs._ir_nodes.Filter,
-                    plrs._ir_nodes.Slice,
-                    plrs._ir_nodes.Sort,
-                    plrs._ir_nodes.Cache,
-                    plrs._ir_nodes.SimpleProjection,
-                    plrs._ir_nodes.Union,
-                    plrs._ir_nodes.HConcat,
-                    plrs._ir_nodes.Join,
-                    plrs._ir_nodes.GroupBy,
-                ),
-            ) and any(
+            if not isinstance(node, _PASSTHROUGH_NODES) and any(
                 _contains_dtype(dtype.polars_type, (pl.Time,))
                 for ir_node in (result, *result.children)
                 for dtype in ir_node.schema.values()
@@ -283,12 +296,19 @@ class Translator:
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
-            if any(
-                isinstance(dtype, pl.Null)
-                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
+            # A Null column may pass through, but not be nested in another dtype.
+            null_dtypes = [
+                dtype.polars_type
+                for ir_node in (result, *result.children)
+                for dtype in ir_node.schema.values()
+                if _contains_dtype(dtype.polars_type, (pl.Null,))
+            ]
+            if null_dtypes and not (
+                isinstance(node, _NULL_PASSTHROUGH_NODES)
+                and all(isinstance(dtype, pl.Null) for dtype in null_dtypes)
             ):
                 error = NotImplementedError(
-                    f"No GPU support for {result} with Null column dtype."
+                    f"{_NULL_PASSTHROUGH_ERROR}; unsupported node {type(node).__name__}"
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
@@ -332,7 +352,8 @@ class Translator:
         schema
             Schema of the IR node this expression uses as evaluation context.
         allow_passthrough
-            Whether a direct Array or Time column, or a ``dt.time()`` result, may be returned.
+            Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
+            returned.
 
         Returns
         -------
@@ -409,6 +430,11 @@ class Translator:
                 "Only dt.time(), dt.combine() and pass-through of Time columns "
                 "are supported"
             )
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        is_null_passthrough = allow_passthrough and isinstance(translated, expr.Col)
+        if not is_null_passthrough and _contains_null_column_input(translated):
+            error = NotImplementedError(_NULL_PASSTHROUGH_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         return translated
@@ -1216,7 +1242,8 @@ def translate_named_expr(
     schema
         Schema of the IR node this expression uses as evaluation context.
     allow_passthrough
-        Whether a direct Array or Time column, or a ``dt.time()`` result, may be returned.
+        Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
+        returned.
 
     Returns
     -------
@@ -1922,7 +1949,9 @@ def _(
         )
 
     # Push casts into literals so we can handle Cast(Literal(Null))
-    if isinstance(inner, expr.Literal):
+    if isinstance(inner, expr.Literal) and not (
+        isinstance(dtype.polars_type, pl.Null) and inner.value is not None
+    ):
         if dtype.id() == plc.TypeId.LIST:
             # TODO: Remove once pylibcudf.Scalar supports lists
             if inner.value is not None:  # pragma: no cover; polars rejects this cast

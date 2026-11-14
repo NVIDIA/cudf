@@ -444,6 +444,7 @@ namespace binops::compiled::detail {
  * @param is_rhs_scalar true if @p rhs is a single element column representing a scalar
  * @param op binary operator identifier
  * @param stream CUDA stream used for device memory operations
+ * @param mr Memory resources used for temporary allocations
  */
 void apply_sorting_struct_binary_op(mutable_column_view& out,
                                     column_view const& lhs,
@@ -451,6 +452,7 @@ void apply_sorting_struct_binary_op(mutable_column_view& out,
                                     bool is_lhs_scalar,
                                     bool is_rhs_scalar,
                                     binary_operator op,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr);
 }  // namespace binops::compiled::detail
 }  // namespace CUDF_EXPORT cudf

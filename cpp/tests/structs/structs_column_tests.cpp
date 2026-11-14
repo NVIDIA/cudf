@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -14,6 +15,8 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
+#include <cudf/structs/structs_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -31,6 +34,59 @@ using vector_of_columns = std::vector<std::unique_ptr<cudf::column>>;
 using cudf::size_type;
 
 struct StructColumnWrapperTest : public cudf::test::BaseFixture {};
+
+struct SlicedChildMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(SlicedChildMemoryResourcesTest, Structs)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> child{{1, 2, 3, 4}, {1, 0, 1, 0}};
+  cudf::test::structs_column_wrapper structs{{child}};
+  auto const sliced = cudf::slice(structs, {1, 3}).front();
+
+  auto const sliced_child = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result =
+      cudf::structs_column_view{sliced}.get_sliced_child(0, stream, harness.resources());
+    harness.synchronize(stream);
+    return result;
+  }();
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+  EXPECT_EQ(sliced_child.size(), 2);
+  EXPECT_EQ(sliced_child.null_count(), 1);
+}
+
+TEST_F(SlicedChildMemoryResourcesTest, Lists)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> values{{1, 2, 3, 4, 5, 6}, {1, 0, 1, 0, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<int32_t> offsets{0, 2, 4, 6};
+  auto const lists =
+    cudf::make_lists_column(3,
+                            offsets.release(),
+                            values.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const sliced = cudf::slice(lists->view(), {1, 3}).front();
+
+  auto const sliced_child = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result = cudf::lists_column_view{sliced}.get_sliced_child(stream, harness.resources());
+    harness.synchronize(stream);
+    return result;
+  }();
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+  EXPECT_EQ(sliced_child.size(), 4);
+  EXPECT_EQ(sliced_child.null_count(), 1);
+}
 
 template <typename T>
 struct TypedStructColumnWrapperTest : public cudf::test::BaseFixture {};

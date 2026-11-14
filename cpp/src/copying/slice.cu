@@ -57,7 +57,8 @@ template mutable_column_view slice<mutable_column_view>(mutable_column_view cons
 
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_EXPECTS(indices.size() % 2 == 0, "indices size must be even", std::invalid_argument);
 
@@ -68,7 +69,7 @@ std::vector<column_view> slice(column_view const& input,
   auto indices_iter = cudf::detail::make_counting_transform_iterator(
     0, [offset = input.offset(), &indices](size_type index) { return indices[index] + offset; });
   auto null_counts = cudf::detail::segmented_null_count(
-    input.null_mask(), indices_iter, indices_iter + indices.size(), stream);
+    input.null_mask(), indices_iter, indices_iter + indices.size(), stream, mr);
 
   auto const children = std::vector<column_view>(input.child_begin(), input.child_end());
 
@@ -93,15 +94,18 @@ std::vector<column_view> slice(column_view const& input,
 
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(indices.size() % 2 == 0, "indices size must be even", std::invalid_argument);
   if (indices.empty()) { return {}; }
 
   // 2d arrangement of column_views that represent the outgoing table_views sliced_table[i][j]
   // where i is the i'th column of the j'th table_view
-  auto op = [&indices, &stream](auto const& c) { return cudf::detail::slice(c, indices, stream); };
-  auto f  = cuda::transform_iterator(input.begin(), op);
+  auto op = [&indices, &stream, &mr](auto const& c) {
+    return cudf::detail::slice(c, indices, stream, mr);
+  };
+  auto f = cuda::transform_iterator(input.begin(), op);
 
   auto sliced_table = std::vector<std::vector<cudf::column_view>>(f, f + input.num_columns());
   sliced_table.reserve(indices.size() + 1);
@@ -138,50 +142,58 @@ std::vector<table_view> slice(table_view const& input,
 
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
-  return detail::slice(input, std::span<size_type const>(indices.begin(), indices.size()), stream);
+  return detail::slice(
+    input, std::span<size_type const>(indices.begin(), indices.size()), stream, mr);
 }
 
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
-  return detail::slice(input, std::span<size_type const>(indices.begin(), indices.size()), stream);
+  return detail::slice(
+    input, std::span<size_type const>(indices.begin(), indices.size()), stream, mr);
 };
 
 }  // namespace detail
 
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::slice(input, indices, stream);
+  return detail::slice(input, indices, stream, mr);
 }
 
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::slice(input, indices, stream);
+  return detail::slice(input, indices, stream, mr);
 };
 
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::slice(input, indices, stream);
+  return detail::slice(input, indices, stream, mr);
 }
 
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::slice(input, indices, stream);
+  return detail::slice(input, indices, stream, mr);
 };
 
 }  // namespace cudf

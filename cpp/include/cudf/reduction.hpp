@@ -291,8 +291,8 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * | Callback | Parameters |
  * |----------|------------|
  * | init | state pointers... |
- * | filter | optional row index, bool* selected, filter input values... |
- * | update | optional row index, state pointers..., input values... |
+ * | filter | [row index,] bool* selected, filter input values... |
+ * | update | [row index,] state pointers..., input values... |
  * | merge | destination state pointers..., source state values... |
  * | finalize | output pointers..., state values... |
  *
@@ -300,7 +300,7 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * that identity; update/merge order is unspecified. An empty filter symbol uses the built-in
  * `cudf_all_true` predicate and requires an empty filter-input list.
  * A false selection skips update. Row indices use `cudf::size_type` and are passed only when
- * `filter_indexed` or `update_indexed` is true for the corresponding callback.
+ * `indexed_filter` or `indexed_update` is true for the corresponding callback.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
  * State and outputs support fixed-width types and strings.
@@ -322,9 +322,9 @@ struct reduce_udf {
   std::string_view finalize{};  ///< Writes output values
   std::string_view filter{};    ///< Row predicate; required when filter inputs are supplied
   null_aware is_null_aware = null_aware::NO;  ///< Whether values use optional wrappers
-  bool update_indexed =
+  bool indexed_update =
     false;  ///< Whether the update callback expects the row index as the first argument
-  bool filter_indexed =
+  bool indexed_filter =
     false;  ///< Whether the filter callback expects the row index as the first argument
 };
 
@@ -333,13 +333,14 @@ struct reduce_udf {
  *
  * @throws std::invalid_argument for mismatched input lengths, unsupported state/output types, or
  * filter inputs supplied without a filter symbol
- * @throws cudf::evaluation_error for callback failures
+ * @throws cudf::evaluation_error for callback failures when `is_fallible` is `fallible::YES`
  * @param udf Compiled fragments and callback symbols
  * @param inputs Inputs in callback order
  * @param state_types State fields in callback order
  * @param outputs Returned types in finalization order
  * @param filter_inputs Inputs for the filter callback; empty by default. Supplying inputs requires
  * a nonempty `udf.filter`.
+ * @param is_fallible Whether to check and propagate callback errors.
  * @param stream Execution stream
  * @param mr Output and temporary memory resources
  * @return One single-row column per output
@@ -350,6 +351,7 @@ std::vector<std::unique_ptr<column>> reduce(
   std::span<data_type const> state_types,
   std::span<data_type const> outputs,
   std::span<reduce_input const> filter_inputs = {},
+  fallible is_fallible                        = fallible::YES,
   cuda::stream_ref stream                     = cudf::get_default_stream(),
   cudf::memory_resources mr                   = cudf::get_current_device_resource_ref());
 

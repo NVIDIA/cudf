@@ -31,9 +31,9 @@ __device__ errc sum_update(optional<int64_t>* sum,
   return errc::SUCCESS;
 }
 
-__device__ errc checked_update(optional<int64_t>* sum,
-                               optional<int64_t>* count,
-                               optional<int32_t> value)
+__device__ errc nonnegative_sum_update(optional<int64_t>* sum,
+                                       optional<int64_t>* count,
+                                       optional<int32_t> value)
 {
   if (value && *value < 0) { return errc::ARITHMETIC_OVERFLOW; }
   return sum_update(sum, count, value);
@@ -116,7 +116,7 @@ __device__ errc user_data_update(size_type row,
   return errc::SUCCESS;
 }
 
-__device__ errc tpch_q6_sales_finalize(
+__device__ errc sum_count_avg_finalize(
   optional<int64_t>*, optional<int64_t>*, optional<double>*, optional<int64_t>, optional<int64_t>);
 
 __device__ errc fused_finalize(optional<int64_t>* out_sum,
@@ -128,12 +128,12 @@ __device__ errc fused_finalize(optional<int64_t>* out_sum,
 {
   *out_qualifies = nullopt;
   if (sum) { *out_qualifies = *sum >= 100; }
-  return tpch_q6_sales_finalize(out_sum, out_count, out_average, sum, count);
+  return sum_count_avg_finalize(out_sum, out_count, out_average, sum, count);
 }
 
-__device__ errc string_update(optional<int64_t>* sum,
-                              optional<int64_t>* count,
-                              optional<string_view> value)
+__device__ errc string_length_update(optional<int64_t>* sum,
+                                     optional<int64_t>* count,
+                                     optional<string_view> value)
 {
   if (value) {
     *sum   = sum->value_or(0) + value->size_bytes();
@@ -196,46 +196,44 @@ __device__ errc raw_string_max_finalize(string_view* output, int32_t* length, st
 }
 
 // Value-only callbacks implement COALESCE(SUM(value), 0), skipping null input rows.
-__device__ errc raw_init(int64_t* sum)
+__device__ errc plain_sum_init(int64_t* sum)
 {
   *sum = 0;
   return errc::SUCCESS;
 }
 
-__device__ errc raw_update(int64_t* sum, int32_t value)
+__device__ errc plain_sum_update(int64_t* sum, int32_t value)
 {
   *sum += value;
   return errc::SUCCESS;
 }
 
-__device__ errc raw_merge(int64_t* sum, int64_t other)
+__device__ errc plain_sum_merge(int64_t* sum, int64_t other)
 {
   *sum += other;
   return errc::SUCCESS;
 }
 
-__device__ errc raw_finalize(int64_t* output, int64_t sum)
+__device__ errc plain_sum_finalize(int64_t* output, int64_t sum)
 {
   *output = sum;
   return errc::SUCCESS;
 }
 
-// TPC-H Q6-inspired filter/project/reduce with synthetic predicates and extra COUNT/AVG outputs.
-// SELECT SUM(price * quantity), COUNT(price * quantity), AVG(price * quantity)
-// FROM sales WHERE active AND quantity > 0;
-
-__device__ errc tpch_q6_sales_init(optional<int64_t>* sum, optional<int64_t>* count)
+__device__ errc sum_count_avg_init(optional<int64_t>* sum, optional<int64_t>* count)
 {
   *sum   = nullopt;
   *count = 0;
   return errc::SUCCESS;
 }
 
-__device__ errc tpch_q6_sales_update(optional<int64_t>* sum,
-                                     optional<int64_t>* count,
-                                     optional<int32_t> price,
-                                     optional<int32_t> quantity,
-                                     optional<bool> active)
+// SELECT SUM(price * quantity), COUNT(price * quantity), AVG(price * quantity)
+// FROM sales WHERE active AND quantity > 0;
+__device__ errc filtered_product_update(optional<int64_t>* sum,
+                                        optional<int64_t>* count,
+                                        optional<int32_t> price,
+                                        optional<int32_t> quantity,
+                                        optional<bool> active)
 {
   if (!active.value_or(false) || !quantity || *quantity <= 0 || !price) { return errc::SUCCESS; }
   *sum   = sum->value_or(0) + int64_t{*price} * *quantity;
@@ -243,7 +241,7 @@ __device__ errc tpch_q6_sales_update(optional<int64_t>* sum,
   return errc::SUCCESS;
 }
 
-__device__ errc tpch_q6_sales_merge(optional<int64_t>* sum,
+__device__ errc sum_count_avg_merge(optional<int64_t>* sum,
                                     optional<int64_t>* count,
                                     optional<int64_t> other_sum,
                                     optional<int64_t> other_count)
@@ -253,7 +251,7 @@ __device__ errc tpch_q6_sales_merge(optional<int64_t>* sum,
   return errc::SUCCESS;
 }
 
-__device__ errc tpch_q6_sales_finalize(optional<int64_t>* out_sum,
+__device__ errc sum_count_avg_finalize(optional<int64_t>* out_sum,
                                        optional<int64_t>* out_count,
                                        optional<double>* out_average,
                                        optional<int64_t> sum,

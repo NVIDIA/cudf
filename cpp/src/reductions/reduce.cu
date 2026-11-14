@@ -329,10 +329,12 @@ std::vector<std::string> reflect_pointer_parameters(std::span<std::string const>
   return result;
 }
 
-std::vector<std::string> reflect_callback_parameters(std::span<std::string const> first  = {},
-                                                     std::span<std::string const> second = {})
+std::vector<std::string> reflect_callback_parameters(bool indexed,
+                                                     std::span<std::string const> first,
+                                                     std::span<std::string const> second)
 {
   std::vector<std::string> result;
+  if (indexed) { result.push_back("cudf::size_type"); }
   result.insert(result.end(), first.begin(), first.end());
   result.insert(result.end(), second.begin(), second.end());
   return result;
@@ -349,62 +351,6 @@ callback_reflection reflect_callback(std::string_view target,
           .symbol           = std::string{symbol}};
 }
 
-callback_reflection reflect_init_callback(std::string_view symbol,
-                                          std::span<std::string const> state_pointers)
-{
-  return reflect_callback("cudf_reduce_init",
-                          "CUDF_REDUCE_INIT_UDF_PARAMS",
-                          reflect_callback_parameters(state_pointers),
-                          symbol);
-}
-
-callback_reflection reflect_update_callback(std::string_view symbol,
-                                            std::span<std::string const> inputs,
-                                            std::span<std::string const> state_pointers,
-                                            bool indexed)
-{
-  auto parameters = reflect_callback_parameters();
-  if (indexed) { parameters.push_back("cudf::size_type"); }
-  parameters.insert(parameters.end(), state_pointers.begin(), state_pointers.end());
-  parameters.insert(parameters.end(), inputs.begin(), inputs.end());
-  return reflect_callback(
-    "cudf_reduce_update", "CUDF_REDUCE_UPDATE_UDF_PARAMS", std::move(parameters), symbol);
-}
-
-callback_reflection reflect_filter_callback(std::string_view symbol,
-                                            std::span<std::string const> inputs,
-                                            bool indexed)
-{
-  auto parameters = reflect_callback_parameters();
-  if (indexed) { parameters.push_back("cudf::size_type"); }
-  parameters.push_back("bool*");
-  parameters.insert(parameters.end(), inputs.begin(), inputs.end());
-  return reflect_callback("cudf_reduce_filter",
-                          "CUDF_REDUCE_FILTER_UDF_PARAMS",
-                          std::move(parameters),
-                          symbol.empty() ? "cudf_all_true" : symbol);
-}
-
-callback_reflection reflect_merge_callback(std::string_view symbol,
-                                           std::span<std::string const> state_pointers,
-                                           std::span<std::string const> state_values)
-{
-  return reflect_callback("cudf_reduce_merge",
-                          "CUDF_REDUCE_MERGE_UDF_PARAMS",
-                          reflect_callback_parameters(state_pointers, state_values),
-                          symbol);
-}
-
-callback_reflection reflect_finalize_callback(std::string_view symbol,
-                                              std::span<std::string const> outputs,
-                                              std::span<std::string const> state_values)
-{
-  return reflect_callback("cudf_reduce_finalize",
-                          "CUDF_REDUCE_FINALIZE_UDF_PARAMS",
-                          reflect_callback_parameters(outputs, state_values),
-                          symbol);
-}
-
 std::vector<callback_reflection> reflect_callbacks(std::span<std::string const> input_types,
                                                    std::span<std::string const> filter_input_types,
                                                    std::span<std::string const> output_types,
@@ -413,16 +359,27 @@ std::vector<callback_reflection> reflect_callbacks(std::span<std::string const> 
 {
   auto outputs        = reflect_pointer_parameters(output_types);
   auto state_pointers = reflect_pointer_parameters(state_types);
+  std::string const filter_outputs[]{"bool*"};
 
-  std::vector<callback_reflection> callbacks{
-    reflect_init_callback(udf.init, state_pointers),
-    reflect_update_callback(udf.update, input_types, state_pointers, udf.update_indexed),
-    reflect_merge_callback(udf.merge, state_pointers, state_types),
-    reflect_finalize_callback(udf.finalize, outputs, state_types)};
-
-  callbacks.push_back(reflect_filter_callback(udf.filter, filter_input_types, udf.filter_indexed));
-
-  return callbacks;
+  return {
+    reflect_callback("cudf_reduce_init", "CUDF_REDUCE_INIT_UDF_PARAMS", state_pointers, udf.init),
+    reflect_callback("cudf_reduce_update",
+                     "CUDF_REDUCE_UPDATE_UDF_PARAMS",
+                     reflect_callback_parameters(udf.indexed_update, state_pointers, input_types),
+                     udf.update),
+    reflect_callback("cudf_reduce_merge",
+                     "CUDF_REDUCE_MERGE_UDF_PARAMS",
+                     reflect_callback_parameters(false, state_pointers, state_types),
+                     udf.merge),
+    reflect_callback("cudf_reduce_finalize",
+                     "CUDF_REDUCE_FINALIZE_UDF_PARAMS",
+                     reflect_callback_parameters(false, outputs, state_types),
+                     udf.finalize),
+    reflect_callback(
+      "cudf_reduce_filter",
+      "CUDF_REDUCE_FILTER_UDF_PARAMS",
+      reflect_callback_parameters(udf.indexed_filter, filter_outputs, filter_input_types),
+      udf.filter.empty() ? "cudf_all_true" : udf.filter)};
 }
 
 std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection const> callbacks)
@@ -496,8 +453,8 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
   )CUDA",
     spec.state,
     parameter_defines,
-    udf.update_indexed,
-    udf.filter_indexed,
+    udf.indexed_update,
+    udf.indexed_filter,
     instance);
 
   char const* const names[]{kernel_instance_header};
@@ -539,6 +496,9 @@ struct scope_t {
   cuda::device_buffer<std::byte> result;
   cuda::device_buffer<std::byte> scratch;
   size_t filter_offset;
+  fallible is_fallible;
+  cuda::stream_ref stream;
+  memory_resources mr;
 
   static std::unique_ptr<column> allocate_output(data_type type,
                                                  bool nullable,
@@ -587,6 +547,7 @@ struct scope_t {
           std::span<data_type const> types,
           size_type num_segments,
           bool nullable,
+          fallible is_fallible,
           cuda::stream_ref stream,
           memory_resources mr)
     : input_views(
@@ -608,7 +569,10 @@ struct scope_t {
       partials(stream, mr.get_temporary_mr()),
       result(stream, mr.get_temporary_mr()),
       scratch(stream, mr.get_temporary_mr()),
-      filter_offset(inputs.size())
+      filter_offset(inputs.size()),
+      is_fallible(is_fallible),
+      stream(stream),
+      mr(mr)
   {
     auto append_inputs = [&](auto values, size_t offset) {
       for (auto const i : std::views::iota(size_t{0}, values.size())) {
@@ -644,8 +608,15 @@ struct scope_t {
       stream);
   }
 
-  std::vector<std::unique_ptr<column>> finalize(cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+  // Host-side error checking, null counts and string sizes require completed readbacks.
+  bool needs_host_readback() const
+  {
+    return is_fallible == fallible::YES || std::ranges::any_of(outputs, [](auto const& output) {
+             return output->nullable() || output->type().id() == type_id::STRING;
+           });
+  }
+
+  std::vector<std::unique_ptr<column>> finalize()
   {
     detail::cuda_memcpy_async<errc>(host_span<errc>{host_errors.data(), host_errors.size(), true},
                                     device_span<errc const>{errors.data(), errors.size()},
@@ -667,21 +638,22 @@ struct scope_t {
       }
     }
 
-    // Synchronize to ensure all asynchronous copies are complete before proceeding.
-    detail::sync_stream(stream);
+    if (needs_host_readback()) { detail::sync_stream(stream); }
 
-    auto const error =
-      *std::max_element(host_errors.data(), host_errors.data() + host_errors.size());
-    CUDF_EXPECTS(error == errc::SUCCESS,
-                 std::format("Reduction UDF evaluation failed with error `{}`", to_string(error)),
-                 evaluation_error,
-                 error);
+    if (is_fallible == fallible::YES) {
+      auto error = *std::max_element(host_errors.data(), host_errors.data() + host_errors.size());
+      CUDF_EXPECTS(error == errc::SUCCESS,
+                   std::format("Reduction UDF evaluation failed with error `{}`", to_string(error)),
+                   evaluation_error,
+                   error);
+    }
 
-    for (auto const col : std::views::iota(size_t{0}, outputs.size())) {
-      size_type const nulls = outputs[col]->nullable() && host_masks.data()[col] == 0;
-      outputs[col]->set_null_count(nulls);
+    for (auto col : std::views::iota(size_t{0}, outputs.size())) {
+      auto num_nulls = (outputs[col]->nullable() && host_masks.data()[col] == 0) ? 1 : 0;
+      outputs[col]->set_null_count(num_nulls);
       if (outputs[col]->type().id() == type_id::STRING) {
-        outputs[col] = finalize_string_output(*outputs[col], host_strings.data()[col], stream, mr);
+        outputs[col] = finalize_string_output(
+          *outputs[col], host_strings.data()[col], stream, mr.get_output_mr());
       }
     }
 
@@ -692,11 +664,12 @@ struct scope_t {
 void launch_reduce(kernel_ref kernel,
                    reduction_launch_config config,
                    size_type num_rows,
-                   scope_t& scope,
-                   cuda::stream_ref stream,
-                   rmm::device_async_resource_ref mr)
+                   scope_t& scope)
 {
   CUDF_FUNC_RANGE();
+
+  auto stream = scope.stream;
+  auto mr     = scope.mr.get_temporary_mr();
 
   CUDF_EXPECTS(config.block_size >= detail::warp_size && config.block_size <= max_block_size &&
                  (config.block_size & (config.block_size - 1)) == 0,
@@ -764,6 +737,7 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
                                             std::span<data_type const> state_types,
                                             std::span<data_type const> types,
                                             std::span<reduce_input const> filter_inputs,
+                                            fallible is_fallible,
                                             cuda::stream_ref stream,
                                             memory_resources mr)
 {
@@ -773,23 +747,19 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
                "A filter symbol is required when filter inputs are specified",
                std::invalid_argument);
 
-  auto const optional_values = udf.is_null_aware == null_aware::YES;
-  auto shape                 = validate_reduce(inputs, filter_inputs, state_types, types);
-  auto spec     = reflect_kernel(inputs, filter_inputs, state_types, types, optional_values);
-  auto rows     = shape.rows.value_or(0);
-  auto instance = reflect_reduce_kernel(spec, optional_values);
-  auto compiled = compile(spec, udf, instance);
+  auto optional_values = udf.is_null_aware == null_aware::YES;
+  auto shape           = validate_reduce(inputs, filter_inputs, state_types, types);
+  auto spec            = reflect_kernel(inputs, filter_inputs, state_types, types, optional_values);
+  auto rows            = shape.rows.value_or(0);
+  auto instance        = reflect_reduce_kernel(spec, optional_values);
+  auto compiled        = compile(spec, udf, instance);
 
-  scope_t scope(inputs, filter_inputs, types, 1, true, stream, mr);
+  scope_t scope(inputs, filter_inputs, types, 1, optional_values, is_fallible, stream, mr);
 
-  launch_reduce(compiled.get(),
-                {spec.block_size, spec.state_layout.size, spec.warp_reduce},
-                rows,
-                scope,
-                stream,
-                mr.get_temporary_mr());
+  launch_reduce(
+    compiled.get(), {spec.block_size, spec.state_layout.size, spec.warp_reduce}, rows, scope);
 
-  return scope.finalize(stream, mr.get_output_mr());
+  return scope.finalize();
 }
 
 }  // namespace cudf

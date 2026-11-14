@@ -480,10 +480,18 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
 struct scope_t {
   using handle = std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>;
 
+  struct output_t {
+    data_type type;
+    rmm::device_buffer data;
+    cuda::device_buffer<bitmask_type> null_mask;
+
+    bool nullable() const { return null_mask.size() != 0; }
+  };
+
   std::vector<handle> handles;
   cuda::device_buffer<column_device_view_core> input_views;
   cuda::device_buffer<mutable_column_device_view_core> output_views;
-  std::vector<std::unique_ptr<column>> outputs;
+  std::vector<output_t> outputs;
   cuda::host_buffer<column_device_view_core> host_inputs;
   cuda::host_buffer<mutable_column_device_view_core> host_outputs;
   cuda::host_buffer<bitmask_type> host_masks;
@@ -498,46 +506,21 @@ struct scope_t {
   cuda::stream_ref stream;
   memory_resources mr;
 
-  static std::unique_ptr<column> allocate_output(data_type type,
-                                                 bool nullable,
-                                                 cuda::stream_ref stream,
-                                                 memory_resources mr)
+  static output_t allocate_output(data_type type,
+                                  bool nullable,
+                                  cuda::stream_ref stream,
+                                  memory_resources mr)
   {
-    auto mask = nullable ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED;
-    if (type.id() != type_id::STRING) {
-      return make_fixed_width_column(type, 1, mask, stream, mr.get_output_mr());
-    }
-
-    // String outputs initially contain a view. Finalization copies its characters into a column.
-    return std::make_unique<column>(
-      type,
-      1,
-      rmm::device_buffer{sizeof(string_view), stream, mr.get_temporary_mr()},
-      create_null_mask(1, mask, stream, mr.get_output_mr()),
-      0);
-  }
-
-  static std::unique_ptr<column> finalize_string_output(column& output,
-                                                        string_view value,
-                                                        cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr)
-  {
-    auto nulls   = output.null_count();
-    auto bytes   = nulls == 0 ? value.size_bytes() : size_type{0};
-    auto offsets = detail::make_device_uvector(std::vector<size_type>{0, bytes}, stream, mr);
-    auto offsets_column =
-      std::make_unique<column>(data_type{type_id::INT32},
-                               2,
-                               offsets.release(),
-                               create_null_mask(0, mask_state::UNALLOCATED, stream, mr),
-                               0);
-    rmm::device_buffer chars(bytes, stream, mr);
-    if (bytes != 0) {
-      CUDF_CUDA_TRY(detail::memcpy_async(chars.data(), value.data(), bytes, stream));
-    }
-    auto contents = output.release();
-    return make_strings_column(
-      1, std::move(offsets_column), std::move(chars), nulls, std::move(*contents.null_mask));
+    auto const is_string = type.id() == type_id::STRING;
+    return {
+      .type = type,
+      .data = rmm::device_buffer{is_string ? sizeof(string_view) : size_of(type),
+                                 stream,
+                                 is_string ? mr.get_temporary_mr() : mr.get_output_mr()},
+      .null_mask = create_null_mask(1,
+                                    nullable ? mask_state::UNINITIALIZED : mask_state::UNALLOCATED,
+                                    stream,
+                                    mr.get_output_mr())};
   }
 
   scope_t(std::span<reduce_input const> inputs,
@@ -589,10 +572,9 @@ struct scope_t {
 
     for (size_type segment = 0; segment < num_segments; ++segment) {
       for (auto type : types) {
-        auto output = allocate_output(type, nullable, stream, mr);
-        auto view   = output->mutable_view();
-        host_outputs.data()[outputs.size()] =
-          mutable_column_device_view::create(type, 1, view.head(), view.null_mask(), 0, nullptr, 0);
+        auto output                         = allocate_output(type, nullable, stream, mr);
+        host_outputs.data()[outputs.size()] = mutable_column_device_view::create(
+          type, 1, output.data.data(), output.null_mask.data(), 0, nullptr, 0);
         outputs.push_back(std::move(output));
       }
     }
@@ -613,8 +595,30 @@ struct scope_t {
   bool needs_host_readback() const
   {
     return is_fallible == fallible::YES || std::ranges::any_of(outputs, [](auto const& output) {
-             return output->nullable() || output->type().id() == type_id::STRING;
+             return output.nullable() || output.type.id() == type_id::STRING;
            });
+  }
+
+  static std::unique_ptr<column> finalize_string(output_t& output,
+                                                 string_view value,
+                                                 size_type nulls,
+                                                 cuda::stream_ref stream,
+                                                 rmm::device_async_resource_ref mr)
+  {
+    auto bytes   = nulls == 0 ? value.size_bytes() : size_type{0};
+    auto offsets = detail::make_device_uvector(std::vector<size_type>{0, bytes}, stream, mr);
+    auto offsets_column =
+      std::make_unique<column>(data_type{type_id::INT32},
+                               2,
+                               offsets.release(),
+                               create_null_mask(0, mask_state::UNALLOCATED, stream, mr),
+                               0);
+    rmm::device_buffer chars(bytes, stream, mr);
+    if (bytes != 0) {
+      CUDF_CUDA_TRY(detail::memcpy_async(chars.data(), value.data(), bytes, stream));
+    }
+    return make_strings_column(
+      1, std::move(offsets_column), std::move(chars), nulls, std::move(output.null_mask));
   }
 
   std::vector<std::unique_ptr<column>> finalize()
@@ -624,17 +628,17 @@ struct scope_t {
                                     stream);
 
     for (auto col : std::views::iota(size_t{0}, outputs.size())) {
-      if (outputs[col]->nullable()) {
+      if (outputs[col].nullable()) {
         detail::cuda_memcpy_async<bitmask_type>(
           host_span<bitmask_type>{host_masks.data() + col, 1, true},
-          device_span<bitmask_type const>{outputs[col]->view().null_mask(), 1},
+          device_span<bitmask_type const>{outputs[col].null_mask.data(), 1},
           stream);
       }
-      if (outputs[col]->type().id() == type_id::STRING) {
+      if (outputs[col].type.id() == type_id::STRING) {
         detail::cuda_memcpy_async<string_view>(
           host_span<string_view>{host_strings.data() + col, 1, true},
-          device_span<string_view const>{
-            static_cast<string_view const*>(outputs[col]->view().head()), 1},
+          device_span<string_view const>{static_cast<string_view const*>(outputs[col].data.data()),
+                                         1},
           stream);
       }
     }
@@ -649,16 +653,21 @@ struct scope_t {
                    error);
     }
 
+    std::vector<std::unique_ptr<column>> columns;
+
     for (auto col : std::views::iota(size_t{0}, outputs.size())) {
-      auto num_nulls = (outputs[col]->nullable() && host_masks.data()[col] == 0) ? 1 : 0;
-      outputs[col]->set_null_count(num_nulls);
-      if (outputs[col]->type().id() == type_id::STRING) {
-        outputs[col] = finalize_string_output(
-          *outputs[col], host_strings.data()[col], stream, mr.get_output_mr());
+      auto& output   = outputs[col];
+      auto num_nulls = (output.nullable() && host_masks.data()[col] == 0) ? 1 : 0;
+      if (output.type.id() == type_id::STRING) {
+        columns.push_back(
+          finalize_string(output, host_strings.data()[col], num_nulls, stream, mr.get_output_mr()));
+      } else {
+        columns.push_back(std::make_unique<column>(
+          output.type, 1, std::move(output.data), std::move(output.null_mask), num_nulls));
       }
     }
 
-    return std::move(outputs);
+    return columns;
   }
 };
 

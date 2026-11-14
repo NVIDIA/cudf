@@ -3782,6 +3782,8 @@ class pack_plan::impl {
       auto const is_raw     = batches[batch_idx].codec == pack_compression::none;
       auto const slot_bytes = is_raw ? 0 : max_compressed_block_bytes(batches[batch_idx]);
       auto const alignment  = is_raw ? sizeof(uint64_t) : block_alignment(batches[batch_idx].codec);
+      CUDF_EXPECTS(split_align % alignment == 0,
+                   "Codec alignment must divide the payload alignment");
       batches[batch_idx].block_begin = blocks.size();
       for (std::size_t region_idx = 0; region_idx < regions.size(); ++region_idx) {
         if (region_batch[region_idx] != batch_idx) { continue; }
@@ -3810,8 +3812,9 @@ class pack_plan::impl {
                                                      std::size_t window_budget,
                                                      cudf::memory_resources mr)
   {
-    // A slot also fits the raw block, which bounds output with uncompressed fallback.
-    auto destination_bytes = payload_offset;
+    // A slot also fits the raw block, which bounds output with uncompressed fallback. Starting and
+    // advancing by multiples of `split_align` keeps the bound valid for any block alignment.
+    auto destination_bytes = cudf::detail::round_up_safe(payload_offset, split_align);
     std::vector<dst_buf_info> copies;
     std::size_t window_output_bytes = 0;
     for (std::size_t block_idx = 0; block_idx < blocks.size(); ++block_idx) {

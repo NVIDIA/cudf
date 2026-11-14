@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 
 import pylibcudf as plc
 
@@ -120,6 +121,27 @@ class StringMethods(BaseAccessor):
             )
         super().__init__(parent=parent)
 
+    def _return_boolean(self, new_col: ColumnBase) -> Series | Index:
+        if (
+            isinstance(self._column.dtype, pd.StringDtype)
+            and self._column.dtype.na_value is pd.NA
+        ):
+            # String predicates use nullable booleans regardless of storage.
+            new_col = new_col.astype(pd.BooleanDtype())
+        return self._return_or_inplace(new_col)
+
+    def _return_integer(self, new_col: ColumnBase) -> Series | Index:
+        if isinstance(self._column.dtype, pd.StringDtype):
+            if self._column.dtype.na_value is pd.NA:
+                # Nullable string methods return nullable 64-bit integers.
+                new_col = new_col.astype(pd.Int64Dtype())
+            else:
+                # NaN string methods use floats when missing values occur.
+                new_col = new_col.astype(
+                    np.dtype("float64" if new_col.has_nulls() else "int64")
+                )
+        return self._return_or_inplace(new_col)
+
     def htoi(self) -> Series | Index:
         """
         Returns integer value represented by each hex string.
@@ -201,7 +223,7 @@ class StringMethods(BaseAccessor):
         3    <NA>
         dtype: int32
         """
-        return self._return_or_inplace(self._column.count_characters())
+        return self._return_integer(self._column.count_characters())
 
     def byte_count(self) -> Series | Index:
         """
@@ -857,7 +879,7 @@ class StringMethods(BaseAccessor):
             result_col = result_col.fillna(False)
         if na is not no_default:
             result_col = result_col.fillna(na)
-        return self._return_or_inplace(result_col)
+        return self._return_boolean(result_col)
 
     def like(self, pat: str, esc: str | None = None) -> Series | Index:
         """
@@ -1452,7 +1474,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.DECIMAL
             )
@@ -1527,7 +1549,7 @@ class StringMethods(BaseAccessor):
         2    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.ALPHANUM
             )
@@ -1589,7 +1611,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.ALPHA
             )
@@ -1657,7 +1679,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.DIGIT
             )
@@ -1731,7 +1753,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.NUMERIC
             )
@@ -1794,7 +1816,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.UPPER,
                 plc.strings.char_types.StringCharacterTypes.CASE_TYPES,
@@ -1858,7 +1880,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.LOWER,
                 plc.strings.char_types.StringCharacterTypes.CASE_TYPES,
@@ -2127,7 +2149,7 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        return self._return_or_inplace(self._column.is_title())
+        return self._return_boolean(self._column.is_title())
 
     def filter_alphanum(
         self, repl: str | None = None, keep: bool = True
@@ -3664,7 +3686,7 @@ class StringMethods(BaseAccessor):
                 "unsupported value for `flags` parameter"
             )
         pat = self._remove_named_capture_groups(pat)
-        return self._return_or_inplace(self._column.count_re(pat, flags))
+        return self._return_integer(self._column.count_re(pat, flags))
 
     def _findall(
         self,
@@ -3937,7 +3959,7 @@ class StringMethods(BaseAccessor):
         2    False
         dtype: bool
         """
-        return self._return_or_inplace(
+        return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.SPACE
             )
@@ -3948,9 +3970,7 @@ class StringMethods(BaseAccessor):
         method: Callable[[plc.Column, plc.Column | plc.Scalar], plc.Column],
         pat: str | tuple[str, ...],
     ) -> Series | Index:
-        return self._return_or_inplace(
-            self._column.starts_ends_with(method, pat)
-        )
+        return self._return_boolean(self._column.starts_ends_with(method, pat))
 
     def endswith(self, pat: str | tuple[str, ...]) -> Series | Index:
         """
@@ -4129,9 +4149,16 @@ class StringMethods(BaseAccessor):
         if end is None:
             end = -1
 
-        return self._return_or_inplace(
-            self._column.find(method, sub, start, end)
-        )
+        new_col: ColumnBase = self._column.find(method, sub, start, end)
+        if (
+            isinstance(self._column.dtype, pd.ArrowDtype)
+            and new_col.is_all_null
+        ):
+            # Pandas infers Arrow's null dtype when no positions are present.
+            new_col = column_empty(
+                len(new_col), dtype=pd.ArrowDtype(pa.null())
+            )
+        return self._return_integer(new_col)
 
     def find(
         self, sub: str, start: int = 0, end: int | None = None
@@ -4285,7 +4312,7 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return result
 
     def rindex(
         self, sub: str, start: int = 0, end: int | None = None
@@ -4345,7 +4372,7 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return result
 
     def match(
         self,
@@ -4420,7 +4447,7 @@ class StringMethods(BaseAccessor):
             result = result.fillna(na)
         elif self._column._PANDAS_NA_VALUE in {np.nan, None}:
             result = result.fillna(False)
-        return self._return_or_inplace(result)
+        return self._return_boolean(result)
 
     def url_decode(self) -> Series | Index:
         """

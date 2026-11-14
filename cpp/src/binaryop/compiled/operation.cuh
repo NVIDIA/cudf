@@ -10,7 +10,6 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 

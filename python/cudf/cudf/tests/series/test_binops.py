@@ -3349,7 +3349,14 @@ def test_float_pymod_edge_cases(divisor):
     res_g = gsr % divisor
     assert_eq(res_p, res_g)
     assert_eq(psr.mod(divisor), gsr.mod(divisor))
-    assert_eq(divisor % psr, divisor % gsr)
+    res_rp = divisor % psr
+    res_rg = divisor % gsr
+    assert_eq(res_rp, res_rg)
+    mask = ~np.isnan(res_rp.to_numpy())
+    np.testing.assert_equal(
+        np.signbit(res_rg.to_numpy()[mask]),
+        np.signbit(res_rp.to_numpy()[mask]),
+    )
     np.testing.assert_equal(
         np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
     )

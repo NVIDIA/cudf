@@ -255,8 +255,8 @@ TEST_F(BinaryOperatorParityTest, FloatingPyModEdgeCases)
   auto res_neg_zero = cudf::binary_operation(v_one, s_neg_one, cudf::binary_operator::PYMOD, type);
   auto res_pos_zero =
     cudf::binary_operation(v_neg_one, s_pos_one, cudf::binary_operator::PYMOD, type);
-  auto const [neg_data, neg_mask] = cudf::test::to_host<double>(res_neg_zero->view());
-  auto const [pos_data, pos_mask] = cudf::test::to_host<double>(res_pos_zero->view());
+  auto const neg_data = cudf::test::to_host<double>(res_neg_zero->view()).first;
+  auto const pos_data = cudf::test::to_host<double>(res_pos_zero->view()).first;
   EXPECT_TRUE(std::signbit(neg_data.front()));
   EXPECT_FALSE(std::signbit(pos_data.front()));
 }

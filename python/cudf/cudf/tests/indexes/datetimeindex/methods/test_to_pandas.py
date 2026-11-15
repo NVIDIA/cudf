@@ -46,15 +46,24 @@ def test_to_pandas_arrow_type_values_match_pandas():
     assert_eq(actual.to_numpy(), pidx.to_numpy())
 
 
-def test_to_pandas_externally_set_stale_freq_matches_pandas_inferred():
+@pytest.mark.parametrize(
+    "stale_freq",
+    [
+        cudf.DateOffset._from_freqstr("h"),
+        pd.DateOffset(hours=1),
+        "invalid_frequency",
+        object(),
+    ],
+)
+def test_to_pandas_externally_set_stale_freq_matches_pandas_inferred(
+    stale_freq,
+):
     # If a stale freq sneaks in (e.g. via deserialization or external mutation),
     # to_pandas() should produce the freq pandas would have inferred from the
     # values, rather than raising.
     pidx = pd.date_range("2001-01-01", periods=5, freq="D")
     gidx = cudf.from_pandas(pidx)
-    gidx._freq = cudf.DateOffset._from_freqstr(
-        "h"
-    )  # nonsense for daily values
+    gidx._freq = stale_freq
 
     actual = gidx.to_pandas()
     assert actual.freq == pidx.freq

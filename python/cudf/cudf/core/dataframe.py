@@ -937,6 +937,8 @@ def _array_to_column_accessor(
     data: np.ndarray | cupy.ndarray,
     columns: pd.Index | None,
     nan_as_null: bool,
+    *,
+    dtype: Dtype | None = None,
 ) -> ColumnAccessor:
     """Convert a 1D or 2D numpy or cupy array to a ColumnAccessor for DataFrame.__init__"""
     if data.ndim not in {1, 2}:
@@ -957,7 +959,11 @@ def _array_to_column_accessor(
         columns_labels = pd.RangeIndex(data.shape[1])
     ca = ColumnAccessor(
         {
-            column_label: as_column(data[:, i], nan_as_null=nan_as_null)
+            column_label: as_column(
+                data[:, i],
+                nan_as_null=nan_as_null,
+                dtype=cudf.dtype(dtype) if dtype is not None else None,
+            )
             for column_label, i in zip(
                 columns_labels, range(data.shape[1]), strict=True
             )
@@ -1254,7 +1260,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             allows_duplicate_labels = data.flags.allows_duplicate_labels
             if isinstance(data, pd.DataFrame):
                 if get_option("mode.pandas_compatible") and any(
-                    not getattr(dtype, "isnative", True)
+                    isinstance(dtype, np.dtype) and not dtype.isnative
                     for dtype in data.dtypes
                 ):
                     raise NotImplementedError(
@@ -1389,7 +1395,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             arr_interface = data.__array_interface__
             if len(arr_interface["descr"]) == 1:
                 col_accessor = _array_to_column_accessor(
-                    np.asarray(data, order="F"), columns, nan_as_null
+                    np.asarray(data, order="F"),
+                    columns,
+                    nan_as_null,
+                    dtype=dtype
+                    if not np.dtype(arr_interface["typestr"]).isnative
+                    else None,
                 )
                 if index is None:
                     index = cudf.RangeIndex(arr_interface["shape"][0])
@@ -4011,6 +4022,26 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 )
             else:
                 idx = Index._from_column(data_to_add[0], name=names[0])
+            if get_option("mode.pandas_compatible"):
+                if isinstance(keys[0], (cudf.RangeIndex, pd.RangeIndex)):
+                    idx = cudf.RangeIndex(
+                        keys[0].start,
+                        keys[0].stop,
+                        keys[0].step,
+                        name=names[0],
+                    )
+                elif (
+                    isinstance(idx.dtype, np.dtype)
+                    and idx.dtype.kind == "i"
+                    and len(idx) != 1
+                ):
+                    candidate = cudf.RangeIndex(
+                        0
+                    )._try_reconstruct_range_index(
+                        idx.astype(np.dtype(np.int64))
+                    )
+                    if isinstance(candidate, cudf.RangeIndex):
+                        idx = candidate
         else:
             idx = MultiIndex._from_data(dict(enumerate(data_to_add)))
             idx.names = names
@@ -5640,10 +5671,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         other,
         on=None,
         how="left",
-        lsuffix="",
-        rsuffix="",
+        lsuffix=no_default,
+        rsuffix=no_default,
         sort=False,
         validate: str | None = None,
+        *,
+        suffixes=no_default,
     ):
         """Join columns with other DataFrame on index or on a key column.
 
@@ -5663,8 +5696,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * cross: creates the cartesian product from both frames, preserves the order
               of the left keys.
         lsuffix, rsuffix : str
-            The suffices to add to the left (*lsuffix*) and right (*rsuffix*)
+            The suffixes to add to the left (*lsuffix*) and right (*rsuffix*)
             column names when avoiding conflicts.
+
+            .. deprecated:: 27.2
+                Use ``suffixes`` instead with pandas 3.1 or later.
         sort : bool
             Set to True to ensure sorted ordering.
         validate : str, optional
@@ -5677,6 +5713,10 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * "many_to_many" or "m:m": allowed, but does not result in checks.
 
             Currently not supported.
+        suffixes : tuple of str or None, optional
+            Suffixes for overlapping left and right column names. Requires
+            pandas 3.1 or later and cannot be combined with ``lsuffix`` or
+            ``rsuffix``. Defaults to ``('', '')``.
 
         Returns
         -------
@@ -5688,6 +5728,24 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             - *other* must be a single DataFrame for now.
             - *on* is not supported yet due to lack of multi-index support.
         """
+        legacy_suffixes = (
+            lsuffix is not no_default or rsuffix is not no_default
+        )
+        if suffixes is not no_default:
+            if not PANDAS_GE_31:
+                raise TypeError(
+                    "DataFrame.join() got an unexpected keyword argument 'suffixes'"
+                )
+            if legacy_suffixes:
+                raise ValueError(
+                    "Cannot specify both 'suffixes' and 'lsuffix'/'rsuffix'."
+                )
+            resolved_suffixes = suffixes
+        else:
+            resolved_suffixes = (
+                lsuffix if lsuffix is not no_default else "",
+                rsuffix if rsuffix is not no_default else "",
+            )
         if on is not None:
             raise NotImplementedError("The on parameter is not yet supported")
         elif validate is not None:
@@ -5700,7 +5758,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             left_index=True,
             right_index=True,
             how=how,
-            suffixes=(lsuffix, rsuffix),
+            suffixes=resolved_suffixes,
             sort=sort,
         )
         df.index.name = (
@@ -5717,6 +5775,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             and self_pd_cols.dtype == other_pd_cols.dtype
         ):
             df.columns = self_pd_cols.append(other_pd_cols)
+        if legacy_suffixes:
+            _warn_pandas_31_deprecation(
+                "The 'lsuffix' and 'rsuffix' keywords in DataFrame.join are "
+                "deprecated and will be removed in a future version. "
+                "Use the 'suffixes' keyword instead."
+            )
         return df
 
     @_performance_tracking

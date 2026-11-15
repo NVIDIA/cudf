@@ -1350,12 +1350,13 @@ class _FastSlowAttribute:
                     raise e
 
             if _is_function_or_method(slow_attr):
+                # This descriptor is shared by every instance. Transfer
+                # restrictions belong to the receiver and are checked when
+                # transforming its arguments, so caching them here would
+                # incorrectly restrict unrelated instances accessed later.
                 self._attr = _MethodProxy(
                     fast_attr,
                     slow_attr,
-                    _fsproxy_transfer_block=instance.get_transfer_blocking()
-                    if instance is not None
-                    else None,
                 )
             else:
                 # for anything else, use a fast-slow attribute:

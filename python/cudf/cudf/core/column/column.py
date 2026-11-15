@@ -3622,6 +3622,20 @@ def as_column(
                     and nan_as_null is not False
                 ),
             )
+            if (
+                cudf.get_option("mode.pandas_compatible")
+                and not isinstance(dtype, DecimalDtype)
+                and inferred_dtype == "decimal"
+                and any(
+                    isinstance(value, Decimal) and not value.is_finite()
+                    for value in arbitrary
+                )
+            ):
+                # Fixed-point storage cannot preserve Decimal NaN payloads
+                # or infinities from an object column.
+                raise MixedTypeError(
+                    "Non-finite Decimal objects require pandas storage"
+                )
             if inferred_dtype in ("mixed-integer", "mixed-integer-float"):
                 raise MixedTypeError("Cannot create column with mixed types")
             elif dtype is None and inferred_dtype not in (
@@ -3824,6 +3838,13 @@ def as_column(
             return result_column
         elif arbitrary.dtype.kind in "biuf":
             if not arbitrary.dtype.isnative:
+                if cudf.get_option("mode.pandas_compatible") and (
+                    dtype is None
+                    or (isinstance(dtype, np.dtype) and not dtype.isnative)
+                ):
+                    raise NotImplementedError(
+                        "Non-native byte-order dtypes require pandas storage"
+                    )
                 # Not supported by pylibcudf
                 arbitrary = arbitrary.astype(arbitrary.dtype.newbyteorder("="))
             result_column = ColumnBase.create(

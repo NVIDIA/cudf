@@ -11,6 +11,7 @@ import os
 import pickle
 import re
 
+import numpy as np
 import pandas as pd
 
 # cuGraph third party integration test, test_cugraph_from_pandas_adjacency,
@@ -52,6 +53,7 @@ from ..fast_slow_proxy import (
     _FunctionProxy,
     _maybe_wrap_result,
     _setattr_fsproxy_no_mirror,
+    _slow_arg,
     _State,
     _Unusable,
     get_final_type_map,
@@ -316,7 +318,10 @@ def _ExcelWriter__init__(self, *args, **kwargs):
 
 
 def _slow_to_fast_dataframe(slow):
-    if any(not getattr(dtype, "isnative", True) for dtype in slow.dtypes):
+    if any(
+        isinstance(dtype, np.dtype) and not dtype.isnative
+        for dtype in slow.dtypes
+    ):
         raise AttributeError(
             "Non-native byte-order DataFrames cannot use GPU storage"
         )
@@ -395,7 +400,7 @@ def _Series_dtype(self):
 
 
 def _slow_to_fast_series(slow):
-    if not getattr(slow.dtype, "isnative", True):
+    if isinstance(slow.dtype, np.dtype) and not slow.dtype.isnative:
         raise AttributeError(
             "Non-native byte-order Series cannot use GPU storage"
         )
@@ -537,6 +542,21 @@ def Index__setattr__(self, name, value):
     )
 
 
+@functools.wraps(pd.Index.rename)
+def _Index_rename(self, name, inplace=False):
+    # A slow Index can be shared with a Categorical or another pandas owner.
+    # Mutating a GPU copy would leave that original owner's name unchanged.
+    wrapped = self._fsproxy_wrapped
+    if inplace and isinstance(wrapped, pd.Index):
+        from ..module_accelerator import disable_module_accelerator
+
+        with disable_module_accelerator():
+            return wrapped.rename(_slow_arg(name), inplace=inplace)
+    return _FastSlowAttribute("rename").__get__(self, type(self))(
+        name, inplace=inplace
+    )
+
+
 @functools.wraps(pd.Index.join)
 def _Index_join(self, other, *args, **kwargs):
     result = _FastSlowAttribute("join").__get__(self, type(self))(
@@ -583,6 +603,7 @@ Index = make_final_proxy_type(
         "__init__": _DELETE,
         "__new__": Index__new__,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "join": _Index_join,
         "_constructor": _FastSlowAttribute("_constructor"),
         "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
@@ -608,6 +629,7 @@ RangeIndex = make_final_proxy_type(
     additional_attributes={
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "join": _Index_join,
         "name": _FastSlowAttribute("name"),
         "nbytes": _FastSlowAttribute("nbytes", private=True),
@@ -670,6 +692,7 @@ CategoricalIndex = make_final_proxy_type(
     additional_attributes={
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "name": _FastSlowAttribute("name"),
         "nbytes": _FastSlowAttribute("nbytes", private=True),
         "array": _FastSlowAttribute("array", private=True),
@@ -711,8 +734,12 @@ DatetimeIndex = make_final_proxy_type(
     slow_to_fast=cudf.from_pandas,
     bases=(Index,),
     additional_attributes={
+        "inferred_freq": _FastSlowAttribute(
+            "inferred_freq", private=PANDAS_GE_31
+        ),
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "_data": _FastSlowAttribute("_data", private=True),
         "_mask": _FastSlowAttribute("_mask", private=True),
         "_engine": _FastSlowAttribute("_engine", private=True),
@@ -760,8 +787,12 @@ TimedeltaIndex = make_final_proxy_type(
     slow_to_fast=cudf.from_pandas,
     bases=(Index,),
     additional_attributes={
+        "inferred_freq": _FastSlowAttribute(
+            "inferred_freq", private=PANDAS_GE_31
+        ),
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "_data": _FastSlowAttribute("_data", private=True),
         "_mask": _FastSlowAttribute("_mask", private=True),
         "_engine": _FastSlowAttribute("_engine", private=True),
@@ -1207,6 +1238,7 @@ IntervalIndex = make_final_proxy_type(
     additional_attributes={
         "__init__": _DELETE,
         "__setattr__": Index__setattr__,
+        "rename": _Index_rename,
         "_data": _FastSlowAttribute("_data", private=True),
         "_mask": _FastSlowAttribute("_mask", private=True),
         "_engine": _FastSlowAttribute("_engine", private=True),

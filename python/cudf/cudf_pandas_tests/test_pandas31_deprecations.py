@@ -26,6 +26,20 @@ def _capture(call):
     ]
 
 
+@pytest.mark.parametrize("series", [False, True])
+@pytest.mark.parametrize("key", [0, -1, [0, 1], slice(None, 2)])
+def test_groupby_nth_indexer_warns_once(series, key):
+    def grouped(module):
+        frame = module.DataFrame({"a": [1, 1, 2], "b": [1, 2, 3]})
+        group = frame.groupby("a")
+        return group["b"] if series else group
+
+    expected, expected_warnings = _capture(lambda: grouped(pd).nth[key])
+    actual, actual_warnings = _capture(lambda: grouped(xpd).nth[key])
+    assert actual_warnings == expected_warnings
+    assert_eq(actual._fsproxy_slow, expected)
+
+
 @pytest.mark.parametrize(
     "method,kwargs,fast",
     [

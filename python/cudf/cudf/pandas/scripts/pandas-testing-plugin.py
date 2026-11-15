@@ -318,10 +318,6 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/numpy_/test_numpy.py::test_np_max_nested_tuples": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_accessor.py::TestFrameAccessor::test_from_spmatrix_columns[columns1]": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_accessor.py::TestFrameAccessor::test_subclassing": "AttributeError: 'SparseArray' object has no attribute 'reshape'. Did you mean: 'shape'?",
-    "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-gt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
-    "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-lt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
-    "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-ne]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
-    "tests/arrays/sparse/test_arithmetics.py::test_cmp_op_masked_other_series": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_masked_other_uneven_length_series[10-11-and_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_masked_other_uneven_length_series[10-11-or_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_masked_other_uneven_length_series[10-11-xor]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
@@ -332,6 +328,7 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_uneven_length_series[or_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_uneven_length_series[xor]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-and_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
+    "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-ge]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-lt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-ne]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
@@ -512,8 +509,12 @@ NODEIDS_THAT_FAIL = {
     "tests/copy_view/test_methods.py::test_align_with_series_copy_false": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_assign_drop_duplicates[assign]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_assign_drop_duplicates[drop_duplicates]": "TODO: Add a reason for failure",
-    "tests/copy_view/test_methods.py::test_between_time[obj0]": "TODO: Add a reason for failure",
-    "tests/copy_view/test_methods.py::test_between_time[obj1]": "TODO: Add a reason for failure",
+    "tests/copy_view/test_methods.py::test_between_time[obj0]": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
+    "tests/copy_view/test_methods.py::test_between_time[obj1]": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_methods[reset_index]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_where_mask[mask]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_chained_where_mask[where]": "TODO: Add a reason for failure",
@@ -611,7 +612,9 @@ NODEIDS_THAT_FAIL = {
     "tests/copy_view/test_methods.py::test_set_index": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_shift_columns": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_shift_no_op": "TODO: Add a reason for failure",
-    "tests/copy_view/test_methods.py::test_sort_index": "TODO: Add a reason for failure",
+    "tests/copy_view/test_methods.py::test_sort_index": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_sort_values[obj0-kwargs0]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_sort_values[obj1-kwargs1]": "TODO: Add a reason for failure",
     "tests/copy_view/test_methods.py::test_sort_values_inplace[obj0-kwargs0]": "TODO: Add a reason for failure",
@@ -683,6 +686,7 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummax-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummin-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cumprod-True]": "TODO: Add a reason for failure",
+    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-ge]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-gt]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-le]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
@@ -1673,7 +1677,6 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/categorical/test_category.py::TestCategoricalIndex::test_is_monotonic[data1-non_lexsorted_data1]": "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_constructors.py::TestCategoricalIndexConstructors::test_construction": "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_constructors.py::TestCategoricalIndexConstructors::test_construction_disallows_scalar": "TODO: Add a reason for failure",
-    "tests/indexes/categorical/test_equals.py::TestEquals::test_equals_non_category": "AssertionError: assert not True",
     "tests/indexes/categorical/test_indexing.py::TestContains::test_contains_na_dtype[False]": "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_indexing.py::TestContains::test_contains_nan": "TODO: Add a reason for failure",
     "tests/indexes/datetimelike_/test_drop_duplicates.py::TestDropDuplicatesDatetimeIndex::test_drop_duplicates_metadata[-2h]": "AssertionError: assert <DateOffset: hours=-2> == None",
@@ -1697,7 +1700,9 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/datetimes/methods/test_factorize.py::TestDatetimeIndexFactorize::test_factorize_dst[series]": "AssertionError: numpy array are different",
     "tests/indexes/datetimes/methods/test_factorize.py::TestDatetimeIndexFactorize::test_factorize_tz['US/Eastern'-index]": "AssertionError: numpy array are different",
     "tests/indexes/datetimes/methods/test_factorize.py::TestDatetimeIndexFactorize::test_factorize_tz['US/Eastern'-series]": "AssertionError: numpy array are different",
-    "tests/indexes/datetimes/methods/test_insert.py::TestInsert::test_insert_empty_preserves_freq[None]": "AssertionError: assert <Week: weekday=None> is None",
+    "tests/indexes/datetimes/methods/test_insert.py::TestInsert::test_insert_empty_preserves_freq[None]": None
+    if PANDAS_GE_31
+    else "AssertionError: assert <Week: weekday=None> is None",
     "tests/indexes/datetimes/methods/test_isocalendar.py::test_dti_timestamp_isocalendar_fields": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/methods/test_shift.py::TestDatetimeIndexShift::test_dti_shift_across_dst[ms]": "AssertionError: Series.index are different",
     "tests/indexes/datetimes/methods/test_shift.py::TestDatetimeIndexShift::test_dti_shift_across_dst[ns]": "AssertionError: Series.index are different",
@@ -1724,15 +1729,6 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/datetimes/test_constructors.py::TestDatetimeIndex::test_constructor_datetime64_tzformat[W-SUN]": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_constructors.py::TestDatetimeIndex::test_constructor_dtype_tz_mismatch_raises": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_constructor_int64_nocopy": "TODO: Add a reason for failure",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[int16]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[int32]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[int64]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[int8]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[int]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[uint16]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[uint32]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[uint64]": "AssertionError: Index are different",
-    "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_dti_constructor_small_int[uint8]": "AssertionError: Index are different",
     "tests/indexes/datetimes/test_constructors.py::TestTimeSeries::test_explicit_none_freq": "AssertionError: assert <DateOffset: minutes=5> is None",
     "tests/indexes/datetimes/test_date_range.py::TestDateRangeNonTickFreq::test_date_range_freqstr_matches_offset[W-SUN-offset2]": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_date_range.py::TestDateRangeTZ::test_date_range_ambiguous_endpoint[Europe/London]": "Failed: DID NOT RAISE <class 'ValueError'>",
@@ -1765,14 +1761,21 @@ NODEIDS_THAT_FAIL = {
     if PANDAS_GE_31
     else None,
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_nat": "Failed: DID NOT RAISE <class 'ValueError'>",
-    "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_freq_dateoffset_with_relateivedelta_nanos": "AssertionError: Index are different",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_range_tz_dateutil": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_range_tz_pytz": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_date_range.py::TestGenRangeGeneration::test_precision_finer_than_offset": "TODO: Add a reason for failure",
-    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[ms]": "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
-    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[ns]": "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
-    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[s]": "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
-    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[us]": "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
+    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[ms]": None
+    if PANDAS_GE_31
+    else "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
+    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[ns]": None
+    if PANDAS_GE_31
+    else "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
+    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[s]": None
+    if PANDAS_GE_31
+    else "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
+    "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation[us]": None
+    if PANDAS_GE_31
+    else "assert 'DatetimeInde...US/Eastern]')' == 'DatetimeInde...', freq=None)'",
     "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation_to_series[ms]": "AssertionError: assert '0    2011-01..., US/Eastern]' == '0   2011-01-..., US/Eastern]'",
     "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation_to_series[ns]": "AssertionError: assert '0    2011-01..., US/Eastern]' == '0   2011-01-..., US/Eastern]'",
     "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_representation_to_series[s]": "AssertionError: assert '0    2011-01..., US/Eastern]' == '0   2011-01-..., US/Eastern]'",
@@ -2482,6 +2485,12 @@ NODEIDS_THAT_FAIL = {
     "tests/io/parser/common/test_index.py::test_multi_index_blank_df[c_high-True-a,b\\nc,d-columns1-header1]": "Exception",
     "tests/io/parser/common/test_index.py::test_multi_index_blank_df[c_low-True-a,b\\nc,d-columns1-header1]": "Exception",
     "tests/io/parser/common/test_index.py::test_multi_index_blank_df[python-True-a,b\\nc,d-columns1-header1]": "Exception",
+    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_high]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_low]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/io/parser/test_compression.py::test_writes_tar_gz[c_high]": "TODO: Add a reason for failure",
     "tests/io/parser/test_compression.py::test_writes_tar_gz[c_low]": "TODO: Add a reason for failure",
     "tests/io/parser/test_compression.py::test_writes_tar_gz[python]": "TODO: Add a reason for failure",
@@ -2554,11 +2563,6 @@ NODEIDS_THAT_FAIL = {
     "tests/io/test_stata.py::TestStata::test_utf8_writer[little-118]": "NotImplementedError: Data type str not supported.",
     "tests/io/test_stata.py::TestStata::test_utf8_writer[little-119]": "NotImplementedError: Data type str not supported.",
     "tests/io/test_stata.py::TestStata::test_utf8_writer[little-None]": "NotImplementedError: Data type str not supported.",
-    "tests/io/test_stata.py::test_chunked_categorical[114]": "TODO: Add a reason for failure",
-    "tests/io/test_stata.py::test_chunked_categorical[117]": "TODO: Add a reason for failure",
-    "tests/io/test_stata.py::test_chunked_categorical[118]": "TODO: Add a reason for failure",
-    "tests/io/test_stata.py::test_chunked_categorical[119]": "TODO: Add a reason for failure",
-    "tests/io/test_stata.py::test_chunked_categorical[None]": "TODO: Add a reason for failure",
     "tests/io/test_stata.py::test_non_categorical_value_labels": "TODO: Add a reason for failure",
     "tests/io/xml/test_to_xml.py::test_style_to_csv": "TODO: Add a reason for failure",
     "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_unordered_ts": "TODO: Add a reason for failure",
@@ -2685,6 +2689,7 @@ NODEIDS_THAT_FAIL = {
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_categorical_index_preserver": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_categorical_index_upcast": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_concat_categorical_datetime": "TODO: Add a reason for failure",
+    "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_keys_specific_levels": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_order": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_concat.py::test_concat_empty_and_non_empty_frame_regression": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_concat.py::test_concat_ignore_empty_object_float[None-datetime64[ns]]": "AssertionError: Attributes of DataFrame.iloc[:, 0] (column name='foo') are different",
@@ -3366,7 +3371,6 @@ NODEIDS_THAT_FAIL = {
     "tests/series/test_constructors.py::TestSeriesConstructors::test_constructor_range_overflows": "TODO: Add a reason for failure",
     "tests/series/test_constructors.py::TestSeriesConstructors::test_constructor_tuple_of_tuples": "TODO: Add a reason for failure",
     "tests/series/test_constructors.py::TestSeriesConstructors::test_invalid_dtype": "TODO: Add a reason for failure",
-    "tests/series/test_constructors.py::test_constructor_preserves_byteorder": "TODO: Fails starting with pandas version 3.1.1 (existing dtype promotion, object replacement, or nullable NaN representation limitation, also in 3.0.6)",
     "tests/series/test_constructors.py::test_dict_keys_rangeindex": "AssertionError: Series.index are different",
     "tests/series/test_formats.py::TestSeriesRepr::test_newline[string=object]": "TODO: Add a reason for failure",
     "tests/series/test_formats.py::TestSeriesRepr::test_newline[string=str[pyarrow]]": "TODO: Add a reason for failure",
@@ -3390,7 +3394,6 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-category-None-False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object--False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object-None-False]": "AssertionError: Attributes of Series are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_False_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
@@ -10198,6 +10201,11 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/io/json/test_ujson.py::TestUltraJSONTests::test_loads_non_str_bytes_raises": "Tests private pandas APIs, for example pandas._libs.json.ujson_loads",
     "tests/io/json/test_ujson.py::TestUltraJSONTests::test_to_dict": "Tests private pandas APIs, for example pandas._libs.json.ujson_dumps",
     "tests/io/json/test_ujson.py::TestUltraJSONTests::test_ujson__name__": "Tests private pandas APIs, for example pandas._libs.json",
+    "tests/io/json/test_ujson.py::test_encode_failure_frees_grown_buffer[1j-TypeError]": "Tests private pandas encoder buffer allocation cleanup via pandas._libs._ujson.ujson_dumps",
+    "tests/io/json/test_ujson.py::test_encode_failure_frees_grown_buffer[bad1-OverflowError]": "Tests private pandas encoder buffer allocation cleanup via pandas._libs._ujson.ujson_dumps",
+    "tests/io/json/test_ujson.py::test_indent_past_recursion_max_raises[0]": "Tests private pandas encoder recursion limits via pandas._libs._ujson.ujson_dumps",
+    "tests/io/json/test_ujson.py::test_indent_past_recursion_max_raises[1]": "Tests private pandas encoder recursion limits via pandas._libs._ujson.ujson_dumps",
+    "tests/io/json/test_ujson.py::test_indent_past_recursion_max_raises[2]": "Tests private pandas encoder recursion limits via pandas._libs._ujson.ujson_dumps",
     "tests/io/json/test_ujson.py::test_to_json_bad_label_frees_values": "Tests private pandas APIs, for example the _values_for_json method and BlockManager buffer identity",
     "tests/io/parser/common/test_chunksize.py::test_warn_if_chunks_have_mismatched_type[c_high]": "Tests private pandas APIs, for example pandas._libs.parsers",
     "tests/io/parser/common/test_chunksize.py::test_warn_if_chunks_have_mismatched_type[c_low]": "Tests private pandas APIs, for example pandas._libs.parsers",
@@ -13783,12 +13791,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
 
 # Keep keys in alphabetical order
 NODEIDS_THAT_MAY_FAIL = {
-    "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6); outcome depends on execution order"
-    if PANDAS_GE_31
-    else None,
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6); outcome depends on execution order"
-    if PANDAS_GE_31
-    else None,
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[pyarrow]-False-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[pyarrow]-True-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[python]-False-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
@@ -13813,16 +13815,7 @@ NODEIDS_THAT_MAY_FAIL = {
     "tests/indexes/multi/test_indexing.py::test_getitem_bool_index_single[list]": "TODO: Fails starting with pandas version 3.1.1 (existing MultiIndex boolean indexing or slice representation limitation; outcome depends on execution order)",
     "tests/indexes/multi/test_indexing.py::test_getitem_group_select": "TODO: Fails starting with pandas version 3.1.1 (existing MultiIndex boolean indexing or slice representation limitation; outcome depends on execution order)",
     "tests/indexes/numeric/test_astype.py::TestAstype::test_astype_float64_to_uint64": "TODO: Fails starting with pandas version 3.1.1 (existing uint64 conversion bounds validation limitation; outcome depends on execution order)",
-    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_high]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6); outcome depends on execution order"
-    if PANDAS_GE_31
-    else None,
-    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_low]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6); outcome depends on execution order"
-    if PANDAS_GE_31
-    else None,
     "tests/io/test_spss.py::test_spss_metadata": "pandas 3.0.3 metadata expectation is incompatible with pyreadstat 1.3.6",
-    "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_keys_specific_levels": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6); outcome depends on execution order"
-    if PANDAS_GE_31
-    else None,
     "tests/series/indexing/test_datetime.py::test_indexing_unordered": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",
     "tests/series/indexing/test_getitem.py::TestGetitemDeprecatedIndexers::test_getitem_dict_and_set_deprecated[key0]": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",
     "tests/series/indexing/test_getitem.py::TestGetitemDeprecatedIndexers::test_getitem_dict_and_set_deprecated[key1]": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",

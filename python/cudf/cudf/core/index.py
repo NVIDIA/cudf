@@ -3192,10 +3192,23 @@ class RangeIndex(Index):
         # RangeIndex instead of a materialized Index.
         if not index._column.has_nulls():
             if len(index) > 1:
+                start = int(index[0])
+                step = int(index[1]) - start
+                last = int(index[-1])
+                limits = np.iinfo(np.int64)
+                if not step or not all(
+                    limits.min <= value <= limits.max
+                    for value in (start, step, last)
+                ):
+                    return index
                 uniques = cupy.unique(cupy.diff(index.values))
-                if len(uniques) == 1 and (diff := uniques[0].get()) != 0:
-                    new_range = range(index[0], index[-1] + diff, diff)
-                    return type(self)(new_range, name=index.name)
+                if len(uniques) == 1 and int(uniques[0].get()) == step:
+                    new_range = range(start, last + step, step)
+                    try:
+                        if len(new_range) == len(index):
+                            return type(self)(new_range, name=index.name)
+                    except (OverflowError, ValueError):
+                        pass
             elif index.dtype == np.dtype(np.int64):
                 # 0- and 1-element results are always representable as a
                 # range, but only when int64: a narrower dtype means the
@@ -4650,11 +4663,11 @@ class DatetimeIndex(Index):
         Examples
         --------
         >>> import cudf
-        >>> datetime_index = cudf.date_range("2017-12-30", periods=6, freq='W')
+        >>> datetime_index = cudf.date_range("2017-12-30", periods=6, freq='7D')
         >>> datetime_index
         DatetimeIndex(['2017-12-30', '2018-01-06', '2018-01-13', '2018-01-20',
                     '2018-01-27', '2018-02-03'],
-                      dtype='datetime64[us]', freq='W')
+                      dtype='datetime64[us]', freq='7D')
         >>> datetime_index.month_name()
         Index(['December', 'January', 'January', 'January', 'January', 'February'], dtype='str')
         """
@@ -4708,8 +4721,8 @@ class DatetimeIndex(Index):
                 inferred = result.inferred_freq
             if PANDAS_GE_31:
                 try:
-                    result.freq = self._freq
-                except ValueError:
+                    result.freq = _validate_freq(self._freq)
+                except (TypeError, ValueError):
                     if inferred is not None:
                         result.freq = inferred
             elif inferred is None:

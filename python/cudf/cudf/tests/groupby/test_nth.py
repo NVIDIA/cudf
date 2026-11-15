@@ -72,6 +72,9 @@ def test_groupby_consecutive_operations():
         slice(-2, None),
     ],
 )
+@pytest.mark.filterwarnings(
+    r"ignore:^GroupBy\.nth\[\.\.\.\] is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_nth_selector_indexing(arg):
     # GroupBy.nth mirrors pandas' GroupByNthSelector: it supports both the
     # call form gb.nth(n) and the index form gb.nth[n], acting as a

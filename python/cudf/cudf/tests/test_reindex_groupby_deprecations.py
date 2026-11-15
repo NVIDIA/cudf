@@ -18,6 +18,30 @@ def _call_with_warnings(call):
     return result, [(type(w.message), str(w.message)) for w in caught]
 
 
+@pytest.mark.parametrize("series", [False, True])
+@pytest.mark.parametrize("key", [0, -1, [0, 1], slice(None, 2)])
+def test_groupby_nth_indexer_deprecation(series, key):
+    frame = pd.DataFrame({"a": [1, 1, 2], "b": [1, 2, 3]})
+    expected_group = frame.groupby("a")
+    actual_group = cudf.from_pandas(frame).groupby("a")
+    if series:
+        expected_group = expected_group["b"]
+        actual_group = actual_group["b"]
+    expected, expected_warnings = _call_with_warnings(
+        lambda: expected_group.nth[key]
+    )
+    actual, actual_warnings = _call_with_warnings(
+        lambda: actual_group.nth[key]
+    )
+    assert actual_warnings == expected_warnings
+    assert_eq(actual, expected)
+    called, called_warnings = _call_with_warnings(
+        lambda: actual_group.nth(key)
+    )
+    assert not called_warnings
+    assert_eq(called, expected)
+
+
 @pytest.mark.parametrize("method", ["cummin", "cummax"])
 @pytest.mark.parametrize("series", [False, True])
 @pytest.mark.parametrize(

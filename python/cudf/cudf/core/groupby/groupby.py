@@ -540,7 +540,14 @@ class GroupByNthSelector:
         return self.groupby_object._nth(n, dropna)
 
     def __getitem__(self, n) -> Series | DataFrame:
-        return self.groupby_object._nth(n)
+        result = self.groupby_object._nth(n)
+        # A failed GPU operation falls back to pandas, which emits its own
+        # warning. Emit ours only when the GPU operation succeeds.
+        _warn_pandas_31_deprecation(
+            "GroupBy.nth[...] is deprecated and will be removed in a future "
+            "version of pandas. Use GroupBy.nth(...) instead."
+        )
+        return result
 
 
 class GroupBy(Serializable, Reducible, Scannable):

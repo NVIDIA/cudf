@@ -49,27 +49,6 @@ __device__ errc cudf_all_true(bool* selected)
 
 __device__ errc cudf_all_true_indexed(size_type, bool* selected) { return cudf_all_true(selected); }
 
-__device__ errc cudf_all_true_join_indexed(size_type, size_type, bool* selected)
-{
-  return cudf_all_true(selected);
-}
-
-__device__ errc cudf_all_false(bool* selected)
-{
-  *selected = false;
-  return errc::SUCCESS;
-}
-
-__device__ errc cudf_all_false_indexed(size_type, bool* selected)
-{
-  return cudf_all_false(selected);
-}
-
-__device__ errc cudf_all_false_join_indexed(size_type, size_type, bool* selected)
-{
-  return cudf_all_false(selected);
-}
-
 __global__ void cudf_kernel_entry(jit::reduce::phase phase,
                                   size_type num_rows,
                                   column_device_view_core const* __restrict__ inputs,

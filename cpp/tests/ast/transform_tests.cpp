@@ -22,6 +22,7 @@
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -1710,6 +1711,80 @@ TYPED_TEST(TransformTest, OperatorParityNumericCasts)
       auto expected   = cudf::cast(input, cudf::data_type{type_id});
       auto result     = Executor::compute_column(table, expression);
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+    }
+  }
+}
+
+TYPED_TEST(TransformTest, NumericToDecimalCasts)
+{
+  using Executor = TypeParam;
+  auto const ref = cudf::ast::column_reference{0};
+  auto const casts =
+    std::array{std::pair{cudf::ast::ast_operator::CAST_TO_DECIMAL32, cudf::type_id::DECIMAL32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_DECIMAL64, cudf::type_id::DECIMAL64}};
+
+  for (auto const nullable : {false, true}) {
+    auto values = nullable ? column_wrapper<double>{{0.0, 12.75, -12.75, 127.0}, {1, 1, 1, 0}}
+                           : column_wrapper<double>{0.0, 12.75, -12.75, 127.0};
+    for (auto const source : {cudf::type_id::BOOL8,
+                              cudf::type_id::INT8,
+                              cudf::type_id::INT16,
+                              cudf::type_id::INT32,
+                              cudf::type_id::INT64,
+                              cudf::type_id::UINT8,
+                              cudf::type_id::UINT16,
+                              cudf::type_id::UINT32,
+                              cudf::type_id::UINT64,
+                              cudf::type_id::FLOAT32,
+                              cudf::type_id::FLOAT64}) {
+      // Keep unsigned conversions within their representable range.
+      auto nonnegative = nullable ? column_wrapper<double>{{0.0, 12.75, 23.5, 127.0}, {1, 1, 1, 0}}
+                                  : column_wrapper<double>{0.0, 12.75, 23.5, 127.0};
+      auto const unsigned_input = cudf::is_unsigned(cudf::data_type{source});
+      auto input =
+        cudf::cast(unsigned_input ? cudf::column_view{nonnegative} : cudf::column_view{values},
+                   cudf::data_type{source});
+      for (auto const& [op, target] : casts) {
+        auto expression = cudf::ast::operation{op, ref};
+        auto expected   = cudf::cast(input->view(), cudf::data_type{target, 0});
+        auto result     = Executor::compute_column(cudf::table_view{{input->view()}}, expression);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view(), verbosity);
+
+        // Exercise decimal intermediates, including null propagation and signed values.
+        auto rescale = cudf::ast::operation{
+          cudf::ast::ast_operator::RESCALE, expression, numeric::scale_type{-2}};
+        auto back      = cudf::ast::operation{cudf::ast::ast_operator::CAST_TO_FLOAT64, rescale};
+        auto roundtrip = cudf::cast(expected->view(), cudf::data_type{cudf::type_id::FLOAT64});
+        auto actual    = Executor::compute_column(cudf::table_view{{input->view()}}, back);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(roundtrip->view(), actual->view(), verbosity);
+      }
+    }
+  }
+}
+
+TYPED_TEST(TransformTest, DecimalToNumericCasts)
+{
+  using Executor = TypeParam;
+  auto const ref = cudf::ast::column_reference{0};
+  auto const casts =
+    std::array{std::pair{cudf::ast::ast_operator::CAST_TO_INT64, cudf::type_id::INT64},
+               std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT32, cudf::type_id::FLOAT32},
+               std::pair{cudf::ast::ast_operator::CAST_TO_FLOAT64, cudf::type_id::FLOAT64}};
+  for (auto const nullable : {false, true}) {
+    for (auto const scale : {-2, 0, 2}) {
+      auto values = nullable ? cudf::test::fixed_point_column_wrapper<int64_t>(
+                                 {1275, -1275, 0, 4567}, {1, 1, 1, 0}, numeric::scale_type{scale})
+                             : cudf::test::fixed_point_column_wrapper<int64_t>(
+                                 {1275, -1275, 0, 4567}, numeric::scale_type{scale});
+      for (auto const source : {cudf::type_id::DECIMAL32, cudf::type_id::DECIMAL64}) {
+        auto input = cudf::cast(values, cudf::data_type{source, scale});
+        for (auto const& [op, target] : casts) {
+          auto expression = cudf::ast::operation{op, ref};
+          auto expected   = cudf::cast(input->view(), cudf::data_type{target});
+          auto actual     = Executor::compute_column(cudf::table_view{{input->view()}}, expression);
+          CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), actual->view(), verbosity);
+        }
+      }
     }
   }
 }

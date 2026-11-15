@@ -565,6 +565,12 @@ def test_sum_duration_unsupported(engine: pl.GPUEngine):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_mean_duration_unsupported(in_memory_engine: pl.GPUEngine, time_unit):
+    df = pl.LazyFrame({"a": pl.Series([1, 2, 3, 4], dtype=pl.Duration(time_unit))})
+    q = df.select(pl.col("a").mean())
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 @pytest.mark.parametrize(
     "op", [pl.Expr.min, pl.Expr.nan_min, pl.Expr.max, pl.Expr.nan_max]
 )
@@ -747,6 +753,17 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     df = pl.LazyFrame({"a": [date(2025, 1, 1), date(2025, 1, 2), date(2025, 1, 3)]})
     q = df.select(expr)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+def test_temporal_mean_not_supported(in_memory_engine: pl.GPUEngine, dtype):
+    df = pl.LazyFrame(
+        {"a": pl.Series([date(2025, 1, 1), date(2025, 1, 4), None]).cast(dtype)}
+    )
+    q = df.select(pl.col("a").mean())
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("set_sorted", [False, True])

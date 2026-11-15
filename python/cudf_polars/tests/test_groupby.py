@@ -856,6 +856,17 @@ def test_groupby_mean_type_promotion(engine: pl.GPUEngine, df: pl.LazyFrame) -> 
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+@pytest.mark.parametrize(
+    "dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+def test_groupby_temporal_mean_unsupported(
+    in_memory_engine: pl.GPUEngine, df: pl.LazyFrame, dtype: pl.DataType
+) -> None:
+    q = df.group_by("key1").agg(pl.col("datetime").cast(dtype).mean())
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame(
         {

@@ -170,6 +170,13 @@ class Agg(Expr):
         elif name == "implode":
             req = plc.aggregation.collect_list(plc.types.NullPolicy.INCLUDE)
         elif name == "mean":
+            (child,) = self.children
+            if plc.traits.is_timestamp(child.dtype.plc_type):
+                raise NotImplementedError("Mean with temporal data types")
+            if context == ExecutionContext.FRAME and plc.traits.is_duration(
+                child.dtype.plc_type
+            ):
+                raise NotImplementedError("Mean reduction of duration data type")
             req = plc.aggregation.mean()
         elif name == "sum":
             if context == ExecutionContext.FRAME and plc.traits.is_duration(

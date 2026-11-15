@@ -631,8 +631,6 @@ endfunction()
 precompile_fixed_width_kernel_fragments()
 precompile_string_kernel_fragments()
 
-add_fragment(cudf_fragments FRAGMENT cudf_builtins SOURCE src/jit/cudf_builtins.cu)
-
 rtcx_embed(cudf_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
 # ##################################################################################################

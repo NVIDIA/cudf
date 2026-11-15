@@ -34,7 +34,6 @@
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
 
-#include <cudf_fragments.hpp>
 #include <rtcx/rtcx.hpp>
 
 #include <algorithm>
@@ -454,8 +453,7 @@ kernel get_kernel(kernel_reflection const& spec, reduce_udf const& udf, std::str
   auto dispatch = compile_udf_dispatcher(callbacks);
 
   std::vector<rtcx::memory_fragment> fragments{
-    {object->view(), rtcx::binary_type::LTO_IR, nullptr},
-    {cudf_fragments::get(cudf_fragments::cudf_builtins), rtcx::binary_type::FATBIN, nullptr}};
+    {object->view(), rtcx::binary_type::LTO_IR, nullptr}};
 
   if (dispatch.has_value()) {
     fragments.push_back({dispatch.value()->view(), rtcx::binary_type::LTO_IR, nullptr});

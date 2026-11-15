@@ -34,6 +34,7 @@
 #include <cuda/std/optional>
 #include <cuda/std/tuple>
 
+#include <cudf_fragments.hpp>
 #include <rtcx/rtcx.hpp>
 
 #include <algorithm>
@@ -42,6 +43,7 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -68,15 +70,6 @@ constexpr size_t max_shuffle_state_bytes = 512;
 
 constexpr int32_t single_block_rows_per_thread = 16;
 
-constexpr char const* scalar_kernel_id = "cudf/cpp/src/reductions/jit/reduce_kernel.cu";
-
-constexpr char const* udf_dispatcher_path = "cudf/cpp/src/jit/udf_dispatch.cu";
-
-constexpr char const* udf_dispatch_header    = "cudf/detail/udf_dispatch.cuh";
-constexpr char const* kernel_instance_header = "cudf/detail/kernel_instance.cuh";
-
-constexpr char const* scalar_kernel_name = "::cudf::jit::reduce_kernel";
-
 struct reduction_launch_config {
   int32_t block_size = default_block_size;
   size_t state_bytes = 0;
@@ -99,8 +92,9 @@ struct kernel_reflection {
 
 struct callback_reflection {
   std::string_view target{};
-  std::string_view parameters_macro{};
+  std::string_view type_macro{};
   std::vector<std::string> parameters{};
+  std::string signature{};
   std::string symbol{};
 };
 
@@ -315,38 +309,26 @@ std::string reflect_kernel_instance(std::string_view name,
 std::string reflect_reduce_kernel(kernel_reflection const& spec, bool optional_values)
 {
   return reflect_kernel_instance(
-    scalar_kernel_name, spec, optional_values, rtcx::reflect(spec.warp_reduce), spec.state);
-}
-
-std::vector<std::string> reflect_pointer_parameters(std::span<std::string const> types)
-{
-  std::vector<std::string> result;
-  for (auto& type : types) {
-    result.push_back(type + "*");
-  }
-  return result;
-}
-
-std::vector<std::string> reflect_callback_parameters(bool indexed,
-                                                     std::span<std::string const> first,
-                                                     std::span<std::string const> second)
-{
-  std::vector<std::string> result;
-  if (indexed) { result.push_back("cudf::size_type"); }
-  result.insert(result.end(), first.begin(), first.end());
-  result.insert(result.end(), second.begin(), second.end());
-  return result;
+    "cudf::jit::reduce_kernel", spec, optional_values, rtcx::reflect(spec.warp_reduce), spec.state);
 }
 
 callback_reflection reflect_callback(std::string_view target,
-                                     std::string_view parameters_macro,
-                                     std::vector<std::string> parameters,
+                                     std::string_view type_macro,
+                                     bool indexed,
+                                     std::ranges::input_range auto&& first,
+                                     std::span<std::string const> second,
                                      std::string_view symbol)
 {
-  return {.target           = target,
-          .parameters_macro = parameters_macro,
-          .parameters       = std::move(parameters),
-          .symbol           = std::string{symbol}};
+  std::vector<std::string> parameters;
+  if (indexed) { parameters.push_back("cudf::size_type"); }
+  std::ranges::copy(first, std::back_inserter(parameters));
+  parameters.insert(parameters.end(), second.begin(), second.end());
+  auto signature = std::format("cudf::errc({})", detail::string_join(parameters, {}, ", "));
+  return {.target     = target,
+          .type_macro = type_macro,
+          .parameters = std::move(parameters),
+          .signature  = std::move(signature),
+          .symbol     = std::string{symbol}};
 }
 
 std::vector<callback_reflection> reflect_callbacks(std::span<std::string const> input_types,
@@ -355,29 +337,39 @@ std::vector<callback_reflection> reflect_callbacks(std::span<std::string const> 
                                                    std::span<std::string const> state_types,
                                                    reduce_udf const& udf)
 {
-  auto outputs        = reflect_pointer_parameters(output_types);
-  auto state_pointers = reflect_pointer_parameters(state_types);
+  auto pointer_type   = [](auto const& type) { return type + "*"; };
+  auto outputs        = output_types | std::views::transform(pointer_type);
+  auto state_pointers = state_types | std::views::transform(pointer_type);
   std::string const filter_outputs[]{"bool*"};
 
-  return {
-    reflect_callback("cudf_reduce_init", "CUDF_REDUCE_INIT_UDF_PARAMS", state_pointers, udf.init),
-    reflect_callback("cudf_reduce_update",
-                     "CUDF_REDUCE_UPDATE_UDF_PARAMS",
-                     reflect_callback_parameters(udf.indexed_update, state_pointers, input_types),
-                     udf.update),
-    reflect_callback("cudf_reduce_merge",
-                     "CUDF_REDUCE_MERGE_UDF_PARAMS",
-                     reflect_callback_parameters(false, state_pointers, state_types),
-                     udf.merge),
-    reflect_callback("cudf_reduce_finalize",
-                     "CUDF_REDUCE_FINALIZE_UDF_PARAMS",
-                     reflect_callback_parameters(false, outputs, state_types),
-                     udf.finalize),
-    reflect_callback(
-      "cudf_reduce_filter",
-      "CUDF_REDUCE_FILTER_UDF_PARAMS",
-      reflect_callback_parameters(udf.indexed_filter, filter_outputs, filter_input_types),
-      udf.filter.empty() ? "cudf_all_true" : udf.filter)};
+  return {reflect_callback(
+            "cudf_reduce_init", "CUDF_REDUCE_INIT_UDF_TYPE", false, state_pointers, {}, udf.init),
+          reflect_callback("cudf_reduce_update",
+                           "CUDF_REDUCE_UPDATE_UDF_TYPE",
+                           udf.indexed_update,
+                           state_pointers,
+                           input_types,
+                           udf.update),
+          reflect_callback("cudf_reduce_merge",
+                           "CUDF_REDUCE_MERGE_UDF_TYPE",
+                           false,
+                           state_pointers,
+                           state_types,
+                           udf.merge),
+          reflect_callback("cudf_reduce_finalize",
+                           "CUDF_REDUCE_FINALIZE_UDF_TYPE",
+                           false,
+                           outputs,
+                           state_types,
+                           udf.finalize),
+          reflect_callback("cudf_reduce_filter",
+                           "CUDF_REDUCE_FILTER_UDF_TYPE",
+                           udf.indexed_filter,
+                           filter_outputs,
+                           filter_input_types,
+                           udf.filter.empty()
+                             ? (udf.indexed_filter ? "cudf_all_true_indexed" : "cudf_all_true")
+                             : udf.filter)};
 }
 
 std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection const> callbacks)
@@ -399,13 +391,11 @@ std::optional<rtcx::blob> compile_udf_dispatcher(std::span<callback_reflection c
       indices, [&](size_t i) { return std::format("{} arg{}", callback.parameters[i], i); }, ", ");
     auto arguments =
       detail::string_join(indices, [](size_t i) { return std::format("arg{}", i); }, ", ");
-    if (callback.symbol != "cudf_all_true") {
-      source += std::format(R"CUDA(
+    source += std::format(R"CUDA(
 extern "C" __device__ cudf::errc {}({});
 )CUDA",
-                            callback.symbol,
-                            parameter_types);
-    }
+                          callback.symbol,
+                          parameter_types);
     source += std::format(R"CUDA(
 extern "C" __device__ cudf::errc {}({})
 {{
@@ -418,26 +408,27 @@ extern "C" __device__ cudf::errc {}({})
                           arguments);
   }
 
-  char const* const names[]{udf_dispatch_header};
+  char const* const names[]{"cudf/detail/udf_dispatch.cuh"};
   char const* const headers[]{source.c_str()};
 
-  return get_kernel_fragment(udf_dispatcher_path, udf_dispatcher_path, names, headers, "");
+  return get_kernel_fragment(
+    "cudf/cpp/src/jit/udf_abi.cu", "cudf/cpp/src/jit/udf_abi.cu", names, headers, "");
 }
 
-kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string const& instance)
+kernel get_kernel(kernel_reflection const& spec, reduce_udf const& udf, std::string const& instance)
 {
+  CUDF_FUNC_RANGE();
+
   auto callbacks = reflect_callbacks(
     spec.input_types, spec.filter_input_types, spec.output_types, spec.state_types, udf);
 
   // The kernel depends only on canonical physical types and fixed callback entry points.
   // Symbol forwarding is compiled separately; user-supplied UDF fragments are linked unchanged.
 
-  auto parameter_defines = detail::string_join(
+  auto type_defines = detail::string_join(
     callbacks,
     [](callback_reflection const& callback) {
-      return std::format("#define {} {}",
-                         callback.parameters_macro,
-                         detail::string_join(callback.parameters, {}, ", "));
+      return std::format("#define {} {}", callback.type_macro, callback.signature);
     },
     "\n");
 
@@ -450,20 +441,21 @@ kernel compile(kernel_reflection const& spec, reduce_udf const& udf, std::string
 #define CUDF_KERNEL_INSTANCE {}
   )CUDA",
     spec.state,
-    parameter_defines,
+    type_defines,
     udf.indexed_update,
     udf.indexed_filter,
     instance);
 
-  char const* const names[]{kernel_instance_header};
+  char const* const names[]{"cudf/detail/kernel_instance.cuh"};
   char const* const headers[]{source.c_str()};
 
-  std::string const path{scalar_kernel_id};
+  std::string const path{"cudf/cpp/src/reductions/jit/reduce_kernel.cu"};
   auto object   = get_kernel_fragment(path, path, names, headers, instance);
   auto dispatch = compile_udf_dispatcher(callbacks);
 
   std::vector<rtcx::memory_fragment> fragments{
-    {object->view(), rtcx::binary_type::LTO_IR, nullptr}};
+    {object->view(), rtcx::binary_type::LTO_IR, nullptr},
+    {cudf_fragments::get(cudf_fragments::cudf_builtins), rtcx::binary_type::FATBIN, nullptr}};
 
   if (dispatch.has_value()) {
     fragments.push_back({dispatch.value()->view(), rtcx::binary_type::LTO_IR, nullptr});
@@ -762,7 +754,7 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
   auto spec            = reflect_kernel(inputs, filter_inputs, state_types, types, optional_values);
   auto rows            = shape.rows.value_or(0);
   auto instance        = reflect_reduce_kernel(spec, optional_values);
-  auto compiled        = compile(spec, udf, instance);
+  auto compiled        = get_kernel(spec, udf, instance);
 
   scope_t scope(inputs, filter_inputs, types, 1, optional_values, is_fallible, stream, mr);
 

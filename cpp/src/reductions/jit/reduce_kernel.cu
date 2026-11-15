@@ -17,42 +17,29 @@
 #include <cudf/detail/kernel_instance.cuh>
 // clang-format on
 
-#ifndef CUDF_REDUCE_INIT_UDF_PARAMS
-#define CUDF_REDUCE_INIT_UDF_PARAMS
-#endif
-
-#ifndef CUDF_REDUCE_FILTER_UDF_PARAMS
-#define CUDF_REDUCE_FILTER_UDF_PARAMS
-#endif
-
-#ifndef CUDF_REDUCE_UPDATE_UDF_PARAMS
-#define CUDF_REDUCE_UPDATE_UDF_PARAMS
-#endif
-
-#ifndef CUDF_REDUCE_MERGE_UDF_PARAMS
-#define CUDF_REDUCE_MERGE_UDF_PARAMS
-#endif
-
-#ifndef CUDF_REDUCE_FINALIZE_UDF_PARAMS
-#define CUDF_REDUCE_FINALIZE_UDF_PARAMS
-#endif
-
-#ifndef CUDF_DISPATCH_REDUCE_STATE
-#define CUDF_DISPATCH_REDUCE_STATE ::cudf::jit::reduce::state<>
-#endif
-
 namespace cudf {
 
 extern "C" {
-__device__ errc cudf_reduce_init(CUDF_REDUCE_INIT_UDF_PARAMS);
 
-__device__ errc cudf_reduce_filter(CUDF_REDUCE_FILTER_UDF_PARAMS);
+using reduce_init_udf_type = CUDF_REDUCE_INIT_UDF_TYPE;
 
-__device__ errc cudf_reduce_update(CUDF_REDUCE_UPDATE_UDF_PARAMS);
+__device__ reduce_init_udf_type cudf_reduce_init;
 
-__device__ errc cudf_reduce_merge(CUDF_REDUCE_MERGE_UDF_PARAMS);
+using reduce_filter_udf_type = CUDF_REDUCE_FILTER_UDF_TYPE;
 
-__device__ errc cudf_reduce_finalize(CUDF_REDUCE_FINALIZE_UDF_PARAMS);
+__device__ reduce_filter_udf_type cudf_reduce_filter;
+
+using reduce_update_udf_type = CUDF_REDUCE_UPDATE_UDF_TYPE;
+
+__device__ reduce_update_udf_type cudf_reduce_update;
+
+using reduce_merge_udf_type = CUDF_REDUCE_MERGE_UDF_TYPE;
+
+__device__ reduce_merge_udf_type cudf_reduce_merge;
+
+using reduce_finalize_udf_type = CUDF_REDUCE_FINALIZE_UDF_TYPE;
+
+__device__ reduce_finalize_udf_type cudf_reduce_finalize;
 
 __global__ void cudf_kernel_entry(jit::reduce::phase phase,
                                   size_type num_rows,

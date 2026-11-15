@@ -297,10 +297,10 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * | finalize | output pointers..., state values... |
  *
  * Initialize every independent state to its identity. Merge must be associative and preserve
- * that identity; update/merge order is unspecified. An empty filter symbol uses the built-in
- * `cudf_all_true` predicate and requires an empty filter-input list.
- * A false selection skips update. Row indices use `cudf::size_type` and are passed only when
- * `indexed_filter` or `indexed_update` is true for the corresponding callback.
+ * that identity; update/merge order is unspecified. An empty filter symbol makes all rows pass and
+ * requires an empty filter-input list. A false selection skips update. Row indices use
+ * `cudf::size_type` and are passed only when `indexed_filter` or `indexed_update` is true for the
+ * corresponding callback.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
  * State and outputs support fixed-width types and strings.

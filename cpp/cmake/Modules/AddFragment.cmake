@@ -28,20 +28,17 @@ macro(add_fragment)
     message(FATAL_ERROR "add_fragment requires SOURCE argument")
   endif()
 
-  set(FRAGMENT_COMPILE_OPTIONS --compress-mode=size)
-
   if(ARG_PTX)
     set(FRAGMENT_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}-virtual)
     set(FRAGMENT_IPO OFF)
   else()
     set(FRAGMENT_ARCHITECTURES ${CUDF_LTO_ARCHITECTURE}-real)
     set(FRAGMENT_IPO ON)
-    list(APPEND FRAGMENT_COMPILE_OPTIONS --gen-opt-lto)
   endif()
 
   set(OBJECT_ID ${TARGET}_${ARG_FRAGMENT})
   add_library(${OBJECT_ID} OBJECT ${ARG_SOURCE})
-  target_compile_options(${OBJECT_ID} PRIVATE ${FRAGMENT_COMPILE_OPTIONS})
+  target_compile_options(${OBJECT_ID} PRIVATE --compress-mode=size)
 
   if(DEFINED ARG_KERNEL_ONLY AND ARG_KERNEL_ONLY)
     # ensure that the FATBIN symbols only contain the specified kernel

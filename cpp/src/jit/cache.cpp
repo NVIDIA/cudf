@@ -335,7 +335,6 @@ std::vector<std::string> make_lto_compile_options(char const* name,
   options.emplace_back("--generate-line-info");
   options.emplace_back("--dopt=on");
   options.emplace_back("--dlink-time-opt");
-  options.emplace_back("--gen-opt-lto");
 
   if (use_minimal) { options.emplace_back("--minimal"); }
 

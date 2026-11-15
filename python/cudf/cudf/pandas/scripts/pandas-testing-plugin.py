@@ -3426,9 +3426,7 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-category-None-False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object--False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object-None-False]": "AssertionError: Attributes of Series are different",
-    "tests/strings/test_extract.py::test_extract_end_of_string[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing object string extraction collapses unmatched NaN results to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_extract.py::test_extract_end_of_string[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing object string extraction collapses unmatched NaN results to None, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_extract.py::test_extract_expand_False_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
@@ -3461,43 +3459,21 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint64-string=object]": "AssertionError: DataFrame.iloc[:, 1] (column name='number') are different",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=object]": "AssertionError: DataFrame.iloc[:, 1] (column name='number') are different",
     "tests/strings/test_extract.py::test_extract_expand_kwarg[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_extract.py::test_extract_lookarounds[string=object-(ab)-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string extraction collapses unmatched NaN results to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_extract.py::test_extract_lookarounds[string=object-(ab)-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string extraction collapses unmatched NaN results to None, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_extract.py::test_extract_series[string=object-None]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_series[string=object-series_name]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extractall_column_names[string=object-(?P<letter>[AB])?(?P<number>[123])-expected_names0]": "AssertionError: DataFrame.iloc[:, 0] (column name='letter') are different",
     "tests/strings/test_extract.py::test_extractall_column_names[string=object-([AB])?(?P<number>[123])-expected_names1]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-_NoDefault.no_default-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string predicates lose object dtype or the explicit pandas.NA missing marker, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string predicates lose object dtype or the explicit pandas.NA missing marker, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[pyarrow]-None-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[pyarrow]-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-None-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_endswith[False-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_endswith[False-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_endswith[True-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_endswith[True-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-_NoDefault.no_default-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string predicates lose object dtype or the explicit pandas.NA missing marker, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=object-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object string predicates lose object dtype or the explicit pandas.NA missing marker, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[pyarrow]-None-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[pyarrow]-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-None-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_contains_lookarounds[string=str[python]-na5-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing NaNString predicate overrides produce nullable object results instead of bool, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_endswith[False-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_endswith[False-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_endswith[True-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_endswith[True-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_find_replace.py::test_find[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
@@ -3515,33 +3491,15 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_find_replace.py::test_find_nan[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
-    "tests/strings/test_find_replace.py::test_findall[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall_end_of_string[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=str[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=str[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=string[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=string[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_find_replace.py::test_findall[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall_end_of_string[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=str[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=str[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=string[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string findall returns Arrow list dtype instead of pandas object, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_findall_lookarounds[string=string[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing string findall list results collapse pandas.NA or NaN missing markers to None, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_find_replace.py::test_match_lookarounds[string=object-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object-string match result uses bool instead of object dtype, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
@@ -3554,24 +3512,12 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_find_replace.py::test_pyarrow_backend_group_replacement[\\\\[(\\\\d+)\\\\]-(\\\\1)-expected_list1]": "TODO: Fails starting with pandas version 3.1.1 (existing regex replacement backreference interpretation, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
-    "tests/strings/test_find_replace.py::test_startswith[False-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_startswith[False-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_startswith[True-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_find_replace.py::test_startswith[True-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_get_bounds[-3]": "TODO: Fails starting with pandas version 3.1.1 (existing list-string get returns str rather than object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_get_bounds[2]": "TODO: Fails starting with pandas version 3.1.1 (existing list-string get returns str rather than object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_find_replace.py::test_startswith[False-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_startswith[False-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_startswith[True-None-object-foo]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_startswith[True-None-object-pat1]": "TODO: Fails starting with pandas version 3.1.1 (existing object string prefix or suffix predicates return bool instead of preserving object missing results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_get_bounds[-3]": "TODO: Fails starting with pandas version 3.1.1 (existing list-string get returns str rather than object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_get_bounds[2]": "TODO: Fails starting with pandas version 3.1.1 (existing list-string get returns str rather than object dtype, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_split_partition.py::test_partition_empty_sep[string=object-True-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing expanded partition/rpartition does not reject an empty separator, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
@@ -3630,196 +3576,70 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_split_partition.py::test_partition_to_dataframe_all_na[string=string[python]-rpartition]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null partition expansion returns three columns rather than one, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
-    "tests/strings/test_split_partition.py::test_rsplit[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_rsplit_to_multiindex_expand_no_split": "TODO: Fails starting with pandas version 3.1.1 (existing expanded no-split Index rsplit returns a one-level MultiIndex rather than Index, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split[string=string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split[string=string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=string[pyarrow]-split]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=string[python]-split]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_n[string=str[pyarrow]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_n[string=str[python]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_n[string=string[pyarrow]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_split_partition.py::test_split_n[string=string[python]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_split_partition.py::test_rsplit[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit_max_number[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_rsplit_to_multiindex_expand_no_split": "TODO: Fails starting with pandas version 3.1.1 (existing expanded no-split Index rsplit returns a one-level MultiIndex rather than Index, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split[string=string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split[string=string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=string[pyarrow]-split]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_category_returns_list_not_string[string=string[python]-split]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical split returns None instead of pandas NA/NaN missing-list sentinel, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=str[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=str[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_more_than_one_char[string=string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_n[string=str[pyarrow]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_n[string=str[python]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_n[string=string[pyarrow]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_split_n[string=string[python]-0-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_split_partition.py::test_split_nan_expand[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-count]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-find]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string find result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-findall]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string findall result dtype list<item: string>[pyarrow] instead of pandas object (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isalnum]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalnum result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isalpha]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalpha result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdecimal]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdecimal result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdigit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdigit result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-islower]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string islower result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isnumeric]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isnumeric result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isspace]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isspace result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-istitle]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string istitle result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isupper]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isupper result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-len]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string len result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-rfind]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string rfind result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[python]-count]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype Int32 instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[python]-findall]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string findall missing-list sentinel None instead of pandas NA (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[python]-len]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string len result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array[string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isalnum-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalnum result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isalpha-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalpha result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isdigit-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdigit result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isnumeric-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isnumeric result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_extract[string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string extract/object-conversion missing-value representation mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_extract[string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string extract/object-conversion missing-value representation mismatch, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[pyarrow]-count-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[pyarrow]-find-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string find result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[python]-count-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype Int32 instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-count]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-endswith4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string endswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-find]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string find result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-findall]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string findall result dtype list<item: string>[pyarrow] instead of pandas object (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isalnum]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalnum result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isalpha]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalpha result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdecimal]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdecimal result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isdigit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdigit result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-islower]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string islower result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isnumeric]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isnumeric result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isspace]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isspace result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-istitle]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string istitle result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-isupper]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isupper result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-len]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string len result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-rfind]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string rfind result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable Arrow-string split/rsplit returns Arrow list dtype instead of pandas object dtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[pyarrow]-startswith3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string startswith result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[python]-count]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype Int32 instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[python]-findall]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string findall missing-list sentinel None instead of pandas NA (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[python]-len]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string len result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array[string[python]-rsplit]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string split/rsplit list missing-value sentinel mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isalnum-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalnum result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isalpha-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isalpha result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isdigit-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isdigit result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_boolean_array[string[pyarrow]-isnumeric-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string isnumeric result dtype bool[pyarrow] instead of pandas boolean (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_extract[string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string extract/object-conversion missing-value representation mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_extract[string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string extract/object-conversion missing-value representation mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[pyarrow]-count-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype int32[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[pyarrow]-find-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string find result dtype int64[pyarrow] instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_string_array.py::test_string_array_numeric_integer_array[string[python]-count-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-string count result dtype Int32 instead of pandas Int64 (also unchanged main/pandas3.0.6), also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_strings.py::test_count_compiled_pattern_with_flags[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
@@ -3850,27 +3670,13 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_strings.py::test_count_end_of_line[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
-    "tests/strings/test_strings.py::test_count_end_of_string[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_end_of_string[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_end_of_string[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_end_of_string[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_end_of_string[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_lookarounds[string=string[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_count_lookarounds[string=string[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_strings.py::test_count_end_of_string[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_end_of_string[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_end_of_string[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_end_of_string[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_end_of_string[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_lookarounds[string=string[pyarrow]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_count_lookarounds[string=string[python]-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_strings.py::test_count_unicode_regex_classes[string=object-\\\\b-expected_data3]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
@@ -3931,127 +3737,47 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_strings.py::test_count_unicode_regex_classes[string=string[python]-\\\\w-expected_data0]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU string count result uses 32-bit integers instead of pandas 64-bit results, also on unchanged main with pandas 3.0.6)"
     if PANDAS_GE_31
     else None,
-    "tests/strings/test_strings.py::test_empty_str_methods[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_empty_str_methods[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_empty_str_methods[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_empty_str_methods[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-index-E-4-8-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-index-EF-3-None-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-rindex-E-0-5-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-rindex-EF-3-None-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[python]-index-E-4-8-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[python]-index-EF-3-None-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[python]-rindex-E-0-5-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_index[series-string=string[python]-rindex-EF-3-None-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_strings.py::test_empty_str_methods[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_empty_str_methods[string=str[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_empty_str_methods[string=str[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_empty_str_methods[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing empty string method output dtypes differ from pandas, for example count returns int32 instead of int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-index-E-4-8-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-index-EF-3-None-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-rindex-E-0-5-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[pyarrow]-rindex-EF-3-None-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[python]-index-E-4-8-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[python]-index-EF-3-None-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[python]-rindex-E-0-5-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_index[series-string=string[python]-rindex-EF-3-None-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string index/rindex returns NumPy int64 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_strings.py::test_index_str_accessor_multiindex_raises": "TODO: Add a reason for failure",
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalnum-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalpha-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isdigit-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-islower-expected6]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isnumeric-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isspace-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-istitle-expected8]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isupper-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode[string=str[pyarrow]-isdigit-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isdecimal-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isdigit-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isnumeric-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isdecimal-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isnumeric-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_len[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string length returns Arrow int32 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_len[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string length returns Arrow int32 instead of pandas Int64, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)"
-    if PANDAS_GE_31
-    else None,
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalnum-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isalpha-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isdigit-expected3]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-islower-expected6]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isnumeric-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isspace-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-istitle-expected8]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_ismethods[string=string[pyarrow]-isupper-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode[string=str[pyarrow]-isdigit-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isdecimal-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isdigit-expected2]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode[string=string[pyarrow]-isnumeric-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isdecimal-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isnumeric-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string predicates return Arrow bool instead of pandas BooleanDtype, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_len[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string length returns Arrow int32 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_len[string=string[python]]": "TODO: Fails starting with pandas version 3.1.1 (existing nullable string length returns Arrow int32 instead of pandas Int64, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--10-3-z-expected7]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_strings.py::test_slice_replace[string=string[python]-None--2-z-expected5]": "TODO: Fails starting with pandas version 3.1.1 (existing GPU slice_replace does not normalize negative bounds like pandas, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_strings.py::test_string_slice_out_of_bounds[string=object]": "AssertionError: Series are different",
     "tests/test_algos.py::TestFactorize::test_int_factorize_use_na_sentinel_false[data0-expected_codes0-expected_uniques0]": "cudf cannot represent an object column of Python ints with NaN; the uniques come back float64",
     "tests/test_algos.py::TestIsin::test_isin_int64_vs_out_of_range_uint64_targets": "TODO: Fails starting with pandas version 3.1.1 (existing signed versus unsigned membership precision loss, also in 3.0.6)",

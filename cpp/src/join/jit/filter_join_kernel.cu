@@ -12,25 +12,38 @@
 #include <join/jit/filter_join_kernel.cuh>
 
 #pragma nv_hdrstop  // The above headers are used by the kernel below and need to be included before
-                    // it. Each UDF will have a different operation_udf.cuh generated for it, so we
-                    // need to put this pragma before including it to avoid PCH mismatch.
+                    // this pragma. Each kernel instance will have a different `kernel_instance.cuh`
+                    // thus we need to have this pragma before including it to avoid type mismatches
+                    // in the PCH cache.
 
 // clang-format off
-// These headers select the kernel instance and declare the UDF signature.
 #include <cudf/detail/kernel_instance.cuh>
-#include <cudf/detail/operation_udf.cuh>
 // clang-format on
 
-using transform_type = CUDF_UDF_TYPE;
-extern "C" __device__ transform_type cudf_transform_udf;
+namespace cudf {
 
-extern "C" __global__ void cudf_kernel_entry(
-  cudf::size_type num_rows,
-  cudf::size_type const* __restrict__ left_indices,
-  cudf::size_type const* __restrict__ right_indices,
-  cudf::column_device_view_core const* __restrict__ columns,
-  bool* __restrict__ predicate_results,
-  int32_t* __restrict__ max_error)
+extern "C" {
+
+using transform_udf_type = CUDF_TRANSFORM_UDF_TYPE;
+
+/// @brief The user-defined function entry point for the kernel.
+/// This is the C-ABI symbol that will be used as a stable identifier for the UDF.
+/// This allows re-using the same kernel across different UDFs with different names without
+/// recompiling the kernel.
+__device__ transform_udf_type cudf_transform_udf;
+
+/// @brief The entry point for the kernel.
+/// This is the C-ABI function that will be used to retrieve the `CuFunction` for the kernel from
+/// the compiled module. This workaround is necessary because tracking the scope-dependent C++
+/// mangled name of the kernel is complex and error-prone without compiler support. We use
+/// this fixed C-ABI symbol to reference the kernel and retrieve the `CuFunction` handle of the
+/// kernel.
+__global__ void cudf_kernel_entry(size_type num_rows,
+                                  size_type const* __restrict__ left_indices,
+                                  size_type const* __restrict__ right_indices,
+                                  column_device_view_core const* __restrict__ columns,
+                                  bool* __restrict__ predicate_results,
+                                  int32_t* __restrict__ max_error)
 {
   CUDF_KERNEL_INSTANCE(num_rows,
                        left_indices,
@@ -38,11 +51,14 @@ extern "C" __global__ void cudf_kernel_entry(
                        columns,
                        predicate_results,
                        max_error,
-                       [](cudf::size_type left_index, cudf::size_type right_index, auto... args) {
-#if CUDF_UDF_INDEXED
+                       [](size_type left_index, size_type right_index, auto... args) {
+#if CUDF_TRANSFORM_UDF_INDEXED
                          return cudf_transform_udf(left_index, right_index, args...);
 #else
       return cudf_transform_udf(args...);
 #endif
                        });
 }
+}
+
+}  // namespace cudf

@@ -111,10 +111,10 @@ std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
     "cudf::detail::transform_kernel", rtcx::reflect(is_null_aware), ins, outs);
   auto signature =
     jit::reflect_udf_signature(is_null_aware, inputs, outputs, true, indexed ? 1 : 0);
-  return {
-    jit::get_udf_kernel_fragment("cudf/cpp/src/transform/jit/kernel.cu", name, signature, indexed),
-    lto_binary_type::LTO_IR,
-    name};
+  return {jit::get_udf_kernel_fragment(
+            "cudf/cpp/src/transform/jit/transform_kernel.cu", name, signature, indexed),
+          lto_binary_type::LTO_IR,
+          name};
 }
 
 auto to_args(std::span<input_column_view const> inputs,
@@ -189,7 +189,7 @@ kernel get_linked_kernel(
     modules.push_back(
       {.data = fragment.data, .type = jit::as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
-  return get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, modules);
+  return get_lto_linked_kernel("cudf/cpp/src/transform/jit/transform_kernel.cu", {}, modules);
 }
 
 void run(kernel const& kernel,

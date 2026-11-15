@@ -122,6 +122,7 @@ struct [[nodiscard]] compiled_fragment {
  * When PCH is enabled, headers used to build it must remain unchanged while it may be reused.
  * Place changing headers after `#pragma nv_hdrstop` or disable PCH.
  * Source filenames do not isolate PCH reuse: NVRTC may reuse a compatible PCH across filenames.
+ * We recommend using PCH whenever possible to improve compilation performance.
  *
  * @param source_code Null-terminated CUDA source
  * @param include_names Null-terminated names of additional in-memory headers

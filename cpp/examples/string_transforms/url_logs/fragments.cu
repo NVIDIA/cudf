@@ -150,14 +150,16 @@ __device__ bool parse_url(cudf::string_view input, url_ranges* out)
   return true;
 }
 
+extern "C" {
+
 // Computes exact output byte counts for the six URL component columns.
-extern "C" __device__ cudf::errc compute_url_component_sizes(int32_t* protocol_size,
-                                                             int32_t* host_size,
-                                                             int32_t* port_size,
-                                                             int32_t* path_size,
-                                                             int32_t* query_size,
-                                                             int32_t* fragment_size,
-                                                             cudf::string_view input)
+__device__ cudf::errc compute_url_component_sizes(int32_t* protocol_size,
+                                                  int32_t* host_size,
+                                                  int32_t* port_size,
+                                                  int32_t* path_size,
+                                                  int32_t* query_size,
+                                                  int32_t* fragment_size,
+                                                  cudf::string_view input)
 {
   *protocol_size = 0;
   *host_size     = 0;
@@ -196,4 +198,5 @@ extern "C" __device__ cudf::errc write_url_components(cuda::std::span<char>* pro
     if (size > 0) { memcpy(outputs[component]->data(), input.data() + range.begin, size); }
   }
   return cudf::errc::SUCCESS;
+}
 }

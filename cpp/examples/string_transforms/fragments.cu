@@ -5,9 +5,11 @@
 
 #include <cudf/udf_includes.hpp>
 
-extern "C" __device__ cudf::errc checksum(uint16_t* out,
-                                          cudf::string_view const name,
-                                          cudf::string_view const email)
+extern "C" {
+
+__device__ cudf::errc checksum(uint16_t* out,
+                               cudf::string_view const name,
+                               cudf::string_view const email)
 {
   auto fletcher16 = [](cudf::string_view str) -> uint16_t {
     uint16_t sum1 = 0;
@@ -23,9 +25,9 @@ extern "C" __device__ cudf::errc checksum(uint16_t* out,
   return cudf::errc::SUCCESS;
 }
 
-extern "C" __device__ cudf::errc email_provider(cudf::string_view* out,
-                                                cudf::string_view const email,
-                                                cudf::string_view const alt)
+__device__ cudf::errc email_provider(cudf::string_view* out,
+                                     cudf::string_view const email,
+                                     cudf::string_view const alt)
 {
   auto at_pos = email.find('@');
 
@@ -55,15 +57,15 @@ extern "C" __device__ cudf::errc email_provider(cudf::string_view* out,
 
 // Convert a phone number to E.164 international phone format.
 // https://en.wikipedia.org/wiki/E.164
-extern "C" __device__ cudf::errc e164_format(cudf::size_type row,
-                                             cudf::string_view* out,
-                                             void* scratch,
-                                             cudf::string_view const country_code,
-                                             cudf::string_view const area_code,
-                                             cudf::string_view const phone_number,
-                                             int64_t age,
-                                             int32_t min_visible_age,
-                                             int32_t scratch_size)
+__device__ cudf::errc e164_format(cudf::size_type row,
+                                  cudf::string_view* out,
+                                  void* scratch,
+                                  cudf::string_view const country_code,
+                                  cudf::string_view const area_code,
+                                  cudf::string_view const phone_number,
+                                  int64_t age,
+                                  int32_t min_visible_age,
+                                  int32_t scratch_size)
 {
   auto const begin = static_cast<char*>(scratch) +
                      static_cast<ptrdiff_t>(row) * static_cast<ptrdiff_t>(scratch_size);
@@ -134,13 +136,13 @@ extern "C" __device__ cudf::errc e164_format(cudf::size_type row,
   return cudf::errc::SUCCESS;
 }
 
-extern "C" __device__ cudf::errc format_phone(cudf::size_type row,
-                                              cudf::string_view* out,
-                                              void* scratch,
-                                              cudf::string_view const country_code,
-                                              cudf::string_view const area_code,
-                                              cudf::string_view const phone_number,
-                                              int32_t scratch_size)
+__device__ cudf::errc format_phone(cudf::size_type row,
+                                   cudf::string_view* out,
+                                   void* scratch,
+                                   cudf::string_view const country_code,
+                                   cudf::string_view const area_code,
+                                   cudf::string_view const phone_number,
+                                   int32_t scratch_size)
 {
   auto const begin = static_cast<char*>(scratch) +
                      static_cast<ptrdiff_t>(row) * static_cast<ptrdiff_t>(scratch_size);
@@ -238,4 +240,5 @@ extern "C" __device__ cudf::errc format_phone(cudf::size_type row,
   *out = cudf::string_view{begin, static_cast<cudf::size_type>(it - begin)};
 
   return cudf::errc::SUCCESS;
+}
 }

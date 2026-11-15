@@ -46,14 +46,17 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
                                    std::string const& udf_type,
                                    bool indexed)
 {
-  auto kernel_instance_source =
-    std::format(R"***(#define CUDF_KERNEL_INSTANCE {})***", kernel_name);
-  auto kernel_udf_source =
-    std::format("#define CUDF_UDF_TYPE {}\n#define CUDF_UDF_INDEXED {}", udf_type, indexed ? 1 : 0);
+  auto kernel_instance_source = std::format(R"CUDA(
+#define CUDF_KERNEL_INSTANCE {}
+#define CUDF_TRANSFORM_UDF_TYPE {}
+#define CUDF_TRANSFORM_UDF_INDEXED {})CUDA",
+                                            kernel_name,
+                                            udf_type,
+                                            indexed ? 1 : 0);
   char const* include_names[] =  // NOLINT(modernize-avoid-c-arrays)
-    {"cudf/detail/kernel_instance.cuh", "cudf/detail/operation_udf.cuh"};
+    {"cudf/detail/kernel_instance.cuh"};
   char const* include_headers[] =  // NOLINT(modernize-avoid-c-arrays)
-    {kernel_instance_source.c_str(), kernel_udf_source.c_str()};
+    {kernel_instance_source.c_str()};
 
   return get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
 }

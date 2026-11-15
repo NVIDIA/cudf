@@ -515,7 +515,7 @@ function(precompile_fixed_width_kernel_fragments)
       FRAGMENT
       ${VARIANT_NAME}
       SOURCE
-      src/transform/jit/kernel.cu
+      src/transform/jit/transform_kernel.cu
       KERNEL_INSTANCE
       ${INSTANCE}
       UDF_TYPE
@@ -548,7 +548,7 @@ function(precompile_fixed_width_kernel_fragments)
         FRAGMENT
         ${VARIANT_NAME}
         SOURCE
-        src/transform/jit/kernel.cu
+        src/transform/jit/transform_kernel.cu
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE
@@ -601,7 +601,7 @@ function(precompile_string_kernel_fragments)
         FRAGMENT
         ${VARIANT_NAME}
         SOURCE
-        src/transform/jit/kernel.cu
+        src/transform/jit/transform_kernel.cu
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE

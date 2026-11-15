@@ -55,15 +55,8 @@ macro(add_fragment)
     file(
       GENERATE
       OUTPUT "${INSTANTIATION_DIR}/cudf/detail/kernel_instance.cuh"
-      CONTENT "#pragma once\n#define CUDF_KERNEL_INSTANCE ${ARG_KERNEL_INSTANCE}"
-    )
-  endif()
-
-  if(ARG_UDF_TYPE)
-    file(
-      GENERATE
-      OUTPUT "${INSTANTIATION_DIR}/cudf/detail/operation_udf.cuh"
-      CONTENT "#pragma once\n#define CUDF_UDF_TYPE ${ARG_UDF_TYPE}\n#define CUDF_UDF_INDEXED 0"
+      CONTENT
+        "#define CUDF_KERNEL_INSTANCE ${ARG_KERNEL_INSTANCE}\n#define CUDF_TRANSFORM_UDF_TYPE ${ARG_UDF_TYPE}\n#define CUDF_TRANSFORM_UDF_INDEXED 0"
     )
   endif()
 

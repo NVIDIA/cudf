@@ -412,7 +412,7 @@ ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp ast/transform
 # ##################################################################################################
 # * LTO Fragments ----------------------------------------------------------------------------
 rtcx_add_embed(cudf_benchmark_fragments)
-add_fragment(cudf_benchmark_fragments FRAGMENT benchmark_udfs SOURCE udfs.cu)
+add_fragment(cudf_benchmark_fragments FRAGMENT benchmark_udfs SOURCE fragments/udfs.cu)
 rtcx_embed(
   cudf_benchmark_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
 )

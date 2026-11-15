@@ -916,9 +916,7 @@ ConfigureTest(
 rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)
 
 foreach(target IN ITEMS REDUCTIONS_TEST STREAM_REDUCTION_TEST)
-  target_sources(
-    ${target} PRIVATE ${cudf_reduce_test_embed_SOURCE_DIR}/cudf_reduce_test_embed.s
-  )
+  target_sources(${target} PRIVATE ${cudf_reduce_test_embed_SOURCE_DIR}/cudf_reduce_test_embed.s)
   target_include_directories(${target} PRIVATE ${cudf_reduce_test_embed_SOURCE_DIR})
   add_dependencies(${target} cudf_reduce_test_embed)
 endforeach()

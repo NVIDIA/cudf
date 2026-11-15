@@ -238,6 +238,13 @@ TEST_F(BinaryOperatorParityTest, FloatingPyModEdgeCases)
   auto result_neg = cudf::binary_operation(v_lhs, s_neg, cudf::binary_operator::PYMOD, type);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(exp_neg, result_neg->view());
 
+  // mod += y rounds to y; Python returns y: -1e-20 % 1.0 == 1.0, 1e-20 % -1.0 == -1.0
+  auto lhs_tiny    = cudf::test::fixed_width_column_wrapper<double>{-1e-20, 1e-20};
+  auto rhs_tiny    = cudf::test::fixed_width_column_wrapper<double>{1.0, -1.0};
+  auto exp_tiny    = cudf::test::fixed_width_column_wrapper<double>{1.0, -1.0};
+  auto result_tiny = cudf::binary_operation(lhs_tiny, rhs_tiny, cudf::binary_operator::PYMOD, type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(exp_tiny, result_tiny->view());
+
   // Float32
   auto const inf_f  = std::numeric_limits<float>::infinity();
   auto const type_f = cudf::data_type{cudf::type_id::FLOAT32};

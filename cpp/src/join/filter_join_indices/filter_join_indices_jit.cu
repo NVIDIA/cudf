@@ -57,12 +57,14 @@ namespace cudf {
 
 namespace {
 
-kernel get_linked_kernel(transform_udf const& udf,
-                         std::span<transform_input const> inputs,
-                         std::span<std::optional<int32_t>> table_sources)
+kernel get_kernel(transform_udf const& udf,
+                  std::span<transform_input const> inputs,
+                  std::span<std::optional<int32_t>> table_sources)
 {
+  CUDF_FUNC_RANGE();
+
   auto is_null_aware = udf.is_null_aware == null_aware::YES;
-  auto indexed       = udf.indexed;
+  auto index_count   = udf.indexed ? 2 : 0;
 
   std::vector<int32_t> input_table_sources;
   std::vector<int32_t> input_table_indices;
@@ -72,21 +74,20 @@ kernel get_linked_kernel(transform_udf const& udf,
     input_table_indices.push_back(static_cast<int32_t>(i));
   }
 
-  auto specs      = cudf::jit::make_input_specs(inputs);
-  auto reflection = cudf::jit::reflect(true,
-                                       specs,
-                                       std::span<transform_output_spec const>{},
-                                       input_table_sources,
-                                       input_table_indices);
+  auto specs      = jit::make_input_specs(inputs);
+  auto reflection = jit::reflect(true,
+                                 specs,
+                                 std::span<transform_output_spec const>{},
+                                 input_table_sources,
+                                 input_table_indices);
   auto name       = rtcx::reflect_template(
-    "cudf::detail::filter_join_kernel", rtcx::reflect(is_null_aware), reflection.input_accessors);
+    "detail::filter_join_kernel", rtcx::reflect(is_null_aware), reflection.input_accessors);
   std::array outputs{transform_output_spec{.type = type_id::BOOL8}};
-  auto signature =
-    cudf::jit::reflect_udf_signature(is_null_aware, specs, outputs, true, indexed ? 2 : 0);
-  auto kernel_fragment = cudf::jit::get_udf_kernel_fragment(
-    "cudf/cpp/src/join/jit/filter_join_kernel.cu", name, signature, indexed);
-  auto adapter = cudf::get_udf_adapter(
-    udf.symbol, "cudf_transform_udf", is_null_aware, specs, outputs, true, indexed ? 2 : 0);
+  auto udf_signature = jit::reflect_udf_signature(is_null_aware, specs, outputs, true, index_count);
+  auto kernel_fragment = jit::get_udf_kernel_fragment(
+    "cudf/cpp/src/join/jit/filter_join_kernel.cu", name, udf_signature, udf.indexed);
+  auto adapter = get_udf_adapter(
+    udf.symbol, "cudf_transform_udf", is_null_aware, specs, outputs, true, index_count);
 
   std::vector<rtcx::memory_fragment> fragments{
     {.data = kernel_fragment->view(), .type = rtcx::binary_type::LTO_IR, .name = nullptr}};
@@ -94,26 +95,25 @@ kernel get_linked_kernel(transform_udf const& udf,
   if (adapter) {
     auto view = adapter->view();
     fragments.push_back(
-      {.data = view.data, .type = cudf::jit::as_rtcx_binary_type(view.type), .name = nullptr});
+      {.data = view.data, .type = jit::as_rtcx_binary_type(view.type), .name = nullptr});
   }
 
-  for (auto const& fragment : udf.fragments) {
-    fragments.push_back({.data = fragment.data,
-                         .type = cudf::jit::as_rtcx_binary_type(fragment.type),
-                         .name = nullptr});
+  for (auto& fragment : udf.fragments) {
+    fragments.push_back(
+      {.data = fragment.data, .type = jit::as_rtcx_binary_type(fragment.type), .name = nullptr});
   }
 
   return get_lto_linked_kernel("cudf/cpp/src/join/jit/filter_join_kernel.cu", {}, fragments);
 }
 
 // Launch the JIT kernel for join filtering
-void launch_join_filter_kernel(kernel const& kernel,
-                               cudf::device_span<size_type const> left_indices,
-                               cudf::device_span<size_type const> right_indices,
+void launch_join_filter_kernel(kernel_ref kernel,
+                               device_span<size_type const> left_indices,
+                               device_span<size_type const> right_indices,
                                std::span<transform_input const> inputs,
                                bool* predicate_results,
                                cuda::stream_ref stream,
-                               cudf::memory_resources mr)
+                               memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -121,7 +121,7 @@ void launch_join_filter_kernel(kernel const& kernel,
     handles;
 
   auto host_views =
-    cudf::detail::make_empty_pinned_vector<column_device_view_core>(inputs.size(), stream);
+    detail::make_empty_pinned_vector<column_device_view_core>(inputs.size(), stream);
   for (auto const& input : inputs) {
     if (auto const* data = std::get_if<user_data>(&input)) {
       host_views.push_back(column_device_view_core{*data});
@@ -137,15 +137,15 @@ void launch_join_filter_kernel(kernel const& kernel,
 
   cuda::device_buffer<column_device_view_core> device_views{
     stream, mr.get_temporary_mr(), inputs.size(), cuda::no_init};
-  cudf::detail::cuda_memcpy<column_device_view_core>(device_views, host_views, stream);
+  detail::cuda_memcpy<column_device_view_core>(device_views, host_views, stream);
 
   // Match the pointer parameters of the JIT kernel entry point.
-  cudf::size_type num_rows                         = left_indices.size();
-  cudf::size_type const* left_indices_ptr          = left_indices.data();
-  cudf::size_type const* right_indices_ptr         = right_indices.data();
-  cudf::column_device_view_core const* columns_ptr = device_views.data();
+  size_type num_rows                         = left_indices.size();
+  size_type const* left_indices_ptr          = left_indices.data();
+  size_type const* right_indices_ptr         = right_indices.data();
+  column_device_view_core const* columns_ptr = device_views.data();
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
+  detail::device_scalar<int32_t> d_max_error(
     static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
   auto max_error_ptr = d_max_error.data();
 
@@ -170,15 +170,15 @@ void launch_join_filter_kernel(kernel const& kernel,
 // Same join semantics handling as the AST version
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-apply_join_semantics(cudf::table_view const& left,
-                     cudf::device_span<size_type const> left_indices,
-                     cudf::device_span<size_type const> right_indices,
-                     cudf::device_span<bool const> predicate_results,
+apply_join_semantics(table_view const& left,
+                     device_span<size_type const> left_indices,
+                     device_span<size_type const> right_indices,
+                     device_span<bool const> predicate_results,
                      join_kind join_kind,
                      cuda::stream_ref stream,
-                     cudf::memory_resources mr)
+                     memory_resources mr)
 {
-  cudf::memory_resources mrs{mr};
+  memory_resources mrs{mr};
   auto make_empty_result = [&]() {
     return std::pair{
       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
@@ -202,11 +202,11 @@ apply_join_semantics(cudf::table_view const& left,
     auto valid_predicate = [=] __device__(size_type i) -> bool { return predicate_results_ptr[i]; };
 
     auto const num_valid =
-      cudf::detail::count_if(cuda::counting_iterator<size_type>{0},
-                             cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
-                             valid_predicate,
-                             stream,
-                             mrs.as_temporary());
+      detail::count_if(cuda::counting_iterator<size_type>{0},
+                       cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
+                       valid_predicate,
+                       stream,
+                       mrs.as_temporary());
 
     if (num_valid == 0) { return make_empty_result(); }
 
@@ -217,7 +217,7 @@ apply_join_semantics(cudf::table_view const& left,
     auto output_iter = cuda::make_zip_iterator(
       cuda::std::tuple{filtered_left_indices->begin(), filtered_right_indices->begin()});
 
-    cudf::detail::copy_if(
+    detail::copy_if(
       input_iter,
       input_iter + left_indices.size(),
       cuda::counting_iterator<size_type>{0},
@@ -239,7 +239,7 @@ apply_join_semantics(cudf::table_view const& left,
                        cuco::double_hashing<1, cuco::default_hash_function<size_type>>,
                        rmm::mr::polymorphic_allocator<char>>;
     SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
-                                   cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+                                   detail::CUCO_DESIRED_LOAD_FACTOR,
                                    cuco::empty_key{-1},
                                    {},
                                    {},
@@ -260,7 +260,7 @@ apply_join_semantics(cudf::table_view const& left,
 
     auto const num_invalid = left.num_rows() - num_filter_passing;
 
-    auto const num_valid = cudf::detail::count_if(
+    auto const num_valid = detail::count_if(
       cuda::counting_iterator<size_type>{0},
       cuda::counting_iterator{static_cast<size_type>(left_indices.size())},
       [predicate_results_ptr] __device__(size_type i) -> bool { return predicate_results_ptr[i]; },
@@ -279,13 +279,13 @@ apply_join_semantics(cudf::table_view const& left,
         return predicate_results_ptr[i];
       };
 
-      cudf::detail::copy_if(input_iter,
-                            input_iter + left_indices.size(),
-                            cuda::counting_iterator<std::size_t>{0},
-                            output_iter,
-                            valid_predicate,
-                            stream,
-                            mrs.as_temporary());
+      detail::copy_if(input_iter,
+                      input_iter + left_indices.size(),
+                      cuda::counting_iterator<std::size_t>{0},
+                      output_iter,
+                      valid_predicate,
+                      stream,
+                      mrs.as_temporary());
     }
     if (num_invalid > 0) {
       auto filter_passing_indices_ref = filter_passing_indices.ref(cuco::contains);
@@ -293,12 +293,12 @@ apply_join_semantics(cudf::table_view const& left,
         auto is_unmatched = !filter_passing_indices_ref.contains(idx);
         return is_unmatched;
       };
-      cudf::detail::copy_if(cuda::counting_iterator<std::size_t>{0},
-                            cuda::counting_iterator{static_cast<std::size_t>(left.num_rows())},
-                            filtered_left_indices->begin() + num_valid,
-                            is_unmatched_idx,
-                            stream,
-                            mrs.as_temporary());
+      detail::copy_if(cuda::counting_iterator<std::size_t>{0},
+                      cuda::counting_iterator{static_cast<std::size_t>(left.num_rows())},
+                      filtered_left_indices->begin() + num_valid,
+                      is_unmatched_idx,
+                      stream,
+                      mrs.as_temporary());
 
       cub::DeviceTransform::Fill(
         filtered_right_indices->begin() + num_valid, num_invalid, JoinNoMatch, stream.get());
@@ -322,9 +322,9 @@ execute_join_filter(table_view const& left,
                     std::span<std::optional<int32_t>> sources,
                     join_kind kind,
                     cuda::stream_ref stream,
-                    cudf::memory_resources mr)
+                    memory_resources mr)
 {
-  auto kernel = get_linked_kernel(predicate, inputs, sources);
+  auto kernel = get_kernel(predicate, inputs, sources);
   auto results =
     cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), left_indices.size(), cuda::no_init);
   launch_join_filter_kernel(
@@ -347,21 +347,21 @@ execute_join_filter(table_view const& left,
   return filtered;
 }
 
-void validate_column_types(cudf::table_view const& table, char const* side)
+void validate_column_types(table_view const& table, char const* side)
 {
   for (auto const& col : table) {
     CUDF_EXPECTS(
-      cudf::is_fixed_width(col.type()) || col.type().id() == type_id::STRING,
+      is_fixed_width(col.type()) || col.type().id() == type_id::STRING,
       "filter_join_indices_jit does not support nested or dictionary column types in the " +
         std::string(side) + " table.",
       std::invalid_argument);
   }
 }
 
-void perform_checks(cudf::table_view const& left,
-                    cudf::table_view const& right,
-                    cudf::device_span<size_type const> left_indices,
-                    cudf::device_span<size_type const> right_indices,
+void perform_checks(table_view const& left,
+                    table_view const& right,
+                    device_span<size_type const> left_indices,
+                    device_span<size_type const> right_indices,
                     std::span<transform_input const> extra_inputs,
                     join_kind kind)
 {
@@ -392,15 +392,15 @@ namespace detail {
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
                         transform_udf const& predicate,
                         join_kind join_kind,
                         std::span<transform_input const> extra_inputs,
                         cuda::stream_ref stream,
-                        cudf::memory_resources mr)
+                        memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -440,15 +440,15 @@ filter_join_indices_jit(cudf::table_view const& left,
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
                         ast::expression const& predicate,
                         join_kind join_kind,
-                        cudf::lto_fragments fragments,
+                        lto_fragments fragments,
                         cuda::stream_ref stream,
-                        cudf::memory_resources mr)
+                        memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -488,15 +488,15 @@ filter_join_indices_jit(cudf::table_view const& left,
 // Public API implementations
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
                         transform_udf const& predicate,
-                        cudf::join_kind join_kind,
+                        join_kind join_kind,
                         std::span<transform_input const> extra_inputs,
                         cuda::stream_ref stream,
-                        cudf::memory_resources mr)
+                        memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(
@@ -505,15 +505,15 @@ filter_join_indices_jit(cudf::table_view const& left,
 
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices_jit(cudf::table_view const& left,
-                        cudf::table_view const& right,
-                        cudf::device_span<size_type const> left_indices,
-                        cudf::device_span<size_type const> right_indices,
-                        cudf::ast::expression const& predicate,
-                        cudf::join_kind join_kind,
-                        cudf::lto_fragments fragments,
+filter_join_indices_jit(table_view const& left,
+                        table_view const& right,
+                        device_span<size_type const> left_indices,
+                        device_span<size_type const> right_indices,
+                        ast::expression const& predicate,
+                        join_kind join_kind,
+                        lto_fragments fragments,
                         cuda::stream_ref stream,
-                        cudf::memory_resources mr)
+                        memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::filter_join_indices_jit(

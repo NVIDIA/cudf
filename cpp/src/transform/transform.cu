@@ -383,8 +383,11 @@ void perform_checks(std::optional<transform_udf> const& udf,
                     std::span<std::unique_ptr<column> const> string_offsets)
 {
   if (udf.has_value()) {
-    CUDF_EXPECTS(!udf.symbol.empty() && !udf.fragments.empty(),
+    CUDF_EXPECTS(!udf->symbol.empty() && !udf->fragments.empty(),
                  "A transform requires an exported symbol and device modules",
+                 std::invalid_argument);
+    CUDF_EXPECTS(udf->is_null_aware == is_null_aware,
+                 "UDF null_aware property must match the provided null_aware flag",
                  std::invalid_argument);
   }
 
@@ -774,18 +777,19 @@ static std::unique_ptr<table> execute_lto_transform(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  perform_checks(udf, in_row_size, inputs, outputs, string_offsets);
+  perform_checks(udf, udf.is_null_aware, in_row_size, inputs, outputs, string_offsets);
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
-  auto [columns, stencil] = make_outputs(is_null_aware,
-                                         row_size,
-                                         inputs,
-                                         outputs,
-                                         get_null_transformation(is_null_aware, inputs, outputs),
-                                         std::move(string_offsets),
-                                         stream,
-                                         mr);
-  auto precompiled =
-    dispatch_lto_kernel_fragment(is_null_aware == null_aware::YES, udf.indexed, inputs, columns);
+  auto [columns, stencil] =
+    make_outputs(udf.is_null_aware,
+                 row_size,
+                 inputs,
+                 outputs,
+                 get_null_transformation(udf.is_null_aware, inputs, outputs),
+                 std::move(string_offsets),
+                 stream,
+                 mr);
+  auto precompiled = dispatch_lto_kernel_fragment(
+    udf.is_null_aware == null_aware::YES, udf.indexed, inputs, columns);
   cudf::detail::device_scalar<int32_t> error(
     static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
   jit_transform::run_lto(precompiled,
@@ -803,7 +807,7 @@ static std::unique_ptr<table> execute_lto_transform(
       status, std::format("Transform UDF evaluation failed with error `{}`", to_string(status)));
   }
   return std::make_unique<table>(
-    finalize_outputs(is_null_aware, row_size, std::move(columns), stream, mr));
+    finalize_outputs(udf.is_null_aware, row_size, std::move(columns), stream, mr));
 }
 
 std::unique_ptr<table> transform(transform_udf const& udf,

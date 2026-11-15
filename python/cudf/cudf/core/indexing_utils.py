@@ -129,7 +129,7 @@ def warn_if_expanding_at(frame: DataFrame | Series, key: Any) -> None:
     if isinstance(frame, cudf.DataFrame):
         if not isinstance(key, tuple) or len(key) != 2:
             return
-        checks = [(key[0], frame.index), (key[1], frame.columns)]
+        checks = [(key[0], frame.index), (key[1], frame._data.to_pandas_index)]
         obj_type = "DataFrame"
     else:
         if isinstance(key, tuple) and len(key) == 1:

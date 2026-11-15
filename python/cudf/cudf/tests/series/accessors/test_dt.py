@@ -281,6 +281,9 @@ def test_ceil(datetime_types_as_str, resolution):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("dtype", _DT_DTYPES)
 def test_days_in_months(dtype):
     data = [
@@ -582,6 +585,9 @@ def test_isocalendar_dtype(dtype):
         )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("dtype", _DT_DTYPES)
 @pytest.mark.parametrize("attr", ["dayofweek", "day_of_week", "weekday"])
 def test_dayofweek_dtype(dtype, attr):
@@ -707,6 +713,9 @@ def test_datetime_strftime_arrow_dtype(unit, date_format):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -945,6 +954,9 @@ def test_convert_edge_cases(data, original_timezone, target_timezone):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -976,6 +988,9 @@ def test_dt_component_dtype_pandas_compat(data, component):
     assert_eq(expect, got, check_dtype=True)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "unit",
     ["s", "ms", "us", "ns"],

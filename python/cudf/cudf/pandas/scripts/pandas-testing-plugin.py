@@ -318,7 +318,6 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/numpy_/test_numpy.py::test_np_max_nested_tuples": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_accessor.py::TestFrameAccessor::test_from_spmatrix_columns[columns1]": "TODO: Add a reason for failure",
     "tests/arrays/sparse/test_accessor.py::TestFrameAccessor::test_subclassing": "AttributeError: 'SparseArray' object has no attribute 'reshape'. Did you mean: 'shape'?",
-    "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-gt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-lt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_cmp_masked_boolean_other[int64-ne]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series nullable comparison dtype limitation, also in 3.0.6)",
@@ -333,7 +332,6 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_uneven_length_series[or_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_logical_op_uneven_length_series[xor]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series boolean alignment dtype limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-and_]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
-    "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-ge]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-lt]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
     "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-ne]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6)",
@@ -670,7 +668,9 @@ NODEIDS_THAT_FAIL = {
     "tests/dtypes/test_dtypes.py::TestCategoricalDtypeParametrized::test_nan_invalid": "TODO: Add a reason for failure",
     "tests/dtypes/test_dtypes.py::TestCategoricalDtypeParametrized::test_non_unique_invalid": "TODO: Add a reason for failure",
     "tests/dtypes/test_inference.py::TestTypeInference::test_categorical": "AssertionError: assert 'string' == 'categorical'",
-    "tests/dtypes/test_inference.py::TestTypeInference::test_date": "TODO: Add a reason for failure",
+    "tests/dtypes/test_inference.py::TestTypeInference::test_date": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
     "tests/extension/decimal/test_decimal.py::TestDecimalArray::test_direct_arith_with_ndframe_returns_not_implemented[__eq__-Index]": "TODO: Add a reason for failure",
     "tests/extension/decimal/test_decimal.py::TestDecimalArray::test_direct_arith_with_ndframe_returns_not_implemented[__ge__-Index]": "TODO: Add a reason for failure",
     "tests/extension/decimal/test_decimal.py::TestDecimalArray::test_direct_arith_with_ndframe_returns_not_implemented[__gt__-Index]": "TODO: Add a reason for failure",
@@ -683,7 +683,6 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummax-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummin-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cumprod-True]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-ge]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-gt]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
     "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-le]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6)",
@@ -1103,7 +1102,9 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/indexing/test_indexing.py::TestDataFrameIndexing::test_loc_bool_multiindex[True-boolean-indexer1]": "AssertionError: Did not see expected warning of class 'PerformanceWarning'",
     "tests/frame/indexing/test_indexing.py::TestDataFrameIndexing::test_setitem_boolean": "TODO: Add a reason for failure",
     "tests/frame/indexing/test_insert.py::TestDataFrameInsert::test_insert": "TODO: Add a reason for failure",
-    "tests/frame/indexing/test_insert.py::TestDataFrameInsert::test_insert_delete_mixed_multiindex_columns": "AssertionError: DataFrame.columns level [1] are different",
+    "tests/frame/indexing/test_insert.py::TestDataFrameInsert::test_insert_delete_mixed_multiindex_columns": None
+    if PANDAS_GE_31
+    else "AssertionError: DataFrame.columns level [1] are different",
     "tests/frame/indexing/test_mask.py::TestDataFrameMask::test_mask_inplace": "assert None is              0            1            2\n0  0.189053382          NaN          NaN\n1          NaN  1....",
     "tests/frame/indexing/test_setitem.py::TestDataFrameSetItem::test_setitem_list_missing_columns[columns3-box3-expected3]": "TODO: Add a reason for failure",
     "tests/frame/indexing/test_setitem.py::TestDataFrameSetItemWithExpansion::test_setitem_listlike_views": "TODO: Add a reason for failure",
@@ -1278,6 +1279,9 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/methods/test_set_index.py::TestSetIndex::test_set_index_pass_single_array[True-False-None-Index]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_set_index.py::TestSetIndexCustomLabelType::test_set_index_custom_label_hashable_iterable": "TODO: Add a reason for failure",
     "tests/frame/methods/test_shift.py::TestDataFrameShift::test_shift_bool": "TODO: Add a reason for failure",
+    "tests/frame/methods/test_shift.py::TestDataFrameShift::test_shift_freq_infer_after_float_to_datetime": "TODO: Fails starting with pandas version 3.1.1 (existing datetime frequency metadata loss prevents shift inference, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/frame/methods/test_sort_index.py::TestDataFrameSortIndex::test_sort_index_nan": "TODO: Add a reason for failure",
     "tests/frame/methods/test_sort_values.py::TestDataFrameSortValues::test_sort_by_column_named_none": "AssertionError: DataFrame.index are different",
     "tests/frame/methods/test_sort_values.py::TestDataFrameSortValues::test_sort_values_by_empty_list": "TODO: Add a reason for failure",
@@ -1299,6 +1303,9 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/methods/test_to_dict.py::test_to_dict_list_pd_scalars[val1]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_to_numpy.py::TestToNumpy::test_to_numpy_copy": "TODO: Add a reason for failure",
     "tests/frame/methods/test_to_numpy.py::TestToNumpy::test_to_numpy_mixed_dtype_to_str": "TODO: Add a reason for failure",
+    "tests/frame/methods/test_to_records.py::TestDataFrameToRecords::test_to_records_empty_multiindex": "TODO: Fails starting with pandas version 3.1.1 (existing empty MultiIndex record conversion representation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/frame/methods/test_truncate.py::TestDataFrameTruncate::test_truncate_multiindex[DataFrame]": "TODO: Add a reason for failure",
     "tests/frame/methods/test_value_counts.py::test_value_counts_with_missing_category": "TODO: Add a reason for failure",
     "tests/frame/methods/test_values.py::TestDataFrameValues::test_values": "TODO: Add a reason for failure",
@@ -1379,8 +1386,14 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_maskedarray_nonfloat": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_maskedrecarray_dtype": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_mixed_dict_and_Series": "TODO: Add a reason for failure",
+    "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_stdlib_array": "TODO: Fails starting with pandas version 3.1.1 (existing standard-library array constructor integer-width inference, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_with_datetimes2": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_datetime_date_tuple_columns_from_dict": "TODO: Add a reason for failure",
+    "tests/frame/test_constructors.py::TestDataFrameConstructors::test_datetime_date_tuple_columns_from_dict_timestamp_keys": "TODO: Fails starting with pandas version 3.1.1 (existing constructor alignment of date tuple columns and Timestamp dictionary keys, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_dict_keys_returns_rangeindex": "AssertionError: Index are different",
     "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_datetime64[DataFrame-dict]": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_datetime64[Series-None]": "TODO: Add a reason for failure",
@@ -1475,6 +1488,18 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/methods/test_groupby_shift_diff.py::test_group_diff_real_series[int16]": "TODO: Add a reason for failure",
     "tests/groupby/methods/test_groupby_shift_diff.py::test_group_diff_real_series[int8]": "TODO: Add a reason for failure",
     "tests/groupby/methods/test_quantile.py::test_groupby_quantile_nonmulti_levels_order": "tm.assert_equal compares MultiIndex.levels, which cudf returns as a list rather than the FrozenList pandas produces",
+    "tests/groupby/methods/test_value_counts.py::test_categorical_non_groupers[False-False-count-expected_data0-True]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical grouped value_counts tie ordering, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/methods/test_value_counts.py::test_categorical_non_groupers[False-True-proportion-expected_data1-True]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical grouped value_counts tie ordering, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/methods/test_value_counts.py::test_categorical_non_groupers[True-False-count-expected_data0-True]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical grouped value_counts tie ordering, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/methods/test_value_counts.py::test_categorical_non_groupers[True-True-proportion-expected_data1-True]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical grouped value_counts tie ordering, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/methods/test_value_counts.py::test_categorical_single_grouper_observed_true[False-False-count-expected_data0]": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/groupby/methods/test_value_counts.py::test_categorical_single_grouper_observed_true[False-True-proportion-expected_data1]": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/groupby/methods/test_value_counts.py::test_categorical_single_grouper_observed_true[True-False-count-expected_data0]": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
@@ -1486,8 +1511,20 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/methods/test_value_counts.py::test_dropna_combinations[False-False-expected_rows0-expected_values0]": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/groupby/methods/test_value_counts.py::test_dropna_combinations[False-True-expected_rows1-expected_values1]": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/groupby/test_api.py::test_tab_completion": "TODO: Add a reason for failure",
+    "tests/groupby/test_apply.py::test_apply_as_index_false_empty_index_name[True]": "TODO: Fails starting with pandas version 3.1.1 (existing empty grouped apply retains the grouping column, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/test_apply.py::test_apply_with_date_in_multiindex_does_not_convert_to_timestamp": "cudf stores datetime.date values as datetime64; the date type identity is lost on the GPU round trip",
     "tests/groupby/test_apply.py::test_positional_slice_groups_datetimelike": "the frame and its column Series are converted to pandas independently on fallback, losing the CoW block identity pandas' is_in_obj grouper check requires",
+    "tests/groupby/test_categorical.py::test_observed[False]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical cartesian-product reindex behavior in the expected result, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_categorical.py::test_observed_codes_remap[False]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical cartesian-product reindex behavior in the expected result, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_categorical.py::test_observed_two_columns[False]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical cartesian-product reindex behavior in the expected result, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/test_cumulative.py::test_groupby_cumprod_nan_influences_other_columns": "TODO: Add a reason for failure",
     "tests/groupby/test_cumulative.py::test_numpy_compat[cumprod]": "TODO: Add a reason for failure",
     "tests/groupby/test_cumulative.py::test_numpy_compat[cumsum]": "TODO: Add a reason for failure",
@@ -1509,6 +1546,9 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_groupby.py::test_groupby_cumsum_timedelta64": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_groupby_groups_in_BaseGrouper": "TODO: Add a reason for failure",
     "tests/groupby/test_groupby.py::test_groupby_level_nonmulti": "TODO: Add a reason for failure",
+    "tests/groupby/test_groupby.py::test_groupby_masked_array_column_values_type_consistent": "TODO: Fails starting with pandas version 3.1.1 (existing NumPy proxy type identity from Series.values, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/test_groupby.py::test_groupby_multiindex_not_lexsorted[False]": "AssertionError: assert not True",
     "tests/groupby/test_groupby.py::test_groupby_multiindex_not_lexsorted[True]": "AssertionError: assert not True",
     "tests/groupby/test_groupby.py::test_groupby_nat_exclude": "AssertionError: numpy array are different",
@@ -1550,12 +1590,66 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_grouping.py::TestGrouping::test_groupby_tuple_keys_handle_multiindex": "TypeError: unhashable type: 'list'",
     "tests/groupby/test_grouping.py::TestGrouping::test_multiindex_columns_empty_level": "TODO: Add a reason for failure",
     "tests/groupby/test_grouping.py::TestSelection::test_indices_grouped_by_tuple_with_lambda": "TODO: Add a reason for failure",
+    "tests/groupby/test_grouping.py::test_groupby_index_with_freq_retains_freq[idx0-False]": "TODO: Fails starting with pandas version 3.1.1 (existing grouped DatetimeIndex frequency metadata loss, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_grouping.py::test_groupby_index_with_freq_retains_freq[idx1-False]": "TODO: Fails starting with pandas version 3.1.1 (existing grouped DatetimeIndex frequency metadata loss, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[bfill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_groupby_column_index_name_lost_fill_funcs[ffill]": "AssertionError: Index are different",
     "tests/groupby/test_missing.py::test_indices_with_missing": "TODO: Add a reason for failure",
     "tests/groupby/test_reductions.py::test_basic_aggregations[float32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_basic_aggregations[int32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_groupby_mean_no_overflow": "TODO: Add a reason for failure",
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-kurt]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-mean]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-prod]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-sem]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-skew]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-std]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-sum]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-False-var]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-kurt]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-mean]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-prod]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-sem]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-skew]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-std]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-sum]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/groupby/test_reductions.py::test_groupby_reductions_dont_skip_nan_with_mask[True-True-var]": "TODO: Fails starting with pandas version 3.1.1 (existing valid NaN FloatingArray input is skipped by grouped reductions, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/groupby/test_reductions.py::test_groupby_sum_mincount_boolean[0]": "TODO: Add a reason for failure",
     "tests/groupby/test_reductions.py::test_mean_numeric_only_validates_bool": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/groupby/test_reductions.py::test_multifunc_skipna[True-prod-values3-float64-float64]": "cudf returns NA for an all-null prod; pandas returns the empty-product identity 1.0 (min_count/empty-reduction semantics, not skipna)",
@@ -1564,9 +1658,16 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_reductions.py::test_sum_skipna_object[False]": "Inherent cudf.pandas None-vs-NaN difference for object-dtype null (skipna logic is correct)",
     "tests/groupby/test_timegrouper.py::TestGroupBy::test_groupby_with_timegrouper": "TODO: Add a reason for failure",
     "tests/groupby/test_timegrouper.py::TestGroupBy::test_scalar_call_versus_list_call": "TODO: Add a reason for failure",
+    "tests/indexes/base_class/test_indexing.py::test_getitem_boolean_ea_indexer": "TODO: Fails starting with pandas version 3.1.1 (existing boolean extension indexer loses the expected RangeIndex subtype, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/indexes/base_class/test_reshape.py::TestReshape::test_insert_missing[Decimal]": "TODO: Add a reason for failure",
-    "tests/indexes/categorical/test_astype.py::TestAstype::test_categorical_date_roundtrip[False]": "TODO: Add a reason for failure",
-    "tests/indexes/categorical/test_astype.py::TestAstype::test_categorical_date_roundtrip[True]": "TODO: Add a reason for failure",
+    "tests/indexes/categorical/test_astype.py::TestAstype::test_categorical_date_roundtrip[False]": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
+    "tests/indexes/categorical/test_astype.py::TestAstype::test_categorical_date_roundtrip[True]": None
+    if PANDAS_GE_31
+    else "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_category.py::TestCategoricalIndex2::test_remove_maintains_order": "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_category.py::TestCategoricalIndex::test_is_monotonic[data0-non_lexsorted_data0]": "TODO: Add a reason for failure",
     "tests/indexes/categorical/test_category.py::TestCategoricalIndex::test_is_monotonic[data1-non_lexsorted_data1]": "TODO: Add a reason for failure",
@@ -1604,8 +1705,20 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/datetimes/methods/test_shift.py::TestDatetimeIndexShift::test_dti_shift_across_dst[us]": "AssertionError: Series.index are different",
     "tests/indexes/datetimes/methods/test_tz_convert.py::TestTZConvert::test_dti_tz_convert_dst": "ValueError: Inferred frequency None from passed values does not conform to passed frequency h",
     "tests/indexes/datetimes/methods/test_tz_localize.py::TestTZLocalize::test_dti_tz_localize[]": "Failed: DID NOT RAISE <class 'ValueError'>",
+    "tests/indexes/datetimes/methods/test_tz_localize.py::TestTZLocalize::test_dti_tz_localize_ambiguous_nat[pytz/US/Eastern]": "TODO: Fails starting with pandas version 3.1.1 (existing asi8 null values become float NaN rather than int64 NaT sentinel, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/indexes/datetimes/methods/test_tz_localize.py::TestTZLocalize::test_dti_tz_localize_ambiguous_nat[tz1]": "TODO: Fails starting with pandas version 3.1.1 (existing asi8 null values become float NaN rather than int64 NaT sentinel, also in 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/indexes/datetimes/methods/test_tz_localize.py::TestTZLocalize::test_dti_tz_localize_nonexistent_raise_coerce": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/indexes/datetimes/methods/test_tz_localize.py::TestTZLocalize::test_dti_tz_localize_utc_conversion[tz2]": "Failed: DID NOT RAISE <class 'ValueError'>",
+    "tests/indexes/datetimes/methods/test_tz_localize.py::test_dti_tz_localize_non_tick_freq_invalidated_by_nat[2020-03-28 01:30-kwargs1]": "TODO: Fails starting with pandas version 3.1.1 (existing timezone localization retains frequency metadata despite NaT, also in 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/indexes/datetimes/methods/test_tz_localize.py::test_dti_tz_localize_non_tick_freq_invalidated_by_nat[2020-10-24 01:30-kwargs0]": "TODO: Fails starting with pandas version 3.1.1 (existing timezone localization retains frequency metadata despite NaT, also in 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/indexes/datetimes/methods/test_unique.py::test_index_unique2": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_constructors.py::TestDatetimeIndex::test_constructor_coverage": "TODO: Add a reason for failure",
     "tests/indexes/datetimes/test_constructors.py::TestDatetimeIndex::test_constructor_datetime64_tzformat[W-SUN]": "TODO: Add a reason for failure",
@@ -1645,6 +1758,12 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_convenience_periods[us]": "AssertionError: Index are different",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_depr_lowercase_frequency[2W-2w]": "AssertionError: Index are different",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_depr_lowercase_frequency[2W-WED-2w-wed]": "AssertionError: Index are different",
+    "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_end_off_offset_periods[W-MON-3-expected1]": "TODO: Fails starting with pandas version 3.1.1 (existing anchored weekly date_range end alignment, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_end_off_offset_periods[W-SUN-3-expected0]": "TODO: Fails starting with pandas version 3.1.1 (existing anchored weekly date_range end alignment, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_date_range_nat": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_freq_dateoffset_with_relateivedelta_nanos": "AssertionError: Index are different",
     "tests/indexes/datetimes/test_date_range.py::TestDateRanges::test_range_tz_dateutil": "TODO: Add a reason for failure",
@@ -1702,7 +1821,6 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/datetimes/test_timezones.py::TestDatetimeIndexTimezones::test_date_range_localize2[s]": "assert nan == 3",
     "tests/indexes/datetimes/test_timezones.py::TestDatetimeIndexTimezones::test_date_range_localize2[us]": "assert nan == 3",
     "tests/indexes/datetimes/test_timezones.py::TestDatetimeIndexTimezones::test_dti_convert_tz_aware_datetime_datetime[tz0]": "AssertionError: assert zoneinfo.ZoneInfo(key='US/Eastern') is datetime.timezone.utc",
-    "tests/indexes/datetimes/test_timezones.py::TestDatetimeIndexTimezones::test_with_tz[tz0]": "TODO: Fails starting with pandas version 3.1.1 (existing Pytz versus ZoneInfo scalar timezone identity mismatch, also in 3.0.6)",
     "tests/indexes/interval/test_astype.py::TestDatetimelikeSubtype::test_subtype_integer[index0-int64]": "TODO: Add a reason for failure",
     "tests/indexes/interval/test_astype.py::TestDatetimelikeSubtype::test_subtype_integer[index0-uint64]": "TODO: Add a reason for failure",
     "tests/indexes/interval/test_astype.py::TestDatetimelikeSubtype::test_subtype_integer[index1-int64]": "TODO: Add a reason for failure",
@@ -1935,6 +2053,9 @@ NODEIDS_THAT_FAIL = {
     "tests/indexes/test_setops.py::test_union_different_types[bool-dtype-complex64]": "TODO: Fails starting with pandas version 3.1.1 (existing private find_common_type expected-dtype inference discrepancy, also in 3.0.6)",
     "tests/indexes/test_setops.py::test_union_different_types[bool-dtype-nullable_bool]": "TODO: Fails starting with pandas version 3.1.1 (existing Index union dtype promotion/storage limitation, also in 3.0.6)",
     "tests/indexes/test_setops.py::test_union_different_types[bool-dtype-timedelta]": "TODO: Fails starting with pandas version 3.1.1 (existing private find_common_type expected-dtype inference discrepancy, also in 3.0.6)",
+    "tests/indexes/test_setops.py::test_union_different_types[categorical-datetime-tz]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical and timezone-datetime union coerces object values to strings, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/indexes/test_setops.py::test_union_different_types[categorical-float32]": "TODO: Fails starting with pandas version 3.1.1 (existing Index union dtype promotion/storage limitation, also in 3.0.6)",
     "tests/indexes/test_setops.py::test_union_different_types[categorical-float64]": "TODO: Fails starting with pandas version 3.1.1 (existing Index union dtype promotion/storage limitation, also in 3.0.6)",
     "tests/indexes/test_setops.py::test_union_different_types[categorical-int16]": "TODO: Fails starting with pandas version 3.1.1 (existing Index union dtype promotion/storage limitation, also in 3.0.6)",
@@ -2030,8 +2151,6 @@ NODEIDS_THAT_FAIL = {
     "tests/indexing/multiindex/test_setitem.py::test_loc_scalar_setitem_scalar_column_multiindex_columns": "TODO: Fails starting with pandas version 3.1.1 (existing scalar access returns a Series for a scalar-padded MultiIndex column, also in 3.0.6)",
     "tests/indexing/multiindex/test_slice.py::TestMultiIndexSlicers::test_per_axis_per_level_getitem": "TODO: Add a reason for failure",
     "tests/indexing/multiindex/test_slice.py::TestMultiIndexSlicers::test_per_axis_per_level_setitem": "TODO: Add a reason for failure",
-    "tests/indexing/test_at.py::TestAtErrors::test_at_setitem_nonscalar_indexer_raises[<lambda>]": "TODO: Fails starting with pandas version 3.1.1 (existing acceptance of a boolean mask in scalar at assignment, also in 3.0.6)",
-    "tests/indexing/test_at.py::TestAtErrors::test_at_setitem_series_nonscalar_indexer_raises[<lambda>]": "TODO: Fails starting with pandas version 3.1.1 (existing acceptance of a boolean mask in scalar at assignment, also in 3.0.6)",
     "tests/indexing/test_at.py::test_at_timezone": "TODO: Add a reason for failure",
     "tests/indexing/test_categorical.py::TestCategoricalIndex::test_getitem_row_categorical_with_nan_bool": "AssertionError: Series are different",
     "tests/indexing/test_categorical.py::TestCategoricalIndex::test_ix_categorical_index_non_unique[False]": "AssertionError: DataFrame.index are different",
@@ -2259,6 +2378,9 @@ NODEIDS_THAT_FAIL = {
     "tests/io/formats/test_format.py::TestSeriesFormatting::test_east_asian_unicode_series": "TODO: Add a reason for failure",
     "tests/io/formats/test_format.py::TestSeriesFormatting::test_freq_name_separation": "AssertionError: assert 'Freq: D, Name: 0' in '2000-01-01    0.189053\n2000-01-02   -0.522748\n2000-01-03   -0.413064\\...",
     "tests/io/formats/test_ipython_compat.py::TestTableSchemaRepr::test_publishes": "TODO: Add a reason for failure",
+    "tests/io/formats/test_ipython_compat.py::TestTableSchemaRepr::test_publishes_latex": "TODO: Fails starting with pandas version 3.1.1 (existing accelerator rich display MIME representation limitation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/io/formats/test_ipython_compat.py::TestTableSchemaRepr::test_publishes_not_implemented": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_date_format": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_different_datetime_formats": "TODO: Add a reason for failure",
@@ -2266,6 +2388,9 @@ NODEIDS_THAT_FAIL = {
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_float_ea_nan_distinguish_series[False]": "AssertionError: assert ',x\\na,1.0\\nb,\\nc,\\n' == ',x\\na,1.0\\nb,\\nc,nan\\n'",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_multi_index": "TODO: Add a reason for failure",
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_na_rep": "TODO: Add a reason for failure",
+    "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_string_with_cr": "TODO: Fails starting with pandas version 3.1.1 (existing CSV writer does not quote bare carriage returns, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/io/formats/test_to_csv.py::TestToCSV::test_to_csv_with_single_column": "TODO: Add a reason for failure",
     "tests/io/json/test_compression.py::test_chunksize_with_compression[bz2]": "TODO: Add a reason for failure",
     "tests/io/json/test_compression.py::test_chunksize_with_compression[gzip]": "TODO: Add a reason for failure",
@@ -2336,9 +2461,18 @@ NODEIDS_THAT_FAIL = {
     "tests/io/json/test_pandas.py::TestPandasContainer::test_index_false_to_json_table[data3]": "TODO: Add a reason for failure",
     "tests/io/json/test_pandas.py::TestPandasContainer::test_index_false_to_json_table[data4]": "TODO: Add a reason for failure",
     "tests/io/json/test_pandas.py::TestPandasContainer::test_index_false_to_json_table[data5]": "TODO: Add a reason for failure",
+    "tests/io/json/test_pandas.py::TestPandasContainer::test_tz_aware_sub_minute_offset[Asia/Tokyo]": "TODO: Fails starting with pandas version 3.1.1 (existing historical timezone astype(object) changes values before JSON serialization, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/io/json/test_pandas.py::TestPandasContainer::test_tz_aware_sub_minute_offset[US/Pacific]": "TODO: Fails starting with pandas version 3.1.1 (existing historical timezone astype(object) changes values before JSON serialization, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/io/json/test_readlines.py::test_chunksize_is_incremental": "TODO: Add a reason for failure",
     "tests/io/json/test_readlines.py::test_to_json_append_output_different_columns": "TODO: Add a reason for failure",
     "tests/io/json/test_readlines.py::test_to_json_append_output_different_columns_reordered": "TODO: Add a reason for failure",
+    "tests/io/json/test_ujson.py::test_to_json_indent_deeply_nested_does_not_overflow_buffer": "TODO: Fails starting with pandas version 3.1.1 (existing deeply nested column GPU-to-CPU Arrow-schema recursion limit, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/io/parser/common/test_file_buffer_url.py::test_context_manager[c_high]": "TODO: Add a reason for failure",
     "tests/io/parser/common/test_file_buffer_url.py::test_context_manager[c_low]": "TODO: Add a reason for failure",
     "tests/io/parser/common/test_file_buffer_url.py::test_context_manager[python]": "TODO: Add a reason for failure",
@@ -2407,7 +2541,6 @@ NODEIDS_THAT_FAIL = {
     "tests/io/test_parquet.py::TestBasic::test_read_empty_array[float]": "TODO: Add a reason for failure",
     "tests/io/test_parquet.py::TestBasic::test_read_empty_array[object]": "TODO: Add a reason for failure",
     "tests/io/test_parquet.py::TestBasic::test_read_empty_array[string]": "TODO: Add a reason for failure",
-    "tests/io/test_parquet.py::TestParquetPyArrow::test_empty_column_multiindex": "TODO: Fails starting with pandas version 3.1.1 (existing no-column Parquet output and MultiIndex metadata limitation, also in 3.0.6)",
     "tests/io/test_parquet.py::TestParquetPyArrow::test_empty_dataframe": "TODO: Add a reason for failure",
     "tests/io/test_parquet.py::TestParquetPyArrow::test_read_dtype_backend_pyarrow_config": "TODO: Add a reason for failure",
     "tests/io/test_parquet.py::TestParquetPyArrow::test_roundtrip_decimal": "TODO: Add a reason for failure",
@@ -2552,7 +2685,6 @@ NODEIDS_THAT_FAIL = {
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_categorical_index_preserver": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_categorical_index_upcast": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_categorical.py::TestCategoricalConcat::test_concat_categorical_datetime": "TODO: Add a reason for failure",
-    "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_keys_specific_levels": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6)",
     "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_order": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_concat.py::test_concat_empty_and_non_empty_frame_regression": "TODO: Add a reason for failure",
     "tests/reshape/concat/test_concat.py::test_concat_ignore_empty_object_float[None-datetime64[ns]]": "AssertionError: Attributes of DataFrame.iloc[:, 0] (column name='foo') are different",
@@ -2719,6 +2851,9 @@ NODEIDS_THAT_FAIL = {
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_dataframe_dummies_with_na[dense-i8]": "AssertionError: DataFrame.columns are different",
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_dataframe_dummies_with_na[dense-uint8]": "AssertionError: DataFrame.columns are different",
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_get_dummies_arrow_dtype": "TODO: Add a reason for failure",
+    "tests/reshape/test_get_dummies.py::TestGetDummies::test_get_dummies_arrow_object_fallback_encoded": "TODO: Fails starting with pandas version 3.1.1 (existing get_dummies Arrow object-encoding fallback limitation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_get_dummies_basic_drop_first_NA[dense]": "TODO: Add a reason for failure",
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_get_dummies_basic_drop_first_one_level[dense]": "TODO: Add a reason for failure",
     "tests/reshape/test_get_dummies.py::TestGetDummies::test_get_dummies_ea_dtype[string=string[pyarrow]-category]": "TODO: Add a reason for failure",
@@ -3005,6 +3140,9 @@ NODEIDS_THAT_FAIL = {
     "tests/series/methods/test_info.py::test_info_series[False]": "TODO: Add a reason for failure",
     "tests/series/methods/test_info.py::test_info_series[True]": "TODO: Add a reason for failure",
     "tests/series/methods/test_info.py::test_info_show_counts_false": "assert '<class 'pand...: 140.0 bytes' == '<class 'pand...ge: 8.0 bytes'",
+    "tests/series/methods/test_interpolate.py::TestSeriesInterpolateData::test_interpolate_int64_linear": "TODO: Fails starting with pandas version 3.1.1 (existing nullable-integer interpolation loses Float64 metadata, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
     "tests/series/methods/test_map.py::test_map_callable[MockEngineDecorator]": "AssertionError: assert Index([], dtype='object', name='bar') is Index([], dtype='object', name='bar')",
     "tests/series/methods/test_map.py::test_map_callable[None]": "AssertionError: assert Index([], dtype='object', name='bar') is Index([], dtype='object', name='bar')",
     "tests/series/methods/test_map.py::test_map_categorical_na_action[None-expected0]": "TODO: Add a reason for failure",
@@ -3077,6 +3215,12 @@ NODEIDS_THAT_FAIL = {
     else None,
     "tests/series/methods/test_map.py::test_map_empty[uint8]": "TODO: Add a reason for failure"
     if not PANDAS_GE_31
+    else None,
+    "tests/series/methods/test_map.py::test_map_result_overflows_int64[dtype0]": "TODO: Fails starting with pandas version 3.1.1 (existing map result integer overflow dtype inference, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/series/methods/test_map.py::test_map_result_overflows_int64[string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing map result integer overflow dtype inference, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
     else None,
     "tests/series/methods/test_map.py::test_map_simple_str_callables_same_as_astype[<lambda>]": "TODO: Add a reason for failure",
     "tests/series/methods/test_nlargest.py::TestSeriesNLargestNSmallest::test_nlargest_boundary_datetimelike[nsmallest-datetime64[ns]]": "TODO: Add a reason for failure",
@@ -3283,6 +3427,37 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_extract.py::test_extract_series[string=object-series_name]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extractall_column_names[string=object-(?P<letter>[AB])?(?P<number>[123])-expected_names0]": "AssertionError: DataFrame.iloc[:, 0] (column name='letter') are different",
     "tests/strings/test_extract.py::test_extractall_column_names[string=object-([AB])?(?P<number>[123])-expected_names1]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
+    "tests/strings/test_find_replace.py::test_find[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_find_all_na[string=object]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string find result dtype mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_find_all_na[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string find result dtype mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_find_replace.py::test_find_empty[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_find_multibyte_chars[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_find_multibyte_chars_all_na_chunk[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_find_nan[string=string[pyarrow]]": "TODO: Fails starting with pandas version 3.1.1 (existing Arrow-backed StringDtype find result is ArrowInt64 instead of nullable Int64, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_match_lookarounds[string=object-ab-expected_data4]": "TODO: Fails starting with pandas version 3.1.1 (existing object-string match result uses bool instead of object dtype, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_pyarrow_ambiguous_group_references[pyarrow_string_dtype0-(\\\\w+) (\\\\w+) (\\\\w+)-\\\\20]": "TODO: Fails starting with pandas version 3.1.1 (existing regex replacement backreference interpretation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_pyarrow_ambiguous_group_references[pyarrow_string_dtype1-(\\\\w+) (\\\\w+) (\\\\w+)-\\\\20]": "TODO: Fails starting with pandas version 3.1.1 (existing regex replacement backreference interpretation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_find_replace.py::test_pyarrow_backend_group_replacement[\\\\[(\\\\d+)\\\\]-(\\\\1)-expected_list1]": "TODO: Fails starting with pandas version 3.1.1 (existing regex replacement backreference interpretation, also on unchanged main with pandas 3.0.6)"
+    if PANDAS_GE_31
+    else None,
+    "tests/strings/test_split_partition.py::test_partition_empty_sep[string=str[pyarrow]-True-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing acceptance of empty string partition separators, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_partition_empty_sep[string=string[python]-True-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing acceptance of empty string partition separators, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=object-partition]": "TODO: Add a reason for failure",
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=object-rpartition]": "TODO: Add a reason for failure",
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=str[pyarrow]-partition]": "TODO: Add a reason for failure",
@@ -3293,6 +3468,10 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=string[pyarrow]-rpartition]": "TODO: Add a reason for failure",
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=string[python]-partition]": "TODO: Add a reason for failure",
     "tests/strings/test_split_partition.py::test_partition_series_stdlib[string=string[python]-rpartition]": "TODO: Add a reason for failure",
+    "tests/strings/test_split_partition.py::test_partition_to_dataframe_all_na[string=object-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string partition expansion shape mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_partition_to_dataframe_all_na[string=str[pyarrow]-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string partition expansion shape mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_partition_to_dataframe_all_na[string=string[pyarrow]-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string partition expansion shape mismatch, also on unchanged main with pandas 3.0.6)",
+    "tests/strings/test_split_partition.py::test_partition_to_dataframe_all_na[string=string[python]-partition]": "TODO: Fails starting with pandas version 3.1.1 (existing all-null string partition expansion shape mismatch, also on unchanged main with pandas 3.0.6)",
     "tests/strings/test_split_partition.py::test_split_nan_expand[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_strings.py::test_index_str_accessor_multiindex_raises": "TODO: Add a reason for failure",
     "tests/strings/test_strings.py::test_string_slice_out_of_bounds[string=object]": "AssertionError: Series are different",
@@ -3338,9 +3517,6 @@ NODEIDS_THAT_FAIL = {
     "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_float_to_datetime_raise_near_bounds": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_round_float_to_datetime_oob_object_path[D]": "TODO: Fails starting with pandas version 3.1.1 (existing datetime overflow validation or subnanosecond resolution limitation, also in 3.0.6)",
     "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_round_float_to_datetime_oob_object_path[s]": "TODO: Fails starting with pandas version 3.1.1 (existing datetime overflow validation or subnanosecond resolution limitation, also in 3.0.6)",
-    "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_sub_nano_unit[as-int-0]": "TODO: Fails starting with pandas version 3.1.1 (existing datetime overflow validation or subnanosecond resolution limitation, also in 3.0.6)",
-    "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_sub_nano_unit[fs-int-0]": "TODO: Fails starting with pandas version 3.1.1 (existing datetime overflow validation or subnanosecond resolution limitation, also in 3.0.6)",
-    "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_sub_nano_unit[ps-int-0]": "TODO: Fails starting with pandas version 3.1.1 (existing datetime overflow validation or subnanosecond resolution limitation, also in 3.0.6)",
     "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_to_datetime_unit_fractional_seconds": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestToDatetimeUnit::test_to_datetime_unit_invalid[111111111111111]": "Failed: DID NOT RAISE <class 'ValueError'>"
     if not PANDAS_GE_31
@@ -7083,6 +7259,7 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_business_repr_etc_smoke[C-tz2]": "Tests private pandas APIs, for example the _summary attribute",
     "tests/indexes/datetimes/test_formats.py::TestDatetimeIndexRendering::test_dti_summary": "Tests private pandas APIs, for example the _summary attribute",
     "tests/indexes/datetimes/test_formats.py::test_get_values_for_csv": "Tests private pandas APIs, for example the _get_values_for_csv attribute",
+    "tests/indexes/datetimes/test_formats.py::test_get_values_for_csv_sub_minute_utc_offset": "Tests private pandas APIs, for example DatetimeIndex._get_values_for_csv",
     "tests/indexes/datetimes/test_indexing.py::TestMaybeCastSliceBound::test_maybe_cast_slice_bounds_empty": "Tests private pandas APIs, for example the _maybe_cast_slice_bound attribute",
     "tests/indexes/datetimes/test_indexing.py::TestMaybeCastSliceBound::test_maybe_cast_slice_duplicate_monotonic": "Tests private pandas APIs, for example the _maybe_cast_slice_bound attribute",
     "tests/indexes/datetimes/test_iter.py::TestDatetimeIndexIteration::test_iteration_preserves_tz2": "Tests private pandas APIs, for example the _repr_base attribute",
@@ -9258,6 +9435,7 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/io/formats/test_format.py::TestSeriesFormatting::test_unicode_name_in_footer": "Tests private pandas APIs, for example pandas.io.formats.format.SeriesFormatter",
     "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_days": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter",
     "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_days_neg": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter",
+    "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_fractional_seconds_aligned": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter and Series._values",
     "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_subdays": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter",
     "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_subdays_neg": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter",
     "tests/io/formats/test_format.py::TestTimedelta64Formatter::test_zero": "Tests private pandas APIs, for example pandas.io.formats.format._Timedelta64Formatter",
@@ -9798,6 +9976,8 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/io/json/test_pandas.py::TestPandasContainer::test_tz_range_is_utc[tz_range0]": "Tests private pandas APIs, for example pandas.io.json.ujson_dumps",
     "tests/io/json/test_pandas.py::TestPandasContainer::test_tz_range_is_utc[tz_range1]": "Tests private pandas APIs, for example pandas.io.json.ujson_dumps",
     "tests/io/json/test_pandas.py::TestPandasContainer::test_tz_range_is_utc[tz_range2]": "Tests private pandas APIs, for example pandas.io.json.ujson_dumps",
+    "tests/io/json/test_pandas.py::test_read_json_quarterly_string_kept_parse_warns_once": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning, value and dtype parity verified",
+    "tests/io/json/test_pandas.py::test_read_json_quarterly_string_out_of_ns_bounds_warns": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning, value and dtype parity verified",
     "tests/io/json/test_readlines.py::test_readjson_chunks_closes[1]": "Tests private pandas APIs, for example pandas.io.json._json.JsonReader",
     "tests/io/json/test_readlines.py::test_readjson_chunks_closes[None]": "Tests private pandas APIs, for example pandas.io.json._json.JsonReader",
     "tests/io/json/test_readlines.py::test_readjson_unicode[pyarrow]": "pandas xfails (reason: Pyarrow only supports a file path as an input and line delimited jsonand doesn't support chunksize parameter.), but xpasses with cudf.pandas",
@@ -10037,6 +10217,8 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/io/parser/common/test_file_buffer_url.py::test_eof_states[pyarrow-in-quoted-field]": "Crashes pytest workers (TODO: Validate on pandas 3)",
     "tests/io/parser/common/test_file_buffer_url.py::test_eof_states[pyarrow-skip-line]": "Crashes pytest workers (TODO: Validate on pandas 3)",
     "tests/io/parser/common/test_file_buffer_url.py::test_eof_states[pyarrow-whitespace-line]": "Crashes pytest workers (TODO: Validate on pandas 3)",
+    "tests/io/parser/test_c_parser_only.py::test_binary_file_handle_avoids_text_wrapping[c_high]": "Tests private pandas APIs, for example TextFileReader.handles.handle and its internal buffer type",
+    "tests/io/parser/test_c_parser_only.py::test_binary_file_handle_avoids_text_wrapping[c_low]": "Tests private pandas APIs, for example TextFileReader.handles.handle and its internal buffer type",
     "tests/io/parser/test_c_parser_only.py::test_decode_failure_frees_string_table[c_high-None]": "Tests private pandas APIs, for example pandas._libs.hashtable.get_hashtable_trace_domain",
     "tests/io/parser/test_c_parser_only.py::test_decode_failure_frees_string_table[c_high-category]": "Tests private pandas APIs, for example pandas._libs.hashtable.get_hashtable_trace_domain",
     "tests/io/parser/test_c_parser_only.py::test_decode_failure_frees_string_table[c_low-None]": "Tests private pandas APIs, for example pandas._libs.hashtable.get_hashtable_trace_domain",
@@ -10057,6 +10239,13 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/io/parser/test_c_parser_only.py::test_mixed_dtype_warning_with_usecols[c_low-usecols1]": "Tests private pandas APIs, for example pandas._libs.parsers",
     "tests/io/parser/test_c_parser_only.py::test_mixed_dtype_warning_with_usecols[c_low-usecols2]": "Tests private pandas APIs, for example pandas._libs.parsers",
     "tests/io/parser/test_c_parser_only.py::test_mixed_dtype_warning_with_usecols[c_low-usecols3]": "Tests private pandas APIs, for example pandas._libs.parsers",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batch_mixed_na_filter[kwargs0]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batch_mixed_na_filter[kwargs1]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batches_columns_together[10-kwargs0]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batches_columns_together[10-kwargs1]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batches_columns_together[None-kwargs0]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_c_parser_only.py::test_pyarrow_string_fast_path_batches_columns_together[None-kwargs1]": "Tests private pandas APIs, for example TextFileReader._engine._reader._largest_str_batch",
+    "tests/io/parser/test_index_col.py::test_scalar_numeric_dtype_for_index_col[python-Int64]": "Upstream xfail passes under cudf.pandas: the GPU CSV engine applies scalar dtype to the index column",
     "tests/io/parser/test_textreader.py::TestTextReader::test_StringIO": "Tests private pandas APIs, for example pandas._libs.parsers.TextReader",
     "tests/io/parser/test_textreader.py::TestTextReader::test_cr_delimited[A  B  C\\r  2  3\\r4  5  6-kwargs4]": "Tests private pandas APIs, for example pandas._libs.parsers.TextReader",
     "tests/io/parser/test_textreader.py::TestTextReader::test_cr_delimited[A B C\\r2 3\\r4 5 6-kwargs5]": "Tests private pandas APIs, for example pandas._libs.parsers.TextReader",
@@ -11507,6 +11696,8 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/series/methods/test_isin.py::TestSeriesIsIn::test_isin_dt64_values_vs_ints[object]": "Tests private pandas APIs, for example pandas.core.algorithms.isin",
     "tests/series/methods/test_isin.py::TestSeriesIsIn::test_isin_period_freq_mismatch": "Tests private pandas APIs, for example pandas.core.arrays.PeriodArray._simple_new",
     "tests/series/methods/test_isin.py::TestSeriesIsIn::test_isin_tzawareness_mismatch": "Tests private pandas APIs, for example pandas.core.algorithms.isin",
+    "tests/series/methods/test_map.py::test_map_empty[multi]": "Strict XPASS from an upstream pandas xfail: its fixture initializes a Series from a MultiIndex, which pandas does not support",
+    "tests/series/methods/test_map.py::test_map_empty[tuples]": "Strict XPASS from an upstream pandas xfail: its fixture initializes a Series from a MultiIndex, which pandas does not support",
     "tests/series/methods/test_reindex.py::test_reindexing_with_float64_NA_log": "Flaky xfails (TODO: Validate with pandas 3)",
     "tests/series/methods/test_set_name.py::TestSetName::test_set_name": "Tests private pandas APIs, for example the _set_name attribute",
     "tests/series/methods/test_to_numpy.py::test_to_numpy_copy_false_returns_readonly_view": "Requires repeated GPU-to-NumPy conversions to share host memory",
@@ -12121,14 +12312,14 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/tools/test_to_datetime.py::TestShouldCache::test_should_cache_errors[10-2-unique_share must be in next bounds: \\\\(0; 1\\\\)]": "Tests private pandas APIs, for example pandas.core.tools.datetimes.should_cache",
     "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_string_na_nat_conversion[False]": "Tests private pandas APIs, for example pandas._libs.tslib.array_to_datetime",
     "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_string_na_nat_conversion[True]": "Tests private pandas APIs, for example pandas._libs.tslib.array_to_datetime",
-    "tests/tools/test_to_datetime.py::test_datetime_index_quarterly_string_warns_once": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[Index]": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[Series]": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[array]": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[list]": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_mixed_resolution": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_mixed_resolution_tzaware": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
-    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_tzaware": "Tests private pandas APIs, for example captured records from pandas._testing.assert_produces_warning",
+    "tests/tools/test_to_datetime.py::test_datetime_index_quarterly_string_warns_once": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[Index]": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[Series]": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[array]": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once[list]": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_mixed_resolution": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_mixed_resolution_tzaware": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
+    "tests/tools/test_to_datetime.py::test_to_datetime_quarterly_string_warns_once_tzaware": "pandas._testing.assert_produces_warning capture records are unavailable because the accelerator disables this test helper; public warning parity verified",
     "tests/tools/test_to_timedelta.py::TestTimedeltas::test_to_timedelta_on_missing_values_list[nan]": "Tests private pandas APIs, for example the _value attribute",
     "tests/tools/test_to_timedelta.py::TestTimedeltas::test_to_timedelta_on_missing_values_list[val1]": "Tests private pandas APIs, for example the _value attribute",
     "tests/tools/test_to_timedelta.py::TestTimedeltas::test_to_timedelta_on_missing_values_list[val2]": "Tests private pandas APIs, for example the _value attribute",
@@ -13592,6 +13783,12 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
 
 # Keep keys in alphabetical order
 NODEIDS_THAT_MAY_FAIL = {
+    "tests/arrays/sparse/test_arithmetics.py::test_op_na_scalar[values0-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing dense Series comparison with NA limitation, also in 3.0.6); outcome depends on execution order"
+    if PANDAS_GE_31
+    else None,
+    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[string-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty Arrow-string comparison result dtype loss, also in 3.0.6); outcome depends on execution order"
+    if PANDAS_GE_31
+    else None,
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[pyarrow]-False-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[pyarrow]-True-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
     "tests/extension/test_string.py::TestStringArray::test_compare_array[string=string[python]-False-eq]": "TODO: Fails starting with pandas version 3.1.1 (existing empty nullable-string comparison dtype loss; outcome depends on execution order)",
@@ -13616,7 +13813,16 @@ NODEIDS_THAT_MAY_FAIL = {
     "tests/indexes/multi/test_indexing.py::test_getitem_bool_index_single[list]": "TODO: Fails starting with pandas version 3.1.1 (existing MultiIndex boolean indexing or slice representation limitation; outcome depends on execution order)",
     "tests/indexes/multi/test_indexing.py::test_getitem_group_select": "TODO: Fails starting with pandas version 3.1.1 (existing MultiIndex boolean indexing or slice representation limitation; outcome depends on execution order)",
     "tests/indexes/numeric/test_astype.py::TestAstype::test_astype_float64_to_uint64": "TODO: Fails starting with pandas version 3.1.1 (existing uint64 conversion bounds validation limitation; outcome depends on execution order)",
+    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_high]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6); outcome depends on execution order"
+    if PANDAS_GE_31
+    else None,
+    "tests/io/parser/test_c_parser_only.py::test_categorical_encoding_errors_merge_with_na[c_low]": "TODO: Fails starting with pandas version 3.1.1 (existing categorical codes expose missing values as NaN instead of minus one, also on unchanged main with pandas 3.0.6); outcome depends on execution order"
+    if PANDAS_GE_31
+    else None,
     "tests/io/test_spss.py::test_spss_metadata": "pandas 3.0.3 metadata expectation is incompatible with pyreadstat 1.3.6",
+    "tests/reshape/concat/test_concat.py::TestConcatenate::test_concat_keys_specific_levels": "TODO: Fails starting with pandas version 3.1.1 (existing grouping, index representation, or concatenation metadata limitation, also in 3.0.6); outcome depends on execution order"
+    if PANDAS_GE_31
+    else None,
     "tests/series/indexing/test_datetime.py::test_indexing_unordered": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",
     "tests/series/indexing/test_getitem.py::TestGetitemDeprecatedIndexers::test_getitem_dict_and_set_deprecated[key0]": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",
     "tests/series/indexing/test_getitem.py::TestGetitemDeprecatedIndexers::test_getitem_dict_and_set_deprecated[key1]": "TODO: Fails starting with pandas version 3.1.1 (existing Series indexing dimensionality or indexer validation limitation; outcome depends on execution order)",

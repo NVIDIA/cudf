@@ -32,7 +32,7 @@ from cudf.utils.dtypes import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from cudf._typing import ColumnLike
+    from cudf._typing import ColumnLike, NoDefault
     from cudf.core.column.string import StringColumn
     from cudf.core.index import Index
     from cudf.core.series import Series
@@ -120,6 +120,14 @@ class StringMethods(BaseAccessor):
                 f"not {inferred_dtype}"
             )
         super().__init__(parent=parent)
+
+    def _return_predicate_result(self, column: ColumnBase) -> Series | Index:
+        if (
+            isinstance(self._column.dtype, pd.StringDtype)
+            and self._column.dtype.na_value is pd.NA
+        ):
+            column = column.astype(pd.BooleanDtype())
+        return self._return_or_inplace(column)
 
     def htoi(self) -> Series | Index:
         """
@@ -840,6 +848,17 @@ class StringMethods(BaseAccessor):
                 "`case=False` only supported when `regex=False`"
             )
 
+        if (
+            regex
+            and isinstance(pat, str)
+            and re.search(r"(?<!\\)(?:\\\\)*\\[uUN]", pat)
+        ):
+            # libcudf does not interpret Python's Unicode escape syntax.
+            re.compile(pat)
+            raise NotImplementedError(
+                "Unicode regex escapes require Python regex matching"
+            )
+
         if is_scalar(pat):
             if regex:
                 pat = self._remove_named_capture_groups(pat)  # type: ignore[arg-type]
@@ -869,7 +888,7 @@ class StringMethods(BaseAccessor):
             result_col = result_col.fillna(False)
         if na is not no_default:
             result_col = result_col.fillna(na)
-        return self._return_or_inplace(result_col)
+        return self._return_predicate_result(result_col)
 
     def like(self, pat: str, esc: str | None = None) -> Series | Index:
         """
@@ -4402,7 +4421,7 @@ class StringMethods(BaseAccessor):
     def match(
         self,
         pat: str,
-        case: bool = True,
+        case: bool | NoDefault = no_default,
         flags: int = 0,
         na=no_default,
     ) -> Series | Index:
@@ -4453,7 +4472,19 @@ class StringMethods(BaseAccessor):
             The `flags` parameter currently only supports re.DOTALL,
             re.MULTILINE and re.IGNORECASE.
         """
-        if case is not True:
+        if PANDAS_GE_31 and case is not no_default:
+            if isinstance(pat, re.Pattern):
+                if case != (not bool(pat.flags & re.IGNORECASE)):
+                    raise ValueError(
+                        "Cannot both specify 'case' and pass a compiled "
+                        "regexp object with conflicting case-sensitivity"
+                    )
+            elif case and flags & re.IGNORECASE:
+                raise ValueError(
+                    "Cannot both specify case=True and pass 'flags' "
+                    "containing re.IGNORECASE"
+                )
+        if case is not no_default and case is not True:
             raise NotImplementedError("`case` parameter is not yet supported")
         if isinstance(pat, re.Pattern):
             if flags:
@@ -4472,7 +4503,7 @@ class StringMethods(BaseAccessor):
             result = result.fillna(na)
         elif self._column._PANDAS_NA_VALUE in {np.nan, None}:
             result = result.fillna(False)
-        return self._return_or_inplace(result)
+        return self._return_predicate_result(result)
 
     def url_decode(self) -> Series | Index:
         """

@@ -84,6 +84,27 @@ def test_pandas_na_keeps_singleton_identity():
     assert pd.NA is pd._fsproxy_slow.NA
 
 
+@pytest.mark.parametrize("kind", ["Series", "DataFrame", "Index"])
+def test_registered_accessor_does_not_retain_parent(kind):
+    class Accessor:
+        def __init__(self, obj):
+            self.obj = obj
+
+    cls = getattr(pd, kind)
+    name = "_test_no_reference_cycle"
+    registrar = getattr(pd.api.extensions, f"register_{kind.lower()}_accessor")
+    registrar(name)(Accessor)
+    try:
+        obj = cls([0])
+        reference = weakref.ref(obj)
+        assert getattr(obj, name).obj is obj
+        del obj
+        assert reference() is None
+    finally:
+        delattr(cls, name)
+        cls._accessors.discard(name)
+
+
 def test_public_module_aliases_and_numpy_ufunc_dispatch():
     assert pd.Series is pd.core.series.Series
     assert pd.Index is pd.core.indexes.base.Index

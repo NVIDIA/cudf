@@ -385,6 +385,23 @@ class NumericalColumn(NumericalBaseColumn):
             "__eq__",
             "__ne__",
         }
+        other_is_categorical = isinstance(
+            other, cudf.core.column.CategoricalColumn
+        )
+        if (
+            cudf.get_option("mode.pandas_compatible")
+            and isinstance(other, cudf.core.column.CategoricalColumn)
+            and (
+                op
+                not in {"__eq__", "__ne__", "NULL_EQUALS", "NULL_NOT_EQUALS"}
+                or is_pandas_nullable_extension_dtype(
+                    other.dtype.categories.dtype
+                )
+            )
+        ):
+            raise NotImplementedError(
+                "Categorical operations require pandas dispatch"
+            )
         out_dtype = None
         if op in {"__truediv__", "__rtruediv__"}:
             # Division with integer types results in a suitable float.
@@ -433,6 +450,15 @@ class NumericalColumn(NumericalBaseColumn):
             if isinstance(other, pa.Scalar)
             else other.dtype
         )
+        if (
+            op in cmp_ops
+            and not other_is_categorical
+            and not is_pandas_nullable_extension_dtype(self.dtype)
+            and is_pandas_nullable_extension_dtype(other_cudf_dtype)
+        ):
+            out_dtype = get_dtype_of_same_kind(
+                other_cudf_dtype, np.dtype(np.bool_)
+            )
         self_is_arrow = isinstance(self.dtype, pd.ArrowDtype)
         other_is_arrow = isinstance(other_cudf_dtype, pd.ArrowDtype)
         if self_is_arrow or other_is_arrow:
@@ -705,7 +731,7 @@ class NumericalColumn(NumericalBaseColumn):
         elif (
             cudf.get_option("mode.pandas_compatible")
             and op in cmp_ops
-            and not is_pandas_nullable_extension_dtype(self.dtype)
+            and not is_pandas_nullable_extension_dtype(out_dtype)
             and self.dtype.kind != "b"
         ):
             # For numeric dtypes, pandas converts nulls to NaN and the

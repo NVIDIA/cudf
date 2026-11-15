@@ -273,8 +273,11 @@ class StringColumn(ColumnBase, Scannable):
 
     def as_numerical_column(self, dtype: np.dtype) -> NumericalColumn:
         if dtype.kind == "b":
-            result = self.count_characters() > np.int8(0)
-            if not is_pandas_nullable_extension_dtype(dtype):
+            counts = self.count_characters()
+            result = counts > np.int8(0)
+            if is_pandas_nullable_extension_dtype(dtype):
+                result = result.set_mask(counts.mask, counts.null_count)
+            else:
                 result = result.fillna(False)
             return cast(
                 "cudf.core.column.numerical.NumericalColumn",

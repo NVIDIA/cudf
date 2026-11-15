@@ -9,6 +9,7 @@ import inspect
 import operator
 import os
 import pickle
+import re
 
 import pandas as pd
 
@@ -314,12 +315,20 @@ def _ExcelWriter__init__(self, *args, **kwargs):
     pass
 
 
+def _slow_to_fast_dataframe(slow):
+    if any(not getattr(dtype, "isnative", True) for dtype in slow.dtypes):
+        raise AttributeError(
+            "Non-native byte-order DataFrames cannot use GPU storage"
+        )
+    return cudf.from_pandas(slow)
+
+
 DataFrame = make_final_proxy_type(
     "DataFrame",
     cudf.DataFrame,
     pd.DataFrame,
     fast_to_slow=lambda fast: fast.to_pandas(),
-    slow_to_fast=cudf.from_pandas,
+    slow_to_fast=_slow_to_fast_dataframe,
     additional_attributes={
         "__array__": array_method,
         "__dir__": _DataFrame__dir__,
@@ -337,6 +346,8 @@ DataFrame = make_final_proxy_type(
         "_mgr": _FastSlowAttribute("_mgr", private=True),
         "plot": _FastSlowAttribute("plot", private=True),
         "sparse": _FastSlowAttribute("sparse", private=True),
+        # pandas' Arrow constructor applies its own dtype conversion policy.
+        "from_arrow": _FastSlowAttribute("from_arrow", private=PANDAS_GE_31),
         "expanding": _FastSlowAttribute("expanding", private=True),
         "_AXIS_LEN": _FastSlowAttribute("_AXIS_LEN", private=True),
         "_AXIS_TO_AXIS_NUMBER": _FastSlowAttribute(
@@ -384,6 +395,10 @@ def _Series_dtype(self):
 
 
 def _slow_to_fast_series(slow):
+    if not getattr(slow.dtype, "isnative", True):
+        raise AttributeError(
+            "Non-native byte-order Series cannot use GPU storage"
+        )
     if PANDAS_GE_31 and getattr(slow.array, "_readonly", False):
         # pandas 3.1 keeps arrays exposed by an Index read-only, including
         # Series sharing that array. Copying to the device would lose the flag.
@@ -468,6 +483,15 @@ def _Index_values(self):
 
 
 def _construct_index(cls, args, kwargs):
+    if cls is cudf.DatetimeIndex and kwargs.get("dtype") is None:
+        data = args[0] if args else kwargs.get("data")
+        if isinstance(data, (list, tuple)) and any(
+            isinstance(value, str) and re.search(r"\.[0-9]{7,}", value)
+            for value in data
+        ):
+            raise NotImplementedError(
+                "Inferring high-precision datetime strings requires pandas"
+            )
     if PANDAS_GE_31 and cls is cudf.Index:
         data = args[0] if args else kwargs.get("data")
         dtype = args[1] if len(args) > 1 else kwargs.get("dtype")
@@ -1710,6 +1734,22 @@ register_proxy_func(pd.read_pickle)(
 )
 
 register_proxy_func(pd.to_pickle)(_FunctionProxy(_Unusable(), pd.to_pickle))
+
+
+def _read_json_fast(*args, **kwargs):
+    if PANDAS_GE_31 and kwargs.get("engine") == "pyarrow":
+        # pandas validates options specifically for the requested Arrow
+        # engine. Use that engine before cuDF can ignore those options.
+        raise NotImplementedError(
+            "Use the requested pandas PyArrow JSON engine"
+        )
+    return cudf.read_json(*args, **kwargs)
+
+
+register_proxy_func(pd.read_json)(
+    _FunctionProxy(_read_json_fast, pd.read_json)
+)
+
 register_proxy_func(pd.api.types.is_list_like)(  # noqa: TID251
     _FunctionProxy(_Unusable(), pd.api.types.is_list_like)  # noqa: TID251
 )

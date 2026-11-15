@@ -561,6 +561,21 @@ class Series(SingleColumnFrame, IndexedFrame):
             data = {}
             if dtype is None and index is not None and len(index) > 0:
                 dtype = np.dtype("float64")
+        checked_dtype = (
+            dtype if dtype is not None else getattr(data, "dtype", None)
+        )
+        if cudf.get_option("mode.pandas_compatible") and isinstance(
+            checked_dtype, (str, np.dtype)
+        ):
+            try:
+                numpy_dtype = np.dtype(checked_dtype)
+            except TypeError:
+                pass
+            else:
+                if not numpy_dtype.isnative:
+                    raise NotImplementedError(
+                        "Non-native byte-order dtypes require pandas storage"
+                    )
         if dtype is not None:
             dtype = cudf.dtype(dtype)
         attrs = None
@@ -1506,7 +1521,16 @@ class Series(SingleColumnFrame, IndexedFrame):
         if len(lines) > 1:
             if lines[-1].startswith("Name: "):
                 lines = lines[:-1]
-                lines.append("Name: %s" % str(self.name))
+                display_name = str(self.name)
+                if (
+                    PANDAS_GE_31
+                    and isinstance(self.name, (float, np.floating))
+                    and not pd.isna(self.name)
+                ):
+                    display_name = pd.io.formats.format.format_array(
+                        np.asarray([self.name]), None, leading_space=False
+                    )[0]
+                lines.append("Name: %s" % display_name)
                 if len(self) > len(preprocess):
                     lines[-1] = lines[-1] + ", Length: %d" % len(self)
                 lines[-1] = lines[-1] + ", "

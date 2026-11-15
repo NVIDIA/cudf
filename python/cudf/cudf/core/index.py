@@ -2040,6 +2040,14 @@ class Index(SingleColumnFrame):
         else:
             preprocess = self
 
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and isinstance(self, DatetimeIndex)
+            and preprocess is self
+        ):
+            return repr(self.to_pandas())
+
         # TODO: Change below usages accordingly to
         # utilize `Index.to_string` once it is implemented
         # related issue : https://github.com/pandas-dev/pandas/issues/35389
@@ -2110,6 +2118,12 @@ class Index(SingleColumnFrame):
         # string by finding first occurrence of "(" in the output
         index_class_split_index = output.find("(")
         output = self.__class__.__name__ + output[index_class_split_index:]
+
+        if PANDAS_GE_31 and isinstance(self, CategoricalIndex):
+            old_length = f"length={len(preprocess)})"
+            if len(preprocess) != len(self) and output.endswith(old_length):
+                output = output[: -len(old_length)] + f"length={len(self)})"
+            return output
 
         lines = output.split("\n")
 
@@ -3370,7 +3384,22 @@ class RangeIndex(Index):
         else:
             shift = int(side == "left")
 
-        offset = (value - ri.start - shift) // ri.step + 1
+        if PANDAS_GE_31 and isinstance(value, (float, np.floating)):
+            if np.isnan(value) or (len(ri) and value > ri[-1]):
+                offset = len(ri)
+            elif not len(ri) or value < ri.start:
+                offset = 0
+            else:
+                numerator, denominator = value.as_integer_ratio()
+                quotient, remainder = divmod(
+                    numerator - ri.start * denominator,
+                    ri.step * denominator,
+                )
+                # A descending range reverses the insertion side as well.
+                left_side = (side == "left") != flip
+                offset = quotient + (bool(remainder) if left_side else 1)
+        else:
+            offset = (value - ri.start - shift) // ri.step + 1
         if flip:
             offset = len(ri) - offset
         result = max(min(len(ri), offset), 0)
@@ -3629,6 +3658,12 @@ class DatetimeIndex(Index):
         name=None,
         nan_as_null=no_default,
     ):
+        if (
+            PANDAS_GE_31
+            and isinstance(data, (np.ndarray, cupy.ndarray))
+            and data.ndim == 0
+        ):
+            raise ValueError("Cannot construct DatetimeArray from 0-dim input")
         self._freq = None
         # we should be more strict on what we accept here but
         # we'd have to go and figure out all the semantics around
@@ -4582,7 +4617,7 @@ class DatetimeIndex(Index):
         """
         # .quarter is already a cached_property
         return Index._from_column(
-            self._column.quarter.astype(np.dtype(np.int8))
+            self._column.quarter.astype(np.dtype(np.int8)), name=self.name
         )
 
     @_performance_tracking
@@ -4671,7 +4706,13 @@ class DatetimeIndex(Index):
                 )
             else:
                 inferred = result.inferred_freq
-            if inferred is None:
+            if PANDAS_GE_31:
+                try:
+                    result.freq = self._freq
+                except ValueError:
+                    if inferred is not None:
+                        result.freq = inferred
+            elif inferred is None:
                 try:
                     result.freq = self._freq
                 except ValueError:
@@ -6186,7 +6227,7 @@ def _get_nearest_indexer(
 
 
 def _validate_freq(freq: Any) -> pd.tseries.offsets.BaseOffset | None:
-    """Normalize ``freq`` to a canonical pandas offset.
+    """Normalize ``freq`` to a pandas offset.
 
     Accepts freq strings, pandas offsets and cudf's own offset classes,
     rejecting frequencies that cudf cannot represent.
@@ -6201,7 +6242,12 @@ def _validate_freq(freq: Any) -> pd.tseries.offsets.BaseOffset | None:
         # cudf supports a subset of pandas frequency strings; parse with
         # cudf's DateOffset (which raises for unsupported ones) and store
         # the equivalent pandas offset.
-        return DateOffset._from_freqstr(freq)._maybe_as_fast_pandas_offset()
+        offset = DateOffset._from_freqstr(freq)._maybe_as_fast_pandas_offset()
+        if PANDAS_GE_31:
+            # Retain explicit tick aliases such as 24h, and weekly anchors,
+            # after validating the frequency against cudf's supported set.
+            return pd.tseries.frequencies.to_offset(freq)
+        return offset
     if not isinstance(freq, pd.tseries.offsets.BaseOffset):
         raise ValueError(f"Invalid frequency: {freq}")
     # gate pandas offsets on the same supported subset

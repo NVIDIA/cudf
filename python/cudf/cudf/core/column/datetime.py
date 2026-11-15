@@ -1029,6 +1029,29 @@ class DatetimeColumn(TemporalBaseColumn):
 
         return ambiguous, nonexistent  # type: ignore[return-value]
 
+    def _check_timezone_localization_bounds(self) -> None:
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and self.null_count < len(self)
+        ):
+            ticks = cast("NumericalColumn", self.astype(np.dtype(np.int64)))
+            lower, upper = ticks.minmax()
+            one_day = {
+                "s": 86_400,
+                "ms": 86_400_000,
+                "us": 86_400_000_000,
+                "ns": 86_400_000_000_000,
+            }[self.time_unit]
+            limits = np.iinfo(np.int64)
+            if lower <= limits.min + one_day or upper >= limits.max - one_day:
+                # Offset arithmetic can wrap or land on the reserved NaT
+                # value. pandas also resolves historical and future rules
+                # at these boundaries, beyond the cached transition table.
+                raise NotImplementedError(
+                    "Timezone localization near datetime bounds requires pandas"
+                )
+
     def tz_localize(
         self,
         tz: str | None,
@@ -1037,6 +1060,7 @@ class DatetimeColumn(TemporalBaseColumn):
     ) -> DatetimeColumn | DatetimeTZColumn:
         if tz is None:
             return self.copy()
+        self._check_timezone_localization_bounds()
         ambiguous, nonexistent = _check_ambiguous_and_nonexistent(
             ambiguous, nonexistent
         )
@@ -1268,6 +1292,7 @@ class DatetimeTZColumn(DatetimeColumn):
         nonexistent: Literal["NaT"] = "NaT",
     ) -> DatetimeColumn:
         if tz is None:
+            self._check_timezone_localization_bounds()
             return self._local_time
         ambiguous, nonexistent = _check_ambiguous_and_nonexistent(
             ambiguous, nonexistent

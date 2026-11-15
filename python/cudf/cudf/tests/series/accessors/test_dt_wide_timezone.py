@@ -31,7 +31,7 @@ def _series(value, timezone, unit, sliced):
 )
 @pytest.mark.parametrize(
     "component",
-    ["year", "weekday", "day_of_year", "is_leap_year", "isocalendar"],
+    ["year", "day_of_week", "day_of_year", "is_leap_year", "isocalendar"],
 )
 def test_calendar_rejects_local_year_overflow(
     value, timezone, unit, sliced, component

@@ -2942,7 +2942,7 @@ class IndexedFrame(Frame):
             elif (ascending and idx.is_monotonic_increasing) or (
                 not ascending and idx.is_monotonic_decreasing
             ):
-                out = self.copy()
+                out = self.copy(deep=not PANDAS_GE_31)
             else:
                 inds = idx.argsort(
                     ascending=ascending, na_position=na_position
@@ -4114,7 +4114,7 @@ class IndexedFrame(Frame):
                 column_names = (
                     column_names
                     if column_names is not None
-                    else list(df._column_names)
+                    else df._data.to_pandas_index
                 )
                 df = cudf.DataFrame()
             else:
@@ -7125,7 +7125,6 @@ class IndexedFrame(Frame):
                 and eff_dtype.name in numpy_to_nullable
             ):
                 col_filled = col.fillna(0)
-                as_int = col_filled.astype(np.dtype(np.int64))
                 nan_blocks_int = (
                     pd.options.future.distinguish_nan_and_na
                     and col.nan_count > 0
@@ -7133,7 +7132,16 @@ class IndexedFrame(Frame):
                 if (
                     convert_integer
                     and not nan_blocks_int
-                    and bool(cp.allclose(col_filled, as_int))
+                    and (
+                        col_filled.can_cast_safely(np.dtype(np.int64))
+                        if PANDAS_GE_31
+                        else bool(
+                            cp.allclose(
+                                col_filled,
+                                col_filled.astype(np.dtype(np.int64)),
+                            )
+                        )
+                    )
                 ):
                     selected = True
                     new_col = col.nans_to_nulls().astype(

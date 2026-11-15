@@ -48,6 +48,9 @@ def test_tz_aware_attributes_local():
     assert_eq(result, expected)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "field",
     [

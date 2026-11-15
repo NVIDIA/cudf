@@ -32,6 +32,7 @@ from cudf.utils.dtypes import (
     dtype_to_pylibcudf_type,
     find_common_type,
     is_mixed_with_object_dtype,
+    is_pandas_nullable_extension_dtype,
     min_signed_type,
     min_unsigned_type,
 )
@@ -231,6 +232,12 @@ class CategoricalColumn(ColumnBase):
         )
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
+        if cudf.get_option(
+            "mode.pandas_compatible"
+        ) and is_pandas_nullable_extension_dtype(self.dtype.categories.dtype):
+            raise NotImplementedError(
+                "Categorical comparisons with extension categories require pandas dispatch"
+            )
         if isinstance(other, ColumnBase):
             if isinstance(other, CategoricalColumn):
                 if self.dtype == other.dtype:

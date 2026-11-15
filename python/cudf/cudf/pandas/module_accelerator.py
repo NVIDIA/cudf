@@ -592,10 +592,11 @@ class ModuleAccelerator(ModuleAcceleratorBase):
         )
         if not use_real:
             # Only need to check the denylist if we're not turned off.
-            frame = sys._getframe()
-            # We cannot possibly be at the top level.
-            assert frame.f_back
-            calling_module = pathlib.PurePath(frame.f_back.f_code.co_filename)
+            # Avoid keeping our own frame in a local variable: that creates
+            # a reference cycle which also retains the caller's objects.
+            calling_module = pathlib.PurePath(
+                sys._getframe(1).f_code.co_filename
+            )
             use_real = _caller_in_denylist(
                 calling_module, tuple(loader._denylist)
             )

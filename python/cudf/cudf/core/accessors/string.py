@@ -593,7 +593,7 @@ class StringMethods(BaseAccessor):
 
     def extract(
         self, pat: str, flags: int = 0, expand: bool = True
-    ) -> Series | Index:
+    ) -> Series | Index | cudf.DataFrame:
         r"""
         Extract capture groups in the regex `pat` as columns in a DataFrame.
 
@@ -609,7 +609,8 @@ class StringMethods(BaseAccessor):
         expand : bool, default True
             If True, return DataFrame with one column per capture group.
             If False, return a Series/Index if there is one capture group or
-            DataFrame if there are multiple capture groups.
+            DataFrame if there are multiple capture groups in a Series.
+            For an Index, ``expand=False`` requires one capture group.
 
         Returns
         -------
@@ -667,6 +668,12 @@ class StringMethods(BaseAccessor):
                 "Case-insensitive Arrow string extraction is not supported"
             )
         compiled = re.compile(pat)
+        if (
+            not expand
+            and isinstance(self._parent, cudf.Index)
+            and compiled.groups > 1
+        ):
+            raise ValueError("only one regex group is supported with Index")
         group_names = {
             group_number - 1: name
             for name, group_number in compiled.groupindex.items()
@@ -686,6 +693,11 @@ class StringMethods(BaseAccessor):
                 group_names.get(key, key): value for key, value in data.items()
             }
             data = named_data  # type: ignore[assignment]
+        if expand and isinstance(self._parent, cudf.Index):
+            result = cudf.DataFrame._from_data(data)
+            if not group_names:
+                result._data.rangeindex = True
+            return result
         return self._return_or_inplace(
             data, expand=expand, replace_name=result_name
         )

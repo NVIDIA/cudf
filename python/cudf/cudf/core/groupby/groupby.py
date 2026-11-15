@@ -1967,7 +1967,7 @@ class GroupBy(Serializable, Reducible, Scannable):
            A  B
         3  1  4
         4  2  5
-        >>> gb.nth[:2]
+        >>> gb.nth(slice(None, 2))
            A     B
         0  1  <NA>
         1  1     2

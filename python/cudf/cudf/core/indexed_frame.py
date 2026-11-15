@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import itertools
 import textwrap
 import warnings
@@ -41,6 +42,7 @@ from cudf.core._internals import copying
 from cudf.core.column import (
     CategoricalColumn,
     ColumnBase,
+    DecimalColumn,
     access_columns,
     as_column,
     column_empty,
@@ -200,7 +202,12 @@ def _get_unique_drop_labels(array):
 def _indices_from_labels(obj, labels):
     if not isinstance(labels, cudf.MultiIndex):
         labels = as_column(labels)
-        labels = labels.astype(obj.index.dtype)
+        if not (
+            PANDAS_GE_31
+            and labels.dtype.kind == obj.index.dtype.kind == "f"
+            and labels.dtype.itemsize > obj.index.dtype.itemsize
+        ):
+            labels = labels.astype(obj.index.dtype)
         idx_labels = cudf.Index._from_column(labels)
     else:
         idx_labels = labels
@@ -3417,6 +3424,12 @@ class IndexedFrame(Frame):
         4     True
         dtype: bool
         """
+        if PANDAS_GE_31 and isinstance(self, cudf.DataFrame) and self.empty:
+            return cudf.Series._from_column(
+                as_column(False, dtype=np.dtype("bool"), length=len(self)),
+                index=self.index,
+                attrs=self.attrs,
+            )
         subset = self._preprocess_subset(subset)
 
         name = None
@@ -4117,6 +4130,19 @@ class IndexedFrame(Frame):
                 )
                 df.index = joined.index
                 if fill_value is not NA and rows_added:
+                    if PANDAS_GE_31 and isinstance(
+                        fill_value, datetime.datetime
+                    ):
+                        for _, dtype in df._dtypes:
+                            if (
+                                isinstance(dtype, pd.ArrowDtype)
+                                and dtype.kind == "M"
+                                and (fill_value.tzinfo is None)
+                                != (dtype.pyarrow_dtype.tz is None)
+                            ):
+                                raise TypeError(
+                                    f"Invalid value '{fill_value}' for dtype '{dtype}'"
+                                )
                     df.loc[diff] = fill_value
 
         index = index if index is not None else df.index
@@ -4365,14 +4391,14 @@ class IndexedFrame(Frame):
             )
 
         cols = (
-            col.round(decimals[name], how=how)
-            if name in decimals
-            and (
-                col.dtype.kind in "fiu"
-                or isinstance(
-                    col.dtype, (cudf.Decimal32Dtype, cudf.Decimal64Dtype)
-                )
+            (
+                col.round(decimals[name], how=how).astype(col.dtype)
+                if isinstance(col, DecimalColumn)
+                and isinstance(col.dtype, pd.ArrowDtype)
+                else col.round(decimals[name], how=how)
             )
+            if name in decimals
+            and (col.dtype.kind in "fiu" or isinstance(col, DecimalColumn))
             else col.copy(deep=True)
             for name, col in self._column_labels_and_values
         )
@@ -7530,8 +7556,13 @@ def _append_new_row(col: ColumnBase, value: ScalarLike) -> ColumnBase:
         if (cudf.utils.utils.is_na_like(value) or value in {None, np.nan})
         else None,
     )
-    if (PANDAS_GE_31 or val_col.dtype.kind != "f") and val_col.can_cast_safely(
-        col.dtype
+    if (
+        PANDAS_GE_31
+        and is_dtype_obj_string(col.dtype)
+        and is_dtype_obj_string(val_col.dtype)
+    ) or (
+        (PANDAS_GE_31 or val_col.dtype.kind != "f")
+        and val_col.can_cast_safely(col.dtype)
     ):
         # If the value can be cast to the column dtype, do so
         val_col = val_col.astype(col.dtype)

@@ -15,6 +15,7 @@ import pylibcudf as plc
 
 import cudf
 from cudf.api.types import is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import binaryop
 from cudf.core.column.column import (
     ColumnBase,
@@ -216,14 +217,22 @@ class NumericalColumn(NumericalBaseColumn):
             pylibcudf_result_dtype_policy,
         ).execute_with_args(self)
 
+    @property
+    def _nan_is_null(self) -> bool:
+        return self.dtype.kind == "f" and not (
+            PANDAS_GE_31
+            and isinstance(self.dtype, pd.ArrowDtype)
+            and pd.get_option("future.distinguish_nan_and_na")
+        )
+
     def isnull(self) -> ColumnBase:
         """Identify missing values in a Column.
 
         For float columns, NaN values are also considered null.
         """
-        if not self.has_nulls(include_nan=self.dtype.kind == "f"):
+        if not self.has_nulls(include_nan=self._nan_is_null):
             return as_column(False, length=len(self))
-        if self.dtype.kind == "f":
+        if self._nan_is_null:
             return PylibcudfFunction(
                 _is_null_or_nan_plc,
                 pylibcudf_result_dtype_policy,
@@ -238,10 +247,10 @@ class NumericalColumn(NumericalBaseColumn):
 
         For float columns, NaN values are considered null and excluded.
         """
-        if not self.has_nulls(include_nan=self.dtype.kind == "f"):
+        if not self.has_nulls(include_nan=self._nan_is_null):
             result = as_column(True, length=len(self))
         else:
-            if self.dtype.kind == "f":
+            if self._nan_is_null:
                 result = PylibcudfFunction(
                     _is_valid_and_not_nan_plc,
                     pylibcudf_result_dtype_policy,
@@ -880,6 +889,11 @@ class NumericalColumn(NumericalBaseColumn):
             return self
 
         if cudf.get_option("mode.pandas_compatible"):
+            preserve_arrow_nan = (
+                PANDAS_GE_31
+                and isinstance(dtype, pd.ArrowDtype)
+                and pd.get_option("future.distinguish_nan_and_na")
+            )
             if (
                 is_pandas_nullable_extension_dtype(self.dtype)
                 and isinstance(dtype, np.dtype)
@@ -894,6 +908,7 @@ class NumericalColumn(NumericalBaseColumn):
                 not is_pandas_nullable_extension_dtype(self.dtype)
                 and is_pandas_nullable_extension_dtype(dtype)
                 and dtype.kind == "f"
+                and not preserve_arrow_nan
             ):
                 res = self.nans_to_nulls().cast(dtype=dtype)
                 res._dtype = dtype
@@ -917,6 +932,7 @@ class NumericalColumn(NumericalBaseColumn):
                     is_pandas_nullable_extension_dtype(dtype)
                     and isinstance(self.dtype, np.dtype)
                     and self.dtype.kind == "f"
+                    and not preserve_arrow_nan
                 ):
                     # NaNs must become nulls before viewing as a masked dtype.
                     res = self.nans_to_nulls()

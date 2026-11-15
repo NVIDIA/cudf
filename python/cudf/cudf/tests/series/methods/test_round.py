@@ -1,10 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import decimal
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
@@ -123,6 +124,45 @@ def test_series_round_decimal(
 
 
 @pytest.mark.parametrize(
+    "dtype",
+    [
+        cudf.Decimal32Dtype(precision=7, scale=3),
+        cudf.Decimal64Dtype(precision=7, scale=3),
+        cudf.Decimal128Dtype(precision=7, scale=3),
+        pd.ArrowDtype(pa.decimal128(7, 3)),
+    ],
+)
+@pytest.mark.parametrize("decimals", [-1, 0, 2])
+@pytest.mark.parametrize("how", ["half_even", "half_up"])
+@pytest.mark.parametrize("box", ["series", "dataframe"])
+def test_decimal_round(dtype, decimals, how, box):
+    values = [decimal.Decimal(x) for x in ["0.500", "-2.500", "33.125"]]
+    values.append(None)
+    rounding = (
+        decimal.ROUND_HALF_EVEN
+        if how == "half_even"
+        else decimal.ROUND_HALF_UP
+    )
+    quantum = decimal.Decimal(1).scaleb(-decimals)
+    expected_values = [
+        value.quantize(quantum, rounding=rounding)
+        if value is not None
+        else None
+        for value in values
+    ]
+    actual = cudf.Series(values, dtype=dtype, name="a")
+    expected = cudf.Series(expected_values, dtype=dtype, name="a")
+    if box == "dataframe":
+        actual = actual.to_frame()
+        expected = expected.to_frame()
+
+    result = actual.round(decimals=decimals, how=how)
+    if not isinstance(dtype, pd.ArrowDtype):
+        result = result.astype(dtype)
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize(
     "data",
     [
         [1.2234242333234, 323432.3243423, np.nan],
@@ -133,11 +173,14 @@ def test_series_round_decimal(
             ),
         ),
         pd.Series([224.242, None, 2424.234324], dtype="category"),
-        [
-            decimal.Decimal("342.3243234234242"),
-            decimal.Decimal("89.32432497687622"),
-            None,
-        ],
+        pd.Series(
+            [
+                decimal.Decimal("342.3243234234242"),
+                decimal.Decimal("89.32432497687622"),
+                None,
+            ],
+            dtype=pd.ArrowDtype(pa.decimal128(20, 14)),
+        ),
     ],
 )
 @pytest.mark.parametrize("digits", [0, 1, 7])

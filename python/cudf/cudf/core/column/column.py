@@ -35,6 +35,7 @@ from cudf.api.types import (
     is_dtype_equal,
     is_scalar,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import (
     aggregation,
     copying,
@@ -1800,10 +1801,10 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         or the inplace replacement is already performed (fill-in-place).
         """
         start, stop, step = key.indices(len(self))
-        if start >= stop:
-            return None
         rng = range(start, stop, step)
         num_keys = len(rng)
+        if num_keys == 0:
+            return None
 
         self._check_scatter_key_length(num_keys, value)
 
@@ -1959,7 +1960,13 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
 
         Returns a copy with null filled.
         """
-        if not self.has_nulls(include_nan=True):
+        distinguish_arrow_nan = (
+            PANDAS_GE_31
+            and isinstance(self.dtype, pd.ArrowDtype)
+            and self.dtype.kind == "f"
+            and pd.get_option("future.distinguish_nan_and_na")
+        )
+        if not self.has_nulls(include_nan=not distinguish_arrow_nan):
             return self.copy()
         elif method is None:
             if is_scalar(fill_value) and (
@@ -1969,6 +1976,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                     and is_pandas_nullable_extension_dtype(self.dtype)
                     and isinstance(fill_value, float)
                     and np.isnan(fill_value)
+                    and not distinguish_arrow_nan
                 )
             ):
                 return self.copy()
@@ -1981,7 +1989,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         if fill_value and method:
             raise ValueError("Cannot specify both 'value' and 'method'.")
 
-        input_col = self.nans_to_nulls()
+        input_col = self if distinguish_arrow_nan else self.nans_to_nulls()
 
         with self.access(mode="read", scope="internal"):
             plc_replace: plc.replace.ReplacePolicy | plc.Scalar | plc.Column
@@ -2616,7 +2624,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
 
         # Check if size is less than base buffer size
         # Note: Some dtypes (like CategoricalDtype) don't have itemsize
-        if self.data is not None and hasattr(self.dtype, "itemsize"):
+        if (
+            self.data is not None
+            and hasattr(self.dtype, "itemsize")
+            and self.dtype.itemsize > 0
+        ):
             base_size_elements = self.data.size // self.dtype.itemsize
             if self.size < base_size_elements:
                 return True
@@ -3148,7 +3160,14 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                         "Cannot use None or np.nan with non-Pandas nullable dtypes."
                     )
                 return self, pa_scalar_to_plc_scalar(
-                    pa.scalar(None, type=cudf_dtype_to_pa_type(self.dtype))
+                    pa.scalar(
+                        None,
+                        type=(
+                            self.dtype.pyarrow_dtype
+                            if isinstance(self.dtype, pd.ArrowDtype)
+                            else cudf_dtype_to_pa_type(self.dtype)
+                        ),
+                    )
                 )
 
         mixed_err = (
@@ -3190,15 +3209,50 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             other_out: plc.Scalar | ColumnBase
             if other_is_scalar:
                 other_out = pa_scalar_to_plc_scalar(
-                    pa.scalar(other, type=cudf_dtype_to_pa_type(self.dtype))
+                    pa.scalar(
+                        other,
+                        type=(
+                            self.dtype.pyarrow_dtype
+                            if isinstance(self.dtype, pd.ArrowDtype)
+                            else cudf_dtype_to_pa_type(self.dtype)
+                        ),
+                    )
                 )
             else:
                 other_out = other_col.astype(self.dtype)
             return self, other_out
 
-        if is_dtype_obj_numeric(
-            self.dtype, include_decimal=False
-        ) and as_column(other).can_cast_safely(self.dtype):
+        other_col = as_column(other)
+        if (
+            PANDAS_GE_31
+            and isinstance(self.dtype, pd.ArrowDtype)
+            and is_dtype_obj_decimal(self.dtype)
+            and is_dtype_obj_decimal(other_col.dtype)
+        ):
+            target = cast("pa.Decimal128Type", self.dtype.pyarrow_dtype)
+            source = cast(
+                "DecimalDtype | pa.Decimal128Type",
+                other_col.dtype.pyarrow_dtype
+                if isinstance(other_col.dtype, pd.ArrowDtype)
+                else other_col.dtype,
+            )
+            if (
+                source.scale > target.scale
+                or source.precision - source.scale
+                > target.precision - target.scale
+            ):
+                raise NotImplementedError(
+                    "Decimal replacements requiring rounding or wider precision are not supported"
+                )
+            common_dtype = self.dtype
+        elif (
+            PANDAS_GE_31
+            and is_dtype_obj_string(self.dtype)
+            and is_dtype_obj_string(other_col.dtype)
+        ) or (
+            is_dtype_obj_numeric(self.dtype, include_decimal=False)
+            and other_col.can_cast_safely(self.dtype)
+        ):
             common_dtype = self.dtype
         else:
             common_dtype = find_common_type(
@@ -3210,7 +3264,6 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                     else other.dtype,
                 ]
             )
-        other_col = as_column(other)
         if (
             is_mixed_with_object_dtype(other_col, self)
             or (self.dtype.kind == "b" and common_dtype.kind != "b")
@@ -3220,7 +3273,14 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
 
         if other_is_scalar:
             other_out = pa_scalar_to_plc_scalar(
-                pa.scalar(other, type=cudf_dtype_to_pa_type(common_dtype))
+                pa.scalar(
+                    other,
+                    type=(
+                        common_dtype.pyarrow_dtype
+                        if isinstance(common_dtype, pd.ArrowDtype)
+                        else cudf_dtype_to_pa_type(common_dtype)
+                    ),
+                )
             )
         else:
             other_out = other.astype(common_dtype)
@@ -3701,7 +3761,16 @@ def as_column(
         elif isinstance(arbitrary, (pd.Timestamp, pd.Timedelta)):
             arbitrary = arbitrary.to_numpy()
         elif isinstance(arbitrary, (np.datetime64, np.timedelta64)):
-            unit = np.datetime_data(arbitrary.dtype)[0]
+            unit, multiplier = np.datetime_data(arbitrary.dtype)
+            if PANDAS_GE_31 and multiplier != 1 and not np.isnat(arbitrary):
+                if dtype is None:
+                    raise ValueError(
+                        f"np.{type(arbitrary).__name__} objects with units containing a multiplier "
+                        "are not supported"
+                    )
+                arbitrary = arbitrary.astype(
+                    np.dtype(f"{arbitrary.dtype.kind}8[{unit}]")
+                )
             if unit not in {"s", "ms", "us", "ns"}:
                 arbitrary = arbitrary.astype(
                     np.dtype(f"{arbitrary.dtype.kind}8[s]")
@@ -3767,7 +3836,18 @@ def as_column(
             return result_column
         elif arbitrary.dtype.kind in "mM":
             time_unit = np.datetime_data(arbitrary.dtype)[0]
-            if time_unit in ("D", "W", "M", "Y"):
+            if (
+                PANDAS_GE_31
+                and arbitrary.dtype.kind == "m"
+                and time_unit in {"M", "Y"}
+            ):
+                # pandas interprets these host-array units as calendar offsets
+                # from the epoch rather than NumPy's average year/month length.
+                return as_column(
+                    pd.Series(arbitrary, dtype=dtype),
+                    nan_as_null=nan_as_null,
+                )
+            elif time_unit in ("D", "W", "M", "Y"):
                 # TODO: Raise in these cases instead of downcasting to s?
                 new_type = f"{arbitrary.dtype.type.__name__}[s]"
                 arbitrary = arbitrary.astype(new_type)
@@ -3950,6 +4030,10 @@ def as_column(
                 isinstance(
                     element,
                     (datetime.datetime, datetime.timedelta, pd.Interval),
+                )
+                or (
+                    PANDAS_GE_31
+                    and isinstance(element, (np.datetime64, np.timedelta64))
                 )
                 or element is pd.NaT
             ):

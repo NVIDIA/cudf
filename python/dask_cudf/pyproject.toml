@@ -104,5 +104,8 @@ filterwarnings = [
     # https://github.com/dask/partd/blob/main/partd/pandas.py#L198
     "ignore:Passing a BlockManager to DataFrame is deprecated and will raise in a future version. Use public APIs instead.:DeprecationWarning",
     "ignore:String support for `aggregate_files` is experimental. Behavior may change in the future.:FutureWarning:dask",
+    # Dask 2026.7.1/2026.8.0 still use inplace in their Parquet engine.
+    # Remove once https://github.com/dask/dask/pull/12714 is released.
+    'ignore:The inplace keyword in DataFrame\.(set_index|reset_index) is deprecated:DeprecationWarning:dask\.dataframe\.io\.parquet\.arrow',
 ]
 xfail_strict = true

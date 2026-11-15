@@ -48,6 +48,14 @@ class _Resampler(GroupBy):
         result = super().agg(
             func, *args, engine=engine, engine_kwargs=engine_kwargs, **kwargs
         )
+        if (
+            PANDAS_GE_31
+            and isinstance(self.obj, cudf.Series)
+            and isinstance(func, dict)
+            and not func
+            and result._num_columns == 0
+        ):
+            result.columns = pd.Index([])
         if len(self.grouping.bin_labels) != len(result):
             index = cudf.Index(
                 self.grouping.bin_labels, name=self.grouping.names[0]

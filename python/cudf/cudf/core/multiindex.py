@@ -732,6 +732,16 @@ class MultiIndex(Index):
         array([ True, False, False])
         """
         if level is None:
+            if PANDAS_GE_31 and isinstance(values, (list, tuple, set)):
+                for position, value in enumerate(values):
+                    if isinstance(value, tuple) and len(value) != self.nlevels:
+                        raise ValueError(
+                            "MultiIndex.isin expects an iterable of tuples of "
+                            f"length {self.nlevels} (the number of levels); got "
+                            f"an element of length {len(value)} at position "
+                            f"{position}. To match on a single level, pass the "
+                            "level= argument."
+                        )
             if isinstance(values, cudf.MultiIndex):
                 values_idx = values
             elif (

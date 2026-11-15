@@ -663,6 +663,14 @@ class DatetimeColumn(TemporalBaseColumn):
     def strftime(self, format: str, dtype: DtypeObj) -> StringColumn:
         if len(self) == 0:
             return super().strftime(format, dtype)
+        if self.time_unit != "ns" and self.null_count < len(self):
+            unit = cast('Literal["s", "ms", "us"]', self.time_unit)
+            lower = int(np.datetime64("0000-01-01", unit).astype(np.int64))
+            if self._calendar_time.astype(np.dtype(np.int64)).min() < lower:
+                # The libcudf formatter cannot safely render negative years.
+                raise NotImplementedError(
+                    "Formatting dates before year 0 is not supported"
+                )
         if re.search("%[aAbB]", format):
             names = self._strftime_names
         else:

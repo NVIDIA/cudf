@@ -294,7 +294,7 @@ class CudfEngine(ArrowDatasetEngine):
                 df = df.set_index(index[0])
             elif index is False and df.index.names != [None]:
                 # If index=False, we shouldn't have a named index
-                df.reset_index(inplace=True)
+                df = df.reset_index()
 
         except MemoryError as err:
             raise MemoryError(
@@ -322,7 +322,7 @@ class CudfEngine(ArrowDatasetEngine):
     ):
         preserve_index = False
         if len(index_cols) and set(index_cols).issubset(set(df.columns)):
-            df.set_index(index_cols, drop=True, inplace=True)
+            df = df.set_index(index_cols, drop=True)
             preserve_index = True
         if partition_on:
             md = write_to_dataset(

@@ -27,6 +27,7 @@ from cudf.api.types import (
     is_scalar,
 )
 from cudf.core import indexing_utils
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.accessors import (
     CategoricalAccessor,
     ListMethods,
@@ -1595,6 +1596,22 @@ class Series(SingleColumnFrame, IndexedFrame):
     @classmethod
     @_performance_tracking
     def _concat(cls, objs, axis: Axis = 0, index: bool = True) -> Self:
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and any(isinstance(obj.dtype, pd.DatetimeTZDtype) for obj in objs)
+            and any(
+                isinstance(obj.dtype, np.dtype)
+                and obj.dtype.kind == "M"
+                and len(obj) > 0
+                and obj._is_all_null
+                for obj in objs
+            )
+        ):
+            # pandas retains the naive NaT values in an object result.
+            raise NotImplementedError(
+                "Concatenating timezone-aware and all-null naive datetimes is not supported"
+            )
         # Concatenate index if not provided
         if index is True:
             if isinstance(objs[0].index, cudf.MultiIndex):
@@ -3924,8 +3941,34 @@ class Series(SingleColumnFrame, IndexedFrame):
                 f"cond must be the same length as self ({len(self)})"
             )
 
+        if PANDAS_GE_31:
+            if (
+                isinstance(other, (set, frozenset))
+                and is_pandas_nullable_extension_dtype(self.dtype)
+                and self.dtype.kind in "biuf"
+                and not cond.fillna(False).all()
+            ):
+                raise TypeError(
+                    "Unordered sets cannot be used as replacements"
+                )
+            if is_dtype_obj_string(self.dtype) and isinstance(
+                other, (tuple, Mapping)
+            ):
+                # pandas treats these as scalar objects for string columns.
+                # A result containing strings and tuples/dicts requires object
+                # storage, so defer instead of treating them positionally.
+                raise NotImplementedError(
+                    "Tuple or mapping replacements in string columns are not supported"
+                )
         if not is_scalar(other):
             other = as_column(other)
+            if PANDAS_GE_31:
+                if len(other) == 1 and len(self) != 1:
+                    other = other.element_indexing(0)
+                elif len(other) != len(self):
+                    raise ValueError(
+                        "other must have length 1 or the same length as self"
+                    )
 
         return self._mimic_inplace(
             self._from_column(

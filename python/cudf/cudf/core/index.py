@@ -1947,6 +1947,15 @@ class Index(SingleColumnFrame):
                 right_plc, dtype=dtype_from_pylibcudf_column(right_plc)
             )
         result = result._scatter_by_column(scatter_map, indices)
+        unmatched_nulls = (
+            needle.isnull() & (result == -1)
+            if (
+                PANDAS_GE_31
+                and method is not None
+                and needle.has_nulls(include_nan=needle.dtype.kind == "f")
+            )
+            else None
+        )
         result_series = cudf.Series._from_column(result)
 
         if method in {"ffill", "bfill", "pad", "backfill"}:
@@ -1970,6 +1979,10 @@ class Index(SingleColumnFrame):
                 "{['ffill'/'pad', 'bfill'/'backfill', 'nearest', None]}"
             )
 
+        if unmatched_nulls is not None:
+            result_series = result_series.where(
+                ~cudf.Series._from_column(unmatched_nulls), -1
+            )
         return self._return_get_indexer_result(result_series.to_cupy())
 
     @_performance_tracking
@@ -4609,10 +4622,13 @@ class DatetimeIndex(Index):
             # (empty / single-element indexes), so resample round-trips
             # preserve `freq` to match pandas.
             if PANDAS_GE_31:
-                with pd.option_context(
-                    "future.infer_freq_returns_offset", True
-                ):
-                    inferred = result.inferred_freq
+                # The public property warns unless a global pandas option is
+                # set. Changing that option races with concurrent conversions.
+                inferred = (
+                    pd.tseries.frequencies.infer_freq_str(result)
+                    if len(result) >= 3
+                    else None
+                )
             else:
                 inferred = result.inferred_freq
             if inferred is None:
@@ -4877,6 +4893,14 @@ class TimedeltaIndex(Index):
         name=None,
         nan_as_null=no_default,
     ):
+        if (
+            PANDAS_GE_31
+            and isinstance(data, (np.ndarray, cupy.ndarray))
+            and data.ndim == 0
+        ):
+            raise ValueError(
+                "Cannot construct TimedeltaArray from 0-dim input"
+            )
         if freq is not None:
             raise NotImplementedError("freq is not yet supported")
 

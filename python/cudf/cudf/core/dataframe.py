@@ -388,9 +388,22 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 new_ser = Series._from_column(value, index=idx)
             else:
                 new_ser = Series(value, index=idx)
+            new_col_is_boolean = new_ser.dtype.kind == "b"
             if len(self._frame) != 0:
                 new_ser = new_ser._align_to_index(
                     self._frame.index, how="right"
+                )
+            if (
+                PANDAS_GE_31
+                and new_col_is_boolean
+                and new_ser.dtype == np.dtype("bool")
+                and new_ser._column.has_nulls()
+            ):
+                # pandas 3.1 creates an object column with bools and NaN.
+                # Nullable boolean storage would turn those NaNs into None.
+                # Defer before adding the column so fallback sees the original.
+                raise NotImplementedError(
+                    "Partial boolean column expansion with object NaN is not supported"
                 )
 
             if len(self._frame) == 0:
@@ -597,6 +610,8 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
 
     @_performance_tracking
     def _setitem_tuple_arg(self, key, value):
+        if is_list_like(key[1]) and getattr(key[0], "ndim", 1) != 1:
+            raise ValueError("Cross index must be 1 dimensional")
         columns_df = self._frame._from_data(
             self._frame._data.select_by_index(key[1]), self._frame.index
         )
@@ -638,6 +653,13 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
                 if is_scalar(key[1]):
                     for col in columns_df._column_names:
                         self._frame[col].iloc[key[0]] = value
+                elif (
+                    len(columns_df._column_names) == 1
+                    and not _is_scalar_or_zero_d_array(key[0])
+                    and len(value) == len(self._frame.iloc[key[0]])
+                ):
+                    col = next(iter(columns_df._column_names))
+                    self._frame[col].iloc[key[0]] = value
                 else:
                     for i, col in enumerate(columns_df._column_names):
                         self._frame[col].iloc[key[0]] = value[i]
@@ -2601,6 +2623,42 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 and other.dtype.kind in "biuf"
             )
             if nullable_series:
+                for col in lhs.columns:
+                    if col.dtype.kind != "b" and other.dtype.kind != "b":
+                        continue
+                    if fn in {"__and__", "__or__", "__xor__"}:
+                        # Boolean extension arrays use Kleene null logic and
+                        # dtype-dependent dispatch for mixed boolean/integer
+                        # operands, which the numeric broadcast cannot retain.
+                        raise NotImplementedError(
+                            "Nullable boolean bitwise broadcasting is not supported"
+                        )
+                    if isinstance(col.dtype, pd.ArrowDtype) or isinstance(
+                        other.dtype, pd.ArrowDtype
+                    ):
+                        if fn in _EQUALITY_OPS:
+                            raise NotImplementedError(
+                                "Mixed boolean Arrow comparisons are not supported"
+                            )
+                        raise TypeError(
+                            f"operation '{fn[2:-2]}' not supported for dtype "
+                            f"'{col.dtype}' with dtype '{other.dtype}'"
+                        )
+                    if col.dtype.kind == other.dtype.kind == "b":
+                        if fn == "__sub__":
+                            raise TypeError(
+                                "numpy boolean subtract is not supported"
+                            )
+                        if fn in {
+                            "__truediv__",
+                            "__floordiv__",
+                            "__mod__",
+                            "__pow__",
+                        }:
+                            raise NotImplementedError(
+                                f"operator '{fn[2:-2]}' not implemented for bool dtypes"
+                            )
+
                 # pandas 3.1 dispatches column-wise operations through the
                 # Series' extension array, preserving its nullable dtype.
                 def _nullable_operand(col: ColumnBase) -> ColumnBase:
@@ -2664,7 +2722,19 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                         value,
                         length=len(self),
                         dtype=(
-                            lhs[name].dtype
+                            pd.Float64Dtype()
+                            if (
+                                fn == "__floordiv__"
+                                and not reflect
+                                and other.dtype.kind == "b"
+                                and value is pd.NA
+                                and name in self._data
+                                and isinstance(
+                                    self._data[name].dtype, np.dtype
+                                )
+                                and self._data[name].dtype.kind in "iu"
+                            )
+                            else lhs[name].dtype
                             if name in lhs and lhs[name].dtype.kind in "biuf"
                             else left_default.dtype
                             if name not in lhs
@@ -2679,6 +2749,21 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 rhs_values = other.to_numpy()
                 left_default = as_column(np.nan, length=len(self))
             rhs = dict(zip(other_pd_index, rhs_values, strict=True))
+            if (
+                nullable_series
+                and fn == "__floordiv__"
+                and not reflect
+                and other.dtype.kind == "b"
+            ):
+                for name, col in self._data.items():
+                    if (
+                        name not in rhs
+                        and isinstance(col.dtype, np.dtype)
+                        and col.dtype.kind in "iu"
+                    ):
+                        rhs[name] = column_empty(
+                            len(self), dtype=pd.Float64Dtype()
+                        )
             equal_columns = other_pd_index.equals(self_pd_columns)
             if equal_columns:
                 ca_attributes = _fill_same_ca_attributes(
@@ -4559,14 +4644,18 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
         if columns:
             new_ca = result._data.rename_levels(mapper=columns, level=level)
-            # pandas' rename rebuilds the columns Index from the transformed
-            # labels (``Index(items, tupleize_cols=False)`` in
-            # ``_transform_index``), re-inferring dtypes rather than
-            # preserving the originals: renaming object-dtype columns to
-            # all-string labels yields ``str``, and MultiIndex level dtypes
-            # are likewise re-inferred.
             if new_ca.multiindex:
                 new_ca._level_dtypes = None
+            elif PANDAS_GE_31:
+                # pandas 3.1 preserves a label array's dtype when the renamed
+                # values fit. Resolve this using only the CPU column metadata;
+                # the original mapper has already run, so do not call it again.
+                renamed_labels = iter(new_ca.names)
+                new_ca.label_dtype = (
+                    pd.DataFrame(columns=self._data.to_pandas_index)
+                    .rename(columns=lambda _: next(renamed_labels))
+                    .columns.dtype
+                )
             else:
                 new_ca.label_dtype = pd.Index(
                     new_ca.names, tupleize_cols=False
@@ -5335,12 +5424,21 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 # rows require.
                 if (
                     isinstance(target, np.dtype)
+                    and target.kind in "iu"
                     and result._data[name].null_count
                 ):
                     return
                 result[name] = result[name].astype(target)
 
             def _keep_left_dtype(target, right_dtype):
+                if (
+                    PANDAS_GE_31
+                    and isinstance(target, np.dtype)
+                    and isinstance(right_dtype, np.dtype)
+                    and target.kind == right_dtype.kind == "M"
+                ):
+                    # pandas 3.1 keeps the common timestamp resolution.
+                    return False
                 # pandas presents a shared-name key with the LEFT dtype when an
                 # extension dtype is involved (all joins) or for inner/left
                 # joins; right/outer numpy keys take the common type.

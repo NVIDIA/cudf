@@ -127,6 +127,18 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         reflect, op = self._check_reflected_op(op)
         _raise_on_invalid_ordering_scalar(self.dtype, other, op)
+        if (
+            PANDAS_GE_31
+            and op == "__mul__"
+            and not isinstance(self.dtype, pd.ArrowDtype)
+            and isinstance(other, (int, np.integer))
+            and not np.iinfo(np.int64).min
+            <= int(other)
+            <= np.iinfo(np.int64).max
+        ):
+            raise pd.errors.OutOfBoundsTimedelta(
+                "Overflow in int64 multiplication"
+            )
         other = self._normalize_binop_operand(other)
         if other is NotImplemented:
             return NotImplemented
@@ -191,6 +203,49 @@ class TimeDeltaColumn(TemporalBaseColumn):
             elif op in {"__add__", "__sub__"}:
                 out_dtype = find_common_type((self.dtype, other_cudf_dtype))
         elif other_cudf_dtype.kind in {"f", "i", "u"}:
+            if (
+                PANDAS_GE_31
+                and op == "__mul__"
+                and other_cudf_dtype.kind in "iu"
+                and not isinstance(self.dtype, pd.ArrowDtype)
+                and not isinstance(other_cudf_dtype, pd.ArrowDtype)
+            ):
+                lower = np.iinfo(np.int64).min + 1
+                upper = np.iinfo(np.int64).max
+                bounds: tuple[Any, Any] | None = None
+                if isinstance(other, pa.Scalar):
+                    if other.is_valid:
+                        factor = int(other.as_py())
+                        if abs(factor) > 1 and self.null_count < len(self):
+                            lo, hi = self.astype(
+                                self._UNDERLYING_DTYPE
+                            ).minmax()
+                            products = (int(lo) * factor, int(hi) * factor)
+                            bounds = (min(products), max(products))
+                else:
+                    if (
+                        other_cudf_dtype.kind == "u"
+                        and other.null_count < len(other)
+                        and int(other.max()) > upper
+                    ):
+                        raise pd.errors.OutOfBoundsTimedelta(
+                            "Overflow in int64 multiplication"
+                        )
+                    # Every int64-duration/uint64-factor product fits in the
+                    # decimal128 accumulator. Check before the int64 kernel
+                    # can wrap, ignoring pairs containing a missing value.
+                    dtype = Decimal128Dtype(38, 0)
+                    products = self.astype(self._UNDERLYING_DTYPE).astype(
+                        dtype
+                    ) * other.astype(dtype)
+                    if products.null_count < len(products):
+                        bounds = products.minmax()
+                if bounds is not None and (
+                    bounds[0] < lower or bounds[1] > upper
+                ):
+                    raise pd.errors.OutOfBoundsTimedelta(
+                        "Overflow in int64 multiplication"
+                    )
             if op in {"__mul__", "__mod__", "__truediv__", "__floordiv__"}:
                 out_dtype = self.dtype
             elif op in {"__eq__", "__ne__", "NULL_EQUALS", "NULL_NOT_EQUALS"}:

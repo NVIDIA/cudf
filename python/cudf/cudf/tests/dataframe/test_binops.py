@@ -729,3 +729,76 @@ def test_binop_dot_preserve_index():
     result = ser @ df
     expected = ser.to_pandas() @ df.to_pandas()
     assert_eq(result, expected)
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31, reason="pandas 3.1 nullable broadcasting"
+)
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype",
+    [
+        (pd.ArrowDtype(pa.bool_()), "Int64"),
+        (pd.ArrowDtype(pa.int64()), "boolean"),
+        ("boolean", pd.ArrowDtype(pa.int64())),
+        ("Int64", pd.ArrowDtype(pa.bool_())),
+    ],
+)
+@pytest.mark.parametrize(
+    "op",
+    [
+        operator.add,
+        operator.sub,
+        operator.mul,
+        operator.truediv,
+        operator.floordiv,
+        operator.pow,
+    ],
+)
+@pytest.mark.parametrize("labels", [["a", "b"], ["b", "c"]])
+def test_dataframe_series_arrow_boolean_arithmetic_raises(
+    left_dtype, right_dtype, op, labels
+):
+    left_is_bool = cudf.dtype(left_dtype).kind == "b"
+    right_is_bool = cudf.dtype(right_dtype).kind == "b"
+    values = [True, False, None] if left_is_bool else [1, 0, None]
+    pdf = pd.DataFrame(
+        {name: pd.Series(values, dtype=left_dtype) for name in "ab"}
+    )
+    psr = pd.Series(
+        [True if right_is_bool else 1, None], index=labels, dtype=right_dtype
+    )
+    with pytest.raises(TypeError):
+        op(pdf, psr)
+    with pytest.raises(TypeError):
+        op(cudf.from_pandas(pdf), cudf.from_pandas(psr))
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31, reason="pandas 3.1 nullable broadcasting"
+)
+@pytest.mark.parametrize("left_dtype", ["int64", "Int64"])
+@pytest.mark.parametrize("labels", [["a", "b"], ["b", "c"]])
+@pytest.mark.parametrize(
+    "op", [operator.add, operator.mul, operator.floordiv, operator.pow]
+)
+def test_dataframe_series_boolean_arithmetic(left_dtype, labels, op):
+    pdf = pd.DataFrame({"a": [1, 0, 2], "b": [1, 0, 2]}, dtype=left_dtype)
+    psr = pd.Series([True, None], index=labels, dtype="boolean")
+    expected = op(pdf, psr)
+    actual = op(cudf.from_pandas(pdf), cudf.from_pandas(psr))
+    assert_eq(expected, actual)
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31, reason="pandas 3.1 nullable broadcasting"
+)
+@pytest.mark.parametrize(
+    "op", [operator.sub, operator.truediv, operator.floordiv, operator.pow]
+)
+def test_dataframe_series_boolean_unsupported_arithmetic(op):
+    pdf = pd.DataFrame({"a": [True, False, None]}, dtype="boolean")
+    psr = pd.Series([True], index=["a"], dtype="boolean")
+    with pytest.raises((TypeError, NotImplementedError)):
+        op(pdf, psr)
+    with pytest.raises((TypeError, NotImplementedError)):
+        op(cudf.from_pandas(pdf), cudf.from_pandas(psr))

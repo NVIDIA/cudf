@@ -1484,6 +1484,13 @@ class Frame(BinaryOperand, Scannable, Serializable):
             raise ValueError("Mismatch number of columns to search for.")
 
         if cudf.get_option("mode.pandas_compatible"):
+            if PANDAS_GE_31 and any(
+                col.dtype.kind == "m" and val.dtype.kind in "biuf"
+                for col, val in zip(self._columns, values, strict=True)
+            ):
+                raise TypeError(
+                    "searchsorted requires compatible dtype or scalar"
+                )
             if any(
                 is_pandas_nullable_extension_dtype(col.dtype)
                 and col.has_nulls(include_nan=True)
@@ -1839,9 +1846,9 @@ class Frame(BinaryOperand, Scannable, Serializable):
             mode="read",
             scope="internal",
         ):
-            mask = None
             data: list[dict[Any, ColumnBase]] = [{} for _ in range(ufunc.nout)]
             for name, (left, right, _, _) in operands.items():
+                mask = None
                 cupy_inputs = []
                 source_dtype = None
                 for inp in (left, right) if ufunc.nin == 2 else (left,):

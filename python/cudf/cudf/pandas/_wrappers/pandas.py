@@ -6,6 +6,7 @@ import copyreg
 import datetime
 import functools
 import inspect
+import operator
 import os
 import pickle
 
@@ -38,6 +39,7 @@ from pandas.tseries.holiday import (
 )
 
 import cudf
+from cudf import testing as cudf_testing
 from cudf.core._compat import PANDAS_GE_31
 
 from ..annotation import nvtx
@@ -51,6 +53,7 @@ from ..fast_slow_proxy import (
     _setattr_fsproxy_no_mirror,
     _State,
     _Unusable,
+    get_final_type_map,
     is_proxy_object,
     make_final_proxy_type as _make_final_proxy_type,
     make_intermediate_proxy_type as _make_intermediate_proxy_type,
@@ -143,6 +146,12 @@ def Timestamp_Timedelta__new__(cls, *args, **kwargs):
     return self
 
 
+def _timestamp_rsub(self, other):
+    # Wide pandas timestamps cannot use our Python datetime base, so they
+    # remain raw scalars. Unwrap a proxied right operand before subtracting.
+    return _fast_slow_function_call(operator.sub, None, other, self)[0]
+
+
 Timedelta = make_final_proxy_type(
     "Timedelta",
     _Unusable,
@@ -169,6 +178,7 @@ Timestamp = make_final_proxy_type(
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
         "__new__": Timestamp_Timedelta__new__,
+        "__rsub__": _timestamp_rsub,
         "__init__": _DELETE,
         "__array_priority__": 100,
     },
@@ -373,6 +383,16 @@ def _Series_dtype(self):
     return _maybe_wrap_result(dtype, None)
 
 
+def _slow_to_fast_series(slow):
+    if PANDAS_GE_31 and getattr(slow.array, "_readonly", False):
+        # pandas 3.1 keeps arrays exposed by an Index read-only, including
+        # Series sharing that array. Copying to the device would lose the flag.
+        raise NotImplementedError(
+            "Read-only Series must remain on the slow side"
+        )
+    return cudf.from_pandas(slow)
+
+
 _SeriesAtIndexer = make_intermediate_proxy_type(
     "_SeriesAtIndexer",
     cudf.core.series._SeriesAtIndexer,
@@ -392,7 +412,7 @@ Series = make_final_proxy_type(
     cudf.Series,
     pd.Series,
     fast_to_slow=lambda fast: fast.to_pandas(),
-    slow_to_fast=cudf.from_pandas,
+    slow_to_fast=_slow_to_fast_series,
     additional_attributes={
         "__array__": array_method,
         "__array_function__": array_function_method,
@@ -710,6 +730,37 @@ TimedeltaIndex = make_final_proxy_type(
     },
 )
 
+
+def _NumpyExtensionArray_astype(self, dtype, copy=True):
+    result, _ = _fast_slow_function_call(
+        lambda array, dtype, copy: array.astype(dtype, copy=copy),
+        None,
+        self,
+        dtype,
+        copy,
+    )
+    if (
+        is_proxy_object(result)
+        and result._fsproxy_wrapped is self._fsproxy_wrapped
+    ):
+        return self
+    return result
+
+
+NumpyEADtype = make_final_proxy_type(
+    "NumpyEADtype",
+    _Unusable,
+    pd.core.dtypes.dtypes.NumpyEADtype,
+    fast_to_slow=_Unusable(),
+    slow_to_fast=_Unusable(),
+    bases=(pd.api.extensions.ExtensionDtype,),
+    additional_attributes={
+        "__hash__": _FastSlowAttribute("__hash__"),
+        "_dtype": _FastSlowAttribute("_dtype", private=True),
+    },
+)
+
+
 try:
     from pandas.arrays import NumpyExtensionArray as pd_NumpyExtensionArray
 
@@ -724,6 +775,7 @@ try:
             "__array__": _FastSlowAttribute("__array__"),
             "__array_priority__": 1000,
             "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
+            "astype": _NumpyExtensionArray_astype,
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
             "_readonly": _FastSlowAttribute("_readonly", private=True),
@@ -744,6 +796,7 @@ except ImportError:
             "__array__": _FastSlowAttribute("__array__"),
             "__array_priority__": 1000,
             "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
+            "astype": _NumpyExtensionArray_astype,
             "_ndarray": _FastSlowAttribute("_ndarray"),
             "_dtype": _FastSlowAttribute("_dtype"),
             "_readonly": _FastSlowAttribute("_readonly", private=True),
@@ -1128,6 +1181,7 @@ IntervalArray = make_final_proxy_type(
     slow_to_fast=_Unusable(),
     bases=(pd.api.extensions.ExtensionArray,),
     additional_attributes={
+        "__arrow_array__": arrow_array_method,
         "__array_ufunc__": _FastSlowAttribute("__array_ufunc__"),
         "_data": _FastSlowAttribute("_data", private=True),
         "_mask": _FastSlowAttribute("_mask", private=True),
@@ -1242,6 +1296,19 @@ RollingGroupBy = make_intermediate_proxy_type(
     else pd.core.window.rolling.RollingGroupby,
 )
 
+
+def _DataFrameIlocIndexer__setitem__(self, key, value):
+    if PANDAS_GE_31 and isinstance(key, tuple):
+        # Preserve rectangular indexing when pandas handles a datetimelike
+        # value on the fallback path. NumPy treats two ranges as paired keys.
+        key = tuple(
+            list(item) if isinstance(item, range) else item for item in key
+        )
+    return _FastSlowAttribute("__setitem__").__get__(self, type(self))(
+        key, value
+    )
+
+
 _SeriesIlocIndexer = make_intermediate_proxy_type(
     "_SeriesIlocIndexer",
     cudf.core.series._SeriesIlocIndexer,
@@ -1252,6 +1319,7 @@ _DataFrameIlocIndexer = make_intermediate_proxy_type(
     "_SeriesIlocIndexer",
     cudf.core.dataframe._DataFrameIlocIndexer,
     pd.core.indexing._iLocIndexer,
+    additional_attributes={"__setitem__": _DataFrameIlocIndexer__setitem__},
 )
 
 _SeriesLocIndexer = make_intermediate_proxy_type(
@@ -1688,6 +1756,47 @@ def _register_series_accessor(name):
 @register_proxy_func(pd.core.accessor.register_index_accessor)
 def _register_index_accessor(name):
     return pd.core.accessor._register_accessor(name, Index)
+
+
+def _assertion_has_integer_dtype(obj):
+    if isinstance(obj, (cudf.Series, cudf.Index)):
+        return obj.dtype.kind in "iu"
+    if isinstance(obj, cudf.DataFrame):
+        return any(dtype.kind in "iu" for dtype in obj.dtypes)
+    return False
+
+
+def _assertion_with_integer_precision(fast_function, slow_function):
+    def fast_assert(left, right, *args, **kwargs):
+        if (
+            PANDAS_GE_31
+            and ("rtol" in kwargs or "atol" in kwargs)
+            and (
+                _assertion_has_integer_dtype(left)
+                or _assertion_has_integer_dtype(right)
+            )
+        ):
+            # pandas 3.1 preserves integer precision when applying an explicit
+            # tolerance, including comparisons with floating-point values.
+            raise NotImplementedError(
+                "Integer assertion tolerances require pandas precision"
+            )
+        return fast_function(left, right, *args, **kwargs)
+
+    return _FunctionProxy(fast_assert, slow_function)
+
+
+for _assertion_name in (
+    "assert_frame_equal",
+    "assert_index_equal",
+    "assert_series_equal",
+):
+    _slow_assertion = getattr(pd._testing, _assertion_name)
+    register_proxy_func(_slow_assertion)(
+        _assertion_with_integer_precision(
+            getattr(cudf_testing, _assertion_name), _slow_assertion
+        )
+    )
 
 
 @contextlib.contextmanager
@@ -2505,6 +2614,9 @@ Flags = make_final_proxy_type(
     slow_to_fast=_Unusable(),
     additional_attributes={
         "__hash__": _FastSlowAttribute("__hash__"),
+        "_allows_duplicate_labels": _FastSlowAttribute(
+            "_allows_duplicate_labels", private=True
+        ),
     },
 )
 
@@ -2989,6 +3101,11 @@ for _offset_cls in vars(pd.tseries.offsets).values():
         and _offset_cls is not pd.DateOffset
     ):
         copyreg.dispatch_table.setdefault(_offset_cls, _reduce_obj)
+        _offset_proxy = get_final_type_map().get(_offset_cls)
+        if _offset_proxy is not None:
+            copyreg.dispatch_table.setdefault(
+                _offset_proxy, _reduce_proxied_td_obj
+            )
 
 
 def _unpickle_NaT():

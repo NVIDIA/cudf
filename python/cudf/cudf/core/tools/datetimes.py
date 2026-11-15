@@ -408,6 +408,15 @@ def _process_col(
     utc: bool,
 ):
     if col.dtype.kind == "f":
+        if (
+            PANDAS_GE_31
+            and unit in (None, "ns")
+            and format is None
+            and (col >= float(2**63)).any()
+        ):
+            raise pd.errors.OutOfBoundsDatetime(
+                "cannot convert input with unit 'ns'"
+            )
         if unit is not None and format is None:
             integer_values = col.nans_to_nulls()
             if integer_values.can_cast_safely(np.dtype("int64")):
@@ -442,6 +451,16 @@ def _process_col(
             col = col.astype(dtype=np.dtype("datetime64[ns]"))
 
     elif col.dtype.kind in "iu":
+        if (
+            PANDAS_GE_31
+            and col.dtype.kind == "u"
+            and unit in (None, "ns")
+            and format is None
+            and (col > np.iinfo(np.int64).max).any()
+        ):
+            raise pd.errors.OutOfBoundsDatetime(
+                "cannot convert input with unit 'ns'"
+            )
         if unit in ("D", "h", "m"):
             factor = (
                 unit_to_nanoseconds_conversion[unit]
@@ -502,6 +521,16 @@ def _process_col(
                     # microsecond precision, like pandas' unit inference.
                     col = col_us
                 else:
+                    if (
+                        PANDAS_GE_31
+                        and (
+                            col_ns.astype(np.dtype("int64"))
+                            == np.iinfo(np.int64).min
+                        ).any()
+                    ):
+                        raise pd.errors.OutOfBoundsDatetime(
+                            "Out of bounds nanosecond timestamp"
+                        )
                     res = col_ns != col_us
                     if res.any():
                         col = col_ns
@@ -526,6 +555,16 @@ def _process_col(
                     ),
                     format=format,
                 )
+        if (
+            PANDAS_GE_31
+            and col.dtype == np.dtype("datetime64[ns]")
+            and (col.astype(np.dtype("int64")) == np.iinfo(np.int64).min).any()
+        ):
+            # The reserved NaT storage value cannot represent a parsed date.
+            # Literal "NaT" and missing inputs already carry a null mask.
+            raise pd.errors.OutOfBoundsDatetime(
+                "Out of bounds nanosecond timestamp"
+            )
     elif col.dtype.kind != "M":
         raise TypeError(
             f"dtype {col.dtype} cannot be converted to {_unit_dtype_map.get(unit, _unit_dtype_map['us'])}"  # type: ignore[arg-type]

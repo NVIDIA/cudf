@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import datetime
 import re
 
 import numpy as np
@@ -8,6 +9,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
@@ -514,6 +516,38 @@ def test_replace_datetime_sub_resolution_value_is_noop():
         pd.Timestamp("2000-01-01 00:00:00.5"), pd.Timestamp("1999-01-01")
     )
     assert_eq(pd_result, cudf_result)
+
+
+@pytest.mark.skipif(not PANDAS_GE_31, reason="Changed in pandas 3.1")
+@pytest.mark.parametrize("box", ["series", "dataframe"])
+@pytest.mark.parametrize("year", [1, 3000])
+@pytest.mark.parametrize("matched", [True, False])
+@pytest.mark.parametrize("listlike", [True, False])
+def test_replace_datetime_out_of_bounds(box, year, matched, listlike):
+    original = pd.Timestamp("2000-01-01")
+    source = pd.Series(
+        [pd.NaT if matched else original], dtype="datetime64[ns]"
+    )
+    if box == "dataframe":
+        source = source.to_frame()
+    actual = cudf.from_pandas(source)
+    to_replace = np.nan
+    replacement = datetime.datetime(year, 1, 1)
+    if listlike:
+        to_replace = [to_replace, original]
+        replacement = [replacement, pd.Timestamp("2020-01-01")]
+
+    if matched:
+        for frame in (source, actual):
+            with pytest.raises(
+                pd.errors.OutOfBoundsDatetime, match="Explicitly cast"
+            ):
+                frame.replace(to_replace, replacement)
+    else:
+        assert_eq(
+            actual.replace(to_replace, replacement),
+            source.replace(to_replace, replacement),
+        )
 
 
 @pytest.mark.parametrize("na", [cudf.NA, None])

@@ -11,6 +11,7 @@ from dask.typing import no_default
 from dask.utils import is_dataframe_like
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 
 from dask_cudf._expr import (
     CumulativeBlockwise,
@@ -190,9 +191,25 @@ def _patched_var(
 # TODO: Fix RepartitionQuantiles and remove this in cudf>24.06
 
 _original_get_divisions = _shuffle_module._get_divisions
+_original_calculate_divisions = _shuffle_module._calculate_divisions
+
+
+def _patched_calculate_divisions(frame, other, *args, **kwargs):
+    if (
+        PANDAS_GE_31
+        and isinstance(other._meta, (cudf.Series, cudf.Index))
+        and other._meta.dtype.kind in "iu"
+    ):
+        # All-null integer partitions otherwise contribute NaN quantiles,
+        # which pandas 3.1 no longer permits casting back to integer dtype.
+        # Filter only the samples; the shuffled frame keeps its null rows.
+        other = new_collection(other).dropna()._expr
+
+    return _original_calculate_divisions(frame, other, *args, **kwargs)
 
 
 def _patched_get_divisions(frame, other, *args, **kwargs):
+
     # NOTE: The following two lines contains the "patch"
     # (we simply convert the partitioning column to pandas)
     if is_categorical_dtype(other._meta.dtype) and hasattr(
@@ -229,5 +246,6 @@ def _patch_dask_expr():
         CumulativeBlockwise._kwargs = PatchCumulativeBlockwise._kwargs
         Expr.var = _patched_var
         _shuffle_module._get_divisions = _patched_get_divisions
+        _shuffle_module._calculate_divisions = _patched_calculate_divisions
         EnforceRuntimeDivisions._divisions = _patched_erd_divisions
         _PATCHED = True

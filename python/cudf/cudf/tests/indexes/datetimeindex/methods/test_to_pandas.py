@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 
 
@@ -82,3 +85,24 @@ def test_to_pandas_single_element_with_freq_falls_back_to_cached(freq):
     actual = gidx.to_pandas()
     assert actual.freq == pidx.freq
     assert_eq(actual, pidx)
+
+
+@pytest.mark.parametrize("periods", [0, 1, 2, 5])
+@pytest.mark.parametrize("tz", [None, "US/Pacific"])
+def test_to_pandas_freq_concurrent(periods, tz):
+    expected = pd.date_range("2001-01-01", periods=periods, freq="h", tz=tz)
+    actual = cudf.from_pandas(expected)
+    option_before = (
+        pd.get_option("future.infer_freq_returns_offset")
+        if PANDAS_GE_31
+        else None
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for result in pool.map(lambda _: actual.to_pandas(), range(64)):
+            assert_eq(result, expected)
+
+    if PANDAS_GE_31:
+        assert (
+            pd.get_option("future.infer_freq_returns_offset") is option_before
+        )

@@ -34,6 +34,22 @@ def test_numpy_extension_series_constructor(data):
     tm.assert_series_equal(result, expected)
 
 
+def test_numpy_extension_dtype_array_type(data):
+    expected = pd.arrays.NumpyExtensionArray(data)
+    result = xpd.arrays.NumpyExtensionArray(data)
+    assert result.dtype.construct_array_type() is type(result)
+    assert result.dtype == expected.dtype
+    assert hash(result.dtype) == hash(expected.dtype)
+
+
+@pytest.mark.parametrize("copy", [True, False])
+def test_numpy_extension_astype_identity(data, copy):
+    array = xpd.arrays.NumpyExtensionArray(data)
+    result = array.astype(array.dtype, copy=copy)
+    assert (result is array) is (not copy)
+    np.testing.assert_array_equal(np.asarray(result), data)
+
+
 @pytest.mark.parametrize("dtype", ["complex128", "float64"])
 @pytest.mark.parametrize("method", ["__call__", "reduce", "accumulate"])
 def test_numpy_extension_ufunc(dtype, method):

@@ -45,6 +45,14 @@ if TYPE_CHECKING:
 class ListColumn(ColumnBase):
     _VALID_BINARY_OPERATIONS = {"__add__", "__radd__", "__eq__", "__ne__"}
 
+    def to_arrow(self) -> pa.Array:
+        result = super().to_arrow()
+        if isinstance(self.dtype, pd.ArrowDtype):
+            # Preserve explicitly declared nested types, including all-null
+            # lists and the offset width of large_string children.
+            result = result.cast(self.dtype.pyarrow_dtype)
+        return result
+
     def _plc_memory_usage(self, col: plc.Column) -> int:
         n = self._plc_memory_usage_buffers(col)
         if col.size() == 0 or col.num_children() == 0:

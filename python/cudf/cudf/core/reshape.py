@@ -12,6 +12,7 @@ import pandas as pd
 import cudf
 from cudf.api.extensions import no_default
 from cudf.api.types import is_integer, is_list_like, is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column import (
     ColumnBase,
     as_column,
@@ -737,6 +738,24 @@ def melt(
             f" in 'id_vars': {list(overlap)}"
         )
 
+    if var_name is None:
+        var_name = (
+            frame._data.level_names[0]
+            if PANDAS_GE_31 and frame._data.level_names[0] is not None
+            else "variable"
+        )
+
+    if PANDAS_GE_31:
+        output_names = [*id_vars, var_name, value_name]
+        duplicate_names = list(
+            {name for name in output_names if output_names.count(name) > 1}
+        )
+        if duplicate_names:
+            raise ValueError(
+                "melt output columns cannot contain duplicate names: "
+                f"{duplicate_names}"
+            )
+
     N = len(frame)
     K = len(value_vars)
 
@@ -752,9 +771,6 @@ def melt(
     # Step 2: add variable
     nval = len(value_vars)
     dtype = min_unsigned_type(nval)
-
-    if var_name is None:
-        var_name = "variable"
 
     if not value_vars:
         # TODO: Use frame._data.label_dtype when it's more consistently set

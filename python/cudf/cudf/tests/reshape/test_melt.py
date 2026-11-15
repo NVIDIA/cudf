@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 
 _MELT_DTYPES = [
@@ -29,6 +30,30 @@ _MELT_DTYPES = [
     "timedelta64[ms]",
     "timedelta64[s]",
 ]
+
+
+@pytest.mark.skipif(not PANDAS_GE_31, reason="Changed in pandas 3.1")
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"id_vars": "id", "var_name": "id"},
+        {"id_vars": "id", "var_name": "x", "value_name": "x"},
+        {"id_vars": ["id", "variable"], "value_vars": ["a"]},
+        {"id_vars": ["id", "id"], "value_vars": ["a"]},
+    ],
+)
+@pytest.mark.parametrize("empty", [False, True])
+def test_melt_output_name_collision(kwargs, empty):
+    expected = pd.DataFrame(
+        {"id": [1, 2], "variable": [9, 9], "a": [10, 20], "b": [100, 200]}
+    )
+    if empty:
+        expected = expected.iloc[:0]
+    actual = cudf.from_pandas(expected)
+    for frame in (expected, actual):
+        with pytest.raises(ValueError, match="duplicate names"):
+            frame.melt(**kwargs)
+    assert_eq(actual, expected)
 
 
 @pytest.mark.parametrize("num_id_vars", [0, 2])

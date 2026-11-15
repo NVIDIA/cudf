@@ -346,8 +346,29 @@ class Merge:
             lcol_casted, rcol_casted = _match_join_keys(lcol, rcol, self.how)
             # The common-typed columns are always used to compute the join
             # maps; the columns written into the output frame may differ.
-            left_join_cols.append(lcol_casted)
-            right_join_cols.append(rcol_casted)
+            match_index_missing = PANDAS_GE_31 and (
+                isinstance(left_key, _IndexIndexer)
+                and isinstance(self.lhs.index, cudf.MultiIndex)
+                or isinstance(right_key, _IndexIndexer)
+                and isinstance(self.rhs.index, cudf.MultiIndex)
+            )
+            # MultiIndex missing codes are nulls; NumPy float data columns may
+            # instead retain NaN. pandas 3.1 matches those missing keys. Keep
+            # the normalized keys local so output data keeps its original mask.
+            left_join_cols.append(
+                lcol_casted.nans_to_nulls()
+                if match_index_missing
+                and isinstance(lcol_casted.dtype, np.dtype)
+                and lcol_casted.dtype.kind == "f"
+                else lcol_casted
+            )
+            right_join_cols.append(
+                rcol_casted.nans_to_nulls()
+                if match_index_missing
+                and isinstance(rcol_casted.dtype, np.dtype)
+                and rcol_casted.dtype.kind == "f"
+                else rcol_casted
+            )
             # ``_match_join_keys`` returns the keys unchanged (still
             # categorical) when both sides share the same categories, and
             # otherwise decategorizes them -- matching pandas, which keeps the

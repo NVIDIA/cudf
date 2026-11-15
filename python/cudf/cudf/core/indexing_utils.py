@@ -17,6 +17,7 @@ from cudf.api.types import (
     is_integer,
     is_list_like,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column.column import as_column
 from cudf.core.copy_types import BooleanMask, GatherMap
 from cudf.core.dtypes import CategoricalDtype, IntervalDtype
@@ -515,7 +516,9 @@ def destructure_series_loc_indexer(key: Any, frame: Series) -> Any:
     return rows
 
 
-def ordered_find(needles: ColumnBase, haystack: ColumnBase) -> GatherMap:
+def ordered_find(
+    needles: ColumnBase, haystack: ColumnBase, *, scalar_key: bool = False
+) -> GatherMap:
     """Find locations of needles in a haystack preserving order
 
     Parameters
@@ -554,7 +557,15 @@ def ordered_find(needles: ColumnBase, haystack: ColumnBase) -> GatherMap:
         haystack_kind,
         needle_kind,
     }.issubset({"i", "u", "f"}):
-        needles = needles.astype(haystack.dtype)
+        if (
+            PANDAS_GE_31
+            and not scalar_key
+            and needle_kind == haystack_kind == "f"
+            and needles.dtype.itemsize > haystack.dtype.itemsize
+        ):
+            haystack = haystack.astype(needles.dtype)
+        else:
+            needles = needles.astype(haystack.dtype)
     elif needles.dtype != haystack.dtype:
         # Pandas raise KeyError here
         raise KeyError("Dtype mismatch in label lookup")
@@ -732,7 +743,7 @@ def parse_single_row_loc_key(
                         raise KeyError(key.element_indexing(0))
                     raise
             haystack = index._column
-            gather_map = ordered_find(key, haystack)
+            gather_map = ordered_find(key, haystack, scalar_key=is_scalar)
             if is_scalar and len(gather_map.column) == 1:
                 return ScalarIndexer(gather_map)
             else:

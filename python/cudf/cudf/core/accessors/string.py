@@ -19,6 +19,7 @@ from cudf.api.types import (
     is_scalar,
     is_string_dtype,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.accessors.lists import ListMethods
 from cudf.core.column.column import ColumnBase, as_column, column_empty
@@ -649,8 +650,19 @@ class StringMethods(BaseAccessor):
                 "unsupported value for `flags` parameter"
             )
 
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and flags & re.IGNORECASE
+        ):
+            raise NotImplementedError(
+                "Case-insensitive Arrow string extraction is not supported"
+            )
         compiled = re.compile(pat)
-        group_names = list(compiled.groupindex.keys())
+        group_names = {
+            group_number - 1: name
+            for name, group_number in compiled.groupindex.items()
+        }
         if len(group_names) > 0:
             pat = re.sub(r"\(\?P<([A-Za-z_][A-Za-z0-9_]*)>", "(", pat)
         data = self._column.extract(pat, flags)
@@ -658,13 +670,13 @@ class StringMethods(BaseAccessor):
         if len(data) == 1 and expand is False:
             _, data = data.popitem()  # type: ignore[assignment]
             if len(group_names) > 0:
-                result_name = group_names[0]
+                result_name = group_names.get(0)
         elif expand is False and len(data) > 1:
             expand = True
-        if len(group_names) == len(data):
-            named_data = {}
-            for key, value in data.items():
-                named_data[group_names[key]] = value
+        if group_names and isinstance(data, dict):
+            named_data: dict[int | str, StringColumn] = {
+                group_names.get(key, key): value for key, value in data.items()
+            }
             data = named_data  # type: ignore[assignment]
         return self._return_or_inplace(
             data, expand=expand, replace_name=result_name
@@ -2645,7 +2657,14 @@ class StringMethods(BaseAccessor):
 
         result_table: StringColumn | dict[int, StringColumn]
         if expand:
-            if self._column.is_all_null:
+            if (
+                PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                and isinstance(self._parent, cudf.Series)
+                and len(self._column) == 0
+            ):
+                result_table = {}
+            elif self._column.is_all_null:
                 result_table = {0: self._column.copy()}
             else:
                 if regex is True:
@@ -2824,7 +2843,14 @@ class StringMethods(BaseAccessor):
 
         result_table: StringColumn | dict[int, StringColumn]
         if expand:
-            if self._column.is_all_null:
+            if (
+                PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                and isinstance(self._parent, cudf.Series)
+                and len(self._column) == 0
+            ):
+                result_table = {}
+            elif self._column.is_all_null:
                 result_table = {0: self._column.copy()}
             else:
                 if regex is True:
@@ -2970,6 +2996,14 @@ class StringMethods(BaseAccessor):
             raise TypeError(
                 f"sep should be a string, but got {type(sep).__name__}"
             )
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and isinstance(self._parent, cudf.Series)
+            and self._column.is_all_null
+        ):
+            data = {0: self._column.copy()} if len(self._column) else {}
+            return self._return_or_inplace(data, expand=expand)
         return self._return_or_inplace(
             self._column.partition(
                 plc.Scalar.from_py(sep, dtype=plc.DataType(plc.TypeId.STRING)),
@@ -3042,6 +3076,14 @@ class StringMethods(BaseAccessor):
             raise TypeError(
                 f"sep should be a string, but got {type(sep).__name__}"
             )
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and isinstance(self._parent, cudf.Series)
+            and self._column.is_all_null
+        ):
+            data = {0: self._column.copy()} if len(self._column) else {}
+            return self._return_or_inplace(data, expand=expand)
         return self._return_or_inplace(
             self._column.rpartition(
                 plc.Scalar.from_py(sep, dtype=plc.DataType(plc.TypeId.STRING)),
@@ -4285,7 +4327,12 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return (
+                result
+                if PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                else result.astype(np.dtype(np.int64))
+            )
 
     def rindex(
         self, sub: str, start: int = 0, end: int | None = None
@@ -4345,7 +4392,12 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return (
+                result
+                if PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                else result.astype(np.dtype(np.int64))
+            )
 
     def match(
         self,

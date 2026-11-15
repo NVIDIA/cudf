@@ -87,6 +87,9 @@ def test_dataframe_rename_columns_label_dtype_matches_pandas():
     assert_eq(result, expected)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.rename is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_dataframe_rename_duplicate_column():
     gdf = cudf.DataFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
     with pytest.raises(

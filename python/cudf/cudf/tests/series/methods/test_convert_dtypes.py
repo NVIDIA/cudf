@@ -49,6 +49,9 @@ def test_convert_dtypes(data, dtype):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_integer_false_convert_floating_true():
     data = [1.000000000000000000000000001, 1]
     expected = pd.Series(data, dtype="Float64")
@@ -64,6 +67,9 @@ def test_convert_dtypes_integer_to_nullable(integer_types_as_str):
     _compare_to_pandas([1, 2, 3], integer_types_as_str, {})
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_dtypes_integer_convert_integer_false(integer_types_as_str):
     _compare_to_pandas(
         [1, 2, 3], integer_types_as_str, {"convert_integer": False}
@@ -78,12 +84,18 @@ def test_convert_dtypes_float_integer_like_to_int64(float_types_as_str):
     _compare_to_pandas([1.0, 2.0, 3.0], float_types_as_str, {})
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_dtypes_float_convert_integer_false(float_types_as_str):
     _compare_to_pandas(
         [1.0, 2.0, 3.0], float_types_as_str, {"convert_integer": False}
     )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_dtypes_float_both_false(float_types_as_str):
     _compare_to_pandas(
         [1.0, 2.0, 3.0],
@@ -92,6 +104,9 @@ def test_convert_dtypes_float_both_false(float_types_as_str):
     )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -108,6 +123,9 @@ def test_convert_dtypes_bool(kwargs):
     _compare_to_pandas([True, False, True], "bool", kwargs)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -120,6 +138,9 @@ def test_convert_dtypes_object_strings(kwargs):
     _compare_to_pandas(["a", "b", "c"], "O", kwargs)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -216,6 +237,9 @@ def test_convert_dtypes_pandas_compatible_mode():
         _compare_to_pandas([1, 2, 3], "int32", {})
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in Series\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data, dtype",
     [

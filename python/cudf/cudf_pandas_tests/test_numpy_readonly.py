@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
@@ -35,6 +36,23 @@ def test_readonly_numpy_copy_is_writable():
     result[0] = 99
     np.testing.assert_array_equal(_slow_arg(result), [99, 1, 2])
     np.testing.assert_array_equal(data, np.arange(3))
+
+
+@pytest.mark.parametrize("order", ["C", "F"])
+@pytest.mark.parametrize("consumer", [cp.array, cp.asarray])
+def test_readonly_numpy_can_copy_to_cupy(order, consumer):
+    data = np.arange(6).reshape(2, 3).copy(order=order)
+    data.flags.writeable = False
+    result = ndarray._fsproxy_wrap(data, None)
+
+    assert not hasattr(result, "__cuda_array_interface__")
+    actual = consumer(result, order=order)
+    cp.testing.assert_array_equal(actual, cp.arange(6).reshape(2, 3))
+    actual[0, 0] = 99
+    assert not result.flags.writeable
+    np.testing.assert_array_equal(data, np.arange(6).reshape(2, 3))
+    with pytest.raises(ValueError, match="read-only"):
+        result[0, 0] = 99
 
 
 @pytest.mark.skipif(

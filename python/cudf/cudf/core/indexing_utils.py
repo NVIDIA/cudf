@@ -11,7 +11,7 @@ import pandas as pd
 
 import pylibcudf as plc
 
-import cudf  # noqa: TC001 (used at runtime for cudf.DataFrame etc., not type-only)
+import cudf
 from cudf.api.types import (
     _is_scalar_or_zero_d_array,
     is_integer,
@@ -24,6 +24,10 @@ from cudf.core.dtypes import CategoricalDtype, IntervalDtype
 from cudf.core.index import Index
 from cudf.core.multiindex import MultiIndex
 from cudf.core.series import Series
+from cudf.utils._warnings import (
+    _warn_pandas_31_date_indexer,
+    _warn_pandas_31_deprecation,
+)
 from cudf.utils.dtypes import dtype_from_pylibcudf_column
 
 if TYPE_CHECKING:
@@ -117,6 +121,59 @@ def check_dict_or_set_indexers(key: Any) -> None:
     elif isinstance(key, tuple):
         for sub_key in key:
             check_dict_or_set_indexers(sub_key)
+
+
+def warn_if_expanding_at(frame: DataFrame | Series, key: Any) -> None:
+    if not PANDAS_GE_31:
+        return
+    if isinstance(frame, cudf.DataFrame):
+        if not isinstance(key, tuple) or len(key) != 2:
+            return
+        checks = [(key[0], frame.index), (key[1], frame.columns)]
+        obj_type = "DataFrame"
+    else:
+        if isinstance(key, tuple) and len(key) == 1:
+            key = key[0]
+        checks = [(key, frame.index)]
+        obj_type = "Series"
+    for label, axis in checks:
+        try:
+            is_expanding = label not in axis
+        except (TypeError, ValueError):
+            continue
+        if is_expanding:
+            if cudf.get_option("mode.pandas_compatible"):
+                # pandas must handle insertion before a warning or mutation:
+                # retrying a failed GPU insertion would warn a second time.
+                raise NotImplementedError(
+                    "Deprecated .at expansion requires pandas insertion semantics"
+                )
+            _warn_pandas_31_deprecation(
+                f"Setting a value on a {obj_type} via .at with a key "
+                "that does not exist in the index is deprecated "
+                "and will raise a KeyError in a future version. "
+                "Use .loc instead."
+            )
+            return
+
+
+def warn_if_expanding_multiindex(
+    index, key, *, target: str, hint: str
+) -> None:
+    if (
+        PANDAS_GE_31
+        and isinstance(index, (MultiIndex, pd.MultiIndex))
+        and not (isinstance(key, tuple) and len(key) == index.nlevels)
+    ):
+        if cudf.get_option("mode.pandas_compatible"):
+            raise NotImplementedError(
+                "Deprecated MultiIndex expansion requires pandas insertion semantics"
+            )
+        _warn_pandas_31_deprecation(
+            f"Setting a new {target} with a MultiIndex using a key that is "
+            "not a full-length tuple is deprecated and will raise in a "
+            f"future version. {hint}"
+        )
 
 
 # Helpers for code-sharing between loc and iloc paths
@@ -691,6 +748,7 @@ def parse_single_row_loc_key(
     if isinstance(key, slice):
         return find_label_range_or_mask(key, index)
     else:
+        original_key = key
         is_scalar = _is_scalar_or_zero_d_array(key)
         if is_scalar and isinstance(key, np.ndarray):
             key = as_column(key.item())
@@ -713,6 +771,8 @@ def parse_single_row_loc_key(
             key = key.reindex(index)._column
         else:
             key = as_column(key)
+        if index.dtype.kind == "M":
+            _warn_pandas_31_date_indexer(original_key, infer=True)
         if (
             isinstance(key.dtype, CategoricalDtype)
             and index.dtype != key.dtype

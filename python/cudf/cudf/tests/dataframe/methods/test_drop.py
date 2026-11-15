@@ -9,6 +9,9 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -54,6 +57,9 @@ def test_drop_cudf_obj_columns(obj):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -92,6 +98,9 @@ def test_dataframe_drop_labels_axis_0(pdf, labels, inplace):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -127,6 +136,9 @@ def test_dataframe_drop_index(pdf, index, inplace):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index,level",
     [
@@ -173,6 +185,9 @@ def test_dataframe_drop_multiindex(index, level, inplace):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("data", [{"c": range(1, 11)}, {"d": ["a", "v"] * 5}])
 @pytest.mark.parametrize("labels", [["a"], ["b"], "a", "b", ["a", "b"]])
 def test_dataframe_drop_labels_axis_1(data, labels, inplace):

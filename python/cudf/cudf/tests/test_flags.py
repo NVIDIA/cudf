@@ -612,6 +612,9 @@ def test_reset_index_inplace_raises_when_flags_false():
         )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame.set_index is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_set_index_inplace_ok_when_flags_true():
     pdf = pd.DataFrame({"A": [0, 1], "B": [1, 2]})
     gdf = cudf.DataFrame({"A": [0, 1], "B": [1, 2]})

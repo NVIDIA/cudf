@@ -187,14 +187,14 @@ def _finalize_gb_agg(
                 if "std" in agg_list:
                     name_std = _make_name((col, "std"), sep=sep)
                     gb[name_std] = np.sqrt(var)
-                gb.drop(columns=[pow2_sum_name], inplace=True)
+                gb = gb.drop(columns=[pow2_sum_name])
             if "mean" in agg_list:
                 mean_name = _make_name((col, "mean"), sep=sep)
                 gb[mean_name] = gb[sum_name] / gb[count_name]
             if "sum" not in agg_list:
-                gb.drop(columns=[sum_name], inplace=True)
+                gb = gb.drop(columns=[sum_name])
             if "count" not in agg_list:
-                gb.drop(columns=[count_name], inplace=True)
+                gb = gb.drop(columns=[count_name])
         if list in agg_list:
             collect_name = _make_name((col, "list"), sep=sep)
             gb[collect_name] = gb[collect_name].list.concat()
@@ -205,7 +205,7 @@ def _finalize_gb_agg(
 
     # Set index if necessary
     if as_index:
-        gb.set_index(gb_cols, inplace=True)
+        gb = gb.set_index(gb_cols)
 
     # Unflatten column names
     col_array = []

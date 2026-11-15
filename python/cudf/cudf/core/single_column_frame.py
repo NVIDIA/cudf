@@ -20,6 +20,7 @@ from cudf.core.column_accessor import ColumnAccessor
 from cudf.core.dtype.validators import is_dtype_obj_numeric
 from cudf.core.frame import Frame
 from cudf.core.mixins import NotIterable
+from cudf.utils._warnings import _warn_pandas_31_numeric_only
 from cudf.utils.dtypes import SIZE_TYPE_DTYPE
 from cudf.utils.performance_tracking import _performance_tracking
 from cudf.utils.utils import _is_same_name
@@ -55,6 +56,8 @@ class SingleColumnFrame(Frame, NotIterable):
         numeric_only: bool = False,
         **kwargs,
     ) -> ScalarLike:
+        if isinstance(self, cudf.Series):
+            _warn_pandas_31_numeric_only(numeric_only, op)
         if axis not in (None, 0):
             raise NotImplementedError("axis parameter is not implemented yet")
 

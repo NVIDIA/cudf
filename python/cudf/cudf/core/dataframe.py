@@ -22,6 +22,7 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     Sequence,
+    Sized,
 )
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never
@@ -110,6 +111,10 @@ from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
 from cudf.errors import MixedTypeError
 from cudf.options import get_option
 from cudf.utils import docutils, ioutils, queryutils
+from cudf.utils._warnings import (
+    _warn_pandas_31_deprecation,
+    _warn_pandas_31_numeric_only,
+)
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
     SIZE_TYPE_DTYPE,
@@ -287,7 +292,14 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     return result
                 try:
                     result = columns_df.index._get_row_major(
-                        columns_df, row_arg, per_level=per_level
+                        columns_df,
+                        row_arg,
+                        per_level=per_level
+                        or (
+                            PANDAS_GE_31
+                            and isinstance(row_arg, tuple)
+                            and any(is_list_like(key) for key in row_arg)
+                        ),
                     )
                 except KeyError as e:
                     # Tag a row-label miss so __getitem__ raises instead of
@@ -457,6 +469,20 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     if not is_scalar(key[0]):
                         raise
                     if not columns_df._num_columns:
+                        if (
+                            PANDAS_GE_31
+                            and not self._frame._num_columns
+                            and isinstance(key[1], slice)
+                            and key[1] == slice(None)
+                        ):
+                            # There are no data columns to transfer. Let pandas
+                            # resolve the new index label and preserve its
+                            # RangeIndex, name, and dtype rules.
+                            index_frame = pd.DataFrame(
+                                index=self._frame.index.to_pandas()
+                            )
+                            index_frame.loc[key] = value
+                            self._frame.index = ensure_index(index_frame.index)
                         return
                     # TODO: There is a potential bug here if the inplace modifications
                     # done above fail half-way we are left with a partially modified
@@ -586,6 +612,7 @@ class _DataFrameAtIndexer(_DataFrameLocIndexer):
         indexing_utils.validate_scalar_key(
             key, "Invalid call for scalar access (getting)!"
         )
+        indexing_utils.warn_if_expanding_at(self._frame, key)
         return super().__setitem__(key, value)
 
 
@@ -872,6 +899,18 @@ def _listlike_to_column_accessor(
     else:
         if index is None:
             index = cudf.RangeIndex(len(data))
+        if (
+            PANDAS_GE_31
+            and all(isinstance(row, Sized) for row in data)
+            and len({len(row) for row in data}) > 1
+        ):
+            _warn_pandas_31_deprecation(
+                "Constructing a DataFrame from a list of sequences with "
+                "mismatched lengths is deprecated and will raise in a future "
+                "version. The shorter sequences are currently padded with "
+                "NaN; make all sequences the same length before constructing "
+                "instead."
+            )
         data = list(itertools.zip_longest(*data))
         if columns is None:
             if isinstance(first_element, tuple) and hasattr(
@@ -2080,7 +2119,23 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         """
         new_df = self.copy(deep=False)
         for k, v in kwargs.items():
-            new_df[k] = v(new_df) if callable(v) else v
+            key: Hashable = k
+            if (
+                PANDAS_GE_31
+                and new_df._data.multiindex
+                and k not in new_df.columns
+            ):
+                key = (k,) + ("",) * (new_df._data.nlevels - 1)
+                indexing_utils.warn_if_expanding_multiindex(
+                    new_df.columns,
+                    k,
+                    target="column on a DataFrame",
+                    hint=(
+                        "DataFrame.assign cannot take a tuple key; use "
+                        f"df[{key}] = ... instead."
+                    ),
+                )
+            new_df[key] = v(new_df) if callable(v) else v
         return new_df
 
     @classmethod
@@ -2160,12 +2215,13 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     result_index_length = sum(len(obj) for obj in objs)
 
                 # remove columns not present in all objs
-                for obj in objs:
+                objs = [
                     obj.drop(
                         columns=non_intersecting_columns,
-                        inplace=True,
                         errors="ignore",
                     )
+                    for obj in objs
+                ]
         elif join == "outer":
             # Get a list of the unique table column names
             names = [name for f in objs for name in f._column_names]
@@ -2935,10 +2991,20 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         """
 
         orient = orient.lower()
+        if not isinstance(data, dict) and orient != "index":
+            _warn_pandas_31_deprecation(
+                f"Passing a {type(data).__name__} to DataFrame.from_dict is "
+                "deprecated. Use the DataFrame constructor instead."
+            )
         if orient == "index":
             if isinstance(
                 next(iter(data.values()), None), (Series, cupy.ndarray)
             ):
+                if not isinstance(data, dict):
+                    _warn_pandas_31_deprecation(
+                        f"Passing a {type(data).__name__} to DataFrame.from_dict is "
+                        "deprecated. Use the DataFrame constructor instead."
+                    )
                 result = cls(data).T
                 result.columns = (
                     columns
@@ -3725,7 +3791,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         keys,
         drop: bool = True,
         append: bool = False,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         verify_integrity: bool = False,
     ) -> Self | None:
         """Return a new DataFrame with a new index
@@ -3807,7 +3873,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
         `set_index` supports `inplace` parameter too:
 
-        >>> df.set_index("a", inplace=True)
+        >>> df = df.set_index("a")
         >>> df
            b    c
         a
@@ -3818,6 +3884,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         5  e  5.0
         """
 
+        inplace = self._check_inplace_deprecation(inplace, "set_index")
         if not isinstance(keys, list):
             keys = [keys]
         if len(keys) == 0:
@@ -3906,7 +3973,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             raise ValueError(f"Values in Index are not unique: {idx}")
 
         if to_drop:
-            df.drop(columns=to_drop, inplace=True)
+            for name in to_drop:
+                df._drop_column(name)
 
         df.index = idx
         return df if not inplace else None
@@ -4123,12 +4191,13 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         self,
         level=None,
         drop=False,
-        inplace=False,
+        inplace: bool | NoDefault = no_default,
         col_level=0,
         col_fill="",
         allow_duplicates: bool = False,
         names: Hashable | Sequence[Hashable] | None = None,
     ):
+        inplace = self._check_inplace_deprecation(inplace, "reset_index")
         if inplace and not self._flags.allows_duplicate_labels:
             raise ValueError(
                 "Cannot specify 'inplace=True' when "
@@ -4198,6 +4267,19 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             If False, a reindexing operation is performed if
             `value.index` is not equal to `self.index`.
         """
+        if self._data.multiindex:
+            if isinstance(name, tuple):
+                if len(name) != self._data.nlevels:
+                    raise ValueError(
+                        "Item must have length equal to number of levels."
+                    )
+            elif name not in self.columns:
+                indexing_utils.warn_if_expanding_multiindex(
+                    self.columns,
+                    name,
+                    target="column on a DataFrame",
+                    hint="Use a full-length tuple key instead.",
+                )
         num_cols = self._num_columns
         if loc < 0:
             loc += num_cols + 1
@@ -4390,7 +4472,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         self,
         subset=None,
         keep: Literal["first", "last", False] = "first",
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         ignore_index: bool = False,
     ) -> Self | None:
         """
@@ -4465,6 +4547,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         2  Indomie   cup     3.5
         4  Indomie  pack     5.0
         """
+        inplace = self._check_inplace_deprecation(inplace, "drop_duplicates")
         outdf = super().drop_duplicates(
             subset=subset,
             keep=keep,
@@ -4488,7 +4571,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         columns=None,
         axis=0,
         copy=True,
-        inplace=False,
+        inplace: bool | NoDefault = no_default,
         level=None,
         errors="ignore",
     ):
@@ -4574,6 +4657,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             duplicates is passed, column names will be postfixed
             with a number.
         """
+        inplace = self._check_inplace_deprecation(inplace, "rename")
         if errors != "ignore":
             raise NotImplementedError(
                 "Only errors='ignore' is currently supported"
@@ -7403,6 +7487,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> ScalarLike:
+        _warn_pandas_31_numeric_only(numeric_only, op)
         source = self
 
         if axis is None:
@@ -8506,6 +8591,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                         )
                     level_indices.append(lv)
 
+        if PANDAS_GE_31 and len(set(level_indices)) != len(level_indices):
+            raise ValueError(
+                "level should not contain duplicate values, "
+                f"got level numbers {level_indices}"
+            )
+
         unnamed_levels_indices = [
             i for i in range(self._data.nlevels) if i not in level_indices
         ]
@@ -9221,7 +9312,9 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
     @_performance_tracking
-    def eval(self, expr: str, inplace: bool = False, **kwargs):
+    def eval(
+        self, expr: str, inplace: bool | NoDefault = no_default, **kwargs
+    ):
         """Evaluate a string describing operations on DataFrame columns.
 
         Operates on columns only, not specific rows or elements.
@@ -9281,9 +9374,9 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         3  4   4
         4  5   2
 
-        Use ``inplace=True`` to modify the original DataFrame.
+        Assign the result to retain the added column.
 
-        >>> df.eval('C = A + B', inplace=True)
+        >>> df = df.eval('C = A + B')
         >>> df
            A   B   C
         0  1  10  11
@@ -9323,6 +9416,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
               assignment statements where later statements are conditioned upon
               the output of earlier statements) is not supported.
         """
+        inplace = self._check_inplace_deprecation(inplace, "eval")
         if kwargs:
             raise ValueError(
                 "Keyword arguments other than `inplace` are not supported"

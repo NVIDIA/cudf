@@ -20,6 +20,9 @@ def drop(request):
     return request.param
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, "l0", 1, ["l0", 1]])
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser", no_default])
@@ -49,6 +52,9 @@ def test_reset_index(level, drop, inplace, original_name, name):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, 1, [None]])
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser"])
@@ -77,6 +83,9 @@ def test_reset_index_dup_level_name(level, drop, inplace, original_name, name):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser"])
 def test_reset_index_named(drop, inplace, original_name, name):

@@ -39,6 +39,9 @@ def test_duplicated_empty_columns_preserves_index(index, keep):
     "mapper", [{1.0: 9.0}, {1.0: None}, lambda value: f"label_{value}"]
 )
 @pytest.mark.parametrize("inplace", [False, True])
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame.rename is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_rename_extension_columns_matches_pandas(dtype, mapper, inplace):
     columns = pd.Index([1, 2, 3], dtype=dtype, name="columns")
     source = pd.DataFrame([[1, 2, 3]], columns=columns)

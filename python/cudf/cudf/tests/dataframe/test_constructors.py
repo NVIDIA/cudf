@@ -30,7 +30,12 @@ def test_init_via_list_of_tuples():
         match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
     ):
         pdf = pd.DataFrame(data)
-    gdf = cudf.DataFrame(data)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        gdf = cudf.DataFrame(data)
 
     assert_eq(pdf, gdf)
 
@@ -635,7 +640,12 @@ def test_dataframe_constructor_from_namedtuple():
 
     data = [Point1(1, 2, 3), Point2(4, 5)]
     idx = ["a", "b"]
-    gdf = cudf.DataFrame(data, index=idx)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        gdf = cudf.DataFrame(data, index=idx)
     with expect_warning_if(
         PANDAS_GE_31,
         warning=pd.errors.Pandas4Warning,
@@ -646,8 +656,13 @@ def test_dataframe_constructor_from_namedtuple():
     assert_eq(gdf, pdf)
 
     data = [Point2(4, 5), Point1(1, 2, 3)]
-    with pytest.raises(ValueError):
-        cudf.DataFrame(data, index=idx)
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Constructing a DataFrame from a list of sequences with mismatched lengths is deprecated",
+    ):
+        with pytest.raises(ValueError):
+            cudf.DataFrame(data, index=idx)
     with expect_warning_if(
         PANDAS_GE_31,
         warning=pd.errors.Pandas4Warning,

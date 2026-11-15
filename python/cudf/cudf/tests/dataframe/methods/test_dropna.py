@@ -36,6 +36,9 @@ def test_datetime_dataframe():
     assert_eq(ps.isnull(), gs.isnull())
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.dropna is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -141,6 +144,9 @@ def test_dropna_thresh(thresh, subset):
     )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.dropna is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("thresh", [0, 1, 2])
 @pytest.mark.parametrize("subset", [None, [0], [1], [0, 1]])
 def test_dropna_thresh_cols(thresh, subset, inplace):

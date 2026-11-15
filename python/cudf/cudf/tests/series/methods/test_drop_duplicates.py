@@ -9,6 +9,9 @@ import cudf
 from cudf.testing import assert_eq
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("keep", ["first", "last", False])
 @pytest.mark.parametrize("ignore_index", [True, False])
 @pytest.mark.parametrize(

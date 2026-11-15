@@ -251,7 +251,7 @@ def test_to_datetime_format(data, format):
         match="Parsing integer or float values with a format in to_datetime is deprecated",
     ):
         expected = pd.to_datetime(pd_data, format=format)
-    actual = cudf.to_datetime(gd_data, format=format)
+        actual = cudf.to_datetime(gd_data, format=format)
 
     if isinstance(expected, pd.Series):
         assert_eq(actual, expected, check_dtype=False)
@@ -366,7 +366,7 @@ def test_to_datetime_int_with_format_us(values):
         match="Parsing integer or float values with a format in to_datetime is deprecated",
     ):
         expected = pd.to_datetime(values, format="%Y%m%d")
-    actual = cudf.to_datetime(values, format="%Y%m%d")
+        actual = cudf.to_datetime(values, format="%Y%m%d")
     assert actual.dtype == expected.dtype
     assert_eq(actual, expected, check_exact=False)
 

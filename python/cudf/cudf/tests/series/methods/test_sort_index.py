@@ -9,6 +9,9 @@ import cudf
 from cudf.testing import assert_eq
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.sort_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index",
     [

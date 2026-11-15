@@ -62,6 +62,10 @@ from cudf.core.dtypes import (
 from cudf.core.join._join_helpers import _match_join_keys
 from cudf.core.single_column_frame import SingleColumnFrame
 from cudf.errors import MixedTypeError
+from cudf.utils._warnings import (
+    _warn_pandas_31_date_indexer,
+    _warn_pandas_31_deprecation,
+)
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
@@ -84,7 +88,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
     from datetime import tzinfo
 
-    from cudf._typing import ColumnLike, Dtype, DtypeObj
+    from cudf._typing import ColumnLike, Dtype, DtypeObj, NoDefault
     from cudf.core.dataframe import DataFrame
     from cudf.core.multiindex import MultiIndex
     from cudf.core.series import Series
@@ -1914,6 +1918,8 @@ class Index(SingleColumnFrame):
             )
 
         needle = as_column(target)
+        if self.dtype.kind == "M":
+            _warn_pandas_31_date_indexer(target, infer=False)
         result = as_column(
             -1,
             length=len(needle),
@@ -3615,9 +3621,9 @@ class DatetimeIndex(Index):
         data=None,
         freq=None,
         tz=None,
-        ambiguous: Literal["raise"] = "raise",
-        dayfirst: bool = False,
-        yearfirst: bool = False,
+        ambiguous: Literal["raise"] | NoDefault = no_default,
+        dayfirst: bool | NoDefault = no_default,
+        yearfirst: bool | NoDefault = no_default,
         dtype=None,
         copy: bool = False,
         name=None,
@@ -3633,11 +3639,11 @@ class DatetimeIndex(Index):
 
         if tz is not None:
             raise NotImplementedError("tz is not yet supported")
-        if ambiguous != "raise":
+        if ambiguous is not no_default and ambiguous != "raise":
             raise NotImplementedError("ambiguous is not yet supported")
-        if dayfirst is not False:
+        if dayfirst is not no_default and dayfirst is not False:
             raise NotImplementedError("dayfirst == True is not yet supported")
-        if yearfirst is not False:
+        if yearfirst is not no_default and yearfirst is not False:
             raise NotImplementedError("yearfirst == True is not yet supported")
 
         if freq is None and isinstance(data, (type(self), pd.DatetimeIndex)):
@@ -3691,6 +3697,22 @@ class DatetimeIndex(Index):
         # existing pandas index needs no additional validation
         if not was_pd_index:
             self._validate_freq_against_data(self._freq)
+        for keyword, value in (
+            ("dayfirst", dayfirst),
+            ("yearfirst", yearfirst),
+            ("ambiguous", ambiguous),
+        ):
+            if value is not no_default:
+                replacement = (
+                    f"{type(self).__name__}.tz_localize"
+                    if keyword == "ambiguous"
+                    else "pd.to_datetime"
+                )
+                _warn_pandas_31_deprecation(
+                    f"The '{keyword}' keyword in {type(self).__name__} is deprecated "
+                    "and will be removed in a future version. "
+                    f"Use {replacement} instead."
+                )
 
     @_performance_tracking
     def serialize(self):
@@ -4216,7 +4238,13 @@ class DatetimeIndex(Index):
         # .days_in_month is already a cached_property
         return Index._from_column(self._column.days_in_month, name=self.name)
 
-    daysinmonth = days_in_month
+    @property
+    def daysinmonth(self) -> Index:
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.daysinmonth is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.days_in_month instead."
+        )
+        return self.days_in_month
 
     @property
     def day_of_week(self) -> Index:
@@ -4224,7 +4252,7 @@ class DatetimeIndex(Index):
         Get the day of week that the date falls on.
         """
         # .day_of_week is already a cached_property
-        return Index._from_column(self._column.day_of_week, name=self.name)
+        return Index._from_column(self._column.weekday, name=self.name)
 
     @property
     @_performance_tracking
@@ -4420,10 +4448,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.weekday
+        >>> datetime_index.day_of_week
         Index([5, 6, 0, 1, 2, 3, 4, 5, 6], dtype='int32')
         """
         # .weekday is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.weekday is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_week instead."
+        )
         return Index._from_column(self._column.weekday, name=self.name)
 
     @property
@@ -4443,10 +4475,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.dayofweek
+        >>> datetime_index.day_of_week
         Index([5, 6, 0, 1, 2, 3, 4, 5, 6], dtype='int32')
         """
         # .weekday is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.dayofweek is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_week instead."
+        )
         return Index._from_column(self._column.weekday, name=self.name)
 
     @property
@@ -4467,10 +4503,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.dayofyear
+        >>> datetime_index.day_of_year
         Index([366, 1, 2, 3, 4, 5, 6, 7, 8], dtype='int16')
         """
         # .day_of_year is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.dayofyear is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_year instead."
+        )
         return Index._from_column(self._column.day_of_year, name=self.name)
 
     @property

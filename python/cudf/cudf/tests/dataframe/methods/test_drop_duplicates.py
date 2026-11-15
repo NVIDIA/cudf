@@ -40,6 +40,9 @@ def test_drop_duplicates_with_duplicate_column_names():
     assert_eq(result1, expected1)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_drop_duplicates():
     pdf = pd.DataFrame(
         {
@@ -208,6 +211,9 @@ def test_drop_duplicates_tuple():
     assert_eq(result, expected)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "df",
     [
@@ -264,6 +270,9 @@ def test_dataframe_drop_duplicates_numeric_method():
     )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_dataframe_drop_duplicates_method():
     pdf = pd.DataFrame(
         [(1, 2, "a"), (2, 3, "b"), (3, 4, "c"), (2, 3, "d"), (3, 5, "c")],
@@ -462,6 +471,9 @@ def test_drop_duplicates_NA_for_take_all():
     assert_eq(result, expected)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_drop_duplicates_inplace():
     orig = pd.DataFrame(
         {

@@ -12,6 +12,9 @@ from cudf.testing import assert_eq
 
 # Note that for now expressions do not automatically handle casting, so inputs
 # need to be casted appropriately
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.eval is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.filterwarnings("ignore::RuntimeWarning")
 @pytest.mark.parametrize(
     "expr, dtype",
@@ -90,6 +93,9 @@ def test_dataframe_eval_errors(expr):
         df.eval(expr)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.eval is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_dataframe_eval_misc():
     df = cudf.DataFrame({"a": [1, 2, 3, None, 5]})
     got = df.eval("isnull(a)")

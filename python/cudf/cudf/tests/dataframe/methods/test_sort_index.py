@@ -20,6 +20,9 @@ def test_dataframe_empty_sort_index():
     assert_eq(expect, got, check_index_type=True)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.sort_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index",
     [
@@ -104,6 +107,9 @@ def _assert_dataframe_multiindex_sort_index(
         assert_eq(expected, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.sort_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "axis, level, ascending, ignore_index, inplace, na_position",
     [

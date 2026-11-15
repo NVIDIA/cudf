@@ -242,7 +242,9 @@ def _ndarray_slow_to_fast(array):
     # CuPy cannot preserve NumPy's write protection. Keep read-only arrays on
     # the CPU so a transfer cannot turn an immutable Index view writable.
     if not array.flags.writeable:
-        raise NotImplementedError("CuPy does not support read-only arrays")
+        # Array consumers probe __cuda_array_interface__ before copying from
+        # the host. AttributeError advertises that device export is absent.
+        raise AttributeError("Read-only arrays have no CUDA array interface")
     return cupy.asarray(array)
 
 

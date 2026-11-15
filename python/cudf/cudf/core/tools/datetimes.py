@@ -22,6 +22,8 @@ from cudf.core.column.column import ColumnBase, as_column
 from cudf.core.dataframe import DataFrame
 from cudf.core.index import DatetimeIndex, Index, ensure_index
 from cudf.core.series import Series
+from cudf.options import get_option
+from cudf.utils._warnings import _warn_pandas_31_deprecation
 from cudf.utils.dtypes import DEFAULT_STRING_DTYPE, dtype_from_pylibcudf_column
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
 from cudf.utils.temporal import infer_format, unit_to_nanoseconds_conversion
@@ -254,10 +256,9 @@ def to_datetime(
                     "<class 'decimal.Decimal'> is not convertible to datetime"
                 )
 
-    if unit in ("Y", "M"):
-        # cuDF does not support calendrical addition for to_datetime
-        # with unit='Y' or 'M'. Defer to pandas via the cudf.pandas
-        # fast/slow proxy fallback.
+    if unit in ("Y", "M") or (PANDAS_GE_31 and unit in ("ps", "fs", "as")):
+        # Calendrical addition and pandas 3.1's subnanosecond unit inference
+        # require the original parser. Defer through cudf.pandas fallback.
         raise NotImplementedError(
             f"unit={unit!r} is not supported in cudf.to_datetime"
         )
@@ -383,6 +384,8 @@ def to_datetime(
                 return col.element_indexing(0)
             else:
                 return Index._from_column(col)
+    except Warning:
+        raise
     except Exception as e:
         if errors == "raise":
             raise e
@@ -407,13 +410,40 @@ def _process_col(
     format: str | None,
     utc: bool,
 ):
+    if (
+        PANDAS_GE_31
+        and format is not None
+        and col.dtype.kind in "ifu"
+        and (
+            col
+            != (
+                float(np.iinfo(np.int64).min)
+                if col.dtype.kind == "f"
+                else np.iinfo(np.int64).min
+            )
+        ).any()
+    ):
+        _warn_pandas_31_deprecation(
+            "Parsing integer or float values with a format in "
+            "to_datetime is deprecated. In a future version these "
+            "will be interpreted as epochs via the 'unit' keyword "
+            "instead. Cast them to strings first to retain the "
+            "current behavior."
+        )
     if col.dtype.kind == "f":
         if (
-            PANDAS_GE_31
+            (PANDAS_GE_31 or get_option("mode.pandas_compatible"))
             and unit in (None, "ns")
             and format is None
             and (col >= float(2**63)).any()
         ):
+            if not PANDAS_GE_31:
+                # pandas 3.0's float conversion can raise OverflowError or
+                # return NaT depending on the platform. Preserve that
+                # behavior through the original parser.
+                raise NotImplementedError(
+                    "Out-of-range float datetimes require the pandas 3.0 parser"
+                )
             raise pd.errors.OutOfBoundsDatetime(
                 "cannot convert input with unit 'ns'"
             )

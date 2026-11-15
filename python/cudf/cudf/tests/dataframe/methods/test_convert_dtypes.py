@@ -105,6 +105,9 @@ def test_convert_dtypes_dataframe_backend(dtype_backend):
     _compare_to_pandas(column_specs, {"dtype_backend": dtype_backend})
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in DataFrame\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_dtypes_dataframe_param_combinations(
     infer_objects,
     convert_string,

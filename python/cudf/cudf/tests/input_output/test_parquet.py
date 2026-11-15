@@ -1077,7 +1077,7 @@ def test_parquet_reader_list_large_multi_rowgroup(tmp_path):
     # group categories by document_id to create a list column
     expect = documents.groupby("document_id").agg({"category_id": ["collect"]})
     expect.columns = expect.columns.get_level_values(0)
-    expect.reset_index(inplace=True)
+    expect = expect.reset_index()
 
     # round trip the dataframe to/from parquet
     fname = tmp_path / "test_parquet_reader_list_large_multi_rowgroup.parquet"
@@ -4098,8 +4098,8 @@ def test_parquet_writer_roundtrip_with_arrow_schema(index):
 
     # drop the index column for comparison: __index_level_0__
     if index:
-        got.drop(columns="__index_level_0__", inplace=True)
-        got2.drop(columns="__index_level_0__", inplace=True)
+        got = got.drop(columns="__index_level_0__")
+        got2 = got2.drop(columns="__index_level_0__")
 
     # Check results
     assert_eq(expected, got)

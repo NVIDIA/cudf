@@ -12,6 +12,9 @@ from cudf.testing._utils import (
 )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "ps",
     [
@@ -42,6 +45,9 @@ def test_series_drop_labels(ps, labels, inplace):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("data", [["a"] * 20, ["b", None] * 10])
 @pytest.mark.parametrize("index", [[0], 1, pd.Index([1, 3, 5])])
 def test_series_drop_index(data, index, inplace):
@@ -58,6 +64,9 @@ def test_series_drop_index(data, index, inplace):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index,level",
     [

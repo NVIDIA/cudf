@@ -467,13 +467,31 @@ def _Index_values(self):
     return _fast_slow_function_call(getattr, None, self, "values")[0]
 
 
+def _construct_index(cls, args, kwargs):
+    if PANDAS_GE_31 and cls is cudf.Index:
+        data = args[0] if args else kwargs.get("data")
+        dtype = args[1] if len(args) > 1 else kwargs.get("dtype")
+        if (
+            dtype is None
+            and isinstance(data, (list, tuple))
+            and cudf.api.types.infer_dtype(data, skipna=True) == "date"
+        ):
+            # pandas keeps Python dates in an object Index. Inferring GPU
+            # datetimes here would lose that dtype and suppress subsequent
+            # indexing/coercion deprecation warnings.
+            raise NotImplementedError(
+                "An object Index of Python dates requires pandas"
+            )
+    return cls(*args, **kwargs)
+
+
 def Index__new__(cls, *args, **kwargs):
     # Call fast/slow constructor
     # This takes care of running __init__ as well, but must be paired
     # with a removal of the defaulted __init__ that
     # make_final_proxy_type provides.
     self, _ = _fast_slow_function_call(
-        lambda cls, args, kwargs: cls(*args, **kwargs),
+        _construct_index,
         None,
         cls,
         args,

@@ -32,8 +32,8 @@ def test_to_datetime_storage_boundaries_match_pandas(values, kwargs, box):
     actual_values = values if box == "list" else getattr(xpd, box)(values)
     try:
         expected = pd.to_datetime(expected_values, **kwargs)
-    except pd.errors.OutOfBoundsDatetime:
-        with pytest.raises(pd.errors.OutOfBoundsDatetime):
+    except (pd.errors.OutOfBoundsDatetime, OverflowError) as error:
+        with pytest.raises(type(error)):
             xpd.to_datetime(actual_values, **kwargs)
     else:
         actual = xpd.to_datetime(actual_values, **kwargs)

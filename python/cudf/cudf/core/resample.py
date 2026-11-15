@@ -16,6 +16,7 @@ from cudf.core.groupby.groupby import (
     SeriesGroupBy,
     _Grouping,
 )
+from cudf.options import get_option
 
 if TYPE_CHECKING:
     import pylibcudf as plc
@@ -26,6 +27,19 @@ if TYPE_CHECKING:
 
 class _Resampler(GroupBy):
     grouping: "_ResampleGrouping"
+
+    def __getitem__(self, key):
+        if (
+            PANDAS_GE_31
+            and get_option("mode.pandas_compatible")
+            and isinstance(key, tuple)
+        ):
+            # pandas interprets tuples as deprecated multi-column selection,
+            # including when a tuple is also a genuine column label.
+            raise NotImplementedError(
+                "Tuple selection on a Resampler requires pandas."
+            )
+        return super().__getitem__(key)
 
     def __init__(self, obj, by, axis=None, kind=None):
         by = _ResampleGrouping(obj, by)

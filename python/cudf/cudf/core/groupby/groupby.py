@@ -19,6 +19,7 @@ import pyarrow as pa
 import pylibcudf as plc
 
 from cudf.api.types import is_list_like, is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import aggregation, copying, sorting
 from cudf.core.abc import Serializable
 from cudf.core.column import access_columns
@@ -53,6 +54,7 @@ from cudf.core.udf.mlir_backend.groupby_function import (
     jit_groupby_apply,
 )
 from cudf.options import get_option
+from cudf.utils._warnings import _warn_pandas_31_deprecation
 from cudf.utils.dtypes import (
     SIZE_TYPE_DTYPE,
     cudf_dtype_to_pa_type,
@@ -1627,6 +1629,14 @@ class GroupBy(Serializable, Reducible, Scannable):
 
     def _scan(self, op: str, *args, **kwargs):
         """{op_name} for each group."""
+        if op in {"cummin", "cummax"} and kwargs.keys() - {
+            "numeric_only",
+            "skipna",
+        }:
+            _warn_pandas_31_deprecation(
+                f"Passing additional arguments to GroupBy.{op} is deprecated "
+                "and will be removed in a future version of pandas."
+            )
         return self.agg(op)
 
     def _has_string_value_column(self) -> bool:
@@ -3033,14 +3043,13 @@ class GroupBy(Serializable, Reducible, Scannable):
                 "max",
             ]
         )
-        res.rename(
+        res = res.rename(
             columns={
                 "_quantile_25": "25%",
                 "_quantile_50": "50%",
                 "_quantile_75": "75%",
             },
             level=1,
-            inplace=True,
         )
         return res
 
@@ -4648,7 +4657,24 @@ class _Grouping(Serializable):
         except KeyError as e:
             # `by` can be index name(label) too.
             if by in self._obj.index.names:
-                self._key_columns.append(self._obj.index._data[by])
+                if (
+                    PANDAS_GE_31
+                    and isinstance(self._obj.index, MultiIndex)
+                    and self._obj.index.names.count(by) > 1
+                ):
+                    _warn_pandas_31_deprecation(
+                        f"Grouping by index level '{by}' which matches "
+                        "multiple index levels is ambiguous. Currently the "
+                        "first matching level is used. In a future version "
+                        "of pandas, this will raise a ValueError. Use the "
+                        "level number instead."
+                    )
+                    level = self._obj.index.names.index(by)
+                    self._key_columns.append(
+                        self._obj.index.get_level_values(level)._column
+                    )
+                else:
+                    self._key_columns.append(self._obj.index._data[by])
             else:
                 raise e
         self.names.append(by)

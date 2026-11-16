@@ -15,6 +15,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
@@ -184,14 +185,16 @@ struct propagate_compat_flag_fn {
     if (sv.data()[0] == '<') { return; }  // compat-tagged: already handled
     uint32_t const cp = d_codepoints[idx];
     if (cp > MAX_CODEPOINT) { return; }
-    if (cudf::bit_is_set(compat_flags.data(), static_cast<cudf::size_type>(cp))) { return; }
+    if (cudf::detail::weak_bit_is_set(compat_flags.data(), static_cast<cudf::size_type>(cp))) {
+      return;
+    }
 
     bool needs_flag   = false;
     auto const& flags = compat_flags;
     auto fn           = [&needs_flag, &flags](char const* ptr, cudf::size_type size) {
       uint32_t const token_cp = hex_to_cp(ptr, size);
       if (token_cp <= MAX_CODEPOINT &&
-          cudf::bit_is_set(flags.data(), static_cast<cudf::size_type>(token_cp))) {
+          cudf::detail::weak_bit_is_set(flags.data(), static_cast<cudf::size_type>(token_cp))) {
         needs_flag = true;
       }
     };

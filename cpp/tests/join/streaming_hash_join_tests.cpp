@@ -52,9 +52,11 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 using join_match = std::tuple<size_type, size_type, size_type>;
 
-// The slot table holds at most 2^32 slots in a prime number of 8-slot buckets, and 2^29 - 3 is the
-// largest prime below 2^29, so this is the most rows it accepts at the default load factor of 0.5.
-constexpr size_type max_rows_at_default_load_factor = 2'147'483'636;
+// The slot table holds at most 2^32 slots in a prime number of 8-slot buckets, so it has at most
+// 2^29 - 3 buckets, the largest prime below 2^29. At the default load factor of 0.5, half of the 8
+// slots of each bucket can hold a row.
+constexpr size_type max_buckets                     = (size_type{1} << 29) - 3;
+constexpr size_type max_rows_at_default_load_factor = max_buckets * (8 / 2);
 
 std::vector<join_match> to_sorted_host_matches(cudf::device_span<size_type const> left_indices,
                                                cudf::device_span<size_type const> batch_indices,

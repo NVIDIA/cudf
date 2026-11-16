@@ -618,8 +618,9 @@ and matching list entries before selected PR runs can use them.
 ### Comparing local and upstream test coverage
 
 To find behavior that may need additional upstream tests, use a devcontainer
-with cudf-polars built and its test dependencies (including pytest-cov and
-pytest-xdist) installed. Install a supported Polars version and place its
+with GPU access, cudf-polars built and installed in editable mode from this
+checkout, and its test dependencies (including pytest-cov and pytest-xdist)
+installed. Install a supported Polars version and place its
 matching `py-<version>` checkout in `polars/`.
 Then run this command in the cuDF devcontainer:
 
@@ -673,7 +674,9 @@ before deciding what to contribute.
 The command exports available data even when a suite fails, then returns a
 nonzero status. Such reports are incomplete evidence. Missing data or missing
 test-body contexts prevent export rather than being interpreted as a coverage
-gap. To compare existing databases without rerunning tests, invoke
+gap. Databases must measure the same cudf-polars source root; differing roots
+are rejected rather than remapped. To compare existing databases without
+rerunning tests, invoke
 `python ci/analyze_cudf_polars_coverage.py --help`; `--upstream-data` accepts multiple
 databases.
 

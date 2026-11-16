@@ -29,13 +29,34 @@ def _read_data(path: Path) -> CoverageData:
             f"No test-body coverage contexts in {path}; collect with "
             "--cov-context=test using pytest-xdist."
         )
+    _source_root(data)
     return data
+
+
+def _source_root(data: CoverageData) -> str:
+    roots = {
+        filename.replace("\\", "/").rsplit("/cudf_polars/", 1)[0]
+        for filename in data.measured_files()
+        if "/cudf_polars/" in filename.replace("\\", "/")
+    }
+    if len(roots) != 1:
+        raise ValueError(
+            f"Expected one cudf-polars source root in each database; found {sorted(roots)}"
+        )
+    return roots.pop()
 
 
 def build_report(
     local: CoverageData, upstream: CoverageData
 ) -> dict[str, Any]:
     """Compare source lines without inferring equivalent test assertions."""
+    local_root = _source_root(local)
+    upstream_root = _source_root(upstream)
+    if local_root != upstream_root:
+        raise ValueError(
+            f"Coverage source roots differ: local={local_root}, upstream={upstream_root}. "
+            "Collect all suites using the same editable cudf-polars checkout."
+        )
     files = {}
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
     filenames = local.measured_files() | upstream.measured_files()
@@ -95,9 +116,9 @@ def main() -> None:
         upstream = CoverageData(no_disk=True)
         for path in args.upstream_data:
             upstream.update(_read_data(path))
+        report = build_report(local, upstream)
     except ValueError as error:
         parser.error(str(error))
-    report = build_report(local, upstream)
     report["provenance"] = {
         "cudf_sha": args.cudf_sha,
         "polars_sha": args.polars_sha,

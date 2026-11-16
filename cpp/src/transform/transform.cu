@@ -683,7 +683,7 @@ std::unique_ptr<table> run_transform(kernel_ref kernel,
                                          std::move(string_offsets),
                                          stream,
                                          mr);
-  detail::device_scalar<int32_t> error(
+  cudf::detail::device_scalar<int32_t> error(
     static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
   launch(kernel,
          row_size,

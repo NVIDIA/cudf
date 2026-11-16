@@ -16,8 +16,6 @@ Write enough for a maintainer to act or join the discussion. A small bug may nee
    gh issue view <number> -R NVIDIA/cudf
    ```
 
-   The existing [example catalog](references/examples.md) also describes useful structures.
-
 2. **Check for duplicates**, including closed issues and related PRs. Search the topic and the user's issues. If an issue already covers it, link it and ask whether the user wants a comment drafted instead. Do not switch to posting or editing it. If the work belongs under a story, read that story and suggest the relationship in the draft.
 
    ```bash

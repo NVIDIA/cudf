@@ -685,6 +685,11 @@ public class Cuda {
    * Import an allocation exported by {@link #memPoolExportPointer(long)} in another process,
    * with cudaMemPoolImportPointer. The returned pointer must be freed with
    * {@link #freeAsync(long, Stream)} before the pool is destroyed.
+   * <p>The imported memory must not be accessed before the allocation completes in the exporting
+   * process. Every importing process must free its pointer before the exporting process frees
+   * the allocation. {@link #freeAsync(long, Stream)} only enqueues the free; it must have
+   * completed on its stream (for example after {@link Stream#sync()}) before the exporting
+   * process frees the allocation.
    * @param pool the pool imported with {@link #memPoolImportFromPosixFd(int)}
    * @param exportData the bytes returned by {@link #memPoolExportPointer(long)}
    * @return the device address of the allocation in this process

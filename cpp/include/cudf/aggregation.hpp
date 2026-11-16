@@ -228,8 +228,8 @@ std::unique_ptr<Base> make_product_aggregation();
  * For floating-point values with `nan_semantics::UNORDERED` (the default), MIN follows the IEEE
  * 754-2019 `minimum` operation: the result is NaN if any value is NaN. With
  * `nan_semantics::TOTALLY_ORDERED`, NaN is greater than every other value, so the result is NaN
- * only when every value is NaN. In both cases -0.0 is less than +0.0, and a NaN result is the
- * canonical quiet NaN; the sign and payload of the input NaNs are not preserved.
+ * only when every value is NaN. In both cases -0.0 is less than +0.0, and the sign and payload of a
+ * NaN result are not specified and may differ from those of the input NaNs.
  *
  * @param semantics How floating-point NaN values are ordered. Ignored for non-floating-point
  *        inputs.
@@ -244,8 +244,8 @@ std::unique_ptr<Base> make_min_aggregation(nan_semantics semantics = nan_semanti
  * For floating-point values, MAX follows the IEEE 754-2019 `maximum` operation: the result is NaN
  * if any value is NaN, with both `nan_semantics::UNORDERED` (the default) and
  * `nan_semantics::TOTALLY_ORDERED`, which orders NaN greater than every other value. In both cases
- * +0.0 is greater than -0.0, and a NaN result is the canonical quiet NaN; the sign and payload of
- * the input NaNs are not preserved.
+ * +0.0 is greater than -0.0, and the sign and payload of a NaN result are not specified and may
+ * differ from those of the input NaNs.
  *
  * @param semantics How floating-point NaN values are ordered. Ignored for non-floating-point
  *        inputs.

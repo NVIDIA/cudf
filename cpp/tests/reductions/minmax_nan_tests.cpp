@@ -25,8 +25,9 @@
 #include <vector>
 
 // min/max follow the IEEE 754-2019 minimum/maximum operations for floating-point values:
-// NaN propagates and -0 is less than +0. A NaN result is the canonical quiet NaN. argmin/argmax
-// select the row holding the min/max result: the first NaN, and -0 before +0 for argmin.
+// NaN propagates and -0 is less than +0. Combining a NaN with another value gives the canonical
+// quiet NaN, so the result bits do not depend on the evaluation order. argmin/argmax select the
+// row holding the min/max result: the first NaN, and -0 before +0 for argmin.
 
 namespace {
 template <typename T>

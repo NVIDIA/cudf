@@ -77,7 +77,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
-                    [d_strings, predicate, d_target] __device__(size_type idx) {
+                    [d_strings, predicate, d_target] __device__(size_type idx) -> bool {
                       return !d_strings.is_null(idx) &&
                              bool{predicate(d_strings.element<string_view>(idx), d_target)};
                     });
@@ -131,7 +131,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     d_results,
-    [d_strings, predicate, d_targets] __device__(size_type idx) {
+    [d_strings, predicate, d_targets] __device__(size_type idx) -> bool {
       // empty target string returns true
       if (d_targets.is_valid(idx) && d_targets.element<string_view>(idx).length() == 0) {
         return true;

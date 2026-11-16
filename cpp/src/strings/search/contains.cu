@@ -521,7 +521,7 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     results->mutable_view().data<bool>(),
-    [d_strings = *d_strings, d_targets = *d_targets] __device__(size_type idx) {
+    [d_strings = *d_strings, d_targets = *d_targets] __device__(size_type idx) -> bool {
       // empty target string returns true
       if (d_targets.is_valid(idx) && d_targets.element<string_view>(idx).length() == 0) {
         return true;

@@ -409,6 +409,31 @@ public class TableTest extends CudfTestBase {
            Table expected = new Table.TestBuilder().column(7, 8, 9, 7, 8, 9, 7, 8, 9, 7, 8, 9).build()) {
         assertTablesAreEqual(expected, joined);
       }
+      try (ColumnVector scatterMap = ColumnVector.fromInts(0, 2, 1);
+           Table scattered = other.scatter(scatterMap, t)) {
+        assertEquals(4, scattered.getRowCount());
+        assertEquals(0, scattered.getNumberOfColumns());
+      }
+      try (PartitionedTable partitioned = t.roundRobinPartition(3, 0)) {
+        assertEquals(4, partitioned.getTable().getRowCount());
+        assertEquals(0, partitioned.getTable().getNumberOfColumns());
+        assertArrayEquals(new int[] {0, 2, 3, 4}, partitioned.getPartitions());
+      }
+    }
+  }
+
+  @Test
+  void testEmptyZeroColumnTable() {
+    try (Table t = new Table(0);
+         ColumnVector map = ColumnVector.fromInts();
+         Table gathered = t.gather(map);
+         Table concatenated = Table.concatenate(t, t)) {
+      assertEquals(0, t.getRowCount());
+      assertEquals(0, t.getNumberOfColumns());
+      assertEquals(0, gathered.getRowCount());
+      assertEquals(0, gathered.getNumberOfColumns());
+      assertEquals(0, concatenated.getRowCount());
+      assertEquals(0, concatenated.getNumberOfColumns());
     }
   }
 

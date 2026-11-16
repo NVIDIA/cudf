@@ -61,6 +61,18 @@ Use only the sections the issue needs. For Matt, short design, performance and s
 - Remove secrets, internal hostnames and links, private datasets and local paths from public text. Ask the user to confirm that facts taken from private notes may be public.
 - Add one line listing every AI tool involved, for example `Tools: Claude Code, Codex`. Check existing drafts and commit trailers for earlier tools and preserve them.
 
+## AI assistance and author review
+
+AI may draft and revise the whole issue from the supplied evidence. Give it the audience, purpose and relevant context. The author owns the final text: review factual claims against sources, preserve important qualifications when editing, and mark uncertainty rather than inventing evidence.
+
+Keep the `Tools:` disclosure and include this checkbox in AI-assisted drafts:
+
+```markdown
+- [ ] I have read this AI-assisted issue and, to the best of my ability, checked that its claims are accurate, its evidence supports them, and any uncertainty is clearly stated.
+```
+
+Leave it unchecked until the author explicitly confirms reviewing the final draft. The agent's own checks do not count as the author's confirmation. If substantive claims change afterward, ask the author to review those changes before filing.
+
 ## Draft and filing
 
 Write the body to a separate file for `gh issue create --body-file`. Keep the title, suggested labels and parent story outside that file. Show the user the full draft and metadata. A small, well-scoped bug may suit a new contributor; mention that to the user without adding a label yourself.

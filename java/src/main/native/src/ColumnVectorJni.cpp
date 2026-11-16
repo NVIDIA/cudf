@@ -438,6 +438,22 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha1(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_xxhash64Bytes(JNIEnv* env,
+                                                                       jclass,
+                                                                       jlong seed,
+                                                                       jlong column_handle)
+{
+  JNI_NULL_CHECK(env, column_handle, "column handle is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const input = reinterpret_cast<cudf::column_view const*>(column_handle);
+    return release_as_jlong(cudf::hashing::xxhash_64_bytes(*input, static_cast<uint64_t>(seed)));
+  }
+  JNI_CATCH(env, 0);
+}
+
 ////////
 // Native methods specific to cudf::column. These either take or return a cudf::column
 // instead of a cudf::column_view so they need to be used with caution. These should

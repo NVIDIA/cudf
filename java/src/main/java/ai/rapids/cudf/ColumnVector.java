@@ -790,6 +790,32 @@ public final class ColumnVector extends ColumnView {
   }
 
   /**
+   * Create a new column containing the
+   * <a href="https://github.com/Cyan4973/xxHash">XXH64</a> hash of each row's bytes.
+   * <p>
+   * For a STRING column each row's UTF-8 bytes are hashed. For a LIST column of INT8 or UINT8
+   * elements, which represents binary data, each row's elements are hashed as consecutive bytes.
+   * A STRING row and a LIST row holding the same bytes therefore have the same hash. Empty strings
+   * and empty lists are not null and hash to the XXH64 of zero bytes.
+   * <p>
+   * A null input row produces a null output row.
+   * <p>
+   * Unlike {@link #md5Hash(ColumnView...)}, only a single column is accepted, and no other input
+   * types are supported, because converting other values to bytes is application specific.
+   *
+   * @param seed the XXH64 seed; its bits are used as an unsigned 64-bit value.
+   * @param column a STRING, LIST&lt;INT8&gt; or LIST&lt;UINT8&gt; column to hash. The lists'
+   *               elements must not be null.
+   * @return a new UINT64 column of hash values. Use {@code bitCastTo(DType.INT64)} to read them
+   *         as signed {@code long} values.
+   * @throws CudfException if the column type is not supported.
+   */
+  public static ColumnVector xxhash64(long seed, ColumnView column) {
+    assert column != null : "Column passed may not be null";
+    return new ColumnVector(xxhash64Bytes(seed, column.getNativeView()));
+  }
+
+  /**
    * Generic method to cast ColumnVector
    * When casting from a Date, Timestamp, or Boolean to a numerical type the underlying numerical
    * representation of the data will be used for the cast.
@@ -907,6 +933,15 @@ public final class ColumnVector extends ColumnView {
    * @return native handle of the resulting cudf column containing the hex-string hashing results.
    */
   private static native long sha1(long[] viewHandles) throws CudfException;
+
+  /**
+   * Native method to XXH64 hash the bytes of each row of the given column
+   *
+   * @param seed the hash seed, interpreted as unsigned.
+   * @param viewHandle native handle of the STRING, LIST&lt;INT8&gt; or LIST&lt;UINT8&gt; column.
+   * @return native handle of the resulting UINT64 cudf column.
+   */
+  private static native long xxhash64Bytes(long seed, long viewHandle) throws CudfException;
 
   /////////////////////////////////////////////////////////////////////////////
   // INTERNAL/NATIVE ACCESS

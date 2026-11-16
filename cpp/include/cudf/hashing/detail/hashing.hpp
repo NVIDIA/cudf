@@ -88,6 +88,11 @@ std::unique_ptr<column> xxhash_64(table_view const& input,
                                   cuda::stream_ref,
                                   cudf::memory_resources mr);
 
+std::unique_ptr<column> xxhash_64_bytes(column_view const& input,
+                                        uint64_t seed,
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr);
+
 /* SPDX-SnippetBegin
  * SPDX-SnippetCopyrightText: Copyright 2005-2014 Daniel James.
  * SPDX-License-Identifier: BSL-1.0

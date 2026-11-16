@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,11 +18,15 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 public class RmmTest {
   private static final long TOO_MUCH_MEMORY = 3L * 1024 * 1024 * 1024 * 1024 * 1024 * 1024;
@@ -544,6 +548,156 @@ public class RmmTest {
             ignored2.close();
           });
     }
+  }
+
+  // Skipped (JUnit assumption) when the device does not support CUDA memory pools exported as
+  // POSIX file descriptors; see Cuda.isMemPoolPosixFdSupported().
+  @Test
+  public void testCudaAsyncPosixFdPoolHandle() {
+    assumeTrue(Cuda.isMemPoolPosixFdSupported(), "POSIX file descriptor pools not supported");
+    Rmm.initialize(RmmAllocationMode.CUDA_ASYNC_POSIX_FD, Rmm.logToStderr(), 1024);
+    try {
+      RmmCudaAsyncMemoryResource asyncResource = currentAsyncResource();
+      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR,
+          asyncResource.getHandleType());
+      assertNotEquals(0, asyncResource.getPoolHandle());
+      try (DeviceMemoryBuffer ignored1 = Rmm.alloc(1024)) {
+        assertThrows(OutOfMemoryError.class,
+            () -> {
+              DeviceMemoryBuffer ignored2 = Rmm.alloc(1024);
+              ignored2.close();
+            });
+      }
+    } finally {
+      Rmm.shutdown();
+    }
+  }
+
+  @Test
+  public void testCudaAsyncPoolHandle() {
+    Rmm.initialize(RmmAllocationMode.CUDA_ASYNC, Rmm.logToStderr(), 1024);
+    try {
+      RmmCudaAsyncMemoryResource asyncResource = currentAsyncResource();
+      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE, asyncResource.getHandleType());
+      assertNotEquals(0, asyncResource.getPoolHandle());
+    } finally {
+      Rmm.shutdown();
+    }
+  }
+
+  /** The RmmCudaAsyncMemoryResource wrapped by the current device resource. */
+  private static RmmCudaAsyncMemoryResource currentAsyncResource() {
+    RmmDeviceMemoryResource resource = Rmm.getCurrentDeviceResource();
+    while (resource instanceof RmmWrappingDeviceMemoryResource) {
+      resource = ((RmmWrappingDeviceMemoryResource<?>) resource).getWrapped();
+    }
+    assertTrue(resource instanceof RmmCudaAsyncMemoryResource,
+        "current device resource does not wrap an RmmCudaAsyncMemoryResource");
+    return (RmmCudaAsyncMemoryResource) resource;
+  }
+
+  @Test
+  public void testCudaAsyncHandleTypeResource() {
+    try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024, false)) {
+      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE, mr.getHandleType());
+      assertNotEquals(0, mr.getPoolHandle());
+    }
+    assertThrows(IllegalArgumentException.class,
+        () -> new RmmCudaAsyncMemoryResource(1024, 1024, 3));
+  }
+
+  // Skipped (JUnit assumption) when the device does not support CUDA memory pools exported as
+  // POSIX file descriptors; see Cuda.isMemPoolPosixFdSupported().
+  @Test
+  public void testCudaAsyncPosixFdHandleTypeResource() {
+    assumeTrue(Cuda.isMemPoolPosixFdSupported(), "POSIX file descriptor pools not supported");
+    try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024,
+        RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR)) {
+      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR,
+          mr.getHandleType());
+      assertNotEquals(0, mr.getPoolHandle());
+    }
+  }
+
+  // Skipped (JUnit assumption) when the device does not support CUDA memory pools exported as
+  // POSIX file descriptors; see Cuda.isMemPoolPosixFdSupported().
+  @Test
+  public void testMemPoolIpcRoundTrip() {
+    assumeTrue(Cuda.isMemPoolPosixFdSupported(), "POSIX file descriptor pools not supported");
+    Rmm.initialize(RmmAllocationMode.CUDA_ASYNC_POSIX_FD, Rmm.logToStderr(), 16 * 1024 * 1024);
+    try {
+      byte[] expected = new byte[4096];
+      for (int i = 0; i < expected.length; i++) {
+        expected[i] = (byte) (i * 31);
+      }
+      try (DeviceMemoryBuffer dev = DeviceMemoryBuffer.allocate(expected.length);
+           HostMemoryBuffer host = HostMemoryBuffer.allocate(expected.length)) {
+        host.setBytes(0, expected, 0, expected.length);
+        dev.copyFromHostBuffer(host);
+        // Export and import in one process, as a process that hosts both sides would. The pool
+        // is exported before the pointer: cudaMemPoolExportPointer fails with
+        // cudaErrorInvalidValue on a pool that has not been exported. The import closes the fd.
+        int fd = Cuda.memPoolExportToPosixFd(currentAsyncResource().getPoolHandle());
+        long imported = Cuda.memPoolImportFromPosixFd(fd);
+        try {
+          byte[] exportData = Cuda.memPoolExportPointer(dev.getAddress());
+          long ptr = Cuda.memPoolImportPointer(imported, exportData);
+          try (HostMemoryBuffer out = HostMemoryBuffer.allocate(expected.length)) {
+            out.copyFromDeviceBuffer(new DeviceMemoryBufferView(ptr, expected.length));
+            byte[] actual = new byte[expected.length];
+            out.getBytes(actual, 0, 0, actual.length);
+            assertArrayEquals(expected, actual);
+          } finally {
+            // The imported pointer is freed before the imported pool is destroyed and before
+            // the exported allocation is freed.
+            Cuda.freeAsync(ptr, Cuda.DEFAULT_STREAM);
+            Cuda.DEFAULT_STREAM.sync();
+          }
+        } finally {
+          Cuda.memPoolDestroy(imported);
+        }
+      }
+    } finally {
+      Rmm.shutdown();
+    }
+  }
+
+  // Skipped (JUnit assumption) when the device does not support CUDA memory pools exported as
+  // POSIX file descriptors; see Cuda.isMemPoolPosixFdSupported().
+  @Test
+  public void testMemPoolImportPointerRejectsWrongSize() {
+    assumeTrue(Cuda.isMemPoolPosixFdSupported(), "POSIX file descriptor pools not supported");
+    Rmm.initialize(RmmAllocationMode.CUDA_ASYNC_POSIX_FD, Rmm.logToStderr(), 1024 * 1024);
+    try {
+      assertThrows(IllegalArgumentException.class,
+          () -> Cuda.memPoolImportPointer(currentAsyncResource().getPoolHandle(), new byte[3]));
+    } finally {
+      Rmm.shutdown();
+    }
+  }
+
+  // The export fails with a CUDA error on purpose, which compute-sanitizer reports.
+  @Tag("noSanitizer")
+  @Test
+  public void testMemPoolExportRequiresPosixFdPool() {
+    try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024,
+        RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE)) {
+      CudaException e = assertThrows(CudaException.class,
+          () -> Cuda.memPoolExportToPosixFd(mr.getPoolHandle()));
+      assertFalse(e instanceof CudaFatalException, "export failure must not be fatal");
+    }
+    // The failure must not leave a sticky error behind.
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(1, 2, 3)) {
+      assertEquals(3, cv.getRowCount());
+    }
+  }
+
+  @Test
+  public void testCudaAsyncPosixFdIsIncompatibleWithManaged() {
+    assertThrows(IllegalArgumentException.class,
+        () -> Rmm.initialize(
+            RmmAllocationMode.CUDA_ASYNC_POSIX_FD | RmmAllocationMode.CUDA_MANAGED_MEMORY,
+            Rmm.logToStderr(), 1024));
   }
 
   @Tag("noSanitizer")

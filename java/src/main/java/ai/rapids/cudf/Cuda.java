@@ -628,4 +628,82 @@ public class Cuda {
    * @note this is very expensive and should almost never be used
    */
   public static native void deviceSynchronize();
+
+  /**
+   * Whether the current device supports CUDA memory pools that can be exported as POSIX file
+   * descriptors. These are the checks RMM makes before creating such a pool. Required by
+   * {@link RmmAllocationMode#CUDA_ASYNC_POSIX_FD} and {@link #memPoolExportToPosixFd(long)}.
+   * @throws CudaException on any error.
+   */
+  public static native boolean isMemPoolPosixFdSupported() throws CudaException;
+
+  /**
+   * Export a CUDA memory pool as a POSIX file descriptor with
+   * cudaMemPoolExportToShareableHandle, so another process on the same host can import it with
+   * {@link #memPoolImportFromPosixFd(int)}. The pool must have been created with POSIX file
+   * descriptor handles, for example by
+   * {@link RmmCudaAsyncMemoryResource#HANDLE_TYPE_POSIX_FILE_DESCRIPTOR}.
+   * @param pool the cudaMemPool_t to export
+   * @return a new file descriptor that the caller owns and must close
+   * @throws CudaException on any error.
+   */
+  public static native int memPoolExportToPosixFd(long pool) throws CudaException;
+
+  /**
+   * Import a CUDA memory pool exported by {@link #memPoolExportToPosixFd(long)} in another
+   * process, with cudaMemPoolImportFromShareableHandle. The file descriptor is closed, whether
+   * or not the import succeeds; the imported pool keeps its own reference to the memory. The
+   * caller must destroy the returned pool with {@link #memPoolDestroy(long)} after every pointer
+   * imported from it has been freed.
+   * @param fd the file descriptor received from the exporting process
+   * @return the imported cudaMemPool_t
+   * @throws CudaException on any error.
+   */
+  public static native long memPoolImportFromPosixFd(int fd) throws CudaException;
+
+  /**
+   * Destroy a CUDA memory pool with cudaMemPoolDestroy. For an imported pool this fails while
+   * any pointer imported from it has not been freed.
+   * @param pool the cudaMemPool_t to destroy
+   * @throws CudaException on any error.
+   */
+  public static native void memPoolDestroy(long pool) throws CudaException;
+
+  /**
+   * Get the data another process needs to import an allocation, with cudaMemPoolExportPointer.
+   * The pointer must be the start of an allocation from a pool that has already been exported
+   * with {@link #memPoolExportToPosixFd(long)}; CUDA returns cudaErrorInvalidValue for a pool
+   * that has not been exported.
+   * @param ptr the start of the allocation
+   * @return the cudaMemPoolPtrExportData bytes, to pass to
+   *         {@link #memPoolImportPointer(long, byte[])}
+   * @throws CudaException on any error.
+   */
+  public static native byte[] memPoolExportPointer(long ptr) throws CudaException;
+
+  /**
+   * Import an allocation exported by {@link #memPoolExportPointer(long)} in another process,
+   * with cudaMemPoolImportPointer. The returned pointer must be freed with
+   * {@link #freeAsync(long, Stream)} before the pool is destroyed.
+   * @param pool the pool imported with {@link #memPoolImportFromPosixFd(int)}
+   * @param exportData the bytes returned by {@link #memPoolExportPointer(long)}
+   * @return the device address of the allocation in this process
+   * @throws CudaException on any error.
+   */
+  public static native long memPoolImportPointer(long pool, byte[] exportData)
+      throws CudaException;
+
+  /**
+   * Free a pointer with cudaFreeAsync on the given stream. The memory is not released until the
+   * free completes on the stream.
+   * @param ptr the pointer to free, for example one returned by
+   *            {@link #memPoolImportPointer(long, byte[])}
+   * @param stream the stream to free on
+   * @throws CudaException on any error.
+   */
+  public static void freeAsync(long ptr, Stream stream) throws CudaException {
+    freeAsync(ptr, stream.getStream());
+  }
+
+  private static native void freeAsync(long ptr, long stream) throws CudaException;
 }

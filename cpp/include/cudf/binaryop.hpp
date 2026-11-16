@@ -87,9 +87,13 @@ enum class binary_operator : int32_t {
                          ///< operands are null, true if one is null, otherwise returns whether
                          ///< they are unequal
   NULL_MAX,              ///< Returns max of operands when both are non-null; returns the non-null
-                         ///< operand when one is null; or invalid when both are null
+                         ///< operand when one is null; or invalid when both are null. For
+                         ///< floating-point operands the max follows the MAX aggregation: NaN
+                         ///< propagates and +0.0 is greater than -0.0
   NULL_MIN,              ///< Returns min of operands when both are non-null; returns the non-null
-                         ///< operand when one is null; or invalid when both are null
+                         ///< operand when one is null; or invalid when both are null. For
+                         ///< floating-point operands the min follows the MIN aggregation: NaN
+                         ///< propagates and -0.0 is less than +0.0
   GENERIC_BINARY,        ///< generic binary operator to be generated with input
                          ///< ptx code
   NULL_LOGICAL_AND,  ///< three-valued (Kleene) &&: if any operand is false, returns false; if both

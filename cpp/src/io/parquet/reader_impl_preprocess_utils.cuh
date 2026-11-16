@@ -146,15 +146,15 @@ void decode_sparse_page_headers(pass_intermediate_data& pass,
                                 cudf::memory_resources mr);
 
 /**
- * @brief Check if the column chunk has a string (byte array or FLBA) type
+ * @brief Check if the column chunk needs a string dictionary index: any byte array (including
+ * decimals, which are variable width) or a non-decimal FLBA
  */
 __device__ constexpr inline bool is_string_chunk(ColumnChunkDesc const& chunk)
 {
   auto const is_decimal =
     chunk.logical_type.has_value() and chunk.logical_type->type == LogicalType::DECIMAL;
-  auto const is_binary =
-    chunk.physical_type == Type::BYTE_ARRAY or chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY;
-  return is_binary and not is_decimal;
+  return chunk.physical_type == Type::BYTE_ARRAY or
+         (chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY and not is_decimal);
 }
 
 /**

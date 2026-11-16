@@ -643,6 +643,7 @@ public class Cuda {
    * {@link #memPoolImportFromPosixFd(int)}. The pool must have been created with POSIX file
    * descriptor handles, for example by
    * {@link RmmCudaAsyncMemoryResource#HANDLE_TYPE_POSIX_FILE_DESCRIPTOR}.
+   * <p>This method is experimental and subject to change.
    * @param pool the cudaMemPool_t to export
    * @return a new file descriptor that the caller owns and must close
    * @throws CudaException on any error.
@@ -655,6 +656,7 @@ public class Cuda {
    * or not the import succeeds; the imported pool keeps its own reference to the memory. The
    * caller must destroy the returned pool with {@link #memPoolDestroy(long)} after every pointer
    * imported from it has been freed.
+   * <p>This method is experimental and subject to change.
    * @param fd the file descriptor received from the exporting process
    * @return the imported cudaMemPool_t
    * @throws CudaException on any error.
@@ -664,6 +666,7 @@ public class Cuda {
   /**
    * Destroy a CUDA memory pool with cudaMemPoolDestroy. The call returns cudaErrorInvalidValue if
    * the pool cannot be destroyed.
+   * <p>This method is experimental and subject to change.
    * @param pool the cudaMemPool_t to destroy
    * @throws CudaException on any error.
    */
@@ -671,10 +674,16 @@ public class Cuda {
 
   /**
    * Get the data another process needs to import an allocation, with cudaMemPoolExportPointer.
-   * The pointer must be the start of an allocation from a pool that has already been exported
-   * with {@link #memPoolExportToPosixFd(long)}; CUDA returns cudaErrorInvalidValue for a pool
-   * that has not been exported.
-   * @param ptr the start of the allocation
+   * The allocation must come from a pool that has already been exported with
+   * {@link #memPoolExportToPosixFd(long)}; CUDA returns cudaErrorInvalidValue for a pool that
+   * has not been exported.
+   * <p>This API does not give the importing process the size of the allocation. The exporting
+   * process must send the size along with the export data.
+   * <p>Tested only with one exported pointer per allocation, at the start of that allocation.
+   * Exporting several pointers into one large allocation (for example sub-buffers at different
+   * offsets) is not tested.
+   * <p>This method is experimental and subject to change.
+   * @param ptr the device address to export
    * @return the cudaMemPoolPtrExportData bytes, to pass to
    *         {@link #memPoolImportPointer(long, byte[])}
    * @throws CudaException on any error.
@@ -690,6 +699,12 @@ public class Cuda {
    * the allocation. {@link #freeAsync(long, Stream)} only enqueues the free; it must have
    * completed on its stream (for example after {@link Stream#sync()}) before the exporting
    * process frees the allocation.
+   * <p>The returned pointer carries no size; use the size the exporting process sent with the
+   * export data.
+   * <p>Tested only with one exported pointer per allocation, at the start of that allocation.
+   * Exporting several pointers into one large allocation (for example sub-buffers at different
+   * offsets) is not tested.
+   * <p>This method is experimental and subject to change.
    * @param pool the pool imported with {@link #memPoolImportFromPosixFd(int)}
    * @param exportData the bytes returned by {@link #memPoolExportPointer(long)}
    * @return the device address of the allocation in this process

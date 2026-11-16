@@ -10,6 +10,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/findall.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -249,4 +250,27 @@ TEST_F(StringsFindallTests, Errors)
   auto pattern = std::string("(\\d+)-(\\w+)");
   auto prog    = cudf::strings::regex_program::create(pattern);
   EXPECT_THROW(cudf::strings::findall(sv, *prog), cudf::logic_error);
+}
+
+TEST_F(StringsFindallTests, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+  auto const nulls  = cudf::test::iterators::nulls_at({0, 3});
+
+  auto const prog = cudf::strings::regex_program::create("\\d+");
+
+  auto results = cudf::strings::findall(sv, *prog);
+  using LCW    = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW expected_findall({{}, {"22", "333"}, {}, {}, {"4"}, {}}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_findall);
+
+  results = cudf::strings::find_re(sv, *prog);
+  auto expected_find =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, -1, 0, 1, -1}, nulls);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_find);
 }

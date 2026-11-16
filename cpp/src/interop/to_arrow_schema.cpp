@@ -19,21 +19,27 @@
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 
+#include <span>
+#include <stdexcept>
+#include <vector>
+
 namespace cudf {
 namespace detail {
 namespace {
 
 struct dispatch_to_arrow_type {
   template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
-  int operator()(column_view, column_metadata const&, ArrowSchema*)
+  int operator()(arrow_schema_column const&, column_metadata const&, ArrowSchema*)
   {
     CUDF_FAIL("Unsupported type for to_arrow_schema", cudf::data_type_error);
   }
 
   template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
-  int operator()(column_view input_view, column_metadata const& metadata, ArrowSchema* out)
+  int operator()(arrow_schema_column const& input,
+                 column_metadata const& metadata,
+                 ArrowSchema* out)
   {
-    cudf::type_id const id = input_view.type().id();
+    cudf::type_id const id = input.type.id();
     auto timezone          = metadata.timezone.c_str();
     switch (id) {
       case cudf::type_id::TIMESTAMP_SECONDS:
@@ -66,17 +72,17 @@ struct dispatch_to_arrow_type {
 };
 
 template <typename DeviceType>
-int decimals_to_arrow(column_view input, int32_t precision, ArrowSchema* out)
+int decimals_to_arrow(arrow_schema_column const& input, int32_t precision, ArrowSchema* out)
 {
   CUDF_EXPECTS(precision >= 1 and precision <= 38,
                "Precision must be between 1 and 38 inclusive",
                cudf::data_type_error);
   return ArrowSchemaSetTypeDecimal(
-    out, id_to_arrow_type(input.type().id()), precision, -input.type().scale());
+    out, id_to_arrow_type(input.type.id()), precision, -input.type.scale());
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<numeric::decimal32>(column_view input,
+int dispatch_to_arrow_type::operator()<numeric::decimal32>(arrow_schema_column const& input,
                                                            column_metadata const& metadata,
                                                            ArrowSchema* out)
 {
@@ -86,7 +92,7 @@ int dispatch_to_arrow_type::operator()<numeric::decimal32>(column_view input,
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<numeric::decimal64>(column_view input,
+int dispatch_to_arrow_type::operator()<numeric::decimal64>(arrow_schema_column const& input,
                                                            column_metadata const& metadata,
                                                            ArrowSchema* out)
 {
@@ -96,7 +102,7 @@ int dispatch_to_arrow_type::operator()<numeric::decimal64>(column_view input,
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<numeric::decimal128>(column_view input,
+int dispatch_to_arrow_type::operator()<numeric::decimal128>(arrow_schema_column const& input,
                                                             column_metadata const& metadata,
                                                             ArrowSchema* out)
 {
@@ -106,12 +112,12 @@ int dispatch_to_arrow_type::operator()<numeric::decimal128>(column_view input,
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<cudf::string_view>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::string_view>(arrow_schema_column const& input,
                                                           column_metadata const&,
                                                           ArrowSchema* out)
 {
-  return ((input.num_children() == 0 ||
-           input.child(cudf::strings_column_view::offsets_column_index).type().id() ==
+  return ((input.children.empty() ||
+           input.children[cudf::strings_column_view::offsets_column_index].type.id() ==
              type_id::INT32))
            ? ArrowSchemaSetType(out, NANOARROW_TYPE_STRING)
            : ArrowSchemaSetType(out, NANOARROW_TYPE_LARGE_STRING);
@@ -120,37 +126,37 @@ int dispatch_to_arrow_type::operator()<cudf::string_view>(column_view input,
 // these forward declarations are needed due to the recursive calls to them
 // inside their definitions and in struct_vew for handling children
 template <>
-int dispatch_to_arrow_type::operator()<cudf::list_view>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::list_view>(arrow_schema_column const& input,
                                                         column_metadata const& metadata,
                                                         ArrowSchema* out);
 
 template <>
-int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::dictionary32>(arrow_schema_column const& input,
                                                            column_metadata const& metadata,
                                                            ArrowSchema* out);
 
 template <>
-int dispatch_to_arrow_type::operator()<cudf::struct_view>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::struct_view>(arrow_schema_column const& input,
                                                           column_metadata const& metadata,
                                                           ArrowSchema* out)
 {
-  CUDF_EXPECTS(metadata.children_meta.size() == static_cast<std::size_t>(input.num_children()),
+  CUDF_EXPECTS(metadata.children_meta.size() == input.children.size(),
                "Number of field names and number of children doesn't match\n");
 
-  NANOARROW_RETURN_NOT_OK(ArrowSchemaSetTypeStruct(out, input.num_children()));
-  for (int i = 0; i < input.num_children(); ++i) {
-    auto child = out->children[i];
-    auto col   = input.child(i);
+  NANOARROW_RETURN_NOT_OK(ArrowSchemaSetTypeStruct(out, input.children.size()));
+  for (std::size_t i = 0; i < input.children.size(); ++i) {
+    auto child      = out->children[i];
+    auto const& col = input.children[i];
     ArrowSchemaInit(child);
     NANOARROW_RETURN_NOT_OK(ArrowSchemaSetName(child, metadata.children_meta[i].name.c_str()));
 
-    child->flags = col.has_nulls() ? ARROW_FLAG_NULLABLE : 0;
+    child->flags = col.has_nulls ? ARROW_FLAG_NULLABLE : 0;
 
-    if (col.type().id() == cudf::type_id::EMPTY) {
+    if (col.type.id() == cudf::type_id::EMPTY) {
       NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(out->children[i], NANOARROW_TYPE_NA));
     } else {
       NANOARROW_RETURN_NOT_OK(cudf::type_dispatcher(
-        col.type(), detail::dispatch_to_arrow_type{}, col, metadata.children_meta[i], child));
+        col.type, dispatch_to_arrow_type{}, col, metadata.children_meta[i], child));
     }
   }
 
@@ -158,74 +164,88 @@ int dispatch_to_arrow_type::operator()<cudf::struct_view>(column_view input,
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<cudf::list_view>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::list_view>(arrow_schema_column const& input,
                                                         column_metadata const& metadata,
                                                         ArrowSchema* out)
 {
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(out, NANOARROW_TYPE_LIST));
-  auto child = input.child(cudf::lists_column_view::child_column_index);
+  CUDF_EXPECTS(input.children.size() == 2,
+               "A list column must have its offsets and its child",
+               std::invalid_argument);
+  auto const& child = input.children[cudf::lists_column_view::child_column_index];
   ArrowSchemaInit(out->children[0]);
   auto child_meta = metadata.children_meta.empty()
                       ? column_metadata{"element"}
                       : metadata.children_meta[cudf::lists_column_view::child_column_index];
 
-  out->flags = input.nullable() ? ARROW_FLAG_NULLABLE : 0;
+  out->flags = input.nullable ? ARROW_FLAG_NULLABLE : 0;
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetName(out->children[0], child_meta.name.c_str()));
-  out->children[0]->flags = child.nullable() ? ARROW_FLAG_NULLABLE : 0;
-  if (child.type().id() == cudf::type_id::EMPTY) {
+  out->children[0]->flags = child.nullable ? ARROW_FLAG_NULLABLE : 0;
+  if (child.type.id() == cudf::type_id::EMPTY) {
     return ArrowSchemaSetType(out->children[0], NANOARROW_TYPE_NA);
   }
   return cudf::type_dispatcher(
-    child.type(), detail::dispatch_to_arrow_type{}, child, child_meta, out->children[0]);
+    child.type, dispatch_to_arrow_type{}, child, child_meta, out->children[0]);
 }
 
 template <>
-int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
+int dispatch_to_arrow_type::operator()<cudf::dictionary32>(arrow_schema_column const& input,
                                                            column_metadata const& metadata,
                                                            ArrowSchema* out)
 {
-  cudf::dictionary_column_view const dview{input};
-  auto const has_children = input.num_children() == 2;
+  auto const has_children = input.children.size() == 2;
 
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(
-    out, has_children ? id_to_arrow_type(dview.indices().type().id()) : NANOARROW_TYPE_INT32));
+    out,
+    has_children
+      ? id_to_arrow_type(input.children[dictionary_column_view::indices_column_index].type.id())
+      : NANOARROW_TYPE_INT32));
   NANOARROW_RETURN_NOT_OK(ArrowSchemaAllocateDictionary(out));
   ArrowSchemaInit(out->dictionary);
   if (not has_children) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
 
-  auto dict_keys = dview.keys();
+  auto const& dict_keys = input.children[dictionary_column_view::keys_column_index];
   return cudf::type_dispatcher(
-    dict_keys.type(),
-    detail::dispatch_to_arrow_type{},
+    dict_keys.type,
+    dispatch_to_arrow_type{},
     dict_keys,
     metadata.children_meta.empty() ? column_metadata{"keys"} : metadata.children_meta[0],
     out->dictionary);
 }
 }  // namespace
-}  // namespace detail
 
-unique_schema_t to_arrow_schema(cudf::table_view const& input,
+arrow_schema_column to_arrow_schema_column(column_view const& column)
+{
+  arrow_schema_column result{column.type(), column.nullable(), column.has_nulls(), {}};
+  result.children.reserve(column.num_children());
+  for (size_type i = 0; i < column.num_children(); ++i) {
+    result.children.push_back(to_arrow_schema_column(column.child(i)));
+  }
+  return result;
+}
+
+unique_schema_t to_arrow_schema(std::span<arrow_schema_column const> columns,
                                 std::span<column_metadata const> metadata)
 {
-  CUDF_EXPECTS((metadata.size() == static_cast<std::size_t>(input.num_columns())),
+  CUDF_EXPECTS((metadata.size() == columns.size()),
                "columns' metadata should be equal to the number of columns in table");
 
   nanoarrow::UniqueSchema result;
   ArrowSchemaInit(result.get());
-  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(result.get(), input.num_columns()));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(result.get(), columns.size()));
 
-  for (int i = 0; i < input.num_columns(); ++i) {
-    auto child = result->children[i];
-    auto col   = input.column(i);
+  for (std::size_t i = 0; i < columns.size(); ++i) {
+    auto child      = result->children[i];
+    auto const& col = columns[i];
     ArrowSchemaInit(child);
     NANOARROW_THROW_NOT_OK(ArrowSchemaSetName(child, metadata[i].name.c_str()));
-    child->flags = col.nullable() ? ARROW_FLAG_NULLABLE : 0;
+    child->flags = col.nullable ? ARROW_FLAG_NULLABLE : 0;
 
-    if (col.type().id() == cudf::type_id::EMPTY) {
+    if (col.type.id() == cudf::type_id::EMPTY) {
       NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(child, NANOARROW_TYPE_NA));
     } else {
-      NANOARROW_THROW_NOT_OK(cudf::type_dispatcher(
-        col.type(), detail::dispatch_to_arrow_type{}, col, metadata[i], child));
+      NANOARROW_THROW_NOT_OK(
+        cudf::type_dispatcher(col.type, dispatch_to_arrow_type{}, col, metadata[i], child));
     }
   }
 
@@ -235,6 +255,19 @@ unique_schema_t to_arrow_schema(cudf::table_view const& input,
   });
   result.move(out.get());
   return out;
+}
+
+}  // namespace detail
+
+unique_schema_t to_arrow_schema(cudf::table_view const& input,
+                                std::span<column_metadata const> metadata)
+{
+  std::vector<detail::arrow_schema_column> columns;
+  columns.reserve(input.num_columns());
+  for (auto const& column : input) {
+    columns.push_back(detail::to_arrow_schema_column(column));
+  }
+  return detail::to_arrow_schema(columns, metadata);
 }
 
 }  // namespace cudf

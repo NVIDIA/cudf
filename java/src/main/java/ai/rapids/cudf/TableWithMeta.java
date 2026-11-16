@@ -67,11 +67,10 @@ public class TableWithMeta implements AutoCloseable {
    */
   public Table releaseTable() {
     long[] ptr = releaseTable(handle);
-    if (ptr == null || ptr.length == 0) {
+    if (ptr == null) {
       return null;
-    } else {
-      return Table.fromRowCountAndColumns(ptr);
     }
+    return Table.fromRowCountAndColumns(ptr);
   }
 
   private static class ChildAndOffset {

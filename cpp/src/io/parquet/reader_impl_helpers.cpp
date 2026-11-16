@@ -331,8 +331,12 @@ struct schema_child_lookup {
     auto const field_idx = std::distance(file_fields.begin(), field);
     if (seen.test(field_idx)) { return false; }
     seen.set(field_idx);
+    auto const child_logical_type = child.logical_type.value_or(LogicalType{});
+    // INT64 fields may also carry an equivalent signed 64-bit INTEGER (or legacy INT_64) annotation
+    auto const is_signed_int64 = child.type == Type::INT64 and child_logical_type.is_signed() and
+                                 child_logical_type.bit_width() == 64;
     return child.repetition_type == FieldRepetitionType::OPTIONAL and child.type == field->type and
-           child.logical_type.value_or(LogicalType{}).type == field->logical_type;
+           (child_logical_type.type == field->logical_type or is_signed_int64);
   });
 }
 
@@ -2241,6 +2245,22 @@ aggregate_reader_metadata::select_columns(
         std::format(
           "Encountered mismatching data type or schema across the Parquet sources for column '{}'",
           src_schema_elem.name),
+        std::invalid_argument);
+
+      // A valid FILE group must be a valid FILE group in all sources so that its children are read
+      // in the same representation
+      auto const is_file_group = [&](SchemaElement const& schema_elem, int const pfm_idx) {
+        return is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx, pfm_idx);
+          }));
+      };
+      CUDF_EXPECTS(
+        is_file_group(src_schema_elem, 0) == is_file_group(dst_schema_elem, src_idx),
+        std::format("Encountered mismatching FILE logical type across the Parquet sources for "
+                    "column '{}'",
+                    src_schema_elem.name),
         std::invalid_argument);
 
       // Get the schema_idx_map for this data source (pfm)

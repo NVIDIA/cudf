@@ -2727,8 +2727,8 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   ASSERT_EQ(fmd.schema[4].name, "inline");
   fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
 
-  // Reads the file with `fmd` spliced in as its footer: data + footer + length + "PAR1"
-  auto const read_with_footer = [&](cudf::size_type num_rows) {
+  // Builds the file with `fmd` spliced in as its footer: data + footer + length + "PAR1"
+  auto const make_file = [&] {
     auto const footer          = pq_experimental::write_parquet_footer_bytes(fmd);
     auto const new_footer_size = static_cast<uint32_t>(footer.size());
     auto const size_bytes      = reinterpret_cast<char const*>(&new_footer_size);
@@ -2736,6 +2736,10 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     file.insert(file.end(), footer.begin(), footer.end());
     file.insert(file.end(), size_bytes, size_bytes + sizeof(new_footer_size));
     file.insert(file.end(), {'P', 'A', 'R', '1'});
+    return file;
+  };
+  auto const read_with_footer = [&](cudf::size_type num_rows) {
+    auto const file   = make_file();
     auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
       reinterpret_cast<std::byte const*>(file.data()), file.size()}};
     return cudf::io::read_parquet(
@@ -2757,6 +2761,36 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     ASSERT_EQ(file_info.children.size(), 3);
     EXPECT_FALSE(file_info.children[0].is_binary.has_value());
     EXPECT_EQ(file_info.children[2].is_binary, true);
+  }
+
+  // A signed 64-bit INTEGER annotation on `offset` is equivalent to none and keeps the group FILE
+  fmd.schema[3].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
+  {
+    auto const result = read_with_footer(input.num_rows());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result.tbl->view().column(0));
+    EXPECT_EQ(result.metadata.schema_info[0].is_file, true);
+  }
+
+  // Reading a FILE group together with a plain struct from mismatched sources throws
+  {
+    auto const file_group = make_file();
+    fmd.schema[1].logical_type.reset();
+    auto const plain_struct    = make_file();
+    fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+    auto const to_span         = [](std::vector<char> const& file) {
+      return cudf::host_span<std::byte const>{reinterpret_cast<std::byte const*>(file.data()),
+                                              file.size()};
+    };
+    for (auto sources : {std::vector{to_span(file_group), to_span(plain_struct)},
+                         std::vector{to_span(plain_struct), to_span(file_group)}}) {
+      auto const options =
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
+          .allow_mismatched_pq_schemas(true)
+          .column_names({"file"})
+          .build();
+      EXPECT_THROW(cudf::io::read_parquet(options), std::invalid_argument);
+    }
   }
 
   // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct of strings

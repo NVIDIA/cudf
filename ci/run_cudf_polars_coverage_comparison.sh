@@ -46,27 +46,15 @@ print(__version__)
 PY
 )
 polars_sha=$(git -C "${polars_dir}" rev-parse HEAD)
-polars_tag=$(git -C "${polars_dir}" describe --tags --exact-match HEAD 2>/dev/null || true)
-if [[ "${polars_tag}" != "py-${polars_version}" ]]; then
-    echo "Expected the Polars checkout at ${polars_dir} to be py-${polars_version}, got ${polars_tag:-an untagged revision}." >&2
+if [[ "${polars_sha}" != "$(git -C "${polars_dir}" rev-parse --verify "refs/tags/py-${polars_version}^{commit}")" ]]; then
+    echo "Expected the Polars checkout at ${polars_dir} to be py-${polars_version}, got ${polars_sha}." >&2
     exit 2
 fi
 cudf_sha=$(git -C "${repo_root}" rev-parse HEAD)
-spmd_blocksize=default
 pytest_args=(
     --numprocesses=4 --dist=worksteal
     --cov=cudf_polars --cov-context=test --cov-config="${config}"
     --cov-report= --maxfail=0
-)
-collection_metadata=$(python - "${spmd_blocksize}" "${pytest_args[@]}" <<'PY'
-import json
-import sys
-
-print(json.dumps({
-    "upstream_spmd_blocksize": sys.argv[1],
-    "pytest_options": sys.argv[2:],
-}))
-PY
 )
 
 mkdir -p "${output_dir}"
@@ -82,16 +70,15 @@ COVERAGE_FILE="${output_dir}/.coverage.local" \
 
 # Keep engine data separate so later analysis can distinguish configuration
 # gaps from missing upstream assertions, even when test node IDs are identical.
+export POLARS_DIR="${polars_dir}" CUDF_POLARS_GPU_RUN_LIST=""
 upstream_in_memory_status=0
-CUDF_POLARS_GPU_RUN_LIST="" POLARS_DIR="${polars_dir}" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream-in-memory" \
     "${repo_root}/ci/run_cudf_polars_polars_tests.sh" --engine in-memory \
     "${pytest_args[@]}" || upstream_in_memory_status=$?
 upstream_spmd_status=0
-CUDF_POLARS_GPU_RUN_LIST="" POLARS_DIR="${polars_dir}" \
 COVERAGE_FILE="${output_dir}/.coverage.upstream-spmd" \
     "${repo_root}/ci/run_cudf_polars_polars_tests.sh" --engine spmd \
-    --inject-gpu-engine-blocksize "${spmd_blocksize}" \
+    --inject-gpu-engine-blocksize default \
     "${pytest_args[@]}" || upstream_spmd_status=$?
 
 python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
@@ -101,7 +88,6 @@ python "${repo_root}/ci/analyze_cudf_polars_coverage.py" \
     --polars-version "${polars_version}" \
     --polars-sha "${polars_sha}" \
     --cudf-sha "${cudf_sha}" \
-    --collection-metadata "${collection_metadata}" \
     --local-exit-status "${local_status}" \
     --upstream-in-memory-exit-status "${upstream_in_memory_status}" \
     --upstream-spmd-exit-status "${upstream_spmd_status}" \

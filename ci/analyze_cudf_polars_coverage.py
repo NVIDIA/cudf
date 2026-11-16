@@ -98,7 +98,6 @@ def main() -> None:
     parser.add_argument("--cudf-sha", required=True)
     parser.add_argument("--polars-sha", required=True)
     parser.add_argument("--polars-version", required=True)
-    parser.add_argument("--collection-metadata", type=json.loads)
     parser.add_argument("--local-exit-status", type=int)
     parser.add_argument("--upstream-in-memory-exit-status", type=int)
     parser.add_argument("--upstream-spmd-exit-status", type=int)
@@ -122,7 +121,6 @@ def main() -> None:
         "polars_sha": args.polars_sha,
         "polars_version": args.polars_version,
     }
-    report["collection"] = args.collection_metadata
     report["context_data"] = {
         "local": os.path.relpath(args.local_data.resolve(), args.output_dir),
         "upstream": [

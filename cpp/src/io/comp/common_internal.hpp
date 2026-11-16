@@ -8,6 +8,9 @@
 #include "nvcomp_adapter.hpp"
 
 #include <cudf/io/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 #include <optional>
 
@@ -52,9 +55,9 @@ constexpr double default_host_device_compression_cost_ratio = 64;
 }
 
 struct sorted_codec_parameters {
-  rmm::device_uvector<device_span<uint8_t const>> inputs;
-  rmm::device_uvector<device_span<uint8_t>> outputs;
-  rmm::device_uvector<std::size_t> order;  // mapping from sorted position to original position
+  cuda::device_buffer<device_span<uint8_t const>> inputs;
+  cuda::device_buffer<device_span<uint8_t>> outputs;
+  cuda::device_buffer<std::size_t> order;  // mapping from sorted position to original position
 };
 
 /**
@@ -67,14 +70,14 @@ struct sorted_codec_parameters {
  * @param inputs Device spans of input data to be sorted
  * @param outputs Device spans of output buffers corresponding to inputs
  * @param stream CUDA stream for asynchronous execution
- * @param mr Memory resource to use for allocations of results
+ * @param mr Memory resources for the returned arrays and for temporary allocations
  * @return sorted_codec_parameters containing sorted inputs, outputs, and original ordering
  */
 [[nodiscard]] sorted_codec_parameters sort_decompression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Finds the split index for decompression tasks
@@ -108,14 +111,14 @@ struct sorted_codec_parameters {
  * @param inputs Device spans of input data to be sorted
  * @param outputs Device spans of output buffers corresponding to inputs
  * @param stream CUDA stream for asynchronous execution
- * @param mr Memory resource to use for allocations of results
+ * @param mr Memory resources for the returned arrays and for temporary allocations
  * @return sorted_codec_parameters containing sorted inputs, outputs, and original ordering
  */
 [[nodiscard]] sorted_codec_parameters sort_compression_tasks(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<device_span<uint8_t> const> outputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Finds the split index for compression tasks
@@ -149,10 +152,12 @@ struct sorted_codec_parameters {
  * @param original_results Destination array where results will be placed in original order
  * @param order Mapping from sorted position to original position
  * @param stream CUDA stream for asynchronous execution
+ * @param mr Memory resources; only the temporary resource is used
  */
 void copy_results_to_original_order(device_span<codec_exec_result const> sorted_results,
                                     device_span<codec_exec_result> original_results,
                                     device_span<std::size_t const> order,
-                                    cuda::stream_ref stream);
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr);
 
 }  // namespace cudf::io::detail

@@ -4,14 +4,14 @@
 
 The scripts under `java/ci/` build the cuDF Java JAR for every Maven classifier the
 same way locally and in CI (GitHub Actions is only a thin wrapper that adds
-artifact upload/download). Each script pulls the RAPIDS `ci-wheel` build image,
+artifact upload/download). Each script pulls the `ci-wheel` build image,
 runs the build in a throwaway container, and writes its output to a host
 directory. No local `docker build` is required, and no GPU is required to build.
 
 ### Prerequisites
 
 1. Docker is installed and the current user can run `docker`.
-2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.11`.
+2. Network access to pull `rapidsai/ci-wheel:<rapids>-cuda<ver>-rockylinux8-py3.12`.
 
 ### Local one-command shortcut
 
@@ -44,14 +44,14 @@ Optional `GITHUB_REF` selects release tag vs SNAPSHOT versioning. Unset means
 SNAPSHOT. See the versioning section below.
 
 This compiles the JNI layer against the static libcudf from Step 1 and emits
-the classifier JAR (e.g. `cudf-26.12.0-SNAPSHOT-cuda12.jar`), a
+the classifier JAR (e.g. `cudf-27.02.0-SNAPSHOT-cuda12.jar`), a
 classifier-independent sources jar and javadoc jar, and the POM into a
 classifier-named subdirectory under `--output-dir`:
 
 ```text
 /tmp/jars/cuda12/
-    cudf-26.12.0-SNAPSHOT-cuda12.jar
-    cudf-26.12.0-SNAPSHOT.pom
+    cudf-27.02.0-SNAPSHOT-cuda12.jar
+    cudf-27.02.0-SNAPSHOT.pom
 ```
 
 The classifier is derived from `--cuda-version` (major) + host arch (`uname
@@ -176,4 +176,4 @@ ${sclCMD} "java/ci/build-in-docker.sh"
 
 ### The output
 
-You can find the cuDF jar in java/target/ like cudf-26.12.0-SNAPSHOT-cuda12.jar.
+You can find the cuDF jar in java/target/ like cudf-27.02.0-SNAPSHOT-cuda12.jar.

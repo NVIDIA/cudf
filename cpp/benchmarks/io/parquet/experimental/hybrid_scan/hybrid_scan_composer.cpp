@@ -47,7 +47,7 @@ std::unique_ptr<hybrid_scan_reader> setup_reader(cudf::io::datasource& datasourc
 
 std::vector<cudf::size_type> apply_row_group_filters(
   cudf::io::datasource& datasource,
-  hybrid_scan_reader const& reader,
+  hybrid_scan_reader& reader,
   cudf::host_span<cudf::size_type> input_row_group_indices,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   cudf::io::parquet_reader_options const& options,
@@ -126,7 +126,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
 
 std::unique_ptr<cudf::table> single_step_materialize(
   cudf::io::datasource& datasource,
-  hybrid_scan_reader const& reader,
+  hybrid_scan_reader& reader,
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
@@ -162,7 +162,7 @@ std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const&
 
   // Setup reader and page index
   auto reader           = setup_reader(datasource_ref, options);
-  auto const reader_ref = std::cref(*reader);
+  auto const reader_ref = std::ref(*reader);
 
   // Start with all row groups
   auto row_group_indices         = reader->all_row_groups(options);

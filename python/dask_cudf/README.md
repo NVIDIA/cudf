@@ -11,7 +11,7 @@ Please visit [the official documentation page](https://docs.nvidia.com/dask-cudf
 
 ## Installation
 
-See the [RAPIDS install page](https://docs.nvidia.com/datascience/install/) for the most up-to-date information and commands for installing Dask cuDF and other RAPIDS packages.
+See the [installation guide](https://docs.nvidia.com/datascience/install/) for the most up-to-date information and commands for installing Dask cuDF and related packages.
 
 ## Resources
 
@@ -21,7 +21,7 @@ See the [RAPIDS install page](https://docs.nvidia.com/datascience/install/) for 
 - [10 Minutes to cuDF and Dask cuDF](https://docs.nvidia.com/cudf/latest/cudf/10min/)
 - [Dask-CUDA documentation](https://docs.nvidia.com/dask-cuda/)
 - [Deployment](https://docs.nvidia.com/datascience/deployment/latest/)
-- [RAPIDS Community](https://rapids.ai/learn-more/#get-involved): Get help, contribute, and collaborate.
+- [Community resources](https://rapids.ai/learn-more/#get-involved): Get help, contribute, and collaborate.
 
 ### Quick-start example
 
@@ -34,31 +34,30 @@ from dask_cuda import LocalCUDACluster
 from distributed import Client
 
 if __name__ == "__main__":
-
-  # Define a GPU-aware cluster to leverage multiple GPUs
-  client = Client(
-    LocalCUDACluster(
-      CUDA_VISIBLE_DEVICES="0,1",  # Use two workers (on devices 0 and 1)
-      rmm_pool_size=0.9,  # Use 90% of GPU memory as a pool for faster allocations
-      enable_cudf_spill=True,  # Improve device memory stability
-      local_directory="/fast/scratch/",  # Use fast local storage for spilling
+    # Define a GPU-aware cluster to leverage multiple GPUs
+    client = Client(
+        LocalCUDACluster(
+            CUDA_VISIBLE_DEVICES="0,1",  # Use two workers (on devices 0 and 1)
+            rmm_pool_size=0.9,  # Use 90% of GPU memory as a pool for faster allocations
+            enable_cudf_spill=True,  # Improve device memory stability
+            local_directory="/fast/scratch/",  # Use fast local storage for spilling
+        )
     )
-  )
 
-  # Set the default dataframe backend to "cudf"
-  dask.config.set({"dataframe.backend": "cudf"})
+    # Set the default dataframe backend to "cudf"
+    dask.config.set({"dataframe.backend": "cudf"})
 
-  # Create your DataFrame collection from on-disk
-  # or in-memory data
-  df = dd.read_parquet("/my/parquet/dataset/")
+    # Create your DataFrame collection from on-disk
+    # or in-memory data
+    df = dd.read_parquet("/my/parquet/dataset/")
 
-  # Use cudf-like syntax to transform and/or query your data
-  query = df.groupby('item')['price'].mean()
+    # Use cudf-like syntax to transform and/or query your data
+    query = df.groupby("item")["price"].mean()
 
-  # Compute, persist, or write out the result
-  query.head()
+    # Compute, persist, or write out the result
+    query.head()
 ```
 
 If you do not have multiple GPUs available, using `LocalCUDACluster` is optional. However, it is still a good idea to [enable cuDF spilling](https://docs.nvidia.com/cudf/latest/cudf/developer_guide/library_design/#spilling-to-host-memory).
 
-If you wish to scale across multiple nodes, you will need to use a different mechanism to deploy your Dask-CUDA workers. Please see [the RAPIDS deployment documentation](https://docs.nvidia.com/datascience/deployment/latest/) for more instructions.
+If you wish to scale across multiple nodes, you will need to use a different mechanism to deploy your Dask-CUDA workers. Please see [the NVIDIA CUDA-X Deployment Documentation](https://docs.nvidia.com/datascience/deployment/latest/) for more instructions.

@@ -30,13 +30,19 @@
 #include <cuda/stream>
 
 #include <rapidsmpf/coll/allgather.hpp>
+#include <rapidsmpf/config.hpp>
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/memory/packed_data.hpp>
 #include <rapidsmpf/owning_wrapper.hpp>
+#include <rapidsmpf/statistics.hpp>
 #include <rapidsmpf/streaming/core/actor.hpp>
 #include <rapidsmpf/streaming/core/channel.hpp>
+#include <rapidsmpf/streaming/core/context.hpp>
 #include <rapidsmpf/streaming/core/leaf_actor.hpp>
 
+#include <algorithm>
 #include <any>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <iomanip>
@@ -245,4 +251,53 @@ TEST_P(StreamingReadParquetParams, ReadParquet)
   EXPECT_EQ(result->num_columns(), expected->num_columns());
   EXPECT_EQ(result->num_columns(), 1);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(result->view(), expected->view());
+}
+
+TEST_F(StreamingReadParquet, UnboundedFileReadCache)
+{
+  auto statistics = rapidsmpf::Statistics::create();
+  auto cache_br   = rapidsmpf::BufferResource::create(mr_cuda,
+                                                    rapidsmpf::PinnedMemoryDisabled,
+                                                      {},
+                                                    std::chrono::milliseconds{1},
+                                                    br->stream_pool(),
+                                                    statistics);
+  std::unordered_map<std::string, std::string> opts{
+    {"experimental_unbounded_file_read_cache", "host"}};
+  auto cache_ctx = std::make_shared<rapidsmpf::streaming::Context>(
+    rapidsmpf::config::Options(std::move(opts)), GlobalEnvironment->comm_->logger(), cache_br);
+
+  // Reads all files and returns the total number of rows.
+  auto read_rows = [&] {
+    auto options = cudf::io::parquet_reader_options::builder(get_source_info(false)).build();
+    auto ch      = cache_ctx->create_channel();
+    std::vector<rapidsmpf::streaming::Actor> actors;
+    actors.push_back(
+      cudf_streaming::actor::read_parquet(cache_ctx, GlobalEnvironment->comm_, ch, 4, options, 3));
+    std::vector<rapidsmpf::streaming::Message> messages;
+    actors.push_back(rapidsmpf::streaming::actor::pull_from_channel(cache_ctx, ch, messages));
+    rapidsmpf::streaming::run_actor_network(std::move(actors));
+
+    cudf::size_type rows = 0;
+    for (auto& msg : messages) {
+      auto chunk            = msg.release<table_chunk>();
+      auto [reservation, _] = cache_br->reserve(rapidsmpf::MemoryType::DEVICE,
+                                                chunk.make_available_cost(),
+                                                rapidsmpf::AllowOverbooking::YES);
+      rows += chunk.make_available(reservation).table_view().num_rows();
+    }
+    return rows;
+  };
+
+  // The first read only has misses.
+  auto const rows    = read_rows();
+  auto const n_reads = statistics->get_stat("unbounded_file_read_cache hits").count();
+  EXPECT_GT(n_reads, 0U);
+  EXPECT_EQ(statistics->get_stat("unbounded_file_read_cache hits").value(), 0);
+
+  // The second read hits the cache for every chunk.
+  EXPECT_EQ(read_rows(), rows);
+  auto const hits = statistics->get_stat("unbounded_file_read_cache hits");
+  EXPECT_EQ(hits.count(), 2 * n_reads);
+  EXPECT_EQ(hits.value(), n_reads);
 }

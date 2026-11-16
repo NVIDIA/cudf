@@ -18,6 +18,7 @@ automatically **falling back to pandas** for other operations.
    df.rolling(window=3).sum()  # uses the GPU!
    df.apply(set, axis=1)  # uses the CPU (fallback)
 
+
 .. figure:: ../_static/colab.png
     :width: 200px
     :target: https://nvda.ws/3BnjYjN
@@ -34,10 +35,25 @@ automatically **falling back to pandas** for other operations.
 | Nothing changes, not even your `import` statements, when going from CPU to GPU.             | Combines the full flexibility of Pandas with blazing fast performance of cuDF                                       |
 +---------------------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------+
 
+
+.. admonition:: Enable from the JupyterLab toolbar, no %load_ext needed
+   :class: tip
+
+   With the `jupyterlab-nvdashboard`_ extension, you can turn ``cudf.pandas``
+   on for a notebook from the **GPU Accel** toolbar menu, without adding
+   ``%load_ext cudf.pandas`` or editing a single cell.
+   See :ref:`cudf-pandas-jupyterlab-toggle` for setup instructions.
+
+.. _jupyterlab-nvdashboard: https://github.com/rapidsai/jupyterlab-nvdashboard
+
 ``cudf.pandas`` is available as part of the ``cudf`` package. See the
 `installation and deployment guide
-<https://docs.nvidia.com/datascience/install/#install-rapids>_`
+<https://docs.nvidia.com/datascience/install/#install-rapids>`_
 to get up-and-running with cuDF.
+
+See :doc:`usage` for other ways to enable ``cudf.pandas``, including from the
+command line and programmatically with ``cudf.pandas.install()``.
+
 
 .. toctree::
    :maxdepth: 1

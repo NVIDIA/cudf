@@ -4,6 +4,7 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
@@ -104,6 +105,8 @@ void BM_transform_dispatch(nvbench::state& state)
   state.add_global_memory_reads<int32_t>(static_cast<std::size_t>(num_rows));
   state.add_global_memory_writes<int32_t>(num_rows);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     switch (api) {
       case transform_api::TRANSFORM:
@@ -121,13 +124,16 @@ void BM_transform_dispatch(nvbench::state& state)
         program->run(inputs, outputs, {}, std::nullopt, launch.get_stream().get_stream());
         break;
       case transform_api::AST:
-        cudf::compute_column_jit(table, expression, launch.get_stream().get_stream());
+        cudf::compute_column_jit(table, expression, {}, launch.get_stream().get_stream());
         break;
       case transform_api::AST_TRANSFORM_PROGRAM:
         program->run(table, launch.get_stream().get_stream());
         break;
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 }  // namespace

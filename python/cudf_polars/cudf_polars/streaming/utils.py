@@ -29,6 +29,21 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.dispatch import LowerIRTransformer
     from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
+PartitionRange = tuple[int, int]
+
+
+def partition_range(rank: int, nranks: int, npartitions: int) -> PartitionRange:
+    """Return the half-open contiguous partition range owned by *rank*."""
+    return (
+        (rank * npartitions + nranks - 1) // nranks,
+        ((rank + 1) * npartitions + nranks - 1) // nranks,
+    )
+
+
+def partition_owner(partition: int, nranks: int, npartitions: int) -> int:
+    """Return the rank owning *partition* under contiguous partition assignment."""
+    return partition * nranks // npartitions
+
 
 def _concat(*dfs: DataFrame, context: IRExecutionContext) -> DataFrame:
     # Concatenate a sequence of DataFrames vertically

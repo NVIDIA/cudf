@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -11,8 +11,11 @@
 #include <cudf/transpose.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <numeric>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -47,6 +50,38 @@ auto transpose_vectors(std::vector<std::vector<T>> const& input)
   }
 
   return transposed;
+}
+
+template <typename T>
+auto flatten_vectors(std::vector<std::vector<T>> const& input)
+{
+  std::vector<T> flattened;
+  if (not input.empty()) { flattened.reserve(input.size() * input.front().size()); }
+  for (auto const& column : input) {
+    flattened.insert(flattened.end(), column.begin(), column.end());
+  }
+  return flattened;
+}
+
+// Owner equality implies slice equality only when every view references the correct buffers.
+void expect_slice_view(cudf::column_view const& actual,
+                       cudf::column_view const& owner,
+                       cudf::size_type offset,
+                       cudf::size_type size,
+                       cudf::size_type null_count)
+{
+  EXPECT_EQ(actual.type(), owner.type());
+  EXPECT_EQ(actual.size(), size);
+  EXPECT_EQ(actual.offset(), offset);
+  EXPECT_EQ(actual.null_count(), null_count);
+  EXPECT_EQ(actual.head(), owner.head());
+  EXPECT_EQ(actual.null_mask(), owner.null_mask());
+  ASSERT_EQ(actual.num_children(), owner.num_children());
+  for (cudf::size_type i = 0; i < owner.num_children(); ++i) {
+    SCOPED_TRACE("child " + std::to_string(i));
+    auto const child = owner.child(i);
+    expect_slice_view(actual.child(i), child, child.offset(), child.size(), child.null_count());
+  }
 }
 
 template <typename T, typename ColumnWrapper>
@@ -100,49 +135,59 @@ void run_test(size_t ncols, size_t nrows, bool add_nulls)
   // Generate values as vector of vectors
   auto const values = generate_vectors<T>(
     ncols, nrows, [&rng]() { return cudf::test::make_type_param_scalar<T>(rng()); });
-  auto const valuesT = transpose_vectors(values);
+  auto const valuesT         = transpose_vectors(values);
+  auto const expected_values = flatten_vectors(valuesT);
 
   std::vector<ColumnWrapper> input_cols;
-  std::vector<ColumnWrapper> expected_cols;
   std::vector<cudf::size_type> expected_nulls(nrows);
 
-  if (add_nulls) {
-    // Generate null mask as vector of vectors
-    auto const valids = generate_vectors<cudf::size_type>(
-      ncols, nrows, [&rng]() { return static_cast<cudf::size_type>(rng() % 3 > 0 ? 1 : 0); });
-    auto const validsT = transpose_vectors(valids);
+  auto const expected = [&] {
+    if (add_nulls) {
+      // Generate null mask as vector of vectors
+      auto const valids = generate_vectors<cudf::size_type>(
+        ncols, nrows, [&rng]() { return static_cast<cudf::size_type>(rng() % 3 > 0 ? 1 : 0); });
+      auto const validsT = transpose_vectors(valids);
 
-    // Compute the null counts over each transposed column
-    std::transform(validsT.begin(),
-                   validsT.end(),
-                   expected_nulls.begin(),
-                   [ncols](std::vector<cudf::size_type> const& vec) {
-                     // num nulls = num elems - num valids
-                     return ncols - std::accumulate(vec.begin(), vec.end(), 0);
-                   });
+      // Compute the null counts over each transposed column
+      std::transform(validsT.begin(),
+                     validsT.end(),
+                     expected_nulls.begin(),
+                     [ncols](std::vector<cudf::size_type> const& vec) {
+                       // num nulls = num elems - num valids
+                       return ncols - std::accumulate(vec.begin(), vec.end(), 0);
+                     });
 
-    // Create column wrappers from vector of vectors
-    input_cols    = make_columns<T, ColumnWrapper>(values, valids);
-    expected_cols = make_columns<T, ColumnWrapper>(valuesT, validsT);
-  } else {
-    input_cols    = make_columns<T, ColumnWrapper>(values);
-    expected_cols = make_columns<T, ColumnWrapper>(valuesT);
-  }
+      auto const expected_valids = flatten_vectors(validsT);
+      input_cols                 = make_columns<T, ColumnWrapper>(values, valids);
+      return ColumnWrapper(expected_values.begin(), expected_values.end(), expected_valids.begin());
+    }
+    input_cols = make_columns<T, ColumnWrapper>(values);
+    return ColumnWrapper(expected_values.begin(), expected_values.end());
+  }();
 
-  // Create table views from column wrappers
-  auto input_view    = make_table_view(input_cols);
-  auto expected_view = make_table_view(expected_cols);
+  auto input_view = make_table_view(input_cols);
 
   auto result      = cudf::transpose(input_view);
   auto result_view = std::get<1>(result);
 
-  ASSERT_EQ(result_view.num_columns(), expected_view.num_columns());
+  ASSERT_EQ(result_view.num_columns(), valuesT.size());
+  if (result_view.num_columns() == 0) {
+    EXPECT_EQ(result.first->size(), 0);
+    return;
+  }
 
   // disable checking logic during a racecheck run
   if (not getenv("LIBCUDF_RACECHECK_ENABLED")) {
+    // Comparing many tiny slices separately repeats GPU launches and synchronization.
+    auto const owner = result.first->view();
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(owner, expected);
     for (cudf::size_type i = 0; i < result_view.num_columns(); ++i) {
-      CUDF_TEST_EXPECT_COLUMNS_EQUAL(result_view.column(i), expected_view.column(i));
-      EXPECT_EQ(result_view.column(i).null_count(), expected_nulls[i]);
+      SCOPED_TRACE("column " + std::to_string(i));
+      expect_slice_view(result_view.column(i),
+                        owner,
+                        i * static_cast<cudf::size_type>(ncols),
+                        static_cast<cudf::size_type>(ncols),
+                        expected_nulls[i]);
     }
   }
 }

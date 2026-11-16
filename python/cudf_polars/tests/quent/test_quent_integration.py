@@ -1,305 +1,399 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Integration tests for Quent telemetry tracing."""
+"""Integration tests for custom-schema Quent telemetry."""
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
+import json
+import logging
+import uuid
 from typing import TYPE_CHECKING, Any
+from unittest.mock import MagicMock
 
 import pytest
 
 import polars as pl
 
-from cudf_polars.dsl.tracing import LOG_TRACES
+from cudf_polars.utils.config import ConfigOptions
+
+pytest.importorskip("cudf_polars_quent")
+
+import cudf_polars.quent._runtime
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Generator, Iterator
+    from pathlib import Path
 
     from cudf_polars.engine.core import StreamingEngine
-    from cudf_polars.quent._context import QuentContext
-
-# Quent tracing requires structlog to emit events. Skip the whole module when
-# it is unavailable so the engine fixture below is never even constructed.
-pytest.importorskip("structlog")
+    from cudf_polars.engine.options import StreamingOptions
+    from cudf_polars.quent import QuentConfig
 
 
-@pytest.fixture(params=["ray", "dask", "spmd"])
+@pytest.fixture
 def engine_with_quent_context(
-    request: pytest.FixtureRequest,
-    quent_context: QuentContext,
-    ray_num_ranks: int,
-    ray_init_options: dict[str, Any],
-) -> Iterator[StreamingEngine]:
+    _unconfigured_engine: tuple[StreamingEngine, StreamingOptions],
+    quent_context: QuentConfig,
+    streaming_engine_factory: Callable[[StreamingOptions], StreamingEngine],
+) -> Iterator[tuple[StreamingEngine, StreamingOptions]]:
     """
-    A streaming engine configured with a quent context from the 'quent_context'
-    fixture.
-
-    The engine owns a rapidsmpf ``Context`` that must be shut down on the thread
-    that created it. This fixture guarantees that teardown even if the test body
-    skips or raises before shutting the engine down itself; otherwise the
-    ``Context`` would be finalized by the garbage collector on an arbitrary
-    thread and abort the interpreter.
+    Yield a streaming engine configured with Quent tracing.
     """
-    backend = request.param
-    engine: StreamingEngine
-    if backend == "ray":
-        pytest.importorskip("ray")
-        import cudf_polars.engine.ray
-
-        # Always specify num_ranks: the default path sizes the engine from the
-        # GPUs Ray reports, which fails if this test shares an xdist worker
-        # with a test that already brought up the shared num_gpus=0 cluster.
-        engine = cudf_polars.engine.ray.RayEngine(
-            executor_options={"quent_context": quent_context},
-            engine_options={"allow_gpu_sharing": True},
-            ray_init_options=ray_init_options,
-            num_ranks=ray_num_ranks,
+    # Uses ``_unconfigured_engine`` directly (rather than a public engine
+    # fixture) so that quent setup and teardown can be expressed as a single
+    # ``_reset`` call each way.
+    engine, base_options = _unconfigured_engine
+    engine._reset(
+        rapidsmpf_options=base_options.to_rapidsmpf_options(),
+        executor_options={
+            **base_options.to_executor_options(),
+            "quent_context": quent_context,
+            "fallback_mode": "silent",
+        },
+        engine_options=base_options.to_engine_options(),
+    )
+    try:
+        yield engine, base_options
+    finally:
+        engine._reset(
+            rapidsmpf_options=base_options.to_rapidsmpf_options(),
+            executor_options={
+                **base_options.to_executor_options(),
+                "quent_context": None,
+                "fallback_mode": "silent",
+            },
+            engine_options=base_options.to_engine_options(),
         )
-    elif backend == "dask":
-        pytest.importorskip("distributed")
-        import cudf_polars.engine.dask
 
-        engine = cudf_polars.engine.dask.DaskEngine(
-            executor_options={"quent_context": quent_context}
-        )
-    elif backend == "spmd":
-        from rapidsmpf import bootstrap
-        from rapidsmpf.communicator.single import (
-            new_communicator as single_communicator,
-        )
-        from rapidsmpf.config import Options, get_environment_variables
-        from rapidsmpf.progress_thread import ProgressThread
 
-        import cudf_polars.engine.spmd
+def _stored_events(root: Path) -> list[dict[str, Any]]:
+    events = []
+    for path in root.glob("*/*/*.ndjson"):
+        entity_name = path.parent.name
+        for seq, line in enumerate(path.read_text().splitlines()):
+            event = json.loads(line)
+            event["data"] = {entity_name: event["data"]}
+            event["sequence"] = seq
+            events.append(event)
+    return sorted(events, key=lambda event: (event["timestamp"], event["sequence"]))
 
-        if bootstrap.is_running_with_rrun():
-            comm = bootstrap.create_ucxx_comm(
-                progress_thread=ProgressThread(),
-                type=bootstrap.BackendType.AUTO,
-            )
-        else:
-            comm = single_communicator(
-                Options(get_environment_variables()), ProgressThread()
-            )
 
-        engine = cudf_polars.engine.spmd.SPMDEngine(
-            executor_options={"quent_context": quent_context},
-            comm=comm,
-        )
+def _of_type(events: list[dict[str, Any]], entity: str) -> list[dict[str, Any]]:
+    return [event for event in events if entity in event["data"]]
+
+
+def _disable_logging(level: int) -> None:
+    """Set the process-wide logging threshold in a Dask worker."""
+    logging.disable(level)
+
+
+@contextlib.contextmanager
+def suppress_worker_exceptions(
+    engine: StreamingEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Suppress backend logging for a deliberately failed remote query."""
+    dask_client = None
+    try:
+        from cudf_polars.engine.ray import RayEngine
+    except ImportError:
+        pass
     else:
-        raise ValueError(f"Invalid backend: {backend}")
+        if isinstance(engine, RayEngine):
+            # Ray otherwise reports intentionally unhandled remote errors.
+            monkeypatch.setenv("RAY_IGNORE_UNHANDLED_ERRORS", "1")
 
     try:
-        yield engine
+        from cudf_polars.engine.dask import DaskEngine
+    except ImportError:
+        pass
+    else:
+        if isinstance(engine, DaskEngine):
+            dask_context = engine._dask_context
+            assert dask_context is not None
+            dask_client = dask_context.client
+
+    previous_logging_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
+    if dask_client is not None:
+        # Dask emits task-failure logs in its worker processes.
+        dask_client.run(_disable_logging, logging.CRITICAL)
+    try:
+        yield
     finally:
-        # Idempotent: a no-op if the test body already shut the engine down.
-        engine.shutdown()
+        logging.disable(previous_logging_disable)
+        if dask_client is not None:
+            dask_client.run(_disable_logging, logging.NOTSET)
 
 
-def test_quent_events(
-    engine_with_quent_context: StreamingEngine, quent_context: QuentContext
+def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
+    session = MagicMock()
+    worker_handle = MagicMock()
+    worker_handle.exit.side_effect = RuntimeError("worker exit failed")
+    runtime = cudf_polars.quent._runtime.QuentWorkerRuntime(
+        config=MagicMock(),
+        session=session,
+        worker_resources=MagicMock(),
+        _worker_handle=worker_handle,
+    )
+
+    with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):
+        runtime.close()
+
+    session.close.assert_called_once_with()
+
+
+def test_quent_controller_cleanup_continues_after_handle_failure() -> None:
+    session = MagicMock()
+    engine_handle = MagicMock()
+    engine_handle.exit.side_effect = RuntimeError("engine exit failed")
+    collector = MagicMock()
+    runtime = cudf_polars.quent._runtime.QuentControllerRuntime(
+        config=MagicMock(),
+        session=session,
+        collector=collector,
+        _engine_handle=engine_handle,
+    )
+
+    with pytest.raises(ExceptionGroup, match="Quent controller shutdown failed"):
+        runtime.close()
+
+    session.close.assert_called_once_with()
+    collector.close.assert_called_once_with(timeout=10.0)
+
+
+def test_quent_lifecycle(
+    engine_with_quent_context: tuple[StreamingEngine, StreamingOptions],
+    quent_context: QuentConfig,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # We need to create the engine, to ensure the lifecycle events are emitted properly.
-    q = pl.LazyFrame({"x": [1, 2]}).filter(pl.col("x") > 1)
-
-    with engine_with_quent_context:
-        q.collect(engine=engine_with_quent_context)
-
-    check_quent_events(engine_with_quent_context, quent_context)
-
-
-def check_quent_events(engine: StreamingEngine, quent_context: QuentContext) -> None:
-    quent_events = engine._quent_events
-    engine_events = [x for x in quent_events if "Engine" in x["data"]]
-    assert len(engine_events) == 2
-    engine_init, engine_exit = engine_events
-    assert engine_init["id"] == str(quent_context.engine.id)
-    assert engine_exit["id"] == str(quent_context.engine.id)
-    assert engine_exit["data"]["Engine"]["Exit"] is None
-    assert (
-        engine_init["data"]["Engine"]["Init"]["implementation"]["name"] == "cudf-polars"
+    query = pl.LazyFrame({"x": [1, 2, 3]}).filter(pl.col("x") > 1)
+    engine, base_options = engine_with_quent_context
+    assert engine.config["executor_options"]["quent_context"] == quent_context
+    current_context = dataclasses.replace(
+        quent_context,
+        query=dataclasses.replace(
+            quent_context.query,
+            query_group_id=uuid.uuid4(),
+            query_group_name="Updated Query Group",
+            query_name="Iteration 1",
+        ),
     )
-
-    worker_events = [x for x in quent_events if "Worker" in x["data"]]
-    worker_init_events = sorted(
-        [x for x in worker_events if "Init" in x["data"]["Worker"]],
-        key=lambda x: x["id"],
+    engine.config["executor_options"]["quent_context"] = current_context
+    query.collect(engine=engine)
+    current_context = dataclasses.replace(
+        current_context,
+        query=dataclasses.replace(
+            current_context.query,
+            query_name="Iteration 2",
+        ),
     )
-    worker_exit_events = sorted(
-        [x for x in worker_events if "Exit" in x["data"]["Worker"]],
-        key=lambda x: x["id"],
+    engine.config["executor_options"]["quent_context"] = current_context
+    query.collect(engine=engine)
+    current_context = dataclasses.replace(
+        current_context,
+        query=dataclasses.replace(
+            current_context.query,
+            query_name="Failed iteration",
+        ),
     )
-    assert len(worker_init_events) == len(worker_exit_events)
-    for worker_init, worker_exit in zip(
-        worker_init_events, worker_exit_events, strict=True
+    engine.config["executor_options"]["quent_context"] = current_context
+    failed_query = (
+        pl.LazyFrame({"orderby": [1, 2, 4, 2], "value": [1, 2, 3, 4]})
+        .rolling("orderby", period="2i")
+        .agg(pl.sum("value"))
+    )
+    with (
+        suppress_worker_exceptions(engine, monkeypatch),
+        pytest.raises(Exception),  # noqa: B017 - backend-specific wrapper
     ):
-        assert worker_init["id"] == worker_exit["id"]
-        assert (
-            worker_init["data"]["Worker"]["Init"]["parent_engine_id"]
-            == engine_init["id"]
-        )
-        assert worker_exit["data"]["Worker"]["Exit"] is None
+        failed_query.collect(engine=engine)
+    # StreamingExecutor
+    config_options = ConfigOptions.from_polars_engine(engine)
+    hash_a = hash(config_options)
+    hash_b = hash(config_options)
+    assert hash_a == hash_b
 
-    query_group_events = [x for x in quent_events if "QueryGroup" in x["data"]]
+    # Capture the output root, then close Quent to flush events to disk.
+    # The fixture teardown calls _reset(..., quent_context=None) again, which is a no-op.
+    quent_output_root = engine._quent_output_root
+    assert quent_output_root is not None
+    engine._reset(
+        rapidsmpf_options=base_options.to_rapidsmpf_options(),
+        executor_options={
+            **base_options.to_executor_options(),
+            "quent_context": None,
+            "fallback_mode": "silent",
+        },
+        engine_options=base_options.to_engine_options(),
+    )
+
+    events = _stored_events(quent_output_root)
+    engine_events = _of_type(events, "Engine")
+    assert len(engine_events) == 2
+    assert engine_events[0]["id"] == str(quent_context.engine_id)
+    assert "Init" in engine_events[0]["data"]["Engine"]
+    assert "Exit" in engine_events[1]["data"]["Engine"]
+
+    worker_events = _of_type(events, "Worker")
+    initialized = [
+        event for event in worker_events if "Init" in event["data"]["Worker"]
+    ]
+    exited = [event for event in worker_events if "Exit" in event["data"]["Worker"]]
+    assert {event["id"] for event in initialized} == {event["id"] for event in exited}
+
+    query_group_events = _of_type(events, "QueryGroup")
     assert len(query_group_events) == 1
-    query_group_declaration = query_group_events[0]
-    assert query_group_declaration["id"] == str(quent_context.query_group.id)
+    assert query_group_events[0]["id"] == str(current_context.query.query_group_id)
     assert (
-        query_group_declaration["data"]["QueryGroup"]["Declaration"]["engine_id"]
-        == engine_init["id"]
+        query_group_events[0]["data"]["QueryGroup"]["Declared"]["instance_name"]
+        == "Updated Query Group"
     )
-
-    query_events = [x for x in quent_events if "Query" in x["data"]]
-    assert len(query_events) == 4
-
-    query_init, query_planning, query_executing, query_exit = query_events
-    # Each ``.collect()`` derives a fresh per-collect query id, so the emitted
-    # id must be unique to this collect rather than the engine-scoped template
-    # ``quent_context.query`` id.
-    query_id = query_init["id"]
-    assert query_id != str(quent_context.query.id)
-    assert (
-        query_init["data"]["Query"]["state"]["Init"]["query_group_id"]
-        == query_group_declaration["id"]
+    query_events = _of_type(events, "Query")
+    assert len(query_events) == 12
+    assert _of_type(events, "Plan")
+    operator_declarations = [
+        event["data"]["Operator"]["Declared"]
+        for event in _of_type(events, "Operator")
+        if "Declared" in event["data"]["Operator"]
+    ]
+    assert operator_declarations
+    assert all(
+        "input_schemas" in declaration["schemas"]
+        and "columns" in declaration["schemas"]["output_schema"]
+        for declaration in operator_declarations
     )
-    assert query_init["data"]["Query"]["seq"] == 0
-    assert query_planning["id"] == query_id
-    assert query_planning["data"]["Query"]["seq"] == 1
-    assert query_executing["id"] == query_id
-    assert query_executing["data"]["Query"]["seq"] == 2
-    assert query_exit["id"] == query_id
-    assert query_exit["data"]["Query"]["seq"] == 3
-
-    memory_events = [x for x in quent_events if "Memory" in x["data"]]
-    task_events = [x for x in quent_events if "Task" in x["data"]]
-    assert len(memory_events) > 0
-
-    if LOG_TRACES:
-        assert len(task_events) > 0
-
-    # A single collect exercises the full processor lifecycle, so fold that
-    # check in here rather than paying for a dedicated engine startup.
-    check_processor_lifecycle(quent_events)
-
-
-def test_quent_events_multiple_collects(
-    engine_with_quent_context: StreamingEngine, quent_context: QuentContext
-) -> None:
-    # Everything that depends on running more than one collect against the same
-    # engine is folded into this single test to avoid paying for extra engine
-    # startups. Running the *same* query twice is the strongest scenario: query
-    # ids are derived per-collect and ``get_stable_plan_id`` is a deterministic
-    # function of the IR structure, so an un-namespaced plan id would collide
-    # across the two identical collects.
-    q = pl.LazyFrame({"x": [1, 2, 3]}).filter(pl.col("x") > 1)
-    with engine_with_quent_context:
-        q.collect(engine=engine_with_quent_context)
-        q.collect(engine=engine_with_quent_context)
-
-    quent_events = engine_with_quent_context._quent_events
-
-    # The processor lifecycle stays balanced across multiple collects.
-    check_processor_lifecycle(quent_events)
-
-    # Device memory is engine/worker-scoped: it is initialized and finalized
-    # exactly once per worker, matching the number of engine-scoped ThreadPool
-    # declarations. Critically, running two collects must NOT re-declare it
-    # (the per-query bug would produce a fresh device memory per collect, i.e.
-    # twice as many inits as thread pools).
-    memory_events = [x for x in quent_events if "Memory" in x["data"]]
-    device_init_events = [
-        x
-        for x in memory_events
-        if isinstance(x["data"]["Memory"]["state"], dict)
-        and "MemoryInitializing" in x["data"]["Memory"]["state"]
-        and "device memory"
-        in x["data"]["Memory"]["state"]["MemoryInitializing"]["instance_name"]
+    actor_events = _of_type(events, "Actor")
+    assert actor_events
+    actor_states: dict[str, list[str]] = {}
+    for event in actor_events:
+        actor_states.setdefault(event["id"], []).append(
+            next(iter(event["data"]["Actor"]))
+        )
+    assert all(
+        states[:2] == ["Started", "Running"]
+        and states[-1] in {"Completed", "Failed"}
+        and len(states) == 3
+        for states in actor_states.values()
+    )
+    terminal_actor_events = [
+        next(iter(event["data"]["Actor"].values()))
+        for event in actor_events
+        if not set(event["data"]["Actor"]).isdisjoint({"Completed", "Failed"})
     ]
-    device_exit_events = [
-        x
-        for x in memory_events
-        if x["data"]["Memory"]["state"] == "Exit"
-        and x["id"] in {e["id"] for e in device_init_events}
+    assert all(
+        {
+            "input_bytes",
+            "output_bytes",
+            "output_rows",
+            "chunk_count",
+            "duplicated",
+            "decision",
+        }.issubset(terminal["values"])
+        for terminal in terminal_actor_events
+    )
+    assert _of_type(events, "DeviceMemory")
+    assert _of_type(events, "Storage")
+    evaluate_events = _of_type(events, "Evaluate")
+    assert evaluate_events
+    evaluate_states: dict[str, list[str]] = {}
+    for event in evaluate_events:
+        evaluate_states.setdefault(event["id"], []).append(
+            next(iter(event["data"]["Evaluate"]))
+        )
+    assert all(
+        states == ["Queued", "Running", states[-1]]
+        and states[-1] in {"Completed", "Failed"}
+        for states in evaluate_states.values()
+    )
+    running_evaluations = [
+        event["data"]["Evaluate"]["Running"]
+        for event in evaluate_events
+        if "Running" in event["data"]["Evaluate"]
     ]
-    thread_pool_decls = [
-        x
-        for x in quent_events
-        if "ThreadPool" in x["data"] and "Declaration" in x["data"]["ThreadPool"]
+    assert all(
+        {
+            "io",
+            "input_bytes",
+            "input",
+            "processor",
+            "channel",
+        }.issubset(running)
+        for running in running_evaluations
+    )
+    assert all(
+        all(set(dataframe) == {"shape"} for dataframe in running["input"]["dataframes"])
+        for running in running_evaluations
+    )
+    chunk_evaluations = [
+        running
+        for running in running_evaluations
+        if running["input"]["content_sizes"] is not None
     ]
-    assert len(thread_pool_decls) >= 1
-    assert len(device_init_events) == len(thread_pool_decls)
-    # Every device memory id is initialized once and exited once.
-    init_ids = [x["id"] for x in device_init_events]
-    assert len(set(init_ids)) == len(init_ids)
-    assert {x["id"] for x in device_exit_events} == set(init_ids)
-
-    # Each collect reuses the engine-scoped QuentContext but must emit a
-    # distinct query id.
-    query_init_ids = [
-        x["id"]
-        for x in quent_events
-        if "Query" in x["data"] and "Init" in x["data"]["Query"].get("state", {})
+    assert chunk_evaluations
+    assert all(
+        running["input"]["sequence_number"] is not None
+        and running["input"]["spillable"] is not None
+        for running in chunk_evaluations
+    )
+    completed_evaluations = [
+        event["data"]["Evaluate"]["Completed"]
+        for event in evaluate_events
+        if "Completed" in event["data"]["Evaluate"]
     ]
-    assert len(query_init_ids) == 2
-    assert len(set(query_init_ids)) == 2
-    assert str(quent_context.query.id) not in query_init_ids
-
-    # Without namespacing by the per-collect query id, both identical collects
-    # would emit the same logical plan id under different parent queries.
-    logical_plan_decls = [
-        x
-        for x in quent_events
-        if "Plan" in x["data"]
-        and "Declaration" in x["data"]["Plan"]
-        and x["data"]["Plan"]["Declaration"]["instance_name"] == "logical"
+    assert completed_evaluations
+    assert all(
+        set(completed["output_dataframe"]) == {"shape"}
+        for completed in completed_evaluations
+    )
+    queued_io_evaluations = [
+        event["data"]["Evaluate"]["Queued"]
+        for event in evaluate_events
+        if "Queued" in event["data"]["Evaluate"]
+        and event["data"]["Evaluate"]["Queued"]["task"] is not None
     ]
-    assert len(logical_plan_decls) == 2
-    plan_ids = [x["id"] for x in logical_plan_decls]
-    assert len(set(plan_ids)) == 2
-    # Each logical plan must hang off the distinct per-collect query id.
-    parent_query_ids = [
-        x["data"]["Plan"]["Declaration"]["parent"]["query_id"]
-        for x in logical_plan_decls
+    assert queued_io_evaluations
+    assert all(
+        {"node_id", "node_type"}.issubset(queued["task"])
+        for queued in queued_io_evaluations
+    )
+    initialized_queries = [
+        event
+        for event in query_events
+        if isinstance(event["data"]["Query"], dict)
+        and "Initialized" in event["data"]["Query"]
     ]
-    assert len(set(parent_query_ids)) == 2
-
-
-def check_processor_lifecycle(quent_events: list[dict]) -> None:
-    thread_pool_ids = {
-        x["id"]
-        for x in quent_events
-        if "ThreadPool" in x["data"] and "Declaration" in x["data"]["ThreadPool"]
+    assert len({event["id"] for event in initialized_queries}) == 3
+    assert [
+        event["data"]["Query"]["Initialized"]["instance_name"]
+        for event in initialized_queries
+    ] == ["Iteration 1", "Iteration 2", "Failed iteration"]
+    events_by_query = {
+        initialized["id"]: [
+            next(iter(event["data"]["Query"]))
+            for event in query_events
+            if event["id"] == initialized["id"]
+        ]
+        for initialized in initialized_queries
     }
-    assert len(thread_pool_ids) >= 1
-
-    processor_events = [x for x in quent_events if "Processor" in x["data"]]
-    init_events = [
-        x
-        for x in processor_events
-        if "ProcessorInitializing" in x["data"]["Processor"]["state"]
-    ]
-    finalizing_events = [
-        x
-        for x in processor_events
-        if x["data"]["Processor"]["state"] == {"ProcessorFinalizing": None}
-    ]
-    exit_events = [
-        x for x in processor_events if x["data"]["Processor"]["state"] == "Exit"
+    assert list(events_by_query.values()) == [
+        ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Failed"],
     ]
 
-    assert len(init_events) == len(finalizing_events) == len(exit_events)
+    logical_plans = [
+        event
+        for event in _of_type(events, "Plan")
+        if event["data"]["Plan"]["Declared"]["instance_name"] == "logical"
+    ]
+    assert len({event["id"] for event in logical_plans}) == 3
 
-    if LOG_TRACES:
-        assert len(init_events) > 0
-
-        init_by_id = {x["id"]: x for x in init_events}
-        finalizing_by_id = {x["id"]: x for x in finalizing_events}
-        exit_by_id = {x["id"]: x for x in exit_events}
-        assert init_by_id.keys() == finalizing_by_id.keys() == exit_by_id.keys()
-
-        for init_event in init_by_id.values():
-            parent_group_id = init_event["data"]["Processor"]["state"][
-                "ProcessorInitializing"
-            ]["parent_group_id"]
-            assert parent_group_id in thread_pool_ids
+    memory_ids = [
+        event["id"]
+        for entity in ("DeviceMemory", "Storage")
+        for event in _of_type(events, entity)
+    ]
+    assert len(memory_ids) == len(set(memory_ids))

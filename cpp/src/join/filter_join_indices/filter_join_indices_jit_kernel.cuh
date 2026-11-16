@@ -49,13 +49,12 @@ filter_join_indices_jit(cudf::table_view const& left,
                         join_kind join_kind,
                         bool is_ptx,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::filter_join_indices_jit(table_view const&, table_view const&,
  *   device_span<size_type const>, device_span<size_type const>,
- *   ast::expression const&, join_kind, cuda::stream_ref,
- *   rmm::device_async_resource_ref)
+ *   ast::expression const&, join_kind, lto_fragments, cuda::stream_ref, memory_resources)
  */
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -64,9 +63,10 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> left_indices,
                         cudf::device_span<size_type const> right_indices,
                         ast::expression const& predicate,
+                        cudf::lto_fragments fragments,
                         join_kind join_kind,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr);
+                        cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

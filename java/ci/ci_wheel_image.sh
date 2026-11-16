@@ -16,6 +16,6 @@ cudf_java_ci_wheel_image() {
   local cuda_version=${1:?CUDA version required}
   local rapids_ver py_ver
   rapids_ver="$(head -1 "${_java_ci_image_repo_root}/VERSION" | cut -d. -f1,2)"
-  py_ver="${RAPIDS_PY_VERSION:-3.11}"
+  py_ver="${RAPIDS_PY_VERSION:-3.12}"
   echo "rapidsai/ci-wheel:${rapids_ver}-cuda${cuda_version}-rockylinux8-py${py_ver}"
 }

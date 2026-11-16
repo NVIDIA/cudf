@@ -2,13 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
+from pylibcudf.libcudf cimport asof_join as cpp_asof_join
 from pylibcudf.libcudf cimport join as cpp_join
 from pylibcudf.libcudf.types cimport null_equality
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
+from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
+
+cdef class AsofJoin:
+    cdef unique_ptr[cpp_asof_join.asof_join] c_obj
+    cdef Table _right_by
+    cdef Column _right_on
+    cdef Stream _stream
+    cdef DeviceMemoryResource _mr
 
 
 cpdef tuple[Column, Column] inner_join(

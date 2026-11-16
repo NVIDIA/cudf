@@ -11,8 +11,10 @@
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <numeric>
@@ -143,7 +145,7 @@ bool compare_vector(std::vector<T> const& cpu_vec,
 
 template <typename T>
 bool compare_vector(std::vector<T> const& cpu_vec,
-                    rmm::device_uvector<T> const& d_vec,
+                    cuda::device_buffer<T> const& d_vec,
                     std::string const& name)
 {
   auto stream  = cudf::get_default_stream();

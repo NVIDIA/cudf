@@ -14,15 +14,16 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -37,11 +38,10 @@ namespace detail {
 namespace {
 
 struct unique_keys_dispatch_fn {
-  template <typename T>
+  template <cudf::concepts::dictionary_key T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& all_keys,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
-    requires(cudf::is_dictionary_key<T>())
+                                           cudf::memory_resources mr)
   {
     using probe_t = cuco::linear_probing<
       1,
@@ -66,9 +66,11 @@ struct unique_keys_dispatch_fn {
     set.insert_async(iter, iter + all_keys.size(), stream.get());
 
     // retrieve the indices of all the unique keys
-    auto keys_indices = rmm::device_uvector<size_type>(all_keys.size(), stream, temp_mr);
-    auto keys_end     = set.retrieve_all(keys_indices.begin(), stream.get());
-    keys_indices.resize(cuda::std::distance(keys_indices.begin(), keys_end), stream);
+    auto keys_indices_storage =
+      cuda::device_buffer<size_type>(stream, temp_mr, all_keys.size(), cuda::no_init);
+    auto keys_end     = set.retrieve_all(keys_indices_storage.begin(), stream);
+    auto keys_indices = cudf::device_span<size_type>(
+      keys_indices_storage.data(), cuda::std::distance(keys_indices_storage.begin(), keys_end));
 
     // gather the unique keys using the keys_indices
     auto const oob_policy   = cudf::out_of_bounds_policy::DONT_CHECK;
@@ -83,8 +85,7 @@ struct unique_keys_dispatch_fn {
   template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref)
-    requires(not cudf::is_dictionary_key<T>())
+                                           cudf::memory_resources)
   {
     CUDF_UNREACHABLE("invalid dictionary key type");
   }
@@ -92,9 +93,7 @@ struct unique_keys_dispatch_fn {
 }  // namespace
 
 std::vector<std::unique_ptr<column>> match_dictionaries(
-  std::span<dictionary_column_view const> input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<dictionary_column_view const> input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
@@ -115,7 +114,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries(
 }
 
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_dictionaries(
-  std::vector<table_view> tables, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  std::vector<table_view> tables, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   // Make a copy of all the column views from each table_view
   std::vector<std::vector<column_view>> updated_columns;
@@ -160,9 +159,7 @@ std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>> match_d
 }
 
 std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
-  std::span<dictionary_column_view const> input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<dictionary_column_view const> input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not input.empty(), "expect at least one dictionary", std::invalid_argument);
 
@@ -185,7 +182,7 @@ std::vector<std::unique_ptr<column>> match_dictionaries_to_indices(
 std::pair<std::vector<std::unique_ptr<column>>, std::vector<table_view>>
 match_dictionaries_to_indices(std::vector<table_view> tables,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not tables.empty(), "expect at least one table", std::invalid_argument);
 
@@ -236,9 +233,7 @@ match_dictionaries_to_indices(std::vector<table_view> tables,
 // external API
 
 std::vector<std::unique_ptr<column>> match_dictionaries(
-  std::span<dictionary_column_view const> input,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::span<dictionary_column_view const> input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::match_dictionaries(input, stream, mr);

@@ -6,6 +6,8 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/lists/explode.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table.hpp>
@@ -16,6 +18,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -47,7 +50,7 @@ std::unique_ptr<table> build_table(
   cuda::std::optional<cudf::device_span<size_type const>> explode_col_gather_map,
   cuda::std::optional<rmm::device_uvector<size_type>> position_array,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto select_iter = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
@@ -77,14 +80,16 @@ std::unique_ptr<table> build_table(
   if (position_array) {
     size_type position_size = position_array->size();
     // build the null mask for position based on invalid entries in gather map
-    auto nullmask = explode_col_gather_map ? valid_if(
-                                               explode_col_gather_map->begin(),
-                                               explode_col_gather_map->end(),
-                                               [] __device__(auto i) { return i != InvalidIndex; },
-                                               stream,
-                                               mr)
-                                           : std::pair<rmm::device_buffer, size_type>{
-                                               rmm::device_buffer(0, stream), size_type{0}};
+    auto nullmask =
+      explode_col_gather_map
+        ? valid_if(
+            explode_col_gather_map->begin(),
+            explode_col_gather_map->end(),
+            [] __device__(auto i) { return i != InvalidIndex; },
+            stream,
+            mr)
+        : std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type>{
+            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), size_type{0}};
 
     columns.insert(columns.begin() + explode_column_idx,
                    std::make_unique<column>(data_type(type_to_id<size_type>()),
@@ -101,11 +106,12 @@ std::unique_ptr<table> build_table(
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type const explode_column_idx,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
-  rmm::device_uvector<size_type> gather_map(sliced_child.size(), stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -139,11 +145,12 @@ std::unique_ptr<table> explode(table_view const& input_table,
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type const explode_column_idx,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child = explode_col.get_sliced_child(stream);
-  rmm::device_uvector<size_type> gather_map(sliced_child.size(), stream);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), sliced_child.size(), cuda::no_init);
 
   // Sliced columns may require rebasing of the offsets.
   auto offsets = explode_col.offsets_begin();
@@ -154,7 +161,7 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
     }));
   auto counting_iter = cuda::counting_iterator<cudf::size_type>{0};
 
-  rmm::device_uvector<size_type> pos(sliced_child.size(), stream, mr);
+  rmm::device_uvector<size_type> pos(sliced_child.size(), stream, mr.get_output_mr());
 
   // This looks like an off-by-one bug, but what is going on here is that we need to reduce each
   // result from `lower_bound` by 1 to build the correct gather map. This can be accomplished by
@@ -190,7 +197,7 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type const explode_column_idx,
                                      bool include_position,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   lists_column_view explode_col{input_table.column(explode_column_idx)};
   auto sliced_child  = explode_col.get_sliced_child(stream);
@@ -198,7 +205,8 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
   auto offsets       = explode_col.offsets_begin();
 
   // number of nulls or empty lists found so far in the explode column
-  rmm::device_uvector<size_type> null_or_empty_offset(explode_col.size(), stream);
+  cuda::device_buffer<size_type> null_or_empty_offset(
+    stream, cudf::get_current_device_resource_ref(), explode_col.size(), cuda::no_init);
 
   auto null_or_empty = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0},
@@ -211,8 +219,15 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
                          null_or_empty + explode_col.size(),
                          null_or_empty_offset.begin());
 
-  auto null_or_empty_count =
-    null_or_empty_offset.size() > 0 ? null_or_empty_offset.back_element(stream) : 0;
+  size_type null_or_empty_count = 0;
+  if (!null_or_empty_offset.empty()) {
+    CUDF_CUDA_TRY(
+      cudf::detail::memcpy_async(&null_or_empty_count,
+                                 null_or_empty_offset.data() + null_or_empty_offset.size() - 1,
+                                 sizeof(size_type),
+                                 stream));
+    cudf::detail::sync_stream(stream);
+  }
   if (null_or_empty_count == 0) {
     // performance penalty to run the below loop if there are no nulls or empty lists.
     // run simple explode instead
@@ -222,9 +237,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
   auto gather_map_size = sliced_child.size() + null_or_empty_count;
 
-  rmm::device_uvector<size_type> gather_map(gather_map_size, stream);
-  rmm::device_uvector<size_type> explode_col_gather_map(gather_map_size, stream);
-  rmm::device_uvector<size_type> pos(include_position ? gather_map_size : 0, stream, mr);
+  cuda::device_buffer<size_type> gather_map(
+    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+  cuda::device_buffer<size_type> explode_col_gather_map(
+    stream, cudf::get_current_device_resource_ref(), gather_map_size, cuda::no_init);
+  rmm::device_uvector<size_type> pos(
+    include_position ? gather_map_size : 0, stream, mr.get_output_mr());
 
   // offsets + 1 here to skip the 0th offset, which removes a - 1 operation later.
   auto offsets_minus_one = cuda::transform_iterator(
@@ -290,12 +308,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  */
 std::unique_ptr<table> explode(table_view const& input_table,
                                size_type explode_column_idx,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -305,12 +323,12 @@ std::unique_ptr<table> explode(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_position(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  */
 std::unique_ptr<table> explode_position(table_view const& input_table,
                                         size_type explode_column_idx,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -320,12 +338,12 @@ std::unique_ptr<table> explode_position(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer(table_view const&, size_type, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  */
 std::unique_ptr<table> explode_outer(table_view const& input_table,
                                      size_type explode_column_idx,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,
@@ -335,12 +353,12 @@ std::unique_ptr<table> explode_outer(table_view const& input_table,
 
 /**
  * @copydoc cudf::explode_outer_position(table_view const&, size_type,
- * cuda::stream_ref, rmm::device_async_resource_ref)
+ * cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<table> explode_outer_position(table_view const& input_table,
                                               size_type explode_column_idx,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(input_table.column(explode_column_idx).type().id() == type_id::LIST,

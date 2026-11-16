@@ -5,6 +5,7 @@
 
 #include "hybrid_scan_common.hpp"
 
+#include "cudf/utilities/memory_resource.hpp"
 #include "tests/io/parquet_common.hpp"
 
 #include <cudf_test/column_wrapper.hpp>
@@ -15,6 +16,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -49,12 +51,27 @@ cudf::test::strings_column_wrapper constant_strings(cudf::size_type value)
 /**
  * @brief Fail for types other than duration or timestamp
  */
-template <typename T, CUDF_ENABLE_IF(not cudf::is_chrono<T>())>
+template <typename T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   static_assert(
-    cudf::is_chrono<T>(),
+    cudf::is_chrono<T>() or cudf::is_fixed_point<T>(),
     "Use testdata::descending<T>() to generate descending values for non-temporal types");
+}
+
+/**
+ * @brief Creates a fixed-point column wrapper with low cardinality descending values from 100 to
+ * -99
+ *
+ * @tparam T Fixed-point type
+ * @return Column wrapper
+ */
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
+{
+  auto elements = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return T((num_ordered_rows / 2 - i) / 100, numeric::scale_type{0}); });
+  return cudf::test::fixed_width_column_wrapper<T>(elements, elements + num_ordered_rows);
 }
 
 /**
@@ -63,7 +80,7 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Duration type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_duration<T>())>
+template <cudf::concepts::duration T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
@@ -77,7 +94,7 @@ cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
  * @tparam T Timestamp type
  * @return Column wrapper
  */
-template <typename T, CUDF_ENABLE_IF(cudf::is_timestamp<T>())>
+template <cudf::concepts::timestamp T>
 cudf::test::fixed_width_column_wrapper<T> descending_low_cardinality()
 {
   auto elements = cudf::detail::make_counting_transform_iterator(
@@ -118,7 +135,7 @@ std::unique_ptr<cudf::column> make_list_str_column(std::mt19937& gen,
     if (is_list_nullable) {
       return cudf::test::detail::make_null_mask(list_valids, list_valids + num_rows);
     } else {
-      return std::make_pair(rmm::device_buffer{}, 0);
+      return std::make_pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
     }
   }();
   return cudf::make_lists_column(
@@ -156,9 +173,8 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   std::vector<cudf::host_span<uint8_t const>> page_index_byte_spans;
   page_index_byte_spans.reserve(page_index_byte_ranges.size());
 
-  auto const page_index_buffers = cudf::io::parquet::fetch_page_indexes_to_host(
-    cudf::host_span<std::reference_wrapper<cudf::io::datasource> const>{inputs.datasource_refs},
-    cudf::host_span<cudf::io::parquet::byte_range_info const>{page_index_byte_ranges});
+  auto const page_index_buffers =
+    cudf::io::parquet::fetch_page_indexes_to_host(inputs.datasource_refs, page_index_byte_ranges);
   std::transform(page_index_buffers.begin(),
                  page_index_buffers.end(),
                  std::back_inserter(page_index_byte_spans),
@@ -201,7 +217,7 @@ multisource_device_data fetch_multisource_device_data(
     group_byte_ranges_by_source(byte_ranges_and_source_map, inputs.datasources.size());
   auto [buffers, per_source_spans, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
     inputs.datasource_refs,
-    cudf::host_span<std::vector<cudf::io::text::byte_range_info> const>{byte_ranges_per_source},
+    byte_ranges_per_source,
     cudf::io::parquet::io_submission_policy::SERIALIZE,
     stream,
     mr);
@@ -236,7 +252,7 @@ namespace {
 // below forward to it.
 template <typename ReaderType, typename InputType>
 auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
-                                              ReaderType const& reader,
+                                              ReaderType& reader,
                                               cudf::io::parquet_reader_options const& options,
                                               cuda::stream_ref stream,
                                               rmm::device_async_resource_ref mr)
@@ -247,7 +263,11 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
   if constexpr (std::is_same_v<ReaderType,
                                cudf::io::parquet::experimental::hybrid_scan_multifile>) {
     auto const dict_pages = reader.dictionary_pages_byte_ranges(row_group_indices, options);
-    CUDF_EXPECTS(dict_pages.first.size() > 0, "No dictionary page byte ranges found");
+
+    // Return early if dictionary pages cannot prune any row groups with this filter
+    if (dict_pages.first.empty()) {
+      return reader.filter_row_groups_with_dictionary_pages({}, row_group_indices, options, stream);
+    }
 
     auto const dict_page_ranges_per_source =
       group_byte_ranges_by_source(dict_pages, inputs.datasources.size());
@@ -271,7 +291,11 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
   } else {
     auto const dict_page_byte_ranges =
       reader.dictionary_pages_byte_ranges(row_group_indices, options);
-    CUDF_EXPECTS(dict_page_byte_ranges.size() > 0, "No dictionary page byte ranges found");
+
+    // Return early if dictionary pages cannot prune any row groups with this filter
+    if (dict_page_byte_ranges.empty()) {
+      return reader.filter_row_groups_with_dictionary_pages({}, row_group_indices, options, stream);
+    }
 
     [[maybe_unused]] auto [dict_page_buffers, dict_page_data, dict_page_tasks] =
       cudf::io::parquet::fetch_byte_ranges_to_device_async(
@@ -291,7 +315,7 @@ auto filter_row_groups_with_dictionaries_impl(InputType& inputs,
 
 std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
   cudf::io::datasource& datasource,
-  cudf::io::parquet::experimental::hybrid_scan_reader const& reader,
+  cudf::io::parquet::experimental::hybrid_scan_reader& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
@@ -301,7 +325,7 @@ std::vector<cudf::size_type> filter_row_groups_with_dictionaries(
 
 std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
   multifile_inputs const& inputs,
-  cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
+  cudf::io::parquet::experimental::hybrid_scan_multifile& reader,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
@@ -325,7 +349,7 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
   auto col0 = testdata::ascending<T>();
   auto col1 = []() {
-    if constexpr (cudf::is_chrono<T>()) {
+    if constexpr (cudf::is_chrono<T>() or cudf::is_fixed_point<T>()) {
       return descending_low_cardinality<T>();
     } else {
       return testdata::descending<T>();
@@ -354,8 +378,12 @@ std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_s
 
     auto const make_null_mask = [stream](auto begin, auto end) {
       auto [null_mask, null_count] = cudf::test::detail::make_null_mask_vector(begin, end);
-      auto d_mask                  = rmm::device_buffer{
-        null_mask.data(), cudf::bitmask_allocation_size_bytes(cudf::distance(begin, end)), stream};
+      auto const* data             = null_mask.data();
+      auto d_mask                  = cuda::device_buffer<cudf::bitmask_type>{
+        stream,
+        cudf::get_current_device_resource_ref(),
+        data,
+        data + cudf::bitmask_allocation_size_words(cudf::distance(begin, end))};
       stream.sync();
       return std::pair{std::move(d_mask), null_count};
     };
@@ -462,6 +490,9 @@ INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_us);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
 INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::string_view);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal32);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal64);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal128);
 
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT
 #undef INSTANTIATE_CREATE_PARQUET_WITH_STATS

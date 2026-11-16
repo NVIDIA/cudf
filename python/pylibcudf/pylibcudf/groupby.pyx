@@ -192,7 +192,7 @@ cdef class GroupBy:
         Returns
         -------
         Tuple[Table, List[Table, ...]]
-            A tuple whose first element is the unique keys and whose second
+            A tuple whose first element is the distinct keys and whose second
             element is a table of aggregation results. One table is returned
             for each aggregation request, with the columns corresponding to the
             sequence of aggregations in the request.
@@ -236,7 +236,7 @@ cdef class GroupBy:
         Returns
         -------
         Tuple[Table, List[Table, ...]]
-            A tuple whose first element is the unique keys and whose second
+            A tuple whose first element is the distinct keys and whose second
             element is a table of aggregation results. One table is returned
             for each aggregation request, with the columns corresponding to the
             sequence of aggregations in the request.

@@ -129,14 +129,14 @@ TEST_F(SortListsInt, Empty)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), l);
   }
   {
-    LCW<T> l{LCW<T>{}};
+    LCW<T> l{{}};
     auto const [sorted_lists, stable_sorted_lists] =
       generate_sorted_lists(cudf::lists_column_view{l}, {}, {});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), l);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), l);
   }
   {
-    LCW<T> l{LCW<T>{}, LCW<T>{}};
+    LCW<T> l{{}, {}};
     auto const [sorted_lists, stable_sorted_lists] =
       generate_sorted_lists(cudf::lists_column_view{l}, {}, {});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), l);
@@ -181,10 +181,10 @@ TEST_F(SortListsInt, NestedListElement)
   using T = int;
   // Column of LIST<LIST<int>>: each row's inner lists are reordered as whole elements. The third
   // row's inner lists tie on their first element, so ordering falls through to the second.
-  LCW<T> input{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+  LCW<T> input{{{3, 1}, {2, 0}}, {{5, 5}, {4, 9}}, {{1, 3}, {1, 2}}};
   {
     // Ascending.
-    LCW<T> expected{LCW<T>{{2, 0}, {3, 1}}, LCW<T>{{4, 9}, {5, 5}}, LCW<T>{{1, 2}, {1, 3}}};
+    LCW<T> expected{{{2, 0}, {3, 1}}, {{4, 9}, {5, 5}}, {{1, 2}, {1, 3}}};
     auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
       cudf::lists_column_view{input}, cudf::order::ASCENDING, cudf::null_order::AFTER);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);
@@ -192,7 +192,7 @@ TEST_F(SortListsInt, NestedListElement)
   }
   {
     // Descending reverses each row's ascending order.
-    LCW<T> expected{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+    LCW<T> expected{{{3, 1}, {2, 0}}, {{5, 5}, {4, 9}}, {{1, 3}, {1, 2}}};
     auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
       cudf::lists_column_view{input}, cudf::order::DESCENDING, cudf::null_order::AFTER);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);
@@ -209,17 +209,33 @@ TEST_F(SortListsInt, ListOfStructElement)
   cudf::test::fixed_width_column_wrapper<int> in_f1{30, 10};
   cudf::test::structs_column_wrapper in_structs{{in_f0, in_f1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> in_inner_off{0, 1, 2};
-  auto in_inner = cudf::make_lists_column(2, in_inner_off.release(), in_structs.release(), 0, {});
+  auto in_inner = cudf::make_lists_column(2,
+                                          in_inner_off.release(),
+                                          in_structs.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> in_outer_off{0, 2};
-  auto in_outer = cudf::make_lists_column(1, in_outer_off.release(), std::move(in_inner), 0, {});
+  auto in_outer = cudf::make_lists_column(1,
+                                          in_outer_off.release(),
+                                          std::move(in_inner),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<int> ex_f0{1, 3};
   cudf::test::fixed_width_column_wrapper<int> ex_f1{10, 30};
   cudf::test::structs_column_wrapper ex_structs{{ex_f0, ex_f1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_inner_off{0, 1, 2};
-  auto ex_inner = cudf::make_lists_column(2, ex_inner_off.release(), ex_structs.release(), 0, {});
+  auto ex_inner = cudf::make_lists_column(2,
+                                          ex_inner_off.release(),
+                                          ex_structs.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_outer_off{0, 2};
-  auto ex_outer = cudf::make_lists_column(1, ex_outer_off.release(), std::move(ex_inner), 0, {});
+  auto ex_outer = cudf::make_lists_column(1,
+                                          ex_outer_off.release(),
+                                          std::move(ex_inner),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const [sorted_lists, stable_sorted_lists] =
     generate_sorted_lists(cudf::lists_column_view{in_outer->view()}, {}, {});
@@ -236,13 +252,21 @@ TEST_F(SortListsInt, StructOfListElement)
   cudf::test::lists_column_wrapper<int, int32_t> in_f1{{9, 0}, {8, 7}};
   cudf::test::structs_column_wrapper in_structs{{in_f0, in_f1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> in_off{0, 2};
-  auto in_list = cudf::make_lists_column(1, in_off.release(), in_structs.release(), 0, {});
+  auto in_list = cudf::make_lists_column(1,
+                                         in_off.release(),
+                                         in_structs.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<int> ex_f0{1, 2};
   cudf::test::lists_column_wrapper<int, int32_t> ex_f1{{8, 7}, {9, 0}};
   cudf::test::structs_column_wrapper ex_structs{{ex_f0, ex_f1}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> ex_off{0, 2};
-  auto ex_list = cudf::make_lists_column(1, ex_off.release(), ex_structs.release(), 0, {});
+  auto ex_list = cudf::make_lists_column(1,
+                                         ex_off.release(),
+                                         ex_structs.release(),
+                                         0,
+                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto const [sorted_lists, stable_sorted_lists] =
     generate_sorted_lists(cudf::lists_column_view{in_list->view()}, {}, {});

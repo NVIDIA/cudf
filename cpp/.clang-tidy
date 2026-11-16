@@ -15,8 +15,6 @@
 #     Our tests use int flags for validity masks extensively and we prefer that
 # modernize-use-constraints:
 #     New check that requires a C++20 feature
-# modernize-use-ranges:
-#     New check that requires a C++20 feature
 # modernize-use-designated-initializers:
 #     New check that requires a C++20 feature
 # clang-analyzer-cplusplus.NewDeleteLeaks:
@@ -41,7 +39,6 @@ Checks:
        -modernize-return-braced-init-list,
        -modernize-use-bool-literals,
        -modernize-use-constraints,
-       -modernize-use-ranges,
        -modernize-use-designated-initializers,
        clang-analyzer-*,
        -clang-analyzer-cplusplus.NewDeleteLeaks,

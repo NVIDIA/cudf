@@ -1199,7 +1199,12 @@ def test_series_compare_nulls(comparison_op, ltype, rtype):
     rmask = ~rser.isnull()
 
     got = comparison_op(lser, rser)
-    if ltype in {"datetime64[ms]", "datetime64[ns]", "timedelta64[s]"}:
+    if ltype in {
+        "datetime64[ms]",
+        "datetime64[ns]",
+        "timedelta64[s]",
+        "str",
+    }:
         expect = comparison_op(lser.to_pandas(), rser.to_pandas())
     else:
         expect_mask = np.logical_and(lmask, rmask)
@@ -1256,6 +1261,38 @@ def test_str_series_compare_num_reflected(comparison_op, cmp_scalar):
         expect = comparison_op(cmp_scalar, str_series_cmp_data)
         got = comparison_op(cmp_scalar, cudf.Series(str_series_cmp_data))
 
+        assert_eq(expect, got)
+
+
+def test_str_nan_semantics_comparison_fills_nulls(comparison_op):
+    # GH#24393 — comparison operators on dtype="str" (NaN-semantics) should
+    # fill null rows with False (or True for !=), matching str.contains etc.
+    data = ["1", None, ""]
+    ps = pd.Series(data)  # pandas default string dtype uses NaN semantics
+    cs = cudf.Series(data)  # cudf "str" dtype
+
+    expect = comparison_op(ps, "").tolist()
+    got = comparison_op(cs, "").to_arrow().to_pylist()
+    assert got == expect, (
+        f"{comparison_op.__name__}: expected {expect}, got {got}"
+    )
+
+    # Second inconsistency from the issue: mixed-null column should behave
+    # the same as all-null column — no nulls in the result.
+    mixed = cudf.Series([None, None, "x"], dtype="str")
+    result = comparison_op(mixed, "").to_arrow().to_pylist()
+    assert None not in result, (
+        f"{comparison_op.__name__} on mixed-null str Series produced nulls: {result}"
+    )
+
+
+def test_str_comparison_mixed_null_semantics(comparison_op):
+    a = pd.Series(["a", None, "c"], dtype="str")
+    b = pd.Series([None, "b", "c"], dtype="string")
+
+    for lhs, rhs in [(a, b), (b, a)]:
+        expect = comparison_op(lhs, rhs)
+        got = comparison_op(cudf.Series(lhs), cudf.Series(rhs))
         assert_eq(expect, got)
 
 
@@ -2940,6 +2977,9 @@ def test_column_null_scalar_comparison(
         "datetime64"
     ) or all_supported_types_as_str.startswith("timedelta64"):
         assert not result.isnull().all()
+    elif all_supported_types_as_str == "str":
+        # NaN-semantics strings compare null as False (True for !=)
+        assert_eq(comparison_op(sr.to_pandas(), null_scalar), result)
     else:
         assert result.isnull().all()
 
@@ -3298,3 +3338,38 @@ def test_arrow_backed_unsigned_subtract_overflow():
     gother = cudf.from_pandas(other)
     with pytest.raises(pa.ArrowInvalid):
         gs - gother
+
+
+@pytest.mark.parametrize("divisor", [float("inf"), float("-inf"), -1e18, 1e18])
+def test_float_pymod_edge_cases(divisor):
+    val = [1.0, -1.0, 2.5, 0.0, -0.0]
+    psr = pd.Series(val)
+    gsr = cudf.Series(val)
+    res_p = psr % divisor
+    res_g = gsr % divisor
+    assert_eq(res_p, res_g)
+    assert_eq(psr.mod(divisor), gsr.mod(divisor))
+    res_rp = divisor % psr
+    res_rg = divisor % gsr
+    assert_eq(res_rp, res_rg)
+    mask = ~np.isnan(res_rp.to_numpy())
+    np.testing.assert_equal(
+        np.signbit(res_rg.to_numpy()[mask]),
+        np.signbit(res_rp.to_numpy()[mask]),
+    )
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )
+
+
+def test_float_pymod_series():
+    psr1 = pd.Series([1.0, -1.0, 1.0, -1.0])
+    psr2 = pd.Series([float("inf"), float("inf"), -1e18, -1e18])
+    gsr1 = cudf.from_pandas(psr1)
+    gsr2 = cudf.from_pandas(psr2)
+    res_p = psr1 % psr2
+    res_g = gsr1 % gsr2
+    assert_eq(res_p, res_g)
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )

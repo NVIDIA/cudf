@@ -18,10 +18,18 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
+#include <cuda/std/optional>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/copy.h>
+#include <thrust/transform.h>
 
-struct ColumnDeviceViewTest : public cudf::test::BaseFixture {};
+struct ColumnDeviceViewTest : public cudf::test::BaseFixture {
+  void test_mutable_nullable_element();
+  void test_noncanonical_bool();
+  void test_nullable_noncanonical_bool();
+};
 
 TEST_F(ColumnDeviceViewTest, Sample)
 {
@@ -57,6 +65,115 @@ TEST_F(ColumnDeviceViewTest, MismatchingType)
                             output_device_view->begin<int64_t>()),
                cudf::logic_error);
 }
+
+void ColumnDeviceViewTest::test_mutable_nullable_element()
+{
+  auto const stream = cudf::get_default_stream();
+  auto input =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{99, 10, 20, 30, 40, 99},
+                                                    {false, true, false, true, false, true}}
+      .release();
+  auto const view = input->mutable_view();
+  cudf::mutable_column_view const sliced{view.type(), 4, view.head(), view.null_mask(), 2, 1};
+  auto const device_view = cudf::mutable_column_device_view::create(sliced, stream);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> const expected{10, -1, 30, -1};
+  auto output        = cudf::allocate_like(expected);
+  auto const indices = cuda::counting_iterator<cudf::size_type>{0};
+  thrust::transform(
+    rmm::exec_policy_nosync(stream),
+    indices,
+    indices + sliced.size(),
+    output->mutable_view().data<int32_t>(),
+    [col = *device_view] __device__(auto i) {
+      auto const value = col.nullable_element<int32_t>(i);
+      static_assert(cuda::std::is_same_v<decltype(value), cuda::std::optional<int32_t> const>);
+      return value.value_or(-1);
+    });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+}
+
+void ColumnDeviceViewTest::test_noncanonical_bool()
+{
+  auto const stream = cudf::get_default_stream();
+  // Construct byte storage directly so the bool wrapper does not normalize the input.
+  cudf::test::fixed_width_column_wrapper<uint8_t> const storage{255, 0, 1, 2, 255};
+  cudf::column_view const bytes{storage};
+  cudf::column_view const input{
+    cudf::data_type{cudf::type_id::BOOL8}, bytes.size(), bytes.head<uint8_t>(), nullptr, 0};
+  auto const sliced      = cudf::slice(input, {1, 5}).front();
+  auto const device_view = cudf::column_device_view::create(sliced, stream);
+
+  // Store results as bytes so invalid bool representations cannot hide in bool comparisons.
+  cudf::test::fixed_width_column_wrapper<uint8_t> const expected{0, 1, 1, 1};
+  auto output        = cudf::allocate_like(expected);
+  auto const indices = cuda::counting_iterator<cudf::size_type>{0};
+  thrust::transform(
+    rmm::exec_policy_nosync(stream),
+    indices,
+    indices + sliced.size(),
+    output->mutable_view().data<uint8_t>(),
+    [col = *device_view] __device__(auto i) { return static_cast<uint8_t>(col.element<bool>(i)); });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+
+  thrust::transform(rmm::exec_policy_nosync(stream),
+                    indices,
+                    indices + sliced.size(),
+                    output->mutable_view().data<uint8_t>(),
+                    [col = *device_view] __device__(auto i) {
+                      return static_cast<uint8_t>(col.element<bool const>(i));
+                    });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+
+  thrust::copy(rmm::exec_policy_nosync(stream),
+               device_view->begin<bool>(),
+               device_view->end<bool>(),
+               output->mutable_view().data<uint8_t>());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+}
+
+void ColumnDeviceViewTest::test_nullable_noncanonical_bool()
+{
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<uint8_t> const storage{
+    {255, 0, 1, 2, 255, 255}, {false, true, true, true, true, false}};
+  cudf::column_view const bytes{storage};
+  cudf::column_view const input{cudf::data_type{cudf::type_id::BOOL8},
+                                bytes.size(),
+                                bytes.head<uint8_t>(),
+                                bytes.null_mask(),
+                                bytes.null_count()};
+  auto const sliced      = cudf::slice(input, {1, 6}).front();
+  auto const device_view = cudf::column_device_view::create(sliced, stream);
+
+  // Use 2 for nulls, distinct from the canonical bool bytes 0 and 1.
+  cudf::test::fixed_width_column_wrapper<uint8_t> const expected{0, 1, 1, 1, 2};
+  auto output        = cudf::allocate_like(expected);
+  auto const indices = cuda::counting_iterator<cudf::size_type>{0};
+  thrust::transform(rmm::exec_policy_nosync(stream),
+                    indices,
+                    indices + sliced.size(),
+                    output->mutable_view().data<uint8_t>(),
+                    [col = *device_view] __device__(auto i) {
+                      auto const value = col.nullable_element<bool>(i);
+                      return value.has_value() ? static_cast<uint8_t>(*value) : uint8_t{2};
+                    });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+
+  auto const begin = device_view->optional_begin<bool>(cudf::nullate::YES{});
+  thrust::transform(rmm::exec_policy_nosync(stream),
+                    begin,
+                    begin + sliced.size(),
+                    output->mutable_view().data<uint8_t>(),
+                    [] __device__(auto value) {
+                      return value.has_value() ? static_cast<uint8_t>(*value) : uint8_t{2};
+                    });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
+}
+
+TEST_F(ColumnDeviceViewTest, NonCanonicalBool) { test_noncanonical_bool(); }
+
+TEST_F(ColumnDeviceViewTest, NullableNonCanonicalBool) { test_nullable_noncanonical_bool(); }
 
 TEST_F(ColumnDeviceViewTest, ExplicitMemoryResourceControl)
 {

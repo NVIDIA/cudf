@@ -1,9 +1,7 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-
-#include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -14,6 +12,8 @@
 #include <cudf/groupby.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 
+#include <utility>
+
 using K = int32_t;  // Key type.
 
 template <typename V>
@@ -22,7 +22,6 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
   cudf::test::fixed_width_column_wrapper<V> vals{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
   void test_groupby(std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                    force_use_sort_impl use_sort        = force_use_sort_impl::NO,
                     cudf::null_policy include_null_keys = cudf::null_policy::INCLUDE,
                     cudf::sorted keys_are_sorted        = cudf::sorted::NO)
   {
@@ -30,10 +29,6 @@ struct groupby_stream_test : public cudf::test::BaseFixture {
       auto requests = std::vector<cudf::groupby::aggregation_request>{};
       requests.push_back(cudf::groupby::aggregation_request{});
       requests.front().values = vals;
-      if (use_sort == force_use_sort_impl::YES) {
-        requests.front().aggregations.push_back(
-          cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
-      }
       requests.front().aggregations.push_back(std::move(agg));
       return requests;
     }();
@@ -54,11 +49,28 @@ TYPED_TEST(groupby_stream_test, test_count)
   };
 
   this->test_groupby(make_count_agg());
-  this->test_groupby(make_count_agg(), force_use_sort_impl::YES);
   this->test_groupby(make_count_agg(cudf::null_policy::INCLUDE));
 }
 
+TYPED_TEST(groupby_stream_test, test_nth_element)
+{
+  this->test_groupby(cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
+}
+
 struct GroupbyTest : public cudf::test::BaseFixture {};
+
+TEST_F(GroupbyTest, StreamingFinalizeAndRelease)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> keys{1, 1, 2};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2, 3};
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back({1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()});
+  std::vector<cudf::size_type> key_indices{0};
+
+  cudf::groupby::streaming_groupby groupby{key_indices, requests, 3};
+  groupby.aggregate(cudf::table_view{{keys, values}}, cudf::test::get_default_stream());
+  static_cast<void>(std::move(groupby).finalize_and_release(cudf::test::get_default_stream()));
+}
 
 TEST_F(GroupbyTest, Scan)
 {
@@ -75,7 +87,6 @@ TEST_F(GroupbyTest, Scan)
   requests[0].aggregations.push_back(std::move(agg));
 
   cudf::groupby::groupby gb_obj(cudf::table_view({keys}));
-  // cudf::groupby scan uses sort implementation
   auto result = gb_obj.scan(requests, cudf::test::get_default_stream());
 }
 

@@ -12,109 +12,109 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cstddef>
+#include <optional>
+
 namespace cudf::io::parquet::detail {
 
 namespace {
 
 /**
- * @brief Returns whether a comparison operator can prune row groups via statistics
- *
- * Some Parquet writers exclude `NaN`s from stats, so a floating-point chunk holding a NaN is
- * indistinguishable from one that does not. `col != val` is the only comparison leaf a NaN
- * satisfies, so it is the only one we cannot prune.
+ * @brief Returns whether a comparison operator can prune row groups or pages via statistics
  *
  * @param op The comparison operator
- * @param dtype The data type of the column being compared
- * @return true if the comparison can be used to prune row groups
+ * @return True if the comparison can be used to prune row groups or pages
  */
-[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op, cudf::data_type dtype)
+[[nodiscard]] bool is_prunable_comparison(ast::ast_operator op)
 {
   using cudf::ast::ast_operator;
   switch (op) {
     case ast_operator::EQUAL: [[fallthrough]];
+    case ast_operator::NOT_EQUAL: [[fallthrough]];
     case ast_operator::LESS: [[fallthrough]];
     case ast_operator::LESS_EQUAL: [[fallthrough]];
     case ast_operator::GREATER: [[fallthrough]];
     case ast_operator::GREATER_EQUAL: return true;
-    case ast_operator::NOT_EQUAL: return not cudf::is_floating_point(dtype);
     default: return false;
   }
 }
 
 }  // namespace
 
-stats_columns_collector::stats_columns_collector(std::span<cudf::data_type const> output_dtypes)
-  : _output_dtypes(output_dtypes)
+bool is_unordered_int96(FileMetaData const& metadata, Type physical_type, std::size_t leaf_idx)
 {
-  _columns_mask.resize(_output_dtypes.size(), false);
+  if (physical_type != Type::INT96) { return false; }
+  // Ignoring min/max is always safe, so treat missing column orders as unordered
+  if (not metadata.column_orders.has_value() or leaf_idx >= metadata.column_orders->size()) {
+    return true;
+  }
+  return (*metadata.column_orders)[leaf_idx].type != ColumnOrder::INT96_TIMESTAMP_ORDER;
 }
 
 stats_columns_collector::stats_columns_collector(ast::expression const& expr,
                                                  std::span<cudf::data_type const> output_dtypes)
-  : stats_columns_collector(output_dtypes)
+  : parquet_expression_simplifier{output_dtypes}
 {
-  expr.accept(*this);
+  // Return an empty mask if statistics cannot prune anything with this filter
+  auto const simplified_expr = simplify_expr(expr);
+  if (not simplified_expr.has_value()) { return; }
+
+  _columns_mask.resize(_output_dtypes.size(), false);
+
+  // Walk the simplified tree and collect columns references
+  collect_surviving_predicates(simplified_expr.value().get());
 }
 
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::literal const& expr)
+void stats_columns_collector::collect_surviving_predicates(ast::expression const& simplified_expr)
 {
-  return expr;
-}
-
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_reference const& expr)
-{
-  CUDF_EXPECTS(expr.get_table_source() == ast::table_reference::LEFT,
-               "Statistics AST supports only left table");
-  CUDF_EXPECTS(static_cast<size_t>(expr.get_column_index()) < _output_dtypes.size(),
-               "Column index cannot be more than number of columns in the table");
-  return expr;
-}
-
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::column_name_reference const& expr)
-{
-  CUDF_FAIL("Column name reference is not supported in statistics AST");
-}
-
-std::reference_wrapper<ast::expression const> stats_columns_collector::visit(
-  ast::operation const& expr)
-{
-  using cudf::ast::ast_operator;
-
-  auto const input_op       = expr.get_operator();
-  auto const operator_arity = cudf::ast::detail::ast_operator_arity(input_op);
-
-  if (operator_arity == 1) {
-    auto const [kind, col_ref] = extract_unary_operand(expr);
-
-    if (kind == operand_kind::COLUMN_REF) {
-      col_ref->accept(*this);
-      if (input_op == ast_operator::IS_NULL) { _columns_mask[col_ref->get_column_index()] = true; }
-    } else {
-      std::ignore = visit_operands(expr.get_operands());
-    }
-    return expr;
+  if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&simplified_expr);
+      col_ref != nullptr) {
+    _columns_mask[col_ref->get_column_index()] = true;
+    return;
   }
-
-  // Binary operation
-  auto const [op, lhs_kind, rhs_kind, col_ref, _] = extract_binary_operands(expr);
-
-  if (lhs_kind == operand_kind::COLUMN_REF and rhs_kind == operand_kind::LITERAL) {
-    col_ref->accept(*this);
-    auto const col_index = col_ref->get_column_index();
-    if (is_prunable_comparison(op, _output_dtypes[col_index])) { _columns_mask[col_index] = true; }
-  } else {
-    // Visit the operands and ignore any output as we only want to build the column mask
-    std::ignore = visit_operands(expr.get_operands());
+  for (auto const& operand : dynamic_cast<ast::operation const&>(simplified_expr).get_operands()) {
+    collect_surviving_predicates(operand.get());
   }
-  return expr;
+}
+
+simplified_expression_opt stats_columns_collector::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const&)
+{
+  if (not is_prunable_comparison(op)) { return std::nullopt; }
+  return col_ref;
+}
+
+simplified_expression_opt stats_columns_collector::simplify_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
+{
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  return col_ref;
+}
+
+simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
+  ast::ast_operator op, ast::column_reference const& col_ref)
+{
+  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
+  return col_ref;
+}
+
+simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
+{
+  auto const negated_op = transform_operator<operator_transform::NEGATE>(op);
+  if (not negated_op.has_value()) { return std::nullopt; }
+  return simplify_comparison(*negated_op, col_ref, literal);
 }
 
 thrust::host_vector<bool> stats_columns_collector::get_stats_columns_mask() &&
 {
   return std::move(_columns_mask);
+}
+
+std::optional<bool> has_nans(std::optional<int64_t> nan_count)
+{
+  if (nan_count.value_or(-1) < 0) { return std::nullopt; }
+  return nan_count.value() > 0;
 }
 
 stats_expression_converter::stats_expression_converter(
@@ -143,68 +143,92 @@ ast::expression const& stats_expression_converter::push_non_null_guard(
   return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_AND, not_all_null, stats_expr});
 }
 
-simplified_expression_opt stats_expression_converter::simplify_comparison(
-  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal_ref)
+ast::expression const& stats_expression_converter::push_nan_guard(size_type col_index,
+                                                                  ast::expression const& literal,
+                                                                  ast::expression const& stats_expr)
 {
   using cudf::ast::ast_operator;
 
-  auto const col_index = col_ref.get_column_index();
+  if (not cudf::is_floating_point(_output_dtypes[col_index])) { return stats_expr; }
 
-  // Some Parquet writers exclude `NaN`s from stats, so we can't reliably prune row groups for
-  // columns that may contain them.
-  if (not is_prunable_comparison(op, _output_dtypes[col_index])) { return std::nullopt; }
+  // A `NaN` literal satisfies the predicate for every non-null value, which `lit != lit` detects
+  auto const& is_nan_lit = _tree.push(ast::operation{ast_operator::NOT_EQUAL, literal, literal});
+  auto const& has_nan    = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 3});
+  auto const& nan_matches =
+    _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, is_nan_lit, has_nan});
 
-  auto const& literal = _tree.push(literal_ref);
+  // Null-aware so that a chunk known to be NaN-free is decided by `stats_expr` alone, while one
+  // whose NaN count is unknown is always kept.
+  return _tree.push(ast::operation{ast_operator::NULL_LOGICAL_OR, nan_matches, stats_expr});
+}
 
-  switch (op) {
-    /* transform to stats conditions
-    col == val --> vmin <= val && vmax >= val
-    col != val --> vmin != vmax || vmax != val
-    col >  val --> vmax > val
-    col <  val --> vmin < val
-    col >= val --> vmax >= val
-    col <= val --> vmin <= val
-    */
-    case ast_operator::EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // The two halves are separately optional in the statistics, so they are combined null-aware
-      // to keep whichever one is present decisive.
-      auto const& in_range = _tree.push(
-        ast::operation{ast_operator::NULL_LOGICAL_AND,
-                       _tree.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
-                       _tree.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
-      // An all-null chunk has no min or max, so this range test is unknown there and would keep
-      // the chunk. The guard makes it prune instead.
-      return push_non_null_guard(col_index, in_range);
+simplified_expression_opt stats_expression_converter::simplify_comparison(
+  ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal_ref)
+{
+  if (not is_prunable_comparison(op)) { return std::nullopt; }
+  return push_comparison(
+    op, col_ref.get_column_index(), literal_ref, op == ast::ast_operator::NOT_EQUAL);
+}
+
+ast::expression const& stats_expression_converter::push_comparison(ast::ast_operator op,
+                                                                   size_type col_index,
+                                                                   ast::literal const& literal_ref,
+                                                                   bool nan_satisfies)
+{
+  using cudf::ast::ast_operator;
+
+  auto const& literal    = _tree.push(literal_ref);
+  auto const& stats_expr = [&]() -> ast::expression const& {
+    switch (op) {
+      /* transform to stats conditions
+      col == val --> vmin <= val && vmax >= val
+      col != val --> vmin != vmax || vmax != val
+      col >  val --> vmax > val
+      col <  val --> vmin < val
+      col >= val --> vmax >= val
+      col <= val --> vmin <= val
+      */
+      case ast_operator::EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        // The two halves are separately optional in the statistics, so they are combined
+        // null-aware to keep whichever one is present decisive.
+        return _tree.push(
+          ast::operation{ast_operator::NULL_LOGICAL_AND,
+                         _tree.push(ast::operation{ast_operator::GREATER_EQUAL, vmax, literal}),
+                         _tree.push(ast::operation{ast_operator::LESS_EQUAL, vmin, literal})});
+      }
+      case ast_operator::NOT_EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        // Null-aware for the same reason as the range test above: either half can be the one the
+        // statistics carry.
+        return _tree.push(
+          ast::operation{ast_operator::NULL_LOGICAL_OR,
+                         _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
+                         _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
+      }
+      case ast_operator::LESS: [[fallthrough]];
+      case ast_operator::LESS_EQUAL: {
+        auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
+        return _tree.push(ast::operation{op, vmin, literal});
+      }
+      case ast_operator::GREATER: [[fallthrough]];
+      case ast_operator::GREATER_EQUAL: {
+        auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
+        return _tree.push(ast::operation{op, vmax, literal});
+      }
+      default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
     }
-    case ast_operator::NOT_EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // Null-aware for the same reason as the range test above: either half can be the one the
-      // statistics carry.
-      auto const& outside_range = _tree.push(
-        ast::operation{ast_operator::NULL_LOGICAL_OR,
-                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmin, vmax}),
-                       _tree.push(ast::operation{ast_operator::NOT_EQUAL, vmax, literal})});
-      // A null does not satisfy `!=` either, and an all-null chunk has no min or max to make this
-      // test decisive, so the guard prunes it.
-      return push_non_null_guard(col_index, outside_range);
-    }
-    case ast_operator::LESS: [[fallthrough]];
-    case ast_operator::LESS_EQUAL: {
-      auto const& vmin = _tree.push(ast::column_reference{col_index * stats_cols_per_column});
-      // An all-null chunk has no min, leaving this test unknown, so the guard prunes it.
-      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmin, literal}));
-    }
-    case ast_operator::GREATER: [[fallthrough]];
-    case ast_operator::GREATER_EQUAL: {
-      auto const& vmax = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 1});
-      // An all-null chunk has no max, leaving this test unknown, so the guard prunes it.
-      return push_non_null_guard(col_index, _tree.push(ast::operation{op, vmax, literal}));
-    }
-    default: CUDF_UNREACHABLE("Non-prunable operator should not reach stats conversion");
-  }
+  }();
+
+  // A `NaN` satisfies `!=` and negated ordered comparisons but is excluded from the min and max, so
+  // a chunk that may hold one is kept.
+  auto const& nan_guarded =
+    nan_satisfies ? push_nan_guard(col_index, literal, stats_expr) : stats_expr;
+  // A null satisfies no comparison, and an all-null chunk has no min or max to make the test
+  // decisive, so the non-null guard prunes it.
+  return push_non_null_guard(col_index, nan_guarded);
 }
 
 simplified_expression_opt stats_expression_converter::simplify_unary_op(
@@ -232,13 +256,15 @@ simplified_expression_opt stats_expression_converter::simplify_negated_unary_op(
 simplified_expression_opt stats_expression_converter::simplify_negated_comparison(
   ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal)
 {
-  // A comparison cannot be complemented when the column may hold a `NaN`: IEEE-754 makes every
-  // ordered comparison with a NaN false, so `NOT(col < val)` is true where `col >= val` is not.
-  if (cudf::is_floating_point(_output_dtypes[col_ref.get_column_index()])) { return std::nullopt; }
-
   auto const negated_op = transform_operator<operator_transform::NEGATE>(op);
-  if (not negated_op.has_value()) { return std::nullopt; }
-  return simplify_comparison(*negated_op, col_ref, literal);
+  if (not negated_op.has_value() or not is_prunable_comparison(*negated_op)) {
+    return std::nullopt;
+  }
+  // IEEE-754 makes every ordered comparison with a `NaN` false, so a `NaN` value or literal
+  // satisfies `NOT(col < val)` but not `col >= val`. Equality complements exactly, so only
+  // `NOT(col == val)`, i.e. `col != val`, is satisfied by a `NaN` among those.
+  return push_comparison(
+    *negated_op, col_ref.get_column_index(), literal, *negated_op != ast::ast_operator::EQUAL);
 }
 
 simplified_expression_opt stats_expression_converter::get_stats_expr() const { return _stats_expr; }

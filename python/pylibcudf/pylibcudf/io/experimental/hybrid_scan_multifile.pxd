@@ -13,7 +13,11 @@ from pylibcudf.libcudf.io.hybrid_scan_multifile cimport (
 from pylibcudf.libcudf.types cimport size_type
 
 
-cdef vector[vector[size_type]] _get_row_group_indices(object row_group_indices) except *
+cdef class RowGroupIndices:
+    cdef vector[vector[size_type]] c_obj
+
+    @staticmethod
+    cdef RowGroupIndices from_libcudf(vector[vector[size_type]] indices)
 
 
 cdef class HybridScanMultiFile:

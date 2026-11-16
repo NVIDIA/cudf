@@ -32,8 +32,9 @@ and concatenate them to the input-IR node using ``HConcat``.
 from __future__ import annotations
 
 import operator
+import typing
 from functools import reduce
-from typing import TYPE_CHECKING, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 import polars as pl
 
@@ -44,19 +45,21 @@ from cudf_polars.dsl.expressions.aggregation import Agg
 from cudf_polars.dsl.expressions.base import Col, ExecutionContext, NamedExpr
 from cudf_polars.dsl.expressions.binaryop import BinOp
 from cudf_polars.dsl.expressions.literal import Literal
-from cudf_polars.dsl.expressions.rolling import GroupedWindow
+from cudf_polars.dsl.expressions.rolling import FixedSizeRollingWindow, GroupedWindow
 from cudf_polars.dsl.expressions.ternary import Ternary
 from cudf_polars.dsl.expressions.unary import Cast, Len, UnaryFunction
 from cudf_polars.dsl.ir import Distinct, Empty, HConcat, Select
 from cudf_polars.dsl.traversal import (
     CachingVisitor,
+    traversal,
 )
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.distinct import lower_distinct
 from cudf_polars.streaming.over import _decompose_grouped_window_node
 from cudf_polars.streaming.repartition import Repartition
+from cudf_polars.streaming.rolling import FixedSizeRolling
 from cudf_polars.streaming.shuffle import Shuffle
-from cudf_polars.streaming.utils import _dynamic_planning_on
+from cudf_polars.streaming.utils import _dynamic_planning_on, _fallback_inform
 
 if TYPE_CHECKING:
     from collections.abc import Generator, MutableMapping, Sequence
@@ -89,8 +92,47 @@ class State(TypedDict):
     unique_names: Generator[str, None, None]
 
 
-ExprDecomposer: TypeAlias = "GenericTransformer[Expr, tuple[Expr, IR, MutableMapping[IR, PartitionInfo]], State]"
+type HConcatShape = typing.Literal["row_aligned", "broadcast", "unaligned"]
+type DecomposedExpr = tuple[Expr, IR, MutableMapping[IR, PartitionInfo], HConcatShape]
+type ExprDecomposer = GenericTransformer[Expr, DecomposedExpr, State]
 """Protocol for decomposing expressions."""
+
+
+def _combine_hconcat_shapes(shapes: Sequence[HConcatShape]) -> HConcatShape:
+    non_broadcast = [shape for shape in shapes if shape != "broadcast"]
+    if not non_broadcast:
+        return "broadcast"
+    if all(shape == "row_aligned" for shape in non_broadcast):
+        return "row_aligned"
+    return "unaligned"
+
+
+def hconcat_streaming_safe(shapes: Sequence[HConcatShape]) -> bool:
+    """Return whether decomposed expressions can be horizontally concatenated."""
+    non_broadcast = [shape for shape in shapes if shape != "broadcast"]
+    return len(non_broadcast) <= 1 or all(
+        shape == "row_aligned" for shape in non_broadcast
+    )
+
+
+def align_hconcat_inputs(
+    inputs: Sequence[IR],
+    partition_info: MutableMapping[IR, PartitionInfo],
+    config_options: ConfigOptions,
+    *,
+    streaming_safe: bool,
+) -> list[IR]:
+    """Collapse unaligned HConcat inputs to single partitions."""
+    if streaming_safe:
+        return list(inputs)
+
+    if any(partition_info[ir].count > 1 for ir in inputs):
+        _fallback_inform(
+            "HConcat is not supported for multiple partitions.", config_options
+        )
+    result: list[IR] = [Repartition(ir.schema, ir) for ir in inputs]
+    partition_info.update((ir, PartitionInfo(count=1)) for ir in result)
+    return result
 
 
 def select(
@@ -145,6 +187,38 @@ def select(
 
     columns = [Col(ne.value.dtype, ne.name) for ne in named_exprs]
     return columns, new_ir, partition_info
+
+
+def _common_fixed_size_overlap(exprs: Sequence[Expr]) -> tuple[int, int]:
+    """Return the row-count overlap required by fixed-size rolling exprs."""
+    preceding = following = 0
+    for node in traversal(exprs):
+        if isinstance(node, FixedSizeRollingWindow):
+            preceding = max(preceding, node.preceding - 1)
+            following = max(following, node.following)
+    return preceding, following
+
+
+def fixed_size_rolling_select(
+    exprs: Sequence[Expr],
+    input_ir: IR,
+    partition_info: MutableMapping[IR, PartitionInfo],
+    *,
+    names: Generator[str, None, None],
+) -> tuple[list[Col], IR, MutableMapping[IR, PartitionInfo]]:
+    """Select fixed-size rolling expressions using row-count overlap."""
+    named_exprs = [NamedExpr(next(names), expr) for expr in exprs]
+    preceding, following = _common_fixed_size_overlap(exprs)
+    new_ir = FixedSizeRolling(
+        {ne.name: ne.value.dtype for ne in named_exprs},
+        named_exprs,
+        True,  # noqa: FBT003
+        preceding,
+        following,
+        input_ir,
+    )
+    partition_info[new_ir] = PartitionInfo(count=partition_info[input_ir].count)
+    return [Col(ne.value.dtype, ne.name) for ne in named_exprs], new_ir, partition_info
 
 
 def _decompose_unique(
@@ -389,7 +463,8 @@ def _decompose_expr_node(
     config_options: ConfigOptions[StreamingExecutor],
     *,
     names: Generator[str, None, None],
-) -> tuple[Expr, IR, MutableMapping[IR, PartitionInfo]]:
+    hconcat_shape: HConcatShape = "row_aligned",
+) -> DecomposedExpr:
     """
     Decompose an expression into partition-wise stages.
 
@@ -406,6 +481,8 @@ def _decompose_expr_node(
         GPUEngine configuration options.
     names
         Generator of unique names for temporaries.
+    hconcat_shape
+        How this expression lines up with sibling expressions.
 
     Returns
     -------
@@ -416,6 +493,8 @@ def _decompose_expr_node(
     partition_info
         A mapping from unique nodes in the new graph to associated
         partitioning information.
+    hconcat_shape
+        How the decomposed expression lines up with sibling expressions.
     """
     if isinstance(expr, Literal):
         # For Literal nodes, we don't actually want an
@@ -423,33 +502,58 @@ def _decompose_expr_node(
         # mess up the result of ``HConcat``.
         input_ir = Empty({})
         partition_info[input_ir] = PartitionInfo(count=1)
+        hconcat_shape = "broadcast"
 
     partition_count = partition_info[input_ir].count
-
-    # Check for dynamic planning - may have more partitions at runtime
     dynamic_planning = _dynamic_planning_on(config_options)
 
-    if expr.is_pointwise or (partition_count == 1 and not dynamic_planning):
-        # Single-partition and pointwise expressions are always supported.
-        return expr, input_ir, partition_info
+    if expr.is_pointwise:
+        return expr, input_ir, partition_info, hconcat_shape
     elif isinstance(expr, Len) or (
         isinstance(expr, Agg) and expr.name in _SUPPORTED_AGGS
     ):
+        if partition_count == 1 and not dynamic_planning:
+            return expr, input_ir, partition_info, "broadcast"
         # This is a supported Agg expression.
-        return _decompose_agg_node(
+        expr, input_ir, partition_info = _decompose_agg_node(
             expr, input_ir, partition_info, config_options, names=names
         )
+        return expr, input_ir, partition_info, "broadcast"
     elif isinstance(expr, UnaryFunction) and expr.name == "drop_nulls":
-        return expr, input_ir, partition_info
+        return expr, input_ir, partition_info, "unaligned"
     elif isinstance(expr, UnaryFunction) and expr.name == "unique":
-        return _decompose_unique(
+        if partition_count == 1 and not dynamic_planning:
+            return expr, input_ir, partition_info, "unaligned"
+        expr, input_ir, partition_info = _decompose_unique(
             expr,
             input_ir,
             partition_info,
             config_options,
             names=names,
         )
+        return expr, input_ir, partition_info, "unaligned"
+    elif isinstance(expr, FixedSizeRollingWindow):
+        # TODO: Batch sibling fixed-size rolling expressions that share an
+        # input IR so they can reuse one overlap pass.
+        if hconcat_shape != "row_aligned":
+            columns, input_ir, partition_info = select(
+                list(expr.children),
+                input_ir,
+                partition_info,
+                names=names,
+            )
+            expr = expr.reconstruct(columns)
+        columns, input_ir, partition_info = fixed_size_rolling_select(
+            [expr],
+            input_ir,
+            partition_info,
+            names=names,
+        )
+        (expr,) = columns
+        return expr, input_ir, partition_info, hconcat_shape
     elif isinstance(expr, UnaryFunction) and expr.name == "null_count":
+        if partition_count == 1 and not dynamic_planning:
+            return expr, input_ir, partition_info, "broadcast"
         columns, input_ir, partition_info = select(
             [expr],
             input_ir,
@@ -465,11 +569,18 @@ def _decompose_expr_node(
             names=names,
         )
         (expr,) = columns
-        return expr, input_ir, partition_info
-    elif isinstance(expr, GroupedWindow) and _dynamic_planning_on(config_options):
-        return _decompose_grouped_window_node(
-            expr, input_ir, partition_info, config_options, names=names
-        )
+        return expr, input_ir, partition_info, "broadcast"
+    elif isinstance(expr, GroupedWindow) and (dynamic_planning or partition_count == 1):
+        if dynamic_planning:
+            expr, input_ir, partition_info = _decompose_grouped_window_node(
+                expr, input_ir, partition_info, config_options, names=names
+            )
+            return expr, input_ir, partition_info, "row_aligned"
+        return expr, input_ir, partition_info, hconcat_shape
+    elif partition_count == 1 and not dynamic_planning:
+        # A single-partition expression can be evaluated as-is, but it may not
+        # preserve row alignment with other decomposed expressions.
+        return expr, input_ir, partition_info, "unaligned"
     else:
         # This is an un-supported expression - raise.
         raise NotImplementedError(
@@ -477,9 +588,7 @@ def _decompose_expr_node(
         )
 
 
-def _decompose(
-    expr: Expr, rec: ExprDecomposer
-) -> tuple[Expr, IR, MutableMapping[IR, PartitionInfo]]:
+def _decompose(expr: Expr, rec: ExprDecomposer) -> DecomposedExpr:
     # Used by `decompose_expr_graph``
 
     if not expr.children:
@@ -493,7 +602,7 @@ def _decompose(
         )
 
     # Process child Exprs first
-    children, input_irs, _partition_info = zip(
+    children, input_irs, _partition_info, hconcat_shapes = zip(
         *(rec(c) for c in expr.children), strict=True
     )
     partition_info = reduce(operator.or_, _partition_info)
@@ -501,13 +610,15 @@ def _decompose(
     # Assume the partition count is the maximum input-IR partition count
     input_ir: IR
     assert len(input_irs) > 0  # Must have at least one input IR
-    partition_count = max(partition_info[ir].count for ir in input_irs)
     unique_input_irs = [k for k in dict.fromkeys(input_irs) if not isinstance(k, Empty)]
     if len(unique_input_irs) > 1:
-        # Need to make sure we only have a single input IR
-        # TODO: Check that we aren't concatenating misaligned
-        # columns that cannot be broadcasted. For example, what
-        # if one of the columns is sorted?
+        streaming_safe = hconcat_streaming_safe(hconcat_shapes)
+        unique_input_irs = align_hconcat_inputs(
+            unique_input_irs,
+            partition_info,
+            rec.state["config_options"],
+            streaming_safe=streaming_safe,
+        )
         schema: Schema = {}
         for ir in unique_input_irs:
             schema.update(ir.schema)
@@ -515,9 +626,12 @@ def _decompose(
             schema,
             True,  # noqa: FBT003
             False,  # noqa: FBT003
+            streaming_safe,
             *unique_input_irs,
         )
-        partition_info[input_ir] = PartitionInfo(count=partition_count)
+        partition_info[input_ir] = PartitionInfo(
+            count=max(partition_info[ir].count for ir in unique_input_irs)
+        )
     elif len(unique_input_irs) == 1:
         input_ir = unique_input_irs[0]
     else:
@@ -535,6 +649,7 @@ def _decompose(
         partition_info,
         rec.state["config_options"],
         names=rec.state["unique_names"],
+        hconcat_shape=_combine_hconcat_shapes(hconcat_shapes),
     )
 
 
@@ -560,7 +675,7 @@ def decompose_expr_graph(
     named_expr: NamedExpr,
     *,
     mapper: ExprDecomposer,
-) -> tuple[NamedExpr, IR, MutableMapping[IR, PartitionInfo]]:
+) -> tuple[NamedExpr, IR, MutableMapping[IR, PartitionInfo], HConcatShape]:
     """
     Decompose a NamedExpr into stages using a shared expression decomposer.
 
@@ -580,6 +695,13 @@ def decompose_expr_graph(
     partition_info
         A mapping from unique nodes in the new graph to associated
         partitioning information.
+    hconcat_shape
+        How the decomposed expression lines up with sibling expressions.
     """
-    expr, input_ir, partition_info = mapper(named_expr.value)
-    return named_expr.reconstruct(expr), input_ir, partition_info
+    expr, input_ir, partition_info, hconcat_shape = mapper(named_expr.value)
+    return (
+        named_expr.reconstruct(expr),
+        input_ir,
+        partition_info,
+        hconcat_shape,
+    )

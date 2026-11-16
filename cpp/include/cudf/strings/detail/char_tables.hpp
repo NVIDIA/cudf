@@ -96,7 +96,7 @@ special_case_mapping const* get_special_case_mapping_table(
 /**
  * @brief Get the special mapping table index for a given code-point.
  *
- * @see cpp/src/strings/char_types/char_cases.h
+ * See cpp/scripts/char_cases.cpp
  */
 CUDF_HOST_DEVICE constexpr uint16_t get_special_case_hash_index(uint32_t code_point)
 {

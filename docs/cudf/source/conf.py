@@ -30,7 +30,9 @@ import xml.etree.ElementTree as ET
 from enum import IntEnum, IntFlag
 from typing import Any
 
+import breathe
 import cudf
+from breathe import parser
 from breathe.directives.content_block import DoxygenPageDirective
 from breathe.renderer.sphinxrenderer import SphinxRenderer
 from docutils import nodes
@@ -47,22 +49,52 @@ from sphinx.highlighting import lexers
 from sphinx.util import logging
 from sphinx.util.nodes import clean_astext, make_refnode
 
+_BREATHE_GE_5 = Version(breathe.__version__) >= Version("5")
+
 
 # TODO: ship this upstream in breathe. Today breathe doesn't render
 # docsect4 headers or the contents at all.
 def visit_docsect4(self, node):
-    (title,) = (item for item in node.content_ if item.name == "title")
+    # Breathe 5 stores the title separately from the tagged body children;
+    # Breathe 4 mixes both in content_, so the title must be filtered out.
+    if _BREATHE_GE_5:
+        title = self.render_tagged_iterable(node.title) if node.title else []
+    else:
+        (title,) = (item for item in node.content_ if item.name == "title")
+        title = self.render(title)
 
     section = nodes.section(ids=[self.get_refid(node.id)])
-    section += nodes.title("", "", *self.render(title))
+    section += nodes.title("", "", *title)
     section += self.create_doxygen_target(node)
-    section += self.render_iterable(
-        [item for item in node.content_ if item.name != "title"]
-    )
+    if _BREATHE_GE_5:
+        section += self.render_tagged_iterable(node)
+    else:
+        section += self.render_iterable(
+            [item for item in node.content_ if item.name != "title"]
+        )
     return [section]
 
 
-SphinxRenderer.methods["docsect4"] = visit_docsect4
+# Breathe 5 dispatches on parser node types; Breathe 4 uses string names.
+if _BREATHE_GE_5:
+    SphinxRenderer.node_handlers[parser.Node_docSect4Type] = visit_docsect4
+
+    # Restore template arguments lost by Breathe 5 so distinct class
+    # specializations do not collide in Sphinx's C++ domain.
+    # https://github.com/breathe-doc/breathe/issues/1074
+    def join_nested_name(self, names):
+        domain = self.get_domain()
+        name = ("::" if not domain or domain == "cpp" else ".").join(names)
+        node = self.context.node_stack[0].value
+        if isinstance(node, parser.Node_compounddefType):
+            _, sep, args = node.compoundname.partition("<")
+            if sep and not name.endswith(sep + args):
+                name += sep + args
+        return name
+
+    SphinxRenderer.join_nested_name = join_nested_name
+else:
+    SphinxRenderer.methods["docsect4"] = visit_docsect4
 
 
 class FlatDoxygenPageDirective(DoxygenPageDirective):
@@ -115,6 +147,8 @@ lexers["pseudo"] = PseudoLexer()
 # -- Custom Extensions ----------------------------------------------------
 sys.path.append(os.path.abspath("./_ext"))
 
+from breathe_java import generate_api_pages  # noqa: E402
+
 # -- General configuration ------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
@@ -126,7 +160,9 @@ sys.path.append(os.path.abspath("./_ext"))
 # ones.
 extensions = [
     "breathe",
+    "breathe_java",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.extlinks",
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
@@ -140,6 +176,9 @@ extensions = [
 ]
 
 remove_from_toctrees = ["cudf/api_docs/api/*"]
+
+# The docs environment does not install PyTorch.
+autodoc_mock_imports = ["torch"]
 
 
 # Preprocess doxygen xml for compatibility with latest Breathe
@@ -207,6 +246,15 @@ def clean_definitions(root):
             if node.tail is not None:
                 node.tail = node.tail.replace(string, "")
 
+    if _BREATHE_GE_5:
+        # Workaround for https://github.com/breathe-doc/breathe/issues/1081
+        # Breathe 5 emits constexpr from the member attribute but fails to
+        # strip a type containing only constexpr (as on constructors). Clearing
+        # that redundant type avoids an invalid "constexpr constexpr" declaration.
+        for type_ in root.findall(".//memberdef[@constexpr='yes']/type"):
+            if "".join(type_.itertext()).strip() == "constexpr":
+                type_.clear()
+
     # Doxygen 1.18 may wrap one of the removed macros in a ref element. Once
     # the macro text is stripped, Breathe renders the empty ref as an empty
     # pending_xref node, which crashes Sphinx's ReferencesResolver. Remove
@@ -237,10 +285,23 @@ def clean_all_xml_files(path):
 
 
 # Breathe Configuration
-breathe_projects = {"libcudf": "../../../cpp/doxygen/xml"}
-for project_path in breathe_projects.values():
-    clean_all_xml_files(project_path)
+breathe_projects = {
+    "libcudf": "../../../cpp/doxygen/xml",
+    "cudf-java": "../../../java/doxygen/xml",
+}
+clean_all_xml_files(breathe_projects["libcudf"])
 breathe_default_project = "libcudf"
+
+# The cuDF Java API is rendered from Doxygen XML using the java domain
+# provided by the breathe_java extension.
+breathe_domain_by_extension = {"java": "java"}
+breathe_java_projects = ["cudf-java"]
+generate_api_pages(
+    breathe_projects["cudf-java"],
+    "java/api",
+    project="cudf-java",
+    title="API Reference",
+)
 
 
 nb_execution_excludepatterns = ["performance-comparisons.ipynb"]
@@ -322,6 +383,8 @@ html_theme_options = {
     "github_url": "https://github.com/NVIDIA/cudf",
     "show_toc_level": 1,
     "navbar_align": "content",
+    # Show every top-level library in the navbar instead of a "More" menu.
+    "header_links_before_dropdown": 7,
     "navbar_center": "navbar-nav, version-switcher, navbar-external-links",
     "navigation_with_keys": True,
     "switcher": {
@@ -416,14 +479,19 @@ with open("../../../RAPIDS_BRANCH", "r") as f:
     branch = f.read().strip()
 intersphinx_version = "latest" if branch == "main" else version
 
+# Only the dask-cuDF landing page is linked here. Avoid requiring its
+# inventory before either project's docs can be published for a new release.
+extlinks = {
+    "dask-cudf-doc": (
+        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/%s",
+        "%s",
+    ),
+}
+
 intersphinx_mapping = {
     "cupy": ("https://docs.cupy.dev/en/stable/", None),
     "dask-cuda": (
         f"https://docs.nvidia.com/dask-cuda/{intersphinx_version}/",
-        None,
-    ),
-    "dask-cudf": (
-        f"https://docs.nvidia.com/dask-cudf/{intersphinx_version}/",
         None,
     ),
     "dlpack": ("https://dmlc.github.io/dlpack/latest/", None),
@@ -439,6 +507,7 @@ intersphinx_mapping = {
         f"https://docs.nvidia.com/rapidsmpf/{intersphinx_version}/",
         None,
     ),
+    "torch": ("https://docs.pytorch.org/docs/stable/", None),
     "typing_extensions": (
         "https://typing-extensions.readthedocs.io/en/stable/",
         None,
@@ -555,6 +624,7 @@ _names_to_skip_in_cpp = {
     "type_to_scalar_type_impl",
     "type_to_scalar_type_impl",
     "detail",
+    "concepts",
     # Test-only helper types are intentionally not published as API pages.
     "classcudf_1_1test_1_1",
     # kafka objects
@@ -809,6 +879,7 @@ nitpick_ignore = [
     ("py:class", "Value"),
     ("py:class", "polars.lazyframe.frame.LazyFrame"),
     ("py:class", "cudf_polars.engine.persisted_result.PersistedBackend"),
+    ("py:class", "cudf_polars.containers.DataFrame"),
     # pylibcudf typing aliases rendered as bare names in autodoc signatures.
     ("py:class", "ColumnNameSpec"),
     ("py:class", "CudaStreamLike"),
@@ -911,6 +982,10 @@ def linkcode_resolve(domain, info) -> str | None:
 suppress_warnings = ["myst.domains"]
 
 
+# pylibcudf enums whose names do not match their nested C++ enum.
+_enums_without_cpp_see_also = {"Kind", "LogicalTypeId", "TimeUnit"}
+
+
 class PLCIntEnumDocumenter(ClassDocumenter):
     objtype = "enum"
     directivetype = "attribute"
@@ -941,7 +1016,7 @@ class PLCIntEnumDocumenter(ClassDocumenter):
         source_name = self.get_sourcename()
         enum_object: IntEnum = self.object
 
-        if self.object.__name__ != "Kind":
+        if self.object.__name__ not in _enums_without_cpp_see_also:
             self.add_line(
                 f"See also :cpp:enum:`{self.object.__name__}`.",
                 source_name,

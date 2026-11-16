@@ -20,6 +20,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -30,6 +31,7 @@
 
 #include <cuda/functional>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -53,7 +55,7 @@ namespace rolling {
  */
 template <typename T>
 struct less {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return false; }
@@ -66,7 +68,7 @@ struct less {
 
 template <typename T>
 struct less_equal {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return cuda::std::isnan(y); }
@@ -78,7 +80,7 @@ struct less_equal {
 };
 template <typename T>
 struct greater {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return !cuda::std::isnan(y); }
@@ -91,7 +93,7 @@ struct greater {
 
 template <typename T>
 struct greater_equal {
-  __device__ constexpr bool operator()(T const& x, T const& y) const noexcept
+  CUDF_HOST_DEVICE constexpr bool operator()(T const& x, T const& y) const noexcept
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
       if (cuda::std::isnan(x)) { return true; }
@@ -205,7 +207,7 @@ struct saturating {
   static_assert(cuda::std::is_same_v<Op, cuda::std::plus<>> ||
                   cuda::std::is_same_v<Op, cuda::std::minus<>>,
                 "Only for addition or subtraction");
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_floating_point_v<T>)>
+  template <cuda::std::floating_point T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -226,7 +228,7 @@ struct saturating {
     return {result, false};
   }
 
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_signed_v<T>)>
+  template <cuda::std::signed_integral T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -247,7 +249,7 @@ struct saturating {
     }
   }
 
-  template <typename T, CUDF_ENABLE_IF(cuda::std::is_integral_v<T>&& cuda::std::is_unsigned_v<T>)>
+  template <cuda::std::unsigned_integral T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, T y) const noexcept
   {
@@ -264,7 +266,7 @@ struct saturating {
     }
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_timestamp<T>())>
+  template <cudf::concepts::timestamp T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, typename T::duration y) const noexcept
   {
@@ -273,7 +275,7 @@ struct saturating {
     return {T{Duration{value}}, did_overflow};
   }
 
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   [[nodiscard]] __host__ __device__ constexpr inline cuda::std::pair<T, bool> operator()(
     T x, typename T::rep y) const noexcept
   {
@@ -665,7 +667,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     auto result = make_numeric_column(
       data_type(type_to_id<size_type>()), orderby.size(), mask_state::UNALLOCATED, stream, mr);
@@ -746,22 +748,7 @@ struct range_window_clamper {
     return result;
   }
 
-  /**
-   * @brief Is the given type supported as an orderby column.
-   *
-   * @tparam OrderbyT The type of the elements of the orderby column.
-   */
-  template <typename OrderbyT>
-  static constexpr bool is_supported()
-  {
-    return (cuda::std::is_same_v<OrderbyT, cudf::string_view> &&
-            (cuda::std::is_same_v<WindowType, current_row> ||
-             cuda::std::is_same_v<WindowType, unbounded>)) ||
-           cudf::is_numeric_not_bool<OrderbyT>() || cudf::is_timestamp<OrderbyT>() ||
-           cudf::is_fixed_point<OrderbyT>();
-  }
-
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_timestamp<OrderbyT>())>
+  template <cudf::concepts::timestamp OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -770,7 +757,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     using ScalarT         = cudf::scalar_type_t<typename OrderbyT::duration>;
     auto const* row_delta = as_scalar_delta(delta);
@@ -794,7 +781,7 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_fixed_point<OrderbyT>())>
+  template <cudf::concepts::fixed_point OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -803,7 +790,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     if constexpr (is_column_range_window<WindowType>()) {
       // Column-valued bounds are unsupported for fixed-point orderby columns. Rejecting here
@@ -844,7 +831,7 @@ struct range_window_clamper {
     }
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(cudf::is_numeric_not_bool<OrderbyT>())>
+  template <cudf::concepts::arithmetic_not_bool OrderbyT>
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -853,7 +840,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     auto const* row_delta = as_scalar_delta(delta);
     CUDF_EXPECTS(!row_delta || cudf::have_same_types(orderby, *row_delta),
@@ -870,10 +857,9 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT,
-            CUDF_ENABLE_IF(cuda::std::is_same_v<OrderbyT, cudf::string_view> &&
-                           (cuda::std::is_same_v<WindowType, current_row> ||
-                            cuda::std::is_same_v<WindowType, unbounded>))>
+  template <cudf::concepts::string_view OrderbyT>
+    requires(cuda::std::same_as<WindowType, current_row> or
+             cuda::std::same_as<WindowType, unbounded>)
   [[nodiscard]] std::unique_ptr<column> operator()(
     column_view const& orderby,
     direction direction,
@@ -882,7 +868,7 @@ struct range_window_clamper {
     bool nulls_at_start,
     range_window_delta const& delta,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const
+    cudf::memory_resources mr) const
   {
     CUDF_EXPECTS(!as_scalar_delta(delta),
                  "Not expecting window range to have value for string-based window calculation");
@@ -893,7 +879,7 @@ struct range_window_clamper {
       orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
   }
 
-  template <typename OrderbyT, CUDF_ENABLE_IF(!is_supported<OrderbyT>())>
+  template <typename OrderbyT>
   std::unique_ptr<column> operator()(column_view const&,
                                      direction,
                                      order,
@@ -901,7 +887,7 @@ struct range_window_clamper {
                                      bool,
                                      range_window_delta const&,
                                      cuda::stream_ref,
-                                     rmm::device_async_resource_ref) const
+                                     cudf::memory_resources) const
   {
     CUDF_FAIL("Unsupported rolling window type.", cudf::data_type_error);
   }

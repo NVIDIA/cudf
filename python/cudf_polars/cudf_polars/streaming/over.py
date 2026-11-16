@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Over IR node for streaming window expressions."""
 
@@ -137,6 +137,7 @@ class Over(IR):
     """Window over() IR node for the streaming runtime."""
 
     __slots__ = ("exprs", "is_scalar", "key_indices")
+    _preserves_output_order: ClassVar[bool] = True
     _non_child: ClassVar[tuple[str, ...]] = (
         "schema",
         "key_indices",

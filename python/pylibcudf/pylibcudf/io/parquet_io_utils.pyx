@@ -6,6 +6,7 @@ from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uintptr_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from cython.operator cimport dereference
@@ -28,7 +29,7 @@ from pylibcudf.libcudf.io.parquet_io_utils cimport (
 )
 
 from pylibcudf.libcudf.io.text cimport byte_range_info
-from pylibcudf.libcudf.utilities.span cimport device_span, host_span
+from pylibcudf.libcudf.utilities.span cimport device_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
@@ -102,7 +103,7 @@ cpdef list fetch_byte_ranges_to_device(
     with nogil:
         fetched = cpp_fetch_byte_ranges_to_device(
             dereference(sources[0]),
-            host_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
+            std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
             policy,
             _stream.view().get(),
             _mr.get_mr(),

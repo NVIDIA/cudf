@@ -13,9 +13,9 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/callback_memory_resource.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
@@ -24,8 +24,29 @@
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <type_traits>
 
 namespace {
+
+// Value construction must be intentional, especially when selecting a stream and resource.
+template <typename Scalar, typename Value>
+constexpr bool has_explicit_value_constructor =
+  std::is_convertible_v<Scalar const&, Scalar> && std::is_convertible_v<Scalar&&, Scalar> &&
+  !std::is_convertible_v<Value, Scalar> && std::is_constructible_v<Scalar, Value> &&
+  std::is_constructible_v<Scalar, Value, bool, cuda::stream_ref, rmm::device_async_resource_ref> &&
+  std::is_constructible_v<Scalar, Value> && std::is_constructible_v<Scalar, Value, bool> &&
+  !std::is_constructible_v<Scalar, Value, cuda::stream_ref, rmm::device_async_resource_ref> &&
+  !std::is_constructible_v<Scalar, Value, cuda::stream_ref>;
+
+static_assert(has_explicit_value_constructor<cudf::string_scalar, std::string_view>);
+static_assert(has_explicit_value_constructor<cudf::string_scalar, cudf::string_view>);
+static_assert(has_explicit_value_constructor<cudf::string_scalar, rmm::device_buffer&&>);
+static_assert(has_explicit_value_constructor<cudf::list_scalar, cudf::column_view const&>);
+static_assert(has_explicit_value_constructor<cudf::list_scalar, cudf::column&&>);
+static_assert(has_explicit_value_constructor<cudf::struct_scalar, cudf::table_view const&>);
+static_assert(
+  has_explicit_value_constructor<cudf::struct_scalar, std::span<cudf::column_view const>>);
+static_assert(has_explicit_value_constructor<cudf::struct_scalar, cudf::table&&>);
 
 class host_func_gate {
  public:
@@ -66,6 +87,13 @@ class lifetime_test_scalar : public cudf::numeric_scalar<int32_t> {
   }
 };
 
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
+
 }  // namespace
 
 template <typename T>
@@ -82,6 +110,8 @@ TYPED_TEST_SUITE(TypedScalarTestWithoutFixedPoint, cudf::test::FixedWidthTypesWi
 TYPED_TEST(TypedScalarTest, DefaultValidity)
 {
   using Type = cudf::device_storage_type_t<TypeParam>;
+  static_assert(has_explicit_value_constructor<cudf::scalar_type_t<TypeParam>, Type>);
+  static_assert(has_explicit_value_constructor<cudf::scalar_type_t<TypeParam>, TypeParam>);
   Type value = static_cast<Type>(cudf::test::make_type_param_scalar<TypeParam>(7));
   cudf::scalar_type_t<TypeParam> s(value);
 
@@ -110,13 +140,13 @@ TYPED_TEST(TypedScalarTestWithoutFixedPoint, SetValue)
 
 TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 {
-  rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.value()};
+  auto stream           = make_stream();
+  auto const stream_ref = cuda::stream_ref{stream.get()};
   int32_t source        = 42;
   lifetime_test_scalar scalar{0, true, stream_ref};
   host_func_gate gate;
   CUDF_CUDA_TRY(cudaLaunchHostFunc(
-    stream.value(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
+    stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
 
   scalar.set_data_async(source, stream_ref);
   source = -1;
@@ -128,22 +158,24 @@ TEST_F(ScalarTest, AsyncSetValueOwnsHostSource)
 
 TEST_F(ScalarTest, AsyncStringConstructionOwnsHostSource)
 {
-  rmm::cuda_stream stream;
-  auto const stream_ref = cuda::stream_ref{stream.value()};
+  auto stream           = make_stream();
+  auto const stream_ref = cuda::stream_ref{stream.get()};
   host_func_gate gate;
   auto upstream = cudf::get_current_device_resource_ref();
   int allocations{0};
   rmm::mr::callback_memory_resource mr{
-    [upstream, &gate, &allocations](std::size_t bytes, auto stream, void*) mutable {
-      auto* ptr = upstream.allocate(stream, bytes, cuda::mr::default_cuda_malloc_alignment);
+    [upstream, &gate, &allocations](
+      cuda::stream_ref stream, std::size_t bytes, std::size_t alignment, void*) mutable {
+      auto* ptr = upstream.allocate(stream, bytes, alignment);
       if (allocations++ == 1) {
         CUDF_CUDA_TRY(cudaLaunchHostFunc(
           stream.get(), [](void* data) { static_cast<host_func_gate*>(data)->wait(); }, &gate));
       }
       return ptr;
     },
-    [upstream](void* ptr, std::size_t bytes, auto stream, void*) mutable {
-      upstream.deallocate(stream, ptr, bytes, cuda::mr::default_cuda_malloc_alignment);
+    [upstream](
+      cuda::stream_ref stream, void* ptr, std::size_t bytes, std::size_t alignment, void*) mutable {
+      upstream.deallocate(stream, ptr, bytes, alignment);
     }};
   std::string expected{"expected"};
   auto source = cudf::detail::make_pinned_vector<char>(expected.size(), stream_ref);

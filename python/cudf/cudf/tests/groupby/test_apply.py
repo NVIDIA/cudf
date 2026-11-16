@@ -12,7 +12,9 @@ import pytest
 import cudf
 from cudf import DataFrame
 from cudf.core.udf._ops import arith_ops, comparison_ops, unary_ops
-from cudf.core.udf.groupby_typing import SUPPORTED_GROUPBY_NUMPY_TYPES
+from cudf.core.udf.mlir_backend.groupby_typing import (
+    SUPPORTED_GROUPBY_NUMPY_TYPES,
+)
 from cudf.core.udf.utils import UDFError, precompiled
 from cudf.testing import assert_eq, assert_groupby_results_equal
 from cudf.testing._utils import expect_warning_if
@@ -232,10 +234,12 @@ JIT_UNARY_REDUCTION_SPECIAL_VALUE_DTYPES = {"float32", "float64"}
 
 
 def _nans_unary_reduction_xfails(func, dtype):
+    # Floating-point mean/var/std and floating-point idxmin/idxmax do not yet
+    # skip NaNs (pandas skipna=True):
+    # https://github.com/NVIDIA/cudf/issues/14860
     return (
-        func in {"var", "std", "mean"}
-        and str(dtype) in {"int64", "float32", "float64"}
-    ) or (func in {"idxmax", "idxmin", "sum"} and dtype.kind == "f")
+        func in {"var", "std", "mean"} and str(dtype) in {"float32", "float64"}
+    ) or (func in {"idxmax", "idxmin"} and dtype.kind == "f")
 
 
 NANS_UNARY_REDUCTION_XFAIL_PARAMS = [
@@ -979,15 +983,15 @@ def test_groupby_apply_series_preserves_multiindex_names():
 def test_groupby_group_keys(group_keys, by):
     gdf = cudf.DataFrame(
         {
-            "A": "a a a a b b".split(),
-            "B": [1, 1, 2, 2, 3, 3],
-            "C": [4, 6, 5, 9, 8, 7],
+            "A": "b a b a a a".split(),
+            "B": [3, 1, 3, 1, 2, 2],
+            "C": [8, 4, 7, 6, 5, 9],
         }
     )
     pdf = gdf.to_pandas()
 
-    g_group = gdf.groupby(by, group_keys=group_keys)
-    p_group = pdf.groupby(by, group_keys=group_keys)
+    g_group = gdf.groupby(by, group_keys=group_keys, sort=False)
+    p_group = pdf.groupby(by, group_keys=group_keys, sort=False)
 
     actual = g_group[["B", "C"]].apply(lambda x: x / x.sum())
     expected = p_group[["B", "C"]].apply(lambda x: x / x.sum())
@@ -1080,3 +1084,20 @@ def test_groupby_apply_preserves_inner_index_name():
     )
     assert expect.index.names == got.index.names
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("index_dtype", ["int8", "int16", "int32", "int64"])
+@pytest.mark.parametrize(
+    "func", [lambda g: g["v"].idxmin(), lambda g: g["v"].idxmax()]
+)
+def test_groupby_apply_jit_idxminmax_non_int64_index(index_dtype, func):
+    # The cooperative idxmin/idxmax device helpers read the group index as
+    # int64; a non-int64 integer index must be handled (previously misread,
+    # causing a misaligned-address crash).
+    pdf = pd.DataFrame({"key": [0, 0, 0, 1, 1, 1], "v": [3, 1, 2, 9, 7, 8]})
+    pdf.index = np.array([10, 11, 12, 13, 14, 15], dtype=index_dtype)
+    gdf = cudf.from_pandas(pdf)
+
+    expect = pdf.groupby("key").apply(func, include_groups=False)
+    got = gdf.groupby("key").apply(func, engine="jit")
+    assert_eq(expect, got, check_dtype=False)

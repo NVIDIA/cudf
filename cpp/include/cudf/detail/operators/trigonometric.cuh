@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -20,7 +20,7 @@ namespace ops {
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arccos(T a)
 {
   return cuda::std::acos(a);
@@ -32,7 +32,7 @@ __device__ T arccos(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arccosh(T a)
 {
   return cuda::std::acosh(a);
@@ -44,7 +44,7 @@ __device__ T arccosh(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arcsin(T a)
 {
   return cuda::std::asin(a);
@@ -56,7 +56,7 @@ __device__ T arcsin(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arcsinh(T a)
 {
   return cuda::std::asinh(a);
@@ -68,7 +68,7 @@ __device__ T arcsinh(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arctan(T a)
 {
   return cuda::std::atan(a);
@@ -80,7 +80,7 @@ __device__ T arctan(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T arctanh(T a)
 {
   return cuda::std::atanh(a);
@@ -92,7 +92,7 @@ __device__ T arctanh(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T cos(T a)
 {
   return cuda::std::cos(a);
@@ -104,7 +104,7 @@ __device__ T cos(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T cosh(T a)
 {
   return cuda::std::cosh(a);
@@ -116,7 +116,7 @@ __device__ T cosh(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T sin(T a)
 {
   return cuda::std::sin(a);
@@ -128,7 +128,7 @@ __device__ T sin(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T sinh(T a)
 {
   return cuda::std::sinh(a);
@@ -140,7 +140,7 @@ __device__ T sinh(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T tan(T a)
 {
   return cuda::std::tan(a);
@@ -152,7 +152,7 @@ __device__ T tan(T a)
  * @tparam T Value type
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T tanh(T a)
 {
   return cuda::std::tanh(a);

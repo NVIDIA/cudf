@@ -24,6 +24,7 @@
 #include <cudf/logger.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -31,14 +32,19 @@
 #include <cuda/numeric>
 #include <cuda/std/tuple>
 
+#include <algorithm>
+#include <array>
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 #include <format>
 #include <functional>
 #include <future>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <optional>
+#include <ranges>
 #include <regex>
 #include <span>
 #include <string_view>
@@ -74,10 +80,8 @@ size_type find_colchunk_iter_offset(RowGroup const& row_group,
       row_group.columns[cached_offset.value()].schema_idx == schema_idx) {
     return cached_offset.value();
   }
-  auto const& colchunk_iter =
-    std::find_if(row_group.columns.begin(), row_group.columns.end(), [schema_idx](auto const& col) {
-      return col.schema_idx == schema_idx;
-    });
+  auto const& colchunk_iter = std::ranges::find_if(
+    row_group.columns, [schema_idx](auto const& col) { return col.schema_idx == schema_idx; });
   CUDF_EXPECTS(colchunk_iter != row_group.columns.end(),
                std::format("Column chunk with schema index {} not found in row group", schema_idx),
                std::invalid_argument);
@@ -129,7 +133,7 @@ namespace {
  * @brief Computes the total number of row groups in input span of row group indices
  */
 [[nodiscard]] size_type compute_total_row_groups(
-  host_span<std::vector<size_type> const> row_group_indices)
+  std::span<std::vector<size_type> const> row_group_indices)
 {
   auto const total_row_groups =
     std::accumulate(row_group_indices.begin(),
@@ -177,6 +181,34 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
   }
   return cuda::std::nullopt;
 }
+
+namespace {
+
+/**
+ * @brief Check if two logical types have the same time unit.
+ */
+bool time_units_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const unit = [](auto const& t) {
+    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
+  };
+  return unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type);
+}
+
+/**
+ * @brief Check if two logical types are identical in everything the reader uses.
+ */
+bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
+  return lhs.type == rhs.type and time_units_match(lhs, rhs) and
+         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
+         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
+         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+}
+
+}  // namespace
 
 /**
  * @brief Lookup schema children by name or field ID across multiple sources.
@@ -289,6 +321,52 @@ struct schema_child_lookup {
   bool match_schema_by_field_id;
   std::unordered_map<std::uint64_t, schema_idx_cache> schema_idx_caches;
 };
+
+/**
+ * @brief Checks if a schema element is a FILE group whose children follow the FILE spec: each is a
+ * unique, OPTIONAL `uri`, `offset`, `size`, `content_type`, `checksum` or `inline` leaf of the
+ * expected physical and logical type
+ *
+ * @param group Schema element to check
+ * @param children Child schema elements of `group`
+ * @return Boolean indicating if `group` is a valid FILE group
+ */
+[[nodiscard]] bool is_valid_file_group(SchemaElement const& group,
+                                       std::ranges::input_range auto&& children)
+{
+  if (not group.logical_type.has_value() or group.logical_type->type != LogicalType::FILE) {
+    return false;
+  }
+
+  struct file_field {
+    std::string_view name;
+    Type type;
+    LogicalType::Type logical_type;
+  };
+  static constexpr std::array file_fields{
+    file_field{"uri", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"offset", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"size", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"content_type", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"checksum", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"inline", Type::BYTE_ARRAY, LogicalType::UNDEFINED}};
+
+  std::bitset<file_fields.size()> seen;
+  return std::ranges::all_of(children, [&](SchemaElement const& child) {
+    auto const field =
+      std::ranges::find(file_fields, std::string_view{child.name}, &file_field::name);
+    if (field == file_fields.end()) { return false; }
+    auto const field_idx = std::distance(file_fields.begin(), field);
+    if (seen.test(field_idx)) { return false; }
+    seen.set(field_idx);
+    auto const child_logical_type = child.logical_type.value_or(LogicalType{});
+    // INT64 fields may also carry an equivalent signed 64-bit INTEGER (or legacy INT_64) annotation
+    auto const is_signed_int64 = child.type == Type::INT64 and child_logical_type.is_signed() and
+                                 child_logical_type.bit_width() == 64;
+    return child.repetition_type == FieldRepetitionType::OPTIONAL and child.type == field->type and
+           (child_logical_type.type == field->logical_type or is_signed_int64);
+  });
+}
 
 }  // namespace
 
@@ -480,6 +558,14 @@ void metadata::sanitize_schema()
           schema[child_idx].parent_idx = struct_node_idx;
         }
 
+        // Move a non-nested annotation of the repeated group (e.g. FILE) to its struct element
+        if (schema_elem.logical_type.has_value() and
+            schema_elem.logical_type->type != LogicalType::LIST and
+            schema_elem.logical_type->type != LogicalType::MAP) {
+          struct_elem.logical_type         = schema_elem.logical_type;
+          struct_elem.logical_type_payload = schema_elem.logical_type_payload;
+        }
+
         schema_elem.converted_type  = ConvertedType::LIST;
         schema_elem.logical_type    = LogicalType::LIST;
         schema_elem.repetition_type = FieldRepetitionType::OPTIONAL;
@@ -514,12 +600,11 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
 {
   // Since page index is set up for all or no row groups, just check if any column chunk has it set.
   // Update this check if this behavior changes in the future.
-  is_page_index_setup_ =
-    std::any_of(row_groups.cbegin(), row_groups.cend(), [](auto const& row_group) {
-      return std::any_of(row_group.columns.cbegin(), row_group.columns.cend(), [](auto const& col) {
-        return col.column_index.has_value() or col.offset_index.has_value();
-      });
+  is_page_index_setup_ = std::ranges::any_of(row_groups, [](auto const& row_group) {
+    return std::any_of(row_group.columns.cbegin(), row_group.columns.cend(), [](auto const& col) {
+      return col.column_index.has_value() or col.offset_index.has_value();
     });
+  });
 }
 
 metadata::metadata(datasource* source, bool read_page_indexes)
@@ -533,29 +618,71 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   // where we're trying to determine if we have the indexes or not.
   // Note: This will have to be modified if there are other uses in the future (e.g. calculating
   // chunk/pass boundaries).
-  auto const has_strings = std::any_of(
-    schema.begin(), schema.end(), [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
+  auto const has_strings =
+    std::ranges::any_of(schema, [](auto const& elem) { return elem.type == Type::BYTE_ARRAY; });
 
-  if (read_page_indexes and has_strings and not row_groups.empty() and
-      not row_groups.front().columns.empty()) {
-    // column index and offset index are encoded back to back.
-    // the first column of the first row group will have the first column index, the last
-    // column of the last row group will have the final offset index.
-    int64_t const min_offset = row_groups.front().columns.front().column_index_offset;
-    auto const& last_col     = row_groups.back().columns.back();
-    int64_t const max_offset = last_col.offset_index_offset + last_col.offset_index_length;
+  // Column indexes are only used alongside offset indexes, skip if there are no offset indexes
+  auto const has_offset_index = [this] {
+    return std::ranges::any_of(
+      row_groups | std::views::transform(&RowGroup::columns) | std::views::join,
+      [](auto const& col) { return col.offset_index_offset > 0 and col.offset_index_length > 0; });
+  };
 
-    if (max_offset > min_offset) {
-      size_t const length     = max_offset - min_offset;
-      auto const page_idx_buf = source->host_read(min_offset, length);
-      setup_page_index({page_idx_buf->data(), length}, min_offset);
+  // Gather page index byte range info
+  auto const page_index_range = [&]() -> text::byte_range_info {
+    // Don't read page index if not required or if we don't have strings or only have column indexes
+    if (not read_page_indexes or not has_strings or not has_offset_index()) { return {}; }
+    try {
+      auto const range = page_index_byte_range();
+      if (std::cmp_less_equal(range.offset() + range.size(), source->size())) { return range; }
+    } catch (std::overflow_error const&) {
+      // Page indexes are optional so skip them if their byte range is invalid
     }
+    return {};
+  }();
+
+  // Setup page indexes if available
+  if (not page_index_range.is_empty()) {
+    auto const page_idx_buf = source->host_read(page_index_range.offset(), page_index_range.size());
+    setup_page_index({page_idx_buf->data(), page_idx_buf->size()}, page_index_range.offset());
   }
 
   sanitize_schema();
 }
 
-void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset)
+text::byte_range_info metadata::page_index_byte_range() const
+{
+  if (is_page_index_setup_) { return {}; }
+
+  if (row_groups.empty() or row_groups.front().columns.empty()) { return {}; }
+
+  // Scan all column chunks to compute the page index extent
+  int64_t min_offset = std::numeric_limits<int64_t>::max();
+  int64_t max_offset = 0;
+
+  // Helper to update the current page index extent
+  auto const update_extent = [&](int64_t offset, int32_t length) {
+    if (offset <= 0 or length <= 0) { return; }
+    auto const sum = cuda::add_overflow<int64_t>(offset, length);
+    CUDF_EXPECTS(not sum.overflow,
+                 "Encountered an invalid Parquet page index byte range",
+                 std::overflow_error);
+    min_offset = std::min(min_offset, offset);
+    max_offset = std::max(max_offset, sum.value);
+  };
+
+  for (auto const& row_group : row_groups) {
+    for (auto const& column : row_group.columns) {
+      update_extent(column.column_index_offset, column.column_index_length);
+      update_extent(column.offset_index_offset, column.offset_index_length);
+    }
+  }
+
+  if (max_offset <= min_offset) { return {}; }
+  return {min_offset, max_offset - min_offset};
+}
+
+void metadata::setup_page_index(std::span<uint8_t const> page_index_bytes, int64_t min_offset)
 {
   if (is_page_index_setup_) { return; }
 
@@ -603,6 +730,7 @@ void metadata::setup_page_index(cudf::host_span<uint8_t const> page_index_bytes,
     auto const remainder              = total_column_chunks % num_tasks;
 
     std::vector<std::future<void>> tasks;
+    cudf::detail::futures_wait_guard tasks_guard{tasks};
     tasks.reserve(num_tasks);
 
     std::size_t start_idx = 0;
@@ -654,7 +782,7 @@ metadata::~metadata()
 }
 
 std::vector<metadata> aggregate_reader_metadata::metadatas_from_sources(
-  host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
+  std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes)
 {
   return parallel_construct_metadatas(sources, [read_page_indexes](auto const& source) {
     return metadata{source.get(), read_page_indexes};
@@ -665,17 +793,14 @@ std::vector<std::unordered_map<std::string, std::string>>
 aggregate_reader_metadata::collect_keyval_metadata() const
 {
   std::vector<std::unordered_map<std::string, std::string>> kv_maps;
-  std::transform(per_file_metadata.cbegin(),
-                 per_file_metadata.cend(),
-                 std::back_inserter(kv_maps),
-                 [](auto const& pfm) {
-                   std::unordered_map<std::string, std::string> kv_map;
-                   std::transform(pfm.key_value_metadata.cbegin(),
-                                  pfm.key_value_metadata.cend(),
-                                  std::inserter(kv_map, kv_map.end()),
-                                  [](auto const& kv) { return std::pair{kv.key, kv.value}; });
-                   return kv_map;
-                 });
+  std::ranges::transform(per_file_metadata, std::back_inserter(kv_maps), [](auto const& pfm) {
+    std::unordered_map<std::string, std::string> kv_map;
+    std::transform(pfm.key_value_metadata.cbegin(),
+                   pfm.key_value_metadata.cend(),
+                   std::inserter(kv_map, kv_map.end()),
+                   [](auto const& kv) { return std::pair{kv.key, kv.value.value_or("")}; });
+    return kv_map;
+  });
 
   return kv_maps;
 }
@@ -722,10 +847,9 @@ size_type aggregate_reader_metadata::calc_num_row_groups() const
 std::vector<size_type> aggregate_reader_metadata::get_num_row_groups_per_file() const
 {
   std::vector<size_type> per_file_num_row_groups(per_file_metadata.size());
-  std::transform(per_file_metadata.begin(),
-                 per_file_metadata.end(),
-                 per_file_num_row_groups.begin(),
-                 [](auto const& pfm) { return pfm.row_groups.size(); });
+  std::ranges::transform(per_file_metadata, per_file_num_row_groups.begin(), [](auto const& pfm) {
+    return pfm.row_groups.size();
+  });
   return per_file_num_row_groups;
 }
 
@@ -908,11 +1032,9 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
                                                      bool has_cols_from_mismatched_srcs)
 {
   if (per_file_metadata.size() > 1) {
-    auto& first_meta = per_file_metadata.front();
-    auto const first_nonempty_source_iter =
-      std::find_if(per_file_metadata.begin(), per_file_metadata.end(), [&](auto const& pfm) {
-        return pfm.row_groups.size() > 0;
-      });
+    auto& first_meta                      = per_file_metadata.front();
+    auto const first_nonempty_source_iter = std::ranges::find_if(
+      per_file_metadata, [&](auto const& pfm) { return pfm.row_groups.size() > 0; });
     auto const num_cols = first_nonempty_source_iter != per_file_metadata.end()
                             ? first_nonempty_source_iter->row_groups.front().columns.size()
                             : 0;
@@ -921,13 +1043,27 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     // Validate that all sources have the same schema unless we are reading select columns
     // from mismatched sources, in which case, we will only check the projected columns later.
     if (not has_cols_from_mismatched_srcs) {
+      // `SchemaElement::operator==` ignores logical types, so compare FILE groups separately
+      auto const is_file_group = [](std::vector<SchemaElement> const& tree, size_t idx) {
+        return is_valid_file_group(
+          tree[idx],
+          tree[idx].children_idx |
+            std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
+      };
+      auto const same_file_groups = [&](std::vector<SchemaElement> const& other) {
+        return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
+          return is_file_group(schema, idx) == is_file_group(other, idx);
+        });
+      };
+
       // Verify that the input files have matching numbers of columns and schema.
       for (auto const& pfm : per_file_metadata) {
         if (pfm.row_groups.size() > 0) {
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema, "All sources must have the same schema");
+        CUDF_EXPECTS(schema == pfm.schema and same_file_groups(pfm.schema),
+                     "All sources must have the same schema");
       }
 
       // Record fields that are nullable in any source other than the first one
@@ -947,8 +1083,7 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
   if (use_arrow_schema) { apply_arrow_schema(); }
 
   // Erase ARROW_SCHEMA_KEY from the output pfm if exists
-  std::for_each(
-    keyval_maps.begin(), keyval_maps.end(), [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
+  std::ranges::for_each(keyval_maps, [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&& parquet_metadatas,
@@ -974,7 +1109,7 @@ aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&&
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(
-  host_span<std::unique_ptr<datasource> const> sources,
+  std::span<std::unique_ptr<datasource> const> sources,
   bool use_arrow_schema,
   bool has_cols_from_mismatched_srcs,
   bool read_page_indexes)
@@ -1347,18 +1482,17 @@ aggregate_reader_metadata::get_rowgroup_metadata() const
 {
   std::vector<std::unordered_map<std::string, int64_t>> rg_metadata;
 
-  std::for_each(
-    per_file_metadata.cbegin(), per_file_metadata.cend(), [&rg_metadata](auto const& pfm) {
-      std::transform(pfm.row_groups.cbegin(),
-                     pfm.row_groups.cend(),
-                     std::back_inserter(rg_metadata),
-                     [](auto const& rg) {
-                       std::unordered_map<std::string, int64_t> rg_meta_map;
-                       rg_meta_map["num_rows"]        = rg.num_rows;
-                       rg_meta_map["total_byte_size"] = rg.total_byte_size;
-                       return rg_meta_map;
-                     });
-    });
+  std::ranges::for_each(per_file_metadata, [&rg_metadata](auto const& pfm) {
+    std::transform(pfm.row_groups.cbegin(),
+                   pfm.row_groups.cend(),
+                   std::back_inserter(rg_metadata),
+                   [](auto const& rg) {
+                     std::unordered_map<std::string, int64_t> rg_meta_map;
+                     rg_meta_map["num_rows"]        = rg.num_rows;
+                     rg_meta_map["total_byte_size"] = rg.total_byte_size;
+                     return rg_meta_map;
+                   });
+  });
   return rg_metadata;
 }
 
@@ -1421,7 +1555,7 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
 std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
                "Cannot decode parquet column-chunk bounds without source metadata",
@@ -1431,10 +1565,9 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   auto const num_row_groups_per_file = get_num_row_groups_per_file();
   auto num_row_groups_per_source     = std::vector<std::size_t>{};
   num_row_groups_per_source.reserve(num_row_groups_per_file.size());
-  std::transform(num_row_groups_per_file.begin(),
-                 num_row_groups_per_file.end(),
-                 std::back_inserter(num_row_groups_per_source),
-                 [](auto count) { return static_cast<std::size_t>(count); });
+  std::ranges::transform(num_row_groups_per_file,
+                         std::back_inserter(num_row_groups_per_source),
+                         [](auto count) { return static_cast<std::size_t>(count); });
 
   auto input_row_group_indices = std::vector<std::vector<size_type>>(per_file_metadata.size());
   for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
@@ -1450,13 +1583,13 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   columns.push_back(std::move(file_indices));
   columns.push_back(std::move(row_group_indices));
 
-  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
-                                         .per_file_metadata    = per_file_metadata,
-                                         .row_group_indices    = input_row_group_indices,
-                                         .has_is_null_operator = false};
+  row_group_stats_caster const stats_col{.total_row_groups        = total_row_groups,
+                                         .per_file_metadata       = per_file_metadata,
+                                         .row_group_indices       = input_row_group_indices,
+                                         .with_null_and_nan_stats = false};
 
   for (auto const& column_name : column_names) {
-    auto per_source_schema_indices = std::vector<int>(per_file_metadata.size());
+    auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
     auto dtype                     = data_type{type_id::EMPTY};
 
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
@@ -1473,13 +1606,12 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
             column_name,
           std::invalid_argument);
       }
-      per_source_schema_indices[src_idx] = schema_idx;
+      schema_indices_per_source[src_idx] = schema_idx;
     }
 
-    auto [min_col, max_col, _] = cudf::type_dispatcher<dispatch_storage_type>(
-      dtype, stats_col, per_source_schema_indices, dtype, stream, mr);
-    columns.push_back(std::move(min_col));
-    columns.push_back(std::move(max_col));
+    std::ranges::move(cudf::type_dispatcher<dispatch_storage_type>(
+                        dtype, stats_col, schema_indices_per_source, dtype, stream, mr),
+                      std::back_inserter(columns));
   }
 
   return std::make_unique<table>(std::move(columns));
@@ -1525,6 +1657,15 @@ int aggregate_reader_metadata::map_schema_index(int schema_idx, int src_idx) con
   return schema_idx_map.at(schema_idx);
 }
 
+std::vector<int> aggregate_reader_metadata::map_schema_index_to_sources(int schema_idx) const
+{
+  auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
+  std::ranges::transform(std::views::iota(0, static_cast<int>(per_file_metadata.size())),
+                         schema_indices_per_source.begin(),
+                         [&](auto const src_idx) { return map_schema_index(schema_idx, src_idx); });
+  return schema_indices_per_source;
+}
+
 std::string aggregate_reader_metadata::get_pandas_index() const
 {
   // Assumes that all input files have the same metadata
@@ -1562,7 +1703,7 @@ std::vector<std::string> aggregate_reader_metadata::get_pandas_index_names() con
     std::smatch sm;
     while (std::regex_search(str, sm, index_name_expr)) {
       if (sm.size() == 2) {  // 2 = whole match, first item
-        if (std::find(names.begin(), names.end(), sm[1].str()) == names.end()) {
+        if (std::ranges::find(names, sm[1].str()) == names.end()) {
           std::regex const esc_quote{R"(\\")"};
           names.emplace_back(std::regex_replace(sm[1].str(), esc_quote, R"(")"));
         }
@@ -1578,7 +1719,7 @@ std::tuple<int64_t,
            std::vector<std::vector<size_t>>,
            std::vector<std::vector<size_t>>>
 aggregate_reader_metadata::apply_row_bounds_filter(
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   int64_t rows_to_skip,
   int64_t rows_to_read) const
 {
@@ -1650,7 +1791,7 @@ aggregate_reader_metadata::apply_row_bounds_filter(
 }
 
 std::vector<std::vector<size_type>> aggregate_reader_metadata::apply_byte_bounds_filter(
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   size_t bytes_to_skip,
   std::optional<size_t> const& bytes_to_read) const
 {
@@ -1704,14 +1845,14 @@ std::tuple<int64_t,
            size_type,
            surviving_row_group_metrics>
 aggregate_reader_metadata::select_row_groups(
-  host_span<std::unique_ptr<datasource> const> sources,
-  host_span<std::vector<size_type> const> row_group_indices,
+  std::span<std::unique_ptr<datasource> const> sources,
+  std::span<std::vector<size_type> const> row_group_indices,
   int64_t skip_rows_opt,
   std::optional<int64_t> const& num_rows_opt,
   size_t skip_bytes_opt,
   std::optional<size_t> const& byte_count_opt,
-  host_span<data_type const> output_dtypes,
-  host_span<int const> output_column_schemas,
+  std::span<data_type const> output_dtypes,
+  std::span<int const> output_column_schemas,
   std::optional<std::reference_wrapper<ast::expression const>> filter,
   cuda::stream_ref stream) const
 {
@@ -1753,22 +1894,20 @@ aggregate_reader_metadata::select_row_groups(
   std::vector<std::vector<size_type>> all_row_group_indices;
 
   // Span to track the current row group indices
-  host_span<std::vector<size_type> const> current_row_group_indices;
+  std::span<std::vector<size_type> const> current_row_group_indices;
 
   // If input row group indices are not specified, populate the vector of all row group indices
   if (row_group_indices.empty()) {
     all_row_group_indices.reserve(per_file_metadata.size());
-    std::transform(per_file_metadata.cbegin(),
-                   per_file_metadata.cend(),
-                   std::back_inserter(all_row_group_indices),
-                   [](auto const& file_meta) {
-                     std::vector<size_type> rg_idx(file_meta.row_groups.size());
-                     std::iota(rg_idx.begin(), rg_idx.end(), 0);
-                     return rg_idx;
-                   });
+    std::ranges::transform(
+      per_file_metadata, std::back_inserter(all_row_group_indices), [](auto const& file_meta) {
+        std::vector<size_type> rg_idx(file_meta.row_groups.size());
+        std::iota(rg_idx.begin(), rg_idx.end(), 0);
+        return rg_idx;
+      });
 
     // Set the current span of row group indices to the vector of all row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(all_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(all_row_group_indices);
   }
   // Otherwise, set the current span of row group indices to the specified input row group indices
   else {
@@ -1797,7 +1936,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_row_bounds_filter(current_row_group_indices, rows_to_skip, rows_to_read);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Flag to check if the row groups will be filtered using byte bounds
@@ -1816,7 +1955,7 @@ aggregate_reader_metadata::select_row_groups(
       apply_byte_bounds_filter(current_row_group_indices, skip_bytes_opt, byte_count_opt);
 
     // Update the current span of row group indices
-    current_row_group_indices = host_span<std::vector<size_type> const>(trimmed_row_group_indices);
+    current_row_group_indices = std::span<std::vector<size_type> const>(trimmed_row_group_indices);
   }
 
   // Compute number of input row groups after row or byte bounds trimming
@@ -1845,17 +1984,16 @@ aggregate_reader_metadata::select_row_groups(
     if (filtered_row_group_indices.has_value()) {
       // Update the current span of row group indices
       current_row_group_indices =
-        host_span<std::vector<size_type> const>(filtered_row_group_indices.value());
+        std::span<std::vector<size_type> const>(filtered_row_group_indices.value());
 
       // Only need to update the rows to skip relative to the first surviving row group
       // if row bounds were previously applied
       if (is_row_bounded_row_groups) {
         // Find the source index of the first non-empty row group
-        auto const first_non_empty_source_idx =
-          std::distance(current_row_group_indices.begin(),
-                        std::find_if(current_row_group_indices.begin(),
-                                     current_row_group_indices.end(),
-                                     [](auto const& indices) { return not indices.empty(); }));
+        auto const first_non_empty_source_idx = std::distance(
+          current_row_group_indices.begin(),
+          std::ranges::find_if(current_row_group_indices,
+                               [](auto const& indices) { return not indices.empty(); }));
 
         // Update the rows to skip relative to the first surviving row group
         if (std::cmp_less(first_non_empty_source_idx, current_row_group_indices.size())) {
@@ -2026,6 +2164,13 @@ aggregate_reader_metadata::select_columns(
       // store the index of this element if inserted in out_col_array
       nesting.push_back(static_cast<int>(out_col_array.size()));
       output_col.name = schema_elem.name;
+      output_col.is_file =
+        col_type == type_id::STRUCT and
+        is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx);
+          }));
 
       // build each child
       bool path_is_valid = false;
@@ -2046,6 +2191,15 @@ aggregate_reader_metadata::select_columns(
                          output_col.children,
                          has_list_parent || col_type == type_id::LIST);
         }
+      }
+
+      // Flag the `inline` child of a valid FILE group so that `make_column` materializes it as
+      // `list<uint8>` instead of strings.
+      if (output_col.is_file) {
+        auto const inline_col = std::ranges::find(output_col.children,
+                                                  std::string_view{"inline"},
+                                                  &cudf::io::detail::inline_column_buffer::name);
+        if (inline_col != output_col.children.end()) { inline_col->string_as_binary = true; }
       }
 
       // if I have no children, we're at a leaf and I'm an input column (that is, one with actual
@@ -2076,7 +2230,7 @@ aggregate_reader_metadata::select_columns(
           output_col.children.push_back(std::move(element_col));
         }
 
-        std::copy(nesting.cbegin(), nesting.cend(), std::back_inserter(input_col.nesting));
+        std::ranges::copy(nesting, std::back_inserter(input_col.nesting));
 
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
@@ -2108,9 +2262,17 @@ aggregate_reader_metadata::select_columns(
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
-    return lhs.type == rhs.type and lhs.converted_type == rhs.converted_type and
-           lhs.type_length == rhs.type_length and identities_match and
-           lhs.decimal_scale == rhs.decimal_scale and
+    // Writers may emit the deprecated converted type, the logical type, or both for the same
+    // column. The time units must always agree when both sources have a logical type, because
+    // the values are copied without conversion. Otherwise sources match if their converted types
+    // are equal or their logical types are identical.
+    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
+                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
+                                         (lhs.converted_type == rhs.converted_type or
+                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
+                                     : lhs.converted_type == rhs.converted_type;
+    return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
+           identities_match and lhs.decimal_scale == rhs.decimal_scale and
            lhs.decimal_precision == rhs.decimal_precision;
   };
 
@@ -2133,6 +2295,22 @@ aggregate_reader_metadata::select_columns(
         std::format(
           "Encountered mismatching data type or schema across the Parquet sources for column '{}'",
           src_schema_elem.name),
+        std::invalid_argument);
+
+      // A valid FILE group must be a valid FILE group in all sources so that its children are read
+      // in the same representation
+      auto const is_file_group = [&](SchemaElement const& schema_elem, int const pfm_idx) {
+        return is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx, pfm_idx);
+          }));
+      };
+      CUDF_EXPECTS(
+        is_file_group(src_schema_elem, 0) == is_file_group(dst_schema_elem, src_idx),
+        std::format("Encountered mismatching FILE logical type across the Parquet sources for "
+                    "column '{}'",
+                    src_schema_elem.name),
         std::invalid_argument);
 
       // Get the schema_idx_map for this data source (pfm)
@@ -2288,11 +2466,9 @@ aggregate_reader_metadata::select_columns(
       *use_names, filter_columns_names.has_value() ? *filter_columns_names : empty_names};
     for (auto const& used_column_names : column_names) {
       for (auto const& selected_path : used_column_names.get()) {
-        auto found_path =
-          std::find_if(all_paths.begin(), all_paths.end(), [&](path_info& valid_path) {
-            return are_column_paths_equal(
-              valid_path.full_path, selected_path, case_sensitive_names);
-          });
+        auto found_path = std::ranges::find_if(all_paths, [&](path_info& valid_path) {
+          return are_column_paths_equal(valid_path.full_path, selected_path, case_sensitive_names);
+        });
         // Ensure that selected path matches a path in all_paths
         CUDF_EXPECTS(
           found_path != all_paths.end() or ignore_missing_columns,
@@ -2307,27 +2483,25 @@ aggregate_reader_metadata::select_columns(
 
     // Now construct paths as vector of strings for further consumption
     std::vector<std::vector<std::string>> use_names3;
-    std::transform(valid_selected_paths.cbegin(),
-                   valid_selected_paths.cend(),
-                   std::back_inserter(use_names3),
-                   [&](path_info const& valid_path) {
-                     auto schema_idx = valid_path.schema_idx;
-                     std::vector<std::string> result_path;
-                     do {
-                       SchemaElement const& elem = get_schema(schema_idx);
-                       result_path.push_back(elem.name);
-                       schema_idx = elem.parent_idx;
-                     } while (schema_idx > 0);
-                     return std::vector<std::string>(result_path.rbegin(), result_path.rend());
-                   });
+    std::ranges::transform(
+      valid_selected_paths, std::back_inserter(use_names3), [&](path_info const& valid_path) {
+        auto schema_idx = valid_path.schema_idx;
+        std::vector<std::string> result_path;
+        do {
+          SchemaElement const& elem = get_schema(schema_idx);
+          result_path.push_back(elem.name);
+          schema_idx = elem.parent_idx;
+        } while (schema_idx > 0);
+        return std::vector<std::string>(result_path.rbegin(), result_path.rend());
+      });
 
     std::vector<column_name_info> selected_columns;
     if (include_index) {
       std::vector<std::string> const index_names = get_pandas_index_names();
-      std::transform(index_names.cbegin(),
-                     index_names.cend(),
-                     std::back_inserter(selected_columns),
-                     [](std::string const& name) { return column_name_info{.name = name}; });
+      std::ranges::transform(
+        index_names, std::back_inserter(selected_columns), [](std::string const& name) {
+          return column_name_info{.name = name};
+        });
     }
     // Merge the vector use_names into a set of hierarchical column_name_info objects
     /* This is because if we have columns like this:
@@ -2357,9 +2531,8 @@ aggregate_reader_metadata::select_columns(
       auto array_to_find_in = &selected_columns;
       for (auto const& name_to_find : path) {
         // Check if the path exists in our selected_columns and if not, add it.
-        auto found_col = std::find_if(
-          array_to_find_in->begin(),
-          array_to_find_in->end(),
+        auto found_col = std::ranges::find_if(
+          *array_to_find_in,
           [&name_to_find](column_name_info const& col) { return col.name == name_to_find; });
         if (found_col == array_to_find_in->end()) {
           auto& col        = array_to_find_in->emplace_back(name_to_find);
@@ -2387,28 +2560,12 @@ aggregate_reader_metadata::select_columns(
 }
 
 std::vector<Type> aggregate_reader_metadata::get_parquet_types(
-  host_span<std::vector<size_type> const> row_group_indices,
-  host_span<int const> column_schemas) const
+  std::span<int const> column_schemas) const
 {
   std::vector<Type> parquet_types(column_schemas.size());
-  // Find a source with at least one row group
-  auto const src_iter = std::find_if(row_group_indices.begin(),
-                                     row_group_indices.end(),
-                                     [](auto const& rg) { return rg.size() > 0; });
-  CUDF_EXPECTS(src_iter != row_group_indices.end(),
-               "Cannot determine Parquet types as no source has any selected row groups.",
-               std::invalid_argument);
-
-  // Source index
-  auto const src_index = std::distance(row_group_indices.begin(), src_iter);
-  // Use the first row group in this source
-  auto const first_row_group_index = row_group_indices[src_index].front();
-  std::transform(column_schemas.begin(),
-                 column_schemas.end(),
-                 parquet_types.begin(),
-                 [&](auto const schema_idx) {
-                   return get_column_metadata(first_row_group_index, src_index, schema_idx).type;
-                 });
+  std::ranges::transform(column_schemas, parquet_types.begin(), [&](auto const schema_idx) {
+    return get_schema(schema_idx).type;
+  });
 
   return parquet_types;
 }

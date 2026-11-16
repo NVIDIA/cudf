@@ -8,8 +8,10 @@
 
 #include <cudf/reshape.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 
 #include <nvbench/nvbench.cuh>
@@ -28,7 +30,10 @@ static void bench_table_to_array(nvbench::state& state)
   auto input_view = input_table->view();
   auto stream     = cudf::get_default_stream();
 
-  rmm::device_buffer output(num_rows * num_cols * sizeof(int32_t), stream);
+  cuda::device_buffer<std::byte> output(stream,
+                                        cudf::get_current_device_resource_ref(),
+                                        num_rows * num_cols * sizeof(int32_t),
+                                        cuda::no_init);
   auto span = cudf::device_span<cuda::std::byte>(reinterpret_cast<cuda::std::byte*>(output.data()),
                                                  output.size());
 

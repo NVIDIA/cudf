@@ -8,8 +8,9 @@
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/io/csv.hpp>
+
+#include <cuda/cmath>
 
 #include <nvbench/nvbench.cuh>
 
@@ -54,9 +55,9 @@ void BM_csv_read_varying_options(
       .comment('#')
       .prefix("BM_");
 
-  size_t const chunk_size = cudf::util::div_rounding_up_safe(source_sink.size(), num_chunks);
+  size_t const chunk_size = cuda::ceil_div(source_sink.size(), num_chunks);
   auto const chunk_row_cnt =
-    cudf::util::div_rounding_up_safe(view.num_rows(), static_cast<cudf::size_type>(num_chunks));
+    cuda::ceil_div(view.num_rows(), static_cast<cudf::size_type>(num_chunks));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,

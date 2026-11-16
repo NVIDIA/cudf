@@ -5,11 +5,11 @@ description: Draft or file NVIDIA/cudf issues from bug reports, performance inve
 
 # Writing a cuDF issue
 
-Write enough for a maintainer to act. A small bug may need only a few paragraphs and a reproducer. A design proposal may need sections and measurements. Follow the user's requested format.
+Write enough for a maintainer to act or join the discussion. A small bug may need only a few paragraphs and a reproducer. A design proposal may need sections and measurements. Follow the user's requested format.
 
 ## Before drafting
 
-1. **Check the current conventions.** Read the matching template in `.github/ISSUE_TEMPLATE/`. Read a few recent open issues of the same kind and area, including the user's issues when available. For Matt, use `--author Matt711`. Search by topic as well as title prefix, then read the bodies; do not copy an issue's omissions. The templates define the information to cover; maintainer prose can use a simpler layout.
+1. **Check the current conventions.** Read the matching template in `.github/ISSUE_TEMPLATE/`. Read a few recent open issues of the same kind and area, including the user's issues when available (`--author <username>`). Search by topic as well as title prefix, then read the bodies; do not copy an issue's omissions. The templates define the information to cover; maintainer prose can use a simpler layout.
 
    ```bash
    gh issue list -R NVIDIA/cudf --state open --search '<topic> sort:created-desc' --limit 5
@@ -44,13 +44,16 @@ Verify label names before suggesting them: `gh label list -R NVIDIA/cudf --searc
 
 ## Body by kind
 
-Use only the sections the issue needs. For Matt, short design, performance and small bug reports can be prose: start with the mechanism and identifiers, explain the consequence, then give the proposed fix or reproducer. For CI and test failures, use Description, Affected tests, How to reproduce, What I saw in CI, Root cause, Workaround and Caveats, omitting sections without evidence.
+Use only the sections the issue needs. Short design, performance and small bug reports can be prose: start with the mechanism and identifiers, explain the consequence, then give the proposed fix or reproducer. For CI and test failures, use Description, Affected tests, How to reproduce, What I saw in CI, Root cause, Workaround and Caveats, omitting sections without evidence.
 
 - **Bug:** actual and expected behavior, minimal runnable reproducer, and environment. Follow the bug template's environment fields: install method, bare metal/container/cloud, and `print_env.sh` output when available. Include relevant library versions, CUDA, GPU and the commit tested. For CI failures, link the run and job, name the commit and affected test IDs, and quote the relevant error. State a root cause only as strongly as the evidence supports it. Prefer a pylibcudf reproducer when it isolates the failure; for upstream bugs, try without cuDF. For intermittent failures, give the rate and measurement command.
 - **Feature or enhancement:** current behavior and use case, proposed behavior or API, alternatives and tradeoffs. Show the reference library's behavior when compatibility is the point. Describe migration if the API changes. For a missing pandas accelerator function, use `pandas_function_request.md` and include profiler output if available.
 - **Performance:** mechanism, baseline, proposed change and rerun command. Give hardware, data size or scale factor, cold/warm conditions, number of runs and variation. Include a profile when available. Distinguish measured prototype gains from estimates and uncontrolled comparisons; do not present a best run as typical.
 - **Story:** goal, scope, work items and completion criteria. Add design, phases, risks, rollback and results when needed to review the plan. A tracker does not require a full design document. Identify sub-issues and dependencies; propose the parent relationship separately for approval.
+- **Discussion:** context, the question maintainers need to resolve, known evidence, possible directions and open questions. A settled design or implementation plan is not required. Distinguish ideas from agreed decisions.
 - **Documentation:** location, what is wrong or missing, how it was checked or searched for, and suggested correction.
+
+Issues can evolve through maintainer discussion. An exploratory issue may be revised into a concrete proposal, bug report or tracker, or lead to separate issues with narrower scopes. When asked to revise it, reflect the current agreement and link the discussion that explains a substantial scope change. Link any follow-up issues in both directions and make clear what each one covers. Show the user proposed edits or follow-up drafts before changing or filing anything on GitHub.
 
 ## Style and evidence
 

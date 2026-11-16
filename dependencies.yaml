@@ -1093,7 +1093,7 @@ dependencies:
           - matrix:
               requirements_type: run
             packages:
-              - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x" }}
+              - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
           - matrix:
             packages:
               - cuda-version =${{ cuda_version }}

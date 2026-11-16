@@ -39,6 +39,7 @@
 #include <cudf/replace.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/rolling.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/search.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -1276,6 +1277,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_sortOrder(JNIEnv* env,
     std::vector<cudf::null_order> null_order =
       n_are_nulls_smallest.transform_if_else(cudf::null_order::BEFORE, cudf::null_order::AFTER);
 
+    // Without sort keys all rows compare equal, so any order is sorted. Keep the input order.
+    // cudf::sorted_order would return an empty gather map instead, which drops every row.
+    if (num_columns == 0) {
+      auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
+      return release_as_jlong(
+        cudf::sequence(input_table->num_rows(), cudf::numeric_scalar<cudf::size_type>(0)));
+    }
+
     std::vector<cudf::column_view> sort_keys = n_sort_keys_columns.get_dereferenced();
     return release_as_jlong(cudf::sorted_order(cudf::table_view{sort_keys}, order, null_order));
   }
@@ -1321,10 +1330,17 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_orderBy(JNIEnv* env,
     std::vector<cudf::null_order> null_order =
       n_are_nulls_smallest.transform_if_else(cudf::null_order::BEFORE, cudf::null_order::AFTER);
 
+    auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
+    // Without sort keys all rows compare equal, so any order is sorted. Keep the input order.
+    // cudf::sorted_order would return an empty gather map instead, which drops every row.
+    if (num_columns == 0) {
+      return convert_table_with_row_count_for_return(env,
+                                                     std::make_unique<cudf::table>(*input_table));
+    }
+
     std::vector<cudf::column_view> sort_keys = n_sort_keys_columns.get_dereferenced();
     auto sorted_col = cudf::sorted_order(cudf::table_view{sort_keys}, order, null_order);
 
-    auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
     return convert_table_with_row_count_for_return(env,
                                                    cudf::gather(*input_table, sorted_col->view()));
   }

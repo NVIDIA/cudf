@@ -211,6 +211,25 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testOrderByNoKeys() {
+    try (Table table = new Table.TestBuilder().column(5, 3, 4).build();
+         Table sorted = table.orderBy();
+         ColumnVector order = table.sortOrder();
+         ColumnVector expectedOrder = ColumnVector.fromInts(0, 1, 2)) {
+      assertTablesAreEqual(table, sorted);
+      assertColumnsAreEqual(expectedOrder, order);
+    }
+    try (Table table = new Table(4);
+         Table sorted = table.orderBy();
+         ColumnVector order = table.sortOrder();
+         ColumnVector expectedOrder = ColumnVector.fromInts(0, 1, 2, 3)) {
+      assertEquals(4, sorted.getRowCount());
+      assertEquals(0, sorted.getNumberOfColumns());
+      assertColumnsAreEqual(expectedOrder, order);
+    }
+  }
+
+  @Test
   void testSortOrderSimple() {
     try (Table table = new Table.TestBuilder()
         .column(5, 3, 3, 1, 1)

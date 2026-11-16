@@ -1532,8 +1532,19 @@ class UnaryFunction(Expr):
             )
         elif self.name == "drop_nulls":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
-            if column.null_count == 0:
+            if (null_count := column.null_count) == 0:
                 return column
+            if column.is_sorted == plc.types.Sorted.YES:
+                bounds = (
+                    [null_count, column.size]
+                    if sorting.nulls_at_start(column)
+                    else [0, column.size - null_count]
+                )
+                (sliced,) = plc.copying.slice(column.obj, bounds, stream=df.stream)
+                if sliced.null_count() == 0:
+                    return Column(
+                        sliced.copy(stream=df.stream), dtype=self.dtype
+                    ).sorted_like(column)
             return Column(
                 plc.stream_compaction.drop_nulls(
                     plc.Table([column.obj]), [0], 1, stream=df.stream

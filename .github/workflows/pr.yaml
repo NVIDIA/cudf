@@ -314,7 +314,6 @@ jobs:
         fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming)
         && 'ci/build_cpp.sh' || 'ci/build_cpp_runtime.sh' }}
       matrix_type: pull-request
-      ci-imgs-pr: "493"
   cmake-tests:
     needs: [checks, changed-files]
     permissions:

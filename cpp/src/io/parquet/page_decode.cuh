@@ -11,6 +11,8 @@
 #include "parquet_gpu.hpp"
 #include "rle_stream.cuh"
 
+#include <cudf/detail/utilities/device_atomics.cuh>
+
 #include <cooperative_groups.h>
 #include <cuda/atomic>
 #include <cuda/std/algorithm.min.h>
@@ -1533,7 +1535,7 @@ __device__ void zero_fill_null_positions_shared(
   // Cast to int64 because a large page can push num_values * dtype_len past INT32_MAX.
   if (static_cast<int64_t>(ni.null_count) * dtype_len * 2 > static_cast<int64_t>(num_values)) {
     for (int i = t; i < num_values; i += block_size) {
-      if (not cudf::bit_is_set(ni.valid_map, start_bit_idx + i)) {
+      if (not cudf::detail::weak_bit_is_set(ni.valid_map, start_bit_idx + i)) {
         cuda::std::memset(data_out + (static_cast<size_t>(i) * dtype_len), 0, dtype_len);
       }
     }
@@ -1545,8 +1547,9 @@ __device__ void zero_fill_null_positions_shared(
   // being per block of validity words, and the inner loop being one iteration per null value within
   // the validity word. A word with no nulls costs a load and nothing else in the inner loop.
   for (int block_idx = start_block + t; block_idx < end_block; block_idx += block_size) {
-    cudf::bitmask_type null_positions = ~ni.valid_map[block_idx];
-    int const block_start_bit         = block_idx * bits_per_mask;
+    cudf::bitmask_type null_positions =
+      ~cuda::ptx::ld(cuda::ptx::space_global, ni.valid_map + block_idx);
+    int const block_start_bit = block_idx * bits_per_mask;
 
     // The first and last words need masking because those can hold bits outside `[start_bit_idx,
     // end_bit_idx)`, and inverting turns every such bit into a phantom null: a trailing partial

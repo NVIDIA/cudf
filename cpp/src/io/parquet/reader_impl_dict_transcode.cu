@@ -5,6 +5,8 @@
 
 #include "reader_impl.hpp"
 
+#include <cudf/ast/detail/expression_transformer.hpp>
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
@@ -30,6 +32,7 @@
 #include <algorithm>
 #include <functional>
 #include <numeric>
+#include <tuple>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -216,6 +219,43 @@ void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
     });
 }
 
+/**
+ * @brief Collects the output columns an AST filter expression references.
+ */
+class referenced_columns_collector : public ast::detail::expression_transformer {
+ public:
+  explicit referenced_columns_collector(size_t num_columns) : _columns(num_columns, false) {}
+
+  std::reference_wrapper<ast::expression const> visit(ast::literal const& expr) override
+  {
+    return expr;
+  }
+
+  std::reference_wrapper<ast::expression const> visit(ast::column_reference const& expr) override
+  {
+    auto const idx = static_cast<size_t>(expr.get_column_index());
+    if (idx < _columns.size()) { _columns[idx] = true; }
+    return expr;
+  }
+
+  std::reference_wrapper<ast::expression const> visit(
+    [[maybe_unused]] ast::column_name_reference const& expr) override
+  {
+    CUDF_FAIL("Column name references are resolved before the filter is converted");
+  }
+
+  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override
+  {
+    std::ignore = visit_operands(expr.get_operands());
+    return expr;
+  }
+
+  [[nodiscard]] std::vector<bool> columns() && { return std::move(_columns); }
+
+ private:
+  std::vector<bool> _columns;
+};
+
 }  // namespace
 
 void reader_impl::prepare_dict_transcode(read_mode mode)
@@ -234,21 +274,31 @@ void reader_impl::prepare_dict_transcode(read_mode mode)
   // Skip the fast path if custom row bounds are in effect.
   if (uses_custom_row_bounds(mode)) { return; }
 
-  // AST/JIT filters evaluate predicates on materialized STRING columns, so the direct transcode
-  // fast path cannot run under a filter. Skip it and let `finalize_output` encode the filtered
-  // STRING result to DICTIONARY32 via the post-hoc `dictionary::detail::encode` fallback.
-  if (_expr_conv.get_converted_expr().has_value()) { return; }
-
   auto& pass    = *_pass_itm_data;
   auto& subpass = *pass.subpass;
 
   if (pass.chunks.empty() or subpass.pages.size() == 0) { return; }
 
+  // AST/JIT filters evaluate predicates on materialized STRING columns, so a column the filter
+  // references stays off the fast path; `finalize_output` encodes its filtered STRING result to
+  // DICTIONARY32 via the post-hoc `dictionary::detail::encode` fallback.
+  auto const filter_columns = [&] {
+    referenced_columns_collector collector{_output_buffers.size()};
+    if (auto const expr = _expr_conv.get_converted_expr(); expr.has_value()) {
+      expr.value().get().accept(collector);
+    }
+    return std::move(collector).columns();
+  }();
+
   auto const elig = compute_dict_transcode_eligibility(pass, _input_columns, _output_buffers);
-  std::transform(
-    elig.begin(), elig.end(), _dict_transcode_eligible.begin(), [](column_eligibility const& e) {
-      return e.is_eligible();
-    });
+  std::transform(elig.begin(),
+                 elig.end(),
+                 _input_columns.begin(),
+                 _dict_transcode_eligible.begin(),
+                 [&](column_eligibility const& e, input_column_info const& input) {
+                   return e.is_eligible() and
+                          not filter_columns[static_cast<size_t>(input.nesting[0])];
+                 });
 
   auto const num_eligible =
     std::count(_dict_transcode_eligible.begin(), _dict_transcode_eligible.end(), true);

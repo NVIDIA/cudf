@@ -338,10 +338,9 @@ TEST_F(ParquetReaderDictTest, SlicedFlatStringDictTranscode)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(sliced, decoded_read->view());
 }
 
-// Non-happy test (Fast path ineligible): a filter combined with `output_dict_columns`. A filter
-// forces the direct transcode fast path off (predicates evaluate on materialized STRING columns);
-// `finalize_output` still encodes the surviving rows to DICTIONARY32 after the filter is applied.
-// The key column is projected through unchanged.
+// A filter combined with `output_dict_columns`. The filter references only the key column, so the
+// string column still takes the direct transcode fast path and the filter is applied to its
+// DICTIONARY32 column. The key column is projected through unchanged.
 TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
 {
   auto key_col = make_int_key_column();
@@ -378,6 +377,52 @@ TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
   ASSERT_EQ(read_str.type().id(), cudf::type_id::DICTIONARY32);
   auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read_str));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(1), decoded->view());
+}
+
+namespace {
+
+void expect_dictionary_of(cudf::column_view const& expected, cudf::column_view const& read)
+{
+  ASSERT_EQ(read.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+}
+
+}  // namespace
+
+// A filter on one string column: that column is materialized as STRING for the filter and encoded
+// after it, while the unreferenced string column takes the direct transcode fast path.
+TEST_F(ParquetReaderDictTest, FilterOnStringColumnWithOutputDictColumns)
+{
+  auto key_col      = make_int_key_column();
+  auto filtered_col = make_low_cardinality_strings();
+  auto carried_col  = make_low_cardinality_strings(seed + 1);
+
+  auto const input_tbl = cudf::table_view{{key_col, filtered_col, carried_col}};
+  auto const filepath =
+    temp_env->get_temp_filepath("FilterOnStringColumnWithOutputDictColumns.parquet");
+  write_parquet(input_tbl, filepath);
+
+  auto literal_value = cudf::string_scalar(make_value_string(1));
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(1);
+  auto filter_expr   = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, literal);
+
+  auto const predicate = cudf::compute_column(input_tbl, filter_expr);
+  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
+  ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
+
+  auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .output_dict_columns(true)
+                           .filter(filter_expr)
+                           .build();
+  auto const read_table = cudf::io::read_parquet(read_opts).tbl;
+  ASSERT_EQ(read_table->num_columns(), 3);
+  ASSERT_EQ(read_table->num_rows(), expected->num_rows());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(0), read_table->view().column(0));
+  expect_dictionary_of(expected->view().column(1), read_table->view().column(1));
+  expect_dictionary_of(expected->view().column(2), read_table->view().column(2));
 }
 
 // Non-happy test (Fast path ineligible): a column whose chunks mix dictionary and PLAIN data pages.

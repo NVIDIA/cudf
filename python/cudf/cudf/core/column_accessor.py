@@ -581,8 +581,7 @@ class ColumnAccessor(MutableMapping):
         tuple
         """
         if isinstance(index, slice):
-            start, stop, step = index.indices(len(self))
-            return self.names[start:stop:step]
+            return self.names[index]
         elif isinstance(index, int):
             return (self.names[index],)
         elif (bn := len(index)) > 0 and all(map(_is_bool, index)):  # type: ignore[arg-type]

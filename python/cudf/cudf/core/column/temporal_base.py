@@ -16,6 +16,7 @@ import pylibcudf as plc
 
 import cudf
 from cudf.api.types import is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column.column import ColumnBase, as_column, column_empty
 from cudf.core.dtype.validators import (
     is_dtype_obj_datetime_tz,
@@ -363,6 +364,26 @@ class TemporalBaseColumn(ColumnBase, Scannable):
             replacement = as_column(replacement)
             if replacement.can_cast_safely(self.dtype):
                 replacement = replacement.astype(self.dtype)
+        if (
+            PANDAS_GE_31
+            and self.dtype.kind == "M"
+            and self.time_unit == "ns"
+            and isinstance(replacement, type(self))
+            and replacement.time_unit != "ns"
+        ):
+            # Only matched replacements need to fit the existing resolution.
+            # Cast before viewing timestamps as integers so coarse values
+            # cannot silently become unrelated nanosecond timestamps.
+            matches = to_replace.isin(self)
+            to_replace = to_replace.apply_retention_mask(matches)
+            replacement = replacement.apply_retention_mask(matches)
+            try:
+                replacement = replacement.astype(self.dtype)
+            except pd.errors.OutOfBoundsDatetime as err:
+                raise pd.errors.OutOfBoundsDatetime(
+                    f"Incompatible (high-resolution) value for dtype='{self.dtype}'. "
+                    "Explicitly cast before operating."
+                ) from err
         if isinstance(to_replace, type(self)):
             to_replace = to_replace.astype(self._UNDERLYING_DTYPE)
         if isinstance(replacement, type(self)):

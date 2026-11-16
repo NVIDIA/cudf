@@ -21,6 +21,46 @@ PANDAS_MERGE_HOWS = ("left", "inner", "outer", "right")
 PANDAS_MERGE_HOWS_WITH_CROSS = (*PANDAS_MERGE_HOWS, "cross")
 
 
+@pytest.mark.parametrize("how", PANDAS_MERGE_HOWS)
+@pytest.mark.parametrize(
+    "left_unit,right_unit",
+    [("s", "ns"), ("us", "ns"), ("ns", "us"), ("ms", "s")],
+)
+@pytest.mark.parametrize("shared_name", [False, True])
+def test_merge_datetime_key_resolution(
+    how, left_unit, right_unit, shared_name
+):
+    left_key = "t" if shared_name else "left"
+    right_key = "t" if shared_name else "right"
+    left = pd.DataFrame(
+        {
+            left_key: pd.array(
+                ["2023-05-12", "2023-05-13"], dtype=f"datetime64[{left_unit}]"
+            ),
+            "a": [1.0, 2.0],
+        }
+    )
+    right = pd.DataFrame(
+        {
+            right_key: pd.array(
+                ["2023-05-13", "2023-05-14"], dtype=f"datetime64[{right_unit}]"
+            ),
+            "b": [3.0, 4.0],
+        }
+    )
+    kwargs = {
+        "left_on": left_key,
+        "right_on": right_key,
+        "how": how,
+        "sort": True,
+    }
+
+    assert_eq(
+        cudf.from_pandas(left).merge(cudf.from_pandas(right), **kwargs),
+        left.merge(right, **kwargs),
+    )
+
+
 @pytest.fixture(
     params=(
         "left",

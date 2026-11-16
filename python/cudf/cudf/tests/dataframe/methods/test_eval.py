@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import re
@@ -12,6 +12,9 @@ from cudf.testing import assert_eq
 
 # Note that for now expressions do not automatically handle casting, so inputs
 # need to be casted appropriately
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.eval is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.filterwarnings("ignore::RuntimeWarning")
 @pytest.mark.parametrize(
     "expr, dtype",
@@ -69,8 +72,7 @@ def test_dataframe_eval(nrows, expr, dtype):
 
     # Test inplace
     if re.search("[^=><]=[^=]", expr) is not None:
-        pdf_eval = df_eval.to_pandas()
-        pdf_eval.eval(expr, inplace=True)
+        pdf_eval = df_eval.to_pandas().eval(expr)
         df_eval.eval(expr, inplace=True)
         assert_eq(pdf_eval, df_eval)
 
@@ -91,6 +93,9 @@ def test_dataframe_eval_errors(expr):
         df.eval(expr)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.eval is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_dataframe_eval_misc():
     df = cudf.DataFrame({"a": [1, 2, 3, None, 5]})
     got = df.eval("isnull(a)")

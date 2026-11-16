@@ -25,7 +25,9 @@ CUML_TESTS_DIR=/tmp/cuml/python/cuml/tests
 
 rapids-logger "pytest cuml cuDF-compat subset"
 
-timeout 15m python -m pytest \
+PYTHONPATH="${PWD}/ci${PYTHONPATH:+:${PYTHONPATH}}" \
+  timeout 15m python -m pytest \
+  -p cuml_cudf_test_plugin \
   --cache-clear \
   "${CUML_TESTS_DIR}/test_compose.py" \
   "${CUML_TESTS_DIR}/test_kneighbors_classifier.py" \

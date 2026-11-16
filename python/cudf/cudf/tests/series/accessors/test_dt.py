@@ -10,6 +10,7 @@ import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 
 # Parametrize between numpy datetime64 and pandas ArrowDtype timestamp so
@@ -18,6 +19,12 @@ _DT_DTYPES = [
     "datetime64[ns]",
     pd.ArrowDtype(pa.timestamp("ns")),
 ]
+_PANDAS_DT_ALIASES = {
+    "weekday": "day_of_week",
+    "dayofweek": "day_of_week",
+    "dayofyear": "day_of_year",
+    "daysinmonth": "days_in_month",
+}
 
 
 @pytest.fixture(
@@ -274,6 +281,9 @@ def test_ceil(datetime_types_as_str, resolution):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("dtype", _DT_DTYPES)
 def test_days_in_months(dtype):
     data = [
@@ -292,7 +302,7 @@ def test_days_in_months(dtype):
     gs = cudf.from_pandas(ps)
 
     assert_eq(ps.dt.days_in_month, gs.dt.days_in_month)
-    assert_eq(ps.dt.daysinmonth, gs.dt.daysinmonth)
+    assert_eq(ps.dt.days_in_month, gs.dt.daysinmonth)
 
 
 @pytest.mark.parametrize("dtype", _DT_DTYPES)
@@ -567,9 +577,17 @@ def test_isocalendar_dtype(dtype):
     if isinstance(dtype, pd.ArrowDtype):
         assert all(dt == pd.ArrowDtype(pa.int64()) for dt in got.dtypes)
     else:
-        assert all(dt == pd.UInt32Dtype() for dt in got.dtypes)
+        assert got["year"].dtype == (
+            pd.Int32Dtype() if PANDAS_GE_31 else pd.UInt32Dtype()
+        )
+        assert all(
+            got[field].dtype == pd.UInt32Dtype() for field in ("week", "day")
+        )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("dtype", _DT_DTYPES)
 @pytest.mark.parametrize("attr", ["dayofweek", "day_of_week", "weekday"])
 def test_dayofweek_dtype(dtype, attr):
@@ -578,7 +596,7 @@ def test_dayofweek_dtype(dtype, attr):
     ps = pd.Series(["2010-01-01", "2010-12-31", "2011-06-15"], dtype=dtype)
     gs = cudf.from_pandas(ps)
 
-    expect = getattr(ps.dt, attr)
+    expect = getattr(ps.dt, _PANDAS_DT_ALIASES.get(attr, attr))
     got = getattr(gs.dt, attr)
 
     assert_eq(expect, got)
@@ -695,6 +713,9 @@ def test_datetime_strftime_arrow_dtype(unit, date_format):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -727,7 +748,7 @@ def test_datetime_strftime_arrow_dtype(unit, date_format):
 def test_dt_series_datetime_fields(data, field):
     pd_data = pd.Series(data)
     gdf_data = cudf.Series(pd_data)
-    base = getattr(pd_data.dt, field)
+    base = getattr(pd_data.dt, _PANDAS_DT_ALIASES.get(field, field))
     test = getattr(gdf_data.dt, field)
     assert_eq(base, test, check_dtype=False)
 
@@ -933,6 +954,9 @@ def test_convert_edge_cases(data, original_timezone, target_timezone):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -959,11 +983,14 @@ def test_dt_component_dtype_pandas_compat(data, component):
     ps = pd.Series(data)
     gs = cudf.Series(data)
 
-    expect = getattr(ps.dt, component)
+    expect = getattr(ps.dt, _PANDAS_DT_ALIASES.get(component, component))
     got = getattr(gs.dt, component)
     assert_eq(expect, got, check_dtype=True)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:(Series\\.dt|DatetimeIndex)\\.(weekday|dayofweek|dayofyear|daysinmonth) is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "unit",
     ["s", "ms", "us", "ns"],
@@ -1008,7 +1035,7 @@ def test_dt_component_arrow_dtype(unit, component):
     ps = pd.Series(data, dtype=pd.ArrowDtype(pa.timestamp(unit)))
     gs = cudf.from_pandas(ps)
 
-    expect = getattr(ps.dt, component)
+    expect = getattr(ps.dt, _PANDAS_DT_ALIASES.get(component, component))
     got = getattr(gs.dt, component)
     assert_eq(expect, got)
 

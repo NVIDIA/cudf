@@ -6,6 +6,7 @@ import functools
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 import cudf
@@ -24,11 +25,14 @@ def test_dataframe_round_builtin(digits):
             "b": ["a", "b", "c"],
             "c": pd.Series([34224, 324324, 324342], dtype="datetime64[ns]"),
             "d": pd.Series([224.242, None, 2424.234324], dtype="category"),
-            "e": [
-                decimal.Decimal("342.3243234234242"),
-                decimal.Decimal("89.32432497687622"),
-                None,
-            ],
+            "e": pd.Series(
+                [
+                    decimal.Decimal("342.3243234234242"),
+                    decimal.Decimal("89.32432497687622"),
+                    None,
+                ],
+                dtype=pd.ArrowDtype(pa.decimal128(20, 14)),
+            ),
         }
     )
     gdf = cudf.from_pandas(pdf, nan_as_null=False)

@@ -66,7 +66,15 @@ def test_dt_accessor(data):
     df = DataFrame({"dt_col": data.copy()})
     ddf = dask_cudf.from_cudf(df, npartitions=5)
 
-    for i in ["year", "month", "day", "hour", "minute", "second", "weekday"]:
+    for i in [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "day_of_week",
+    ]:
         assert i in dir(ddf.dt_col.dt)
         assert_series_equal(
             getattr(ddf.dt_col.dt, i).compute().to_pandas(),

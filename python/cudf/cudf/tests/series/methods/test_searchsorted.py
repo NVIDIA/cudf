@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import cupy
 import numpy as np
@@ -6,8 +6,21 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import gen_rand
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31, reason="Pandas-compatible validation in 3.1"
+)
+@pytest.mark.parametrize("target", [1, np.int64(1), np.arange(3, dtype="i8")])
+@pytest.mark.parametrize("box", [cudf.Series, cudf.TimedeltaIndex])
+def test_searchsorted_timedelta_rejects_numeric(target, box):
+    source = box(np.arange(3).view("timedelta64[ns]"))
+    with cudf.option_context("mode.pandas_compatible", True):
+        with pytest.raises(TypeError, match="compatible dtype"):
+            source.searchsorted(target)
 
 
 @pytest.mark.parametrize("side", ["left", "right"])

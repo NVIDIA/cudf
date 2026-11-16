@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.abc import Serializable
 from cudf.core.column.column import deserialize_columns
 from cudf.core.groupby.groupby import (
@@ -15,6 +16,7 @@ from cudf.core.groupby.groupby import (
     SeriesGroupBy,
     _Grouping,
 )
+from cudf.options import get_option
 
 if TYPE_CHECKING:
     import pylibcudf as plc
@@ -25,6 +27,19 @@ if TYPE_CHECKING:
 
 class _Resampler(GroupBy):
     grouping: "_ResampleGrouping"
+
+    def __getitem__(self, key):
+        if (
+            PANDAS_GE_31
+            and get_option("mode.pandas_compatible")
+            and isinstance(key, tuple)
+        ):
+            # pandas interprets tuples as deprecated multi-column selection,
+            # including when a tuple is also a genuine column label.
+            raise NotImplementedError(
+                "Tuple selection on a Resampler requires pandas."
+            )
+        return super().__getitem__(key)
 
     def __init__(self, obj, by, axis=None, kind=None):
         by = _ResampleGrouping(obj, by)
@@ -47,6 +62,14 @@ class _Resampler(GroupBy):
         result = super().agg(
             func, *args, engine=engine, engine_kwargs=engine_kwargs, **kwargs
         )
+        if (
+            PANDAS_GE_31
+            and isinstance(self.obj, cudf.Series)
+            and isinstance(func, dict)
+            and not func
+            and result._num_columns == 0
+        ):
+            result.columns = pd.Index([])
         if len(self.grouping.bin_labels) != len(result):
             index = cudf.Index(
                 self.grouping.bin_labels, name=self.grouping.names[0]
@@ -308,7 +331,8 @@ class _ResampleGrouping(_Grouping):
 
         nbins = bin_numbers.max() + 1
         if (
-            isinstance(offset, Day)
+            not PANDAS_GE_31
+            and isinstance(offset, Day)
             and closed == "right"
             and natural_end == pd.Timestamp(max_date)
         ):

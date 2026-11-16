@@ -1806,8 +1806,8 @@ def _get_groups_and_offsets(
         dropna=False,
     )._grouped()
     if not preserve_index:
-        grouped_df.reset_index(drop=True, inplace=True)
-    grouped_df.drop(columns=partition_cols, inplace=True)
+        grouped_df = grouped_df.reset_index(drop=True)
+    grouped_df = grouped_df.drop(columns=partition_cols)
     # Copy the entire keys df in one operation rather than using iloc
     part_names = (
         part_keys.take(part_offsets[:-1])
@@ -2715,7 +2715,7 @@ def _process_metadata(
                 idx = MultiIndex.from_frame(
                     index_data, names=list(actual_index_names)
                 )
-            df.drop(columns=index_col, inplace=True)
+            df = df.drop(columns=index_col)
             df.index = idx
         else:
             if use_pandas_metadata:

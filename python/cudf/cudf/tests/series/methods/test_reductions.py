@@ -10,6 +10,7 @@ import pyarrow as pa
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
@@ -1023,7 +1024,7 @@ def test_string_sum_empty_and_all_null(dtype, skipna, min_count):
     result = cudf.Series([None, None], dtype=dtype).sum(
         skipna=skipna, min_count=min_count
     )
-    if dtype == np.dtype("object") and not skipna:
+    if dtype == np.dtype("object") and not skipna and not PANDAS_GE_31:
         # pandas raises TypeError (None + None); cudf treats the values
         # as nulls and returns a missing value instead.
         with pytest.raises(TypeError):
@@ -1078,13 +1079,22 @@ def test_object_min_max_with_null(method, skipna):
     # value); cudf treats None as a null: skipped when skipna=True,
     # otherwise the result is a missing value.
     data = ["a", "b", "c", None]
-    with pytest.raises(TypeError):
-        getattr(pd.Series(data, dtype=np.dtype("object")), method)(
-            skipna=skipna
-        )
+    if not PANDAS_GE_31:
+        with pytest.raises(TypeError):
+            getattr(pd.Series(data, dtype=np.dtype("object")), method)(
+                skipna=skipna
+            )
 
     sr = cudf.Series(data, dtype=np.dtype("object"))
     result = getattr(sr, method)(skipna=skipna)
+    if PANDAS_GE_31:
+        expected = getattr(pd.Series(data, dtype=np.dtype("object")), method)(
+            skipna=skipna
+        )
+        if pd.isna(expected):
+            assert pd.isna(result)
+        else:
+            assert result == expected
     if skipna:
         assert result == ("a" if method == "min" else "c")
     else:

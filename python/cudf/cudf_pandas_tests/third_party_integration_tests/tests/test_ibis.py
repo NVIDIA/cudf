@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import ibis
@@ -13,7 +13,16 @@ def ibis_assert_equal(expect, got, rtol: float = 1e-7, atol: float = 0.0):
     pd._testing.assert_almost_equal(expect, got, rtol=rtol, atol=atol)
 
 
-pytestmark = pytest.mark.assert_eq(fn=ibis_assert_equal)
+pytestmark = [pytest.mark.assert_eq(fn=ibis_assert_equal)]
+if hasattr(pd.errors, "Pandas4Warning"):
+    # Ibis 12 still reads this deprecated option during dtype conversion.
+    # https://github.com/ibis-project/ibis/blob/12.0.0/ibis/formats/pandas.py
+    pytestmark.append(
+        pytest.mark.filterwarnings(
+            r"ignore:The 'future\.infer_string' option is deprecated and will be "
+            r"removed in pandas 4\.0:pandas.errors.Pandas4Warning:ibis\.formats\.pandas$"
+        )
+    )
 
 
 COLUMN_REDUCTIONS = ["sum", "min", "max", "mean", "var", "std"]

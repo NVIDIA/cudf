@@ -7,10 +7,17 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
 )
+
+
+def _join_suffix_kwargs(left, right):
+    if PANDAS_GE_31:
+        return {"suffixes": (left, right)}
+    return {"lsuffix": left, "rsuffix": right}
 
 
 @pytest.fixture(
@@ -147,11 +154,13 @@ def test_dataframe_join_suffix():
     with pytest.raises(ValueError, match=msg):
         left.join(right)
 
-    got = left.join(right, lsuffix="_left", rsuffix="_right", sort=True)
-    expect = left.to_pandas().join(
+    got = left.join(right, sort=True, **_join_suffix_kwargs("_left", "_right"))
+    expect = left.to_pandas().merge(
         right.to_pandas(),
-        lsuffix="_left",
-        rsuffix="_right",
+        how="left",
+        left_index=True,
+        right_index=True,
+        suffixes=("_left", "_right"),
         sort=True,
     )
     # TODO: Retain result index name
@@ -464,7 +473,7 @@ def test_typecast_on_join_indexes():
     )
     expect = expect.set_index("join_col")
 
-    got = gdf_l.join(gdf_r, how="inner", lsuffix="_x", rsuffix="_y")
+    got = gdf_l.join(gdf_r, how="inner", **_join_suffix_kwargs("_x", "_y"))
 
     assert_join_results_equal(expect, got, how="inner")
 
@@ -515,7 +524,7 @@ def test_typecast_on_join_multiindices():
         }
     )
     expect = expect.set_index(["join_col_0", "join_col_1", "join_col_2"])
-    got = gdf_l.join(gdf_r, how="inner", lsuffix="_x", rsuffix="_y")
+    got = gdf_l.join(gdf_r, how="inner", **_join_suffix_kwargs("_x", "_y"))
 
     assert_join_results_equal(expect, got, how="inner")
 
@@ -542,7 +551,7 @@ def test_typecast_on_join_indexes_matching_categorical():
         }
     )
     expect = expect.set_index("join_col")
-    got = gdf_l.join(gdf_r, how="inner", lsuffix="_x", rsuffix="_y")
+    got = gdf_l.join(gdf_r, how="inner", **_join_suffix_kwargs("_x", "_y"))
 
     assert_join_results_equal(expect, got, how="inner")
 
@@ -655,8 +664,8 @@ def test_cross_join_overlapping(left_data, right_data, sort):
 
     pdf1 = df1.to_pandas()
     pdf2 = df2.to_pandas()
-    expected = pdf1.join(
-        pdf2, how="cross", lsuffix="_x", rsuffix="_y", sort=sort
+    expected = pdf1.merge(pdf2, how="cross", suffixes=("_x", "_y"), sort=sort)
+    result = df1.join(
+        df2, how="cross", sort=sort, **_join_suffix_kwargs("_x", "_y")
     )
-    result = df1.join(df2, how="cross", lsuffix="_x", rsuffix="_y", sort=sort)
     assert_eq(result, expected)

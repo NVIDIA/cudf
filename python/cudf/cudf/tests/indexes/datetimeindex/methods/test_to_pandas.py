@@ -1,10 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+
+from concurrent.futures import ThreadPoolExecutor
 
 import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 
 
@@ -43,20 +46,27 @@ def test_to_pandas_arrow_type_values_match_pandas():
     assert_eq(actual.to_numpy(), pidx.to_numpy())
 
 
-def test_to_pandas_externally_set_stale_freq_matches_pandas_inferred():
+@pytest.mark.parametrize(
+    "stale_freq",
+    [
+        cudf.DateOffset._from_freqstr("h"),
+        pd.DateOffset(hours=1),
+        "invalid_frequency",
+        object(),
+    ],
+)
+def test_to_pandas_externally_set_stale_freq_matches_pandas_inferred(
+    stale_freq,
+):
     # If a stale freq sneaks in (e.g. via deserialization or external mutation),
     # to_pandas() should produce the freq pandas would have inferred from the
     # values, rather than raising.
     pidx = pd.date_range("2001-01-01", periods=5, freq="D")
     gidx = cudf.from_pandas(pidx)
-    gidx._freq = cudf.DateOffset._from_freqstr(
-        "h"
-    )  # nonsense for daily values
+    gidx._freq = stale_freq
 
     actual = gidx.to_pandas()
-    expected_freq = pidx.inferred_freq  # what pandas would infer
-
-    assert actual.freq == pd.tseries.frequencies.to_offset(expected_freq)
+    assert actual.freq == pidx.freq
     assert_eq(actual.values, pidx.values)
 
 
@@ -84,3 +94,24 @@ def test_to_pandas_single_element_with_freq_falls_back_to_cached(freq):
     actual = gidx.to_pandas()
     assert actual.freq == pidx.freq
     assert_eq(actual, pidx)
+
+
+@pytest.mark.parametrize("periods", [0, 1, 2, 5])
+@pytest.mark.parametrize("tz", [None, "US/Pacific"])
+def test_to_pandas_freq_concurrent(periods, tz):
+    expected = pd.date_range("2001-01-01", periods=periods, freq="h", tz=tz)
+    actual = cudf.from_pandas(expected)
+    option_before = (
+        pd.get_option("future.infer_freq_returns_offset")
+        if PANDAS_GE_31
+        else None
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for result in pool.map(lambda _: actual.to_pandas(), range(64)):
+            assert_eq(result, expected)
+
+    if PANDAS_GE_31:
+        assert (
+            pd.get_option("future.infer_freq_returns_offset") is option_before
+        )

@@ -16,6 +16,7 @@ import pylibcudf as plc
 
 import cudf
 from cudf.api.types import is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import binaryop
 from cudf.core.column.column import (
     ColumnBase,
@@ -98,6 +99,14 @@ def _infer_timedelta_format(col: StringColumn) -> str:
 
 class StringColumn(ColumnBase, Scannable):
     """Implements operations for Columns of String type"""
+
+    def _is_sliced(self) -> bool:
+        if self.offset != 0:
+            return True
+        # Character-buffer bytes do not encode the number of string rows.
+        # The offsets child has one entry per row plus the terminal offset.
+        col = self.plc_column
+        return col.num_children() > 0 and col.child(0).size() > self.size + 1
 
     _VALID_BINARY_OPERATIONS = {
         "__eq__",
@@ -264,8 +273,11 @@ class StringColumn(ColumnBase, Scannable):
 
     def as_numerical_column(self, dtype: np.dtype) -> NumericalColumn:
         if dtype.kind == "b":
-            result = self.count_characters() > np.int8(0)
-            if not is_pandas_nullable_extension_dtype(dtype):
+            counts = self.count_characters()
+            result = counts > np.int8(0)
+            if is_pandas_nullable_extension_dtype(dtype):
+                result = result.set_mask(counts.mask, counts.null_count)
+            else:
                 result = result.fillna(False)
             return cast(
                 "cudf.core.column.numerical.NumericalColumn",
@@ -406,6 +418,26 @@ class StringColumn(ColumnBase, Scannable):
         return self.strptime(dtype, format)  # type: ignore[return-value]
 
     def as_timedelta_column(self, dtype: np.dtype) -> TimeDeltaColumn:
+        if PANDAS_GE_31 and isinstance(dtype, pd.ArrowDtype):
+            integer_dtype = np.dtype(np.int64)
+            if not self.is_all_integer(integer_dtype):
+                raise NotImplementedError(
+                    "Non-integer Arrow duration strings require pandas parsing"
+                )
+            values = self.as_numerical_column(integer_dtype)
+            if values.null_count < len(values):
+                lower, upper = values.minmax()
+                if lower <= -(2**53) or upper >= 2**53:
+                    # pandas first validates through its nanosecond parser,
+                    # even for a coarser target. Its float precision and bounds
+                    # behavior needs the original parser for large integers.
+                    raise NotImplementedError(
+                        "Large Arrow duration strings require pandas parsing"
+                    )
+            return cast(
+                "TimeDeltaColumn",
+                values.astype(dtype),
+            )
         format = _infer_timedelta_format(self)
         return self.strptime(dtype, format)  # type: ignore[return-value]
 
@@ -1830,11 +1862,34 @@ class StringColumn(ColumnBase, Scannable):
         # Return type depends on method parameter at runtime:
         # - plc.strings.findall.findall -> LIST<STRING>
         # - plc.strings.findall.find_re -> INT32
+        arrow_result_dtype = None
+        if PANDAS_GE_31 and isinstance(self.dtype, pd.ArrowDtype):
+            arrow_result_dtype = (
+                pd.ArrowDtype(pa.list_(self.dtype.pyarrow_dtype))
+                if method is plc.strings.findall.findall
+                else pd.ArrowDtype(pa.int32())
+            )
         with self.access(mode="read", scope="internal"):
             if len(self) == 0:
+                if (
+                    arrow_result_dtype is not None
+                    and method is plc.strings.findall.findall
+                ):
+                    empty = column_empty(0, dtype=cudf.ListDtype(self.dtype))
+                    return cast(
+                        "Self",
+                        ColumnBase.create(
+                            empty.plc_column, arrow_result_dtype
+                        ),
+                    )
                 return cast(
                     "Self",
-                    column_empty(0, dtype=self.dtype),
+                    column_empty(
+                        0,
+                        dtype=self.dtype
+                        if arrow_result_dtype is None
+                        else arrow_result_dtype,
+                    ),
                 )
             plc_result = method(
                 self.plc_column,
@@ -1844,7 +1899,9 @@ class StringColumn(ColumnBase, Scannable):
             )
             res = ColumnBase.create(
                 plc_result,
-                get_dtype_of_same_kind(
+                arrow_result_dtype
+                if arrow_result_dtype is not None
+                else get_dtype_of_same_kind(
                     self.dtype, dtype_from_pylibcudf_column(plc_result)
                 ),
             )

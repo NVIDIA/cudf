@@ -7,6 +7,7 @@ import functools
 import math
 from typing import TYPE_CHECKING, Any, cast
 
+import cupy as cp
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -14,7 +15,9 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import binaryop
+from cudf.core.buffer import as_buffer
 from cudf.core.column.column import (
     ColumnBase,
     PylibcudfFunction,
@@ -25,6 +28,7 @@ from cudf.core.column.temporal_base import (
     TemporalBaseColumn,
     _raise_on_invalid_ordering_scalar,
 )
+from cudf.core.dtypes import Decimal128Dtype
 from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
     cudf_dtype_from_pa_type,
@@ -123,6 +127,18 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         reflect, op = self._check_reflected_op(op)
         _raise_on_invalid_ordering_scalar(self.dtype, other, op)
+        if (
+            PANDAS_GE_31
+            and op == "__mul__"
+            and not isinstance(self.dtype, pd.ArrowDtype)
+            and isinstance(other, (int, np.integer))
+            and not np.iinfo(np.int64).min
+            <= int(other)
+            <= np.iinfo(np.int64).max
+        ):
+            raise pd.errors.OutOfBoundsTimedelta(
+                "Overflow in int64 multiplication"
+            )
         other = self._normalize_binop_operand(other)
         if other is NotImplemented:
             return NotImplemented
@@ -187,6 +203,49 @@ class TimeDeltaColumn(TemporalBaseColumn):
             elif op in {"__add__", "__sub__"}:
                 out_dtype = find_common_type((self.dtype, other_cudf_dtype))
         elif other_cudf_dtype.kind in {"f", "i", "u"}:
+            if (
+                PANDAS_GE_31
+                and op == "__mul__"
+                and other_cudf_dtype.kind in "iu"
+                and not isinstance(self.dtype, pd.ArrowDtype)
+                and not isinstance(other_cudf_dtype, pd.ArrowDtype)
+            ):
+                lower = np.iinfo(np.int64).min + 1
+                upper = np.iinfo(np.int64).max
+                bounds: tuple[Any, Any] | None = None
+                if isinstance(other, pa.Scalar):
+                    if other.is_valid:
+                        factor = int(other.as_py())
+                        if abs(factor) > 1 and self.null_count < len(self):
+                            lo, hi = self.astype(
+                                self._UNDERLYING_DTYPE
+                            ).minmax()
+                            products = (int(lo) * factor, int(hi) * factor)
+                            bounds = (min(products), max(products))
+                else:
+                    if (
+                        other_cudf_dtype.kind == "u"
+                        and other.null_count < len(other)
+                        and int(other.max()) > upper
+                    ):
+                        raise pd.errors.OutOfBoundsTimedelta(
+                            "Overflow in int64 multiplication"
+                        )
+                    # Every int64-duration/uint64-factor product fits in the
+                    # decimal128 accumulator. Check before the int64 kernel
+                    # can wrap, ignoring pairs containing a missing value.
+                    dtype = Decimal128Dtype(38, 0)
+                    products = self.astype(self._UNDERLYING_DTYPE).astype(
+                        dtype
+                    ) * other.astype(dtype)
+                    if products.null_count < len(products):
+                        bounds = products.minmax()
+                if bounds is not None and (
+                    bounds[0] < lower or bounds[1] > upper
+                ):
+                    raise pd.errors.OutOfBoundsTimedelta(
+                        "Overflow in int64 multiplication"
+                    )
             if op in {"__mul__", "__mod__", "__truediv__", "__floordiv__"}:
                 out_dtype = self.dtype
             elif op in {"__eq__", "__ne__", "NULL_EQUALS", "NULL_NOT_EQUALS"}:
@@ -218,6 +277,34 @@ class TimeDeltaColumn(TemporalBaseColumn):
         return result
 
     def total_seconds(self) -> ColumnBase:
+        if PANDAS_GE_31:
+            pps = int(1e9 // unit_to_nanoseconds_conversion[self.time_unit])
+            ticks = self.astype(self._UNDERLYING_DTYPE).fillna(0).values
+            seconds, residual = cp.divmod(ticks, pps)
+            floor = seconds.astype(cp.float64)
+            result = floor + residual / pps
+            fixable = (residual != 0) & (cp.abs(seconds) < 2**52)
+            result = cp.where(
+                fixable & (result == floor),
+                cp.nextafter(result, cp.inf),
+                cp.where(
+                    fixable & (result == floor + 1),
+                    cp.nextafter(result, -cp.inf),
+                    result,
+                ),
+            )
+            mask = self.mask
+            if mask is not None and self.offset:
+                with self.access(mode="read", scope="internal"):
+                    mask = as_buffer(
+                        plc.null_mask.copy_bitmask(self.plc_column)
+                    )
+            column = as_column(result, nan_as_null=False).set_mask(
+                mask, self.null_count
+            )
+            return column.astype(
+                get_dtype_of_same_kind(self.dtype, np.dtype(np.float64))
+            )
         conversion = unit_to_nanoseconds_conversion[self.time_unit] / 1e9
         # Typecast to decimal128 to avoid floating point precision issues
         # https://github.com/NVIDIA/cudf/issues/17664
@@ -338,14 +425,24 @@ class TimeDeltaColumn(TemporalBaseColumn):
             # Drop fully-zero fractional seconds on rows that
             # have no sub-second component (keeps HH:MM:SS for
             # mixed columns).
-            plc_result = plc.strings.replace_re.replace_with_backrefs(
-                plc_result,
-                plc.strings.regex_program.RegexProgram.create(
-                    r"(\d{2}:\d{2}:\d{2})\.000000$",
-                    plc.strings.regex_flags.RegexFlags.DEFAULT,
-                ),
-                r"\1",
-            )
+            if PANDAS_GE_31:
+                plc_result = plc.strings.replace_re.replace_with_backrefs(
+                    plc_result,
+                    plc.strings.regex_program.RegexProgram.create(
+                        r"(\d{2}:\d{2}:\d{2})$",
+                        plc.strings.regex_flags.RegexFlags.DEFAULT,
+                    ),
+                    r"\1.000000",
+                )
+            else:
+                plc_result = plc.strings.replace_re.replace_with_backrefs(
+                    plc_result,
+                    plc.strings.regex_program.RegexProgram.create(
+                        r"(\d{2}:\d{2}:\d{2})\.000000$",
+                        plc.strings.regex_flags.RegexFlags.DEFAULT,
+                    ),
+                    r"\1",
+                )
 
         return cast(
             "cudf.core.column.string.StringColumn",
@@ -363,10 +460,24 @@ class TimeDeltaColumn(TemporalBaseColumn):
         min_count: int = 0,
         **kwargs: Any,
     ) -> pd.Timedelta:
+        values = self.astype(self._UNDERLYING_DTYPE)
+        valid_count = len(self) - self.null_count
+        if valid_count >= max(min_count, 1) and (
+            skipna or not self.has_nulls()
+        ):
+            lower, upper = np.iinfo(np.int64).min + 1, np.iinfo(np.int64).max
+            lo, hi = values.minmax()
+            if int(lo) * valid_count < lower or int(hi) * valid_count > upper:
+                # An int64 reduction can wrap. Only potentially overflowing
+                # inputs need an exact wider accumulator; opposite signs may
+                # cancel and still produce a valid timedelta.
+                total = values.astype(Decimal128Dtype(38, 0)).sum()
+                if total < lower or total > upper:
+                    raise pd.errors.OutOfBoundsTimedelta(
+                        "overflow in timedelta operation"
+                    )
         return self._PD_SCALAR(
-            self.astype(self._UNDERLYING_DTYPE).sum(
-                skipna=skipna, min_count=min_count, **kwargs
-            ),
+            values.sum(skipna=skipna, min_count=min_count, **kwargs),
             unit=self.time_unit,
         ).as_unit(self.time_unit)
 

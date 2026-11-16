@@ -28,6 +28,7 @@ from cudf.api.types import (
     is_list_like,
     is_scalar,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import copying, sorting
 from cudf.core.accessors import StringMethods
 from cudf.core.column import (
@@ -61,6 +62,10 @@ from cudf.core.dtypes import (
 from cudf.core.join._join_helpers import _match_join_keys
 from cudf.core.single_column_frame import SingleColumnFrame
 from cudf.errors import MixedTypeError
+from cudf.utils._warnings import (
+    _warn_pandas_31_date_indexer,
+    _warn_pandas_31_deprecation,
+)
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
@@ -83,7 +88,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
     from datetime import tzinfo
 
-    from cudf._typing import ColumnLike, Dtype, DtypeObj
+    from cudf._typing import ColumnLike, Dtype, DtypeObj, NoDefault
     from cudf.core.dataframe import DataFrame
     from cudf.core.multiindex import MultiIndex
     from cudf.core.series import Series
@@ -1913,6 +1918,8 @@ class Index(SingleColumnFrame):
             )
 
         needle = as_column(target)
+        if self.dtype.kind == "M":
+            _warn_pandas_31_date_indexer(target, infer=False)
         result = as_column(
             -1,
             length=len(needle),
@@ -1946,6 +1953,15 @@ class Index(SingleColumnFrame):
                 right_plc, dtype=dtype_from_pylibcudf_column(right_plc)
             )
         result = result._scatter_by_column(scatter_map, indices)
+        unmatched_nulls = (
+            needle.isnull() & (result == -1)
+            if (
+                PANDAS_GE_31
+                and method is not None
+                and needle.has_nulls(include_nan=needle.dtype.kind == "f")
+            )
+            else None
+        )
         result_series = cudf.Series._from_column(result)
 
         if method in {"ffill", "bfill", "pad", "backfill"}:
@@ -1969,6 +1985,10 @@ class Index(SingleColumnFrame):
                 "{['ffill'/'pad', 'bfill'/'backfill', 'nearest', None]}"
             )
 
+        if unmatched_nulls is not None:
+            result_series = result_series.where(
+                ~cudf.Series._from_column(unmatched_nulls), -1
+            )
         return self._return_get_indexer_result(result_series.to_cupy())
 
     @_performance_tracking
@@ -2020,6 +2040,14 @@ class Index(SingleColumnFrame):
         else:
             preprocess = self
 
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and isinstance(self, DatetimeIndex)
+            and preprocess is self
+        ):
+            return repr(self.to_pandas())
+
         # TODO: Change below usages accordingly to
         # utilize `Index.to_string` once it is implemented
         # related issue : https://github.com/pandas-dev/pandas/issues/35389
@@ -2041,6 +2069,11 @@ class Index(SingleColumnFrame):
                 output = (
                     output[:break_idx].replace("'", "") + output[break_idx:]
                 )
+            elif PANDAS_GE_31:
+                # pandas 3.1 can wrap categories and ordered metadata onto
+                # separate lines. Splicing their final line into a repr built
+                # from decoded values loses categorical types and ordering.
+                output = repr(preprocess.to_pandas())
             else:
                 # Too many non-unique categories will cause
                 # the output to take too long. In this case, we
@@ -2048,7 +2081,8 @@ class Index(SingleColumnFrame):
                 # and generate the repr separately and
                 # merge them.
                 pd_cats = pd.Categorical(
-                    preprocess._column._get_decategorized_column().to_pandas()
+                    preprocess._column._get_decategorized_column().to_pandas(),
+                    ordered=preprocess.dtype.ordered,
                 )
                 pd_preprocess = pd.CategoricalIndex(pd_cats)
                 data_repr = repr(pd_preprocess).split("\n")
@@ -2084,6 +2118,12 @@ class Index(SingleColumnFrame):
         # string by finding first occurrence of "(" in the output
         index_class_split_index = output.find("(")
         output = self.__class__.__name__ + output[index_class_split_index:]
+
+        if PANDAS_GE_31 and isinstance(self, CategoricalIndex):
+            old_length = f"length={len(preprocess)})"
+            if len(preprocess) != len(self) and output.endswith(old_length):
+                output = output[: -len(old_length)] + f"length={len(self)})"
+            return output
 
         lines = output.split("\n")
 
@@ -2676,6 +2716,8 @@ class RangeIndex(Index):
 
     @_performance_tracking
     def __repr__(self) -> str:
+        if PANDAS_GE_31:
+            return repr(self.to_pandas())
         return (
             f"{self.__class__.__name__}(start={self.start}, stop={self.stop}"
             f", step={self.step}"
@@ -2948,6 +2990,34 @@ class RangeIndex(Index):
             start, stop, step = reverse.start, reverse.stop, reverse.step
 
         target_array = target_col.values
+        if target_array.dtype.kind in "iu":
+            locs = cupy.full(len(target_array), -1, dtype=np.int64)
+            if not len(self):
+                return locs
+
+            limits = np.iinfo(target_array.dtype)
+            if start > limits.max or stop <= limits.min:
+                return locs
+            if len(self) == 1:
+                if start >= limits.min:
+                    locs[target_array == start] = 0
+                return locs
+            valid = cupy.ones(len(target_array), dtype=bool)
+            if start > limits.min:
+                valid &= target_array >= start
+            if stop <= limits.max:
+                valid &= target_array < stop
+
+            # Exact membership bounds precede subtraction: signed offsets
+            # can overflow even for valid members of a widely spaced range.
+            # Their differences fit in uint64 modulo arithmetic instead.
+            offsets = target_array.astype(np.uint64) - np.uint64(start % 2**64)
+            valid &= offsets % np.uint64(step) == 0
+            locs[valid] = (offsets[valid] // np.uint64(step)).astype(np.int64)
+            if step != self.step:
+                locs[valid] = len(self) - 1 - locs[valid]
+            return locs
+
         locs = target_array - start
         valid = (locs % step == 0) & (locs >= 0) & (target_array < stop)
         locs[~valid] = -1
@@ -2956,7 +3026,16 @@ class RangeIndex(Index):
         if step != self.step:
             # Reversed
             locs[valid] = len(self) - 1 - locs[valid]
-        return locs
+        return locs.astype(np.int64)
+
+    @copy_docstring(Index.take)
+    def take(
+        self, indices, axis=0, allow_fill: bool = True, fill_value=None
+    ) -> Self:
+        result = super().take(
+            indices, axis=axis, allow_fill=allow_fill, fill_value=fill_value
+        )
+        return cast("Self", self._try_reconstruct_range_index(result))
 
     @_performance_tracking
     def get_loc(self, key) -> int:
@@ -3113,10 +3192,23 @@ class RangeIndex(Index):
         # RangeIndex instead of a materialized Index.
         if not index._column.has_nulls():
             if len(index) > 1:
+                start = int(index[0])
+                step = int(index[1]) - start
+                last = int(index[-1])
+                limits = np.iinfo(np.int64)
+                if not step or not all(
+                    limits.min <= value <= limits.max
+                    for value in (start, step, last)
+                ):
+                    return index
                 uniques = cupy.unique(cupy.diff(index.values))
-                if len(uniques) == 1 and (diff := uniques[0].get()) != 0:
-                    new_range = range(index[0], index[-1] + diff, diff)
-                    return type(self)(new_range, name=index.name)
+                if len(uniques) == 1 and int(uniques[0].get()) == step:
+                    new_range = range(start, last + step, step)
+                    try:
+                        if len(new_range) == len(index):
+                            return type(self)(new_range, name=index.name)
+                    except (OverflowError, ValueError):
+                        pass
             elif index.dtype == np.dtype(np.int64):
                 # 0- and 1-element results are always representable as a
                 # range, but only when int64: a narrower dtype means the
@@ -3243,18 +3335,30 @@ class RangeIndex(Index):
             # join. Hence falling back to performing a merge on pd.RangeIndex
             # since the conversion is cheap.
             if isinstance(other, RangeIndex):
-                result = self.to_pandas().join(
-                    other.to_pandas(),
+                left = self.to_pandas()
+                right = left if other is self else other.to_pandas()
+                result = left.join(
+                    right,
                     how=how,
                     level=level,
                     return_indexers=return_indexers,
                     sort=sort,
                 )
                 if return_indexers:
-                    return tuple(
-                        cudf.from_pandas(result[0]), result[1], result[2]
+                    return (
+                        self
+                        if result[0] is left
+                        else other
+                        if result[0] is right
+                        else cudf.from_pandas(result[0]),
+                        result[1],
+                        result[2],
                     )
                 else:
+                    if result is left:
+                        return self
+                    if result is right:
+                        return other
                     return cudf.from_pandas(result)
         return self._as_int_index().join(
             other, how, level, return_indexers, sort
@@ -3293,10 +3397,32 @@ class RangeIndex(Index):
         else:
             shift = int(side == "left")
 
-        offset = (value - ri.start - shift) // ri.step + 1
+        if PANDAS_GE_31 and isinstance(value, (float, np.floating)):
+            if np.isnan(value) or (len(ri) and value > ri[-1]):
+                offset = len(ri)
+            elif not len(ri) or value < ri.start:
+                offset = 0
+            else:
+                numerator, denominator = value.as_integer_ratio()
+                quotient, remainder = divmod(
+                    numerator - ri.start * denominator,
+                    ri.step * denominator,
+                )
+                # A descending range reverses the insertion side as well.
+                left_side = (side == "left") != flip
+                offset = quotient + (bool(remainder) if left_side else 1)
+        else:
+            offset = (value - ri.start - shift) // ri.step + 1
         if flip:
             offset = len(ri) - offset
-        return max(min(len(ri), offset), 0)
+        result = max(min(len(ri), offset), 0)
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and not pd.get_option("future.python_scalars")
+        ):
+            return np.intp(result)
+        return result
 
     @_performance_tracking
     def _factorize(
@@ -3537,14 +3663,20 @@ class DatetimeIndex(Index):
         data=None,
         freq=None,
         tz=None,
-        ambiguous: Literal["raise"] = "raise",
-        dayfirst: bool = False,
-        yearfirst: bool = False,
+        ambiguous: Literal["raise"] | NoDefault = no_default,
+        dayfirst: bool | NoDefault = no_default,
+        yearfirst: bool | NoDefault = no_default,
         dtype=None,
         copy: bool = False,
         name=None,
         nan_as_null=no_default,
     ):
+        if (
+            PANDAS_GE_31
+            and isinstance(data, (np.ndarray, cupy.ndarray))
+            and data.ndim == 0
+        ):
+            raise ValueError("Cannot construct DatetimeArray from 0-dim input")
         self._freq = None
         # we should be more strict on what we accept here but
         # we'd have to go and figure out all the semantics around
@@ -3555,11 +3687,11 @@ class DatetimeIndex(Index):
 
         if tz is not None:
             raise NotImplementedError("tz is not yet supported")
-        if ambiguous != "raise":
+        if ambiguous is not no_default and ambiguous != "raise":
             raise NotImplementedError("ambiguous is not yet supported")
-        if dayfirst is not False:
+        if dayfirst is not no_default and dayfirst is not False:
             raise NotImplementedError("dayfirst == True is not yet supported")
-        if yearfirst is not False:
+        if yearfirst is not no_default and yearfirst is not False:
             raise NotImplementedError("yearfirst == True is not yet supported")
 
         if freq is None and isinstance(data, (type(self), pd.DatetimeIndex)):
@@ -3613,6 +3745,22 @@ class DatetimeIndex(Index):
         # existing pandas index needs no additional validation
         if not was_pd_index:
             self._validate_freq_against_data(self._freq)
+        for keyword, value in (
+            ("dayfirst", dayfirst),
+            ("yearfirst", yearfirst),
+            ("ambiguous", ambiguous),
+        ):
+            if value is not no_default:
+                replacement = (
+                    f"{type(self).__name__}.tz_localize"
+                    if keyword == "ambiguous"
+                    else "pd.to_datetime"
+                )
+                _warn_pandas_31_deprecation(
+                    f"The '{keyword}' keyword in {type(self).__name__} is deprecated "
+                    "and will be removed in a future version. "
+                    f"Use {replacement} instead."
+                )
 
     @_performance_tracking
     def serialize(self):
@@ -4138,7 +4286,13 @@ class DatetimeIndex(Index):
         # .days_in_month is already a cached_property
         return Index._from_column(self._column.days_in_month, name=self.name)
 
-    daysinmonth = days_in_month
+    @property
+    def daysinmonth(self) -> Index:
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.daysinmonth is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.days_in_month instead."
+        )
+        return self.days_in_month
 
     @property
     def day_of_week(self) -> Index:
@@ -4146,7 +4300,7 @@ class DatetimeIndex(Index):
         Get the day of week that the date falls on.
         """
         # .day_of_week is already a cached_property
-        return Index._from_column(self._column.day_of_week, name=self.name)
+        return Index._from_column(self._column.weekday, name=self.name)
 
     @property
     @_performance_tracking
@@ -4342,10 +4496,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.weekday
+        >>> datetime_index.day_of_week
         Index([5, 6, 0, 1, 2, 3, 4, 5, 6], dtype='int32')
         """
         # .weekday is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.weekday is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_week instead."
+        )
         return Index._from_column(self._column.weekday, name=self.name)
 
     @property
@@ -4365,10 +4523,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.dayofweek
+        >>> datetime_index.day_of_week
         Index([5, 6, 0, 1, 2, 3, 4, 5, 6], dtype='int32')
         """
         # .weekday is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.dayofweek is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_week instead."
+        )
         return Index._from_column(self._column.weekday, name=self.name)
 
     @property
@@ -4389,10 +4551,14 @@ class DatetimeIndex(Index):
                     '2017-01-04', '2017-01-05', '2017-01-06', '2017-01-07',
                     '2017-01-08'],
                     dtype='datetime64[us]', freq='D')
-        >>> datetime_index.dayofyear
+        >>> datetime_index.day_of_year
         Index([366, 1, 2, 3, 4, 5, 6, 7, 8], dtype='int16')
         """
         # .day_of_year is already a cached_property
+        _warn_pandas_31_deprecation(
+            "DatetimeIndex.dayofyear is deprecated and will be removed in a "
+            "future version. Use DatetimeIndex.day_of_year instead."
+        )
         return Index._from_column(self._column.day_of_year, name=self.name)
 
     @property
@@ -4464,7 +4630,7 @@ class DatetimeIndex(Index):
         """
         # .quarter is already a cached_property
         return Index._from_column(
-            self._column.quarter.astype(np.dtype(np.int8))
+            self._column.quarter.astype(np.dtype(np.int8)), name=self.name
         )
 
     @_performance_tracking
@@ -4497,11 +4663,11 @@ class DatetimeIndex(Index):
         Examples
         --------
         >>> import cudf
-        >>> datetime_index = cudf.date_range("2017-12-30", periods=6, freq='W')
+        >>> datetime_index = cudf.date_range("2017-12-30", periods=6, freq='7D')
         >>> datetime_index
         DatetimeIndex(['2017-12-30', '2018-01-06', '2018-01-13', '2018-01-20',
                     '2018-01-27', '2018-02-03'],
-                      dtype='datetime64[us]', freq='W')
+                      dtype='datetime64[us]', freq='7D')
         >>> datetime_index.month_name()
         Index(['December', 'January', 'January', 'January', 'January', 'February'], dtype='str')
         """
@@ -4543,8 +4709,23 @@ class DatetimeIndex(Index):
             # Fall back to the cached freq when inference is impossible
             # (empty / single-element indexes), so resample round-trips
             # preserve `freq` to match pandas.
-            inferred = result.inferred_freq
-            if inferred is None:
+            if PANDAS_GE_31:
+                # The public property warns unless a global pandas option is
+                # set. Changing that option races with concurrent conversions.
+                inferred = (
+                    pd.tseries.frequencies.infer_freq_str(result)
+                    if len(result) >= 3
+                    else None
+                )
+            else:
+                inferred = result.inferred_freq
+            if PANDAS_GE_31:
+                try:
+                    result.freq = _validate_freq(self._freq)
+                except (TypeError, ValueError):
+                    if inferred is not None:
+                        result.freq = inferred
+            elif inferred is None:
                 try:
                     result.freq = self._freq
                 except ValueError:
@@ -4806,6 +4987,14 @@ class TimedeltaIndex(Index):
         name=None,
         nan_as_null=no_default,
     ):
+        if (
+            PANDAS_GE_31
+            and isinstance(data, (np.ndarray, cupy.ndarray))
+            and data.ndim == 0
+        ):
+            raise ValueError(
+                "Cannot construct TimedeltaArray from 0-dim input"
+            )
         if freq is not None:
             raise NotImplementedError("freq is not yet supported")
 
@@ -6051,7 +6240,7 @@ def _get_nearest_indexer(
 
 
 def _validate_freq(freq: Any) -> pd.tseries.offsets.BaseOffset | None:
-    """Normalize ``freq`` to a canonical pandas offset.
+    """Normalize ``freq`` to a pandas offset.
 
     Accepts freq strings, pandas offsets and cudf's own offset classes,
     rejecting frequencies that cudf cannot represent.
@@ -6066,7 +6255,12 @@ def _validate_freq(freq: Any) -> pd.tseries.offsets.BaseOffset | None:
         # cudf supports a subset of pandas frequency strings; parse with
         # cudf's DateOffset (which raises for unsupported ones) and store
         # the equivalent pandas offset.
-        return DateOffset._from_freqstr(freq)._maybe_as_fast_pandas_offset()
+        offset = DateOffset._from_freqstr(freq)._maybe_as_fast_pandas_offset()
+        if PANDAS_GE_31:
+            # Retain explicit tick aliases such as 24h, and weekly anchors,
+            # after validating the frequency against cudf's supported set.
+            return pd.tseries.frequencies.to_offset(freq)
+        return offset
     if not isinstance(freq, pd.tseries.offsets.BaseOffset):
         raise ValueError(f"Invalid frequency: {freq}")
     # gate pandas offsets on the same supported subset

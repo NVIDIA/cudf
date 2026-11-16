@@ -155,7 +155,7 @@ def test_strings(tmpdir):
     dfp = pd.DataFrame(
         {"a": ["aa", "bbb", "cccc"], "b": ["hello", "dog", "man"]}
     )
-    dfp.set_index("a", inplace=True, drop=True)
+    dfp = dfp.set_index("a", drop=True)
     ddf2 = dd.from_pandas(dfp, npartitions=2)
     ddf2.to_parquet(fn, engine="pyarrow")
     read_df = dask_cudf.read_parquet(fn, index=["a"])
@@ -209,7 +209,7 @@ def test_empty(tmpdir, index):
     fn = str(tmpdir)
     dfp = pd.DataFrame({"a": [11.0, 12.0, 12.0], "b": [4, 5, 6]})[:0]
     if index:
-        dfp.set_index("a", inplace=True, drop=True)
+        dfp = dfp.set_index("a", drop=True)
     ddf2 = dd.from_pandas(dfp, npartitions=2)
 
     ddf2.to_parquet(fn, write_index=index, engine="pyarrow")

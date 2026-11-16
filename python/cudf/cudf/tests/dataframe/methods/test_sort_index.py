@@ -20,6 +20,9 @@ def test_dataframe_empty_sort_index():
     assert_eq(expect, got, check_index_type=True)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.sort_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index",
     [
@@ -49,7 +52,6 @@ def test_dataframe_sort_index(
         axis=axis,
         ascending=ascending,
         ignore_index=ignore_index,
-        inplace=inplace,
         na_position=na_position,
     )
     got = gdf.sort_index(
@@ -62,7 +64,8 @@ def test_dataframe_sort_index(
     # As of pandas 3.0, pandas sometimes returns a RangeIndex
     # instead of an Index[int64]
     if inplace is True:
-        assert_eq(pdf, gdf)
+        assert got is None
+        assert_eq(expected, gdf)
     else:
         assert_eq(expected, got)
 
@@ -85,7 +88,6 @@ def _assert_dataframe_multiindex_sort_index(
         axis=axis,
         level=level,
         ascending=ascending,
-        inplace=inplace,
         na_position=na_position,
         ignore_index=ignore_index,
     )
@@ -99,13 +101,15 @@ def _assert_dataframe_multiindex_sort_index(
     )
 
     if inplace is True:
-        assert expected is None
         assert got is None
-        assert_eq(pdf, gdf)
+        assert_eq(expected, gdf)
     else:
         assert_eq(expected, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.sort_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "axis, level, ascending, ignore_index, inplace, na_position",
     [

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import cugraph
 import cupy as cp
@@ -9,7 +9,17 @@ import pytest
 
 cugraph_algos = [
     "betweenness_centrality",
-    "degree_centrality",
+    # cugraph.centrality.degree_centrality still calls
+    # DataFrame.rename(..., inplace=True). Keep the warning scoped to these
+    # three integration cases in both the gold and accelerated passes.
+    pytest.param(
+        "degree_centrality",
+        marks=pytest.mark.filterwarnings(
+            r"ignore:^The inplace keyword in DataFrame\.rename is deprecated "
+            r"and will be removed in a future version \(PDEP-8\)\.:"
+            r"pandas.errors.Pandas4Warning"
+        ),
+    ),
     "katz_centrality",
     "sorensen",
     "jaccard",

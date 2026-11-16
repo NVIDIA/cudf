@@ -721,7 +721,7 @@ files:
     output: none
     matrix:
       cuda: ["12.9", "13.4"]
-      pandas_compat_version: ["3.0"]
+      pandas_compat_version: ["3.0", "3.1"]
     includes:
       - test_cudf_pandas_compat
   test_cudf_polars_compat:
@@ -1081,7 +1081,7 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - fsspec>=0.6.0
-          - &pandas pandas>=3.0.0,<3.1.0
+          - &pandas pandas>=3.0.0,<3.1.2dev0
   run_libcudf:
     common:
       - output_types: [requirements, pyproject]
@@ -1208,10 +1208,10 @@ dependencies:
           - matrix: {dependencies: "oldest"}
             packages:
               - numba==0.60.0
-              - *pandas
+              - &pandas_oldest pandas==3.0.*
           - matrix: {dependencies: "latest"}
             packages:
-              - *pandas
+              - &pandas_latest pandas==3.1.1
           - matrix:
             packages:
       - output_types: conda
@@ -1919,7 +1919,13 @@ dependencies:
               pandas_compat_version: "3.0"
             packages:
               - numpy>=2.0,<3.0
-              - *pandas
+              - *pandas_oldest
+          - matrix:
+              pandas_compat_version: "3.1"
+            packages:
+              - numpy>=2.0,<3.0
+              - numba>=0.61.2
+              - *pandas_latest
           - matrix:
             packages:
   test_cudf_polars_compat:

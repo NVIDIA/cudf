@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -36,6 +36,9 @@ def test_datetime_dataframe():
     assert_eq(ps.isnull(), gs.isnull())
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.dropna is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "data",
     [
@@ -52,11 +55,11 @@ def test_dropna_dataframe(data, dropna_how, axis, inplace):
     pdf = pd.DataFrame(data)
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.dropna(axis=axis, how=dropna_how, inplace=inplace)
+    expected = pdf.dropna(axis=axis, how=dropna_how)
     actual = gdf.dropna(axis=axis, how=dropna_how, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)
@@ -141,6 +144,9 @@ def test_dropna_thresh(thresh, subset):
     )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.dropna is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("thresh", [0, 1, 2])
 @pytest.mark.parametrize("subset", [None, [0], [1], [0, 1]])
 def test_dropna_thresh_cols(thresh, subset, inplace):
@@ -149,13 +155,11 @@ def test_dropna_thresh_cols(thresh, subset, inplace):
     )
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.dropna(
-        axis=1, thresh=thresh, subset=subset, inplace=inplace
-    )
+    expected = pdf.dropna(axis=1, thresh=thresh, subset=subset)
     actual = gdf.dropna(axis=1, thresh=thresh, subset=subset, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(

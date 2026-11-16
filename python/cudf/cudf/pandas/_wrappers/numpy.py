@@ -238,12 +238,22 @@ def _ndarray_fsproxy_fast_to_slow(self):
     return self._fsproxy_wrapped
 
 
+def _ndarray_slow_to_fast(array):
+    # CuPy cannot preserve NumPy's write protection. Keep read-only arrays on
+    # the CPU so a transfer cannot turn an immutable Index view writable.
+    if not array.flags.writeable:
+        # Array consumers probe __cuda_array_interface__ before copying from
+        # the host. AttributeError advertises that device export is absent.
+        raise AttributeError("Read-only arrays have no CUDA array interface")
+    return cupy.asarray(array)
+
+
 ndarray = make_final_proxy_type(
     "ndarray",
     cupy.ndarray,
     numpy.ndarray,
     fast_to_slow=cupy.ndarray.get,
-    slow_to_fast=cupy.asarray,
+    slow_to_fast=_ndarray_slow_to_fast,
     bases=(ProxyNDarrayBase,),
     additional_attributes={
         "__array__": array_method,

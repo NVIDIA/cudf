@@ -27,6 +27,7 @@ from cudf.api.types import (
     is_scalar,
 )
 from cudf.core import indexing_utils
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.accessors import (
     CategoricalAccessor,
     ListMethods,
@@ -63,6 +64,7 @@ from cudf.core.resample import SeriesResampler
 from cudf.core.single_column_frame import SingleColumnFrame
 from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
 from cudf.utils import docutils
+from cudf.utils._warnings import _warn_pandas_31_deprecation
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
@@ -85,6 +87,7 @@ if TYPE_CHECKING:
         Axis,
         DataFrameOrSeries,
         Dtype,
+        NoDefault,
         ScalarLike,
     )
     from cudf.core.dataframe import DataFrame
@@ -409,6 +412,8 @@ class _SeriesLocIndexer(_FrameIndexer):
                 aligned = arg.reindex(self._frame.index)
                 return Series._from_column(aligned._column)
             col = as_column(arg)
+            if self._frame.index.dtype.kind == "M":
+                indexing_utils._warn_pandas_31_date_indexer(arg, infer=True)
             if col.dtype.kind == "b":
                 return Series._from_column(col)
             else:
@@ -436,6 +441,7 @@ class _SeriesAtIndexer(_SeriesLocIndexer):
         indexing_utils.validate_scalar_key(
             key, "Invalid call for scalar access (getting)!"
         )
+        indexing_utils.warn_if_expanding_at(self._frame, key)
         return super().__setitem__(key, value)
 
 
@@ -555,6 +561,21 @@ class Series(SingleColumnFrame, IndexedFrame):
             data = {}
             if dtype is None and index is not None and len(index) > 0:
                 dtype = np.dtype("float64")
+        checked_dtype = (
+            dtype if dtype is not None else getattr(data, "dtype", None)
+        )
+        if cudf.get_option("mode.pandas_compatible") and isinstance(
+            checked_dtype, (str, np.dtype)
+        ):
+            try:
+                numpy_dtype = np.dtype(checked_dtype)
+            except TypeError:
+                pass
+            else:
+                if not numpy_dtype.isnative:
+                    raise NotImplementedError(
+                        "Non-native byte-order dtypes require pandas storage"
+                    )
         if dtype is not None:
             dtype = cudf.dtype(dtype)
         attrs = None
@@ -811,7 +832,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         index=None,
         columns=None,
         level=None,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> Self | None:
         if axis == 1:
@@ -1086,9 +1107,10 @@ class Series(SingleColumnFrame, IndexedFrame):
         level=None,
         drop: bool = False,
         name=no_default,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         allow_duplicates: bool = False,
     ) -> Self | None:
+        inplace = self._check_inplace_deprecation(inplace, "reset_index")
         if not drop and inplace:
             raise TypeError(
                 "Cannot reset_index inplace on a Series to create a DataFrame"
@@ -1499,7 +1521,16 @@ class Series(SingleColumnFrame, IndexedFrame):
         if len(lines) > 1:
             if lines[-1].startswith("Name: "):
                 lines = lines[:-1]
-                lines.append("Name: %s" % str(self.name))
+                display_name = str(self.name)
+                if (
+                    PANDAS_GE_31
+                    and isinstance(self.name, (float, np.floating))
+                    and not pd.isna(self.name)
+                ):
+                    display_name = pd.io.formats.format.format_array(
+                        np.asarray([self.name]), None, leading_space=False
+                    )[0]
+                lines.append("Name: %s" % display_name)
                 if len(self) > len(preprocess):
                     lines[-1] = lines[-1] + ", Length: %d" % len(self)
                 lines[-1] = lines[-1] + ", "
@@ -1595,6 +1626,22 @@ class Series(SingleColumnFrame, IndexedFrame):
     @classmethod
     @_performance_tracking
     def _concat(cls, objs, axis: Axis = 0, index: bool = True) -> Self:
+        if (
+            PANDAS_GE_31
+            and cudf.get_option("mode.pandas_compatible")
+            and any(isinstance(obj.dtype, pd.DatetimeTZDtype) for obj in objs)
+            and any(
+                isinstance(obj.dtype, np.dtype)
+                and obj.dtype.kind == "M"
+                and len(obj) > 0
+                and obj._is_all_null
+                for obj in objs
+            )
+        ):
+            # pandas retains the naive NaT values in an object result.
+            raise NotImplementedError(
+                "Concatenating timezone-aware and all-null naive datetimes is not supported"
+            )
         # Concatenate index if not provided
         if index is True:
             if isinstance(objs[0].index, cudf.MultiIndex):
@@ -1713,7 +1760,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     def dropna(
         self,
         axis: Axis = 0,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         how: Literal["any", "all"] | None = None,
         ignore_index: bool = False,
     ) -> Self | None:
@@ -1768,7 +1815,7 @@ class Series(SingleColumnFrame, IndexedFrame):
 
         Keep the Series with valid entries in the same variable.
 
-        >>> ser.dropna(inplace=True)
+        >>> ser = ser.dropna()
         >>> ser
         0    1
         1    2
@@ -1788,6 +1835,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         2    abc
         dtype: str
         """
+        inplace = self._check_inplace_deprecation(inplace, "dropna")
         if axis not in (0, "index"):
             raise ValueError(
                 "Series.dropna supports only one axis to drop values from"
@@ -1804,7 +1852,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     def drop_duplicates(
         self,
         keep: Literal["first", "last", False] = "first",
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         ignore_index: bool = False,
     ) -> Self | None:
         """
@@ -1868,13 +1916,14 @@ class Series(SingleColumnFrame, IndexedFrame):
         of duplicated entries. Setting the value of 'inplace' to
         `True` performs the operation inplace and returns `None`.
 
-        >>> s.drop_duplicates(keep=False, inplace=True)
+        >>> s = s.drop_duplicates(keep=False)
         >>> s
         1       cow
         3    beetle
         5     hippo
         Name: animal, dtype: str
         """
+        inplace = self._check_inplace_deprecation(inplace, "drop_duplicates")
         result = super().drop_duplicates(keep=keep, ignore_index=ignore_index)
 
         return self._mimic_inplace(result, inplace=inplace)
@@ -2222,7 +2271,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         axis: Axis = 0,
         level=None,
         ascending: bool | Iterable[bool] = True,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         kind: str = "quicksort",  # type: ignore[valid-type]
         na_position: Literal["first", "last"] = "last",
         sort_remaining: bool = True,
@@ -2231,11 +2280,11 @@ class Series(SingleColumnFrame, IndexedFrame):
     ) -> Self | None:
         if axis not in (0, "index"):
             raise ValueError("Only axis=0 is valid for Series.")
-        return super().sort_index(  # type: ignore[call-overload]
+        return super().sort_index(
             axis=axis,
             level=level,
             ascending=ascending,
-            inplace=inplace,
+            inplace=inplace,  # type: ignore[arg-type]
             kind=kind,
             na_position=na_position,
             sort_remaining=sort_remaining,
@@ -2248,7 +2297,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         self,
         axis: Axis = 0,
         ascending: bool | Iterable[bool] = True,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         kind: str = "quicksort",  # type: ignore[valid-type]
         na_position: Literal["first", "last"] = "last",
         ignore_index: bool = False,
@@ -3536,6 +3585,12 @@ class Series(SingleColumnFrame, IndexedFrame):
         exclude=None,
     ) -> Self:
         """{docstring}"""
+        if include is not None or exclude is not None:
+            _warn_pandas_31_deprecation(
+                "The 'include' and 'exclude' arguments are deprecated for "
+                "Series.describe and will be removed in a future version. "
+                "These arguments have no effect on Series and will be removed."
+            )
         if cudf.get_option("mode.pandas_compatible") and not (
             is_dtype_obj_numeric(self.dtype) and self.dtype.kind != "b"
         ):
@@ -3733,7 +3788,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         index=None,
         axis=None,
         copy: bool = True,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         level=None,
         errors: Literal["ignore", "raise"] = "ignore",
     ):
@@ -3790,7 +3845,7 @@ class Series(SingleColumnFrame, IndexedFrame):
 
             - Supports scalar values only for changing name attribute
         """
-        if inplace is not False:
+        if inplace is not no_default and inplace is not False:
             raise NotImplementedError("inplace is currently not supported.")
         if level is not None:
             raise NotImplementedError("level is currently not supported.")
@@ -3800,6 +3855,7 @@ class Series(SingleColumnFrame, IndexedFrame):
             raise NotImplementedError(
                 ".rename does not currently support relabeling the index."
             )
+        self._check_inplace_deprecation(inplace, "rename")
         out_data = self._data.copy(deep=copy)
         out = Series._from_data(out_data, self.index, name=index)
         self._propagate_metadata(out)
@@ -3924,8 +3980,34 @@ class Series(SingleColumnFrame, IndexedFrame):
                 f"cond must be the same length as self ({len(self)})"
             )
 
+        if PANDAS_GE_31:
+            if (
+                isinstance(other, (set, frozenset))
+                and is_pandas_nullable_extension_dtype(self.dtype)
+                and self.dtype.kind in "biuf"
+                and not cond.fillna(False).all()
+            ):
+                raise TypeError(
+                    "Unordered sets cannot be used as replacements"
+                )
+            if is_dtype_obj_string(self.dtype) and isinstance(
+                other, (tuple, Mapping)
+            ):
+                # pandas treats these as scalar objects for string columns.
+                # A result containing strings and tuples/dicts requires object
+                # storage, so defer instead of treating them positionally.
+                raise NotImplementedError(
+                    "Tuple or mapping replacements in string columns are not supported"
+                )
         if not is_scalar(other):
             other = as_column(other)
+            if PANDAS_GE_31:
+                if len(other) == 1 and len(self) != 1:
+                    other = other.element_indexing(0)
+                elif len(other) != len(self):
+                    raise ValueError(
+                        "other must have length 1 or the same length as self"
+                    )
 
         return self._mimic_inplace(
             self._from_column(
@@ -4154,7 +4236,7 @@ class DatetimeProperties(BaseDatelikeProperties):
     1   2000-06-30
     2   2000-09-30
     dtype: datetime64[ns]
-    >>> weekday_series.dt.weekday
+    >>> weekday_series.dt.day_of_week
     0    4
     1    4
     2    5
@@ -4391,7 +4473,7 @@ class DatetimeProperties(BaseDatelikeProperties):
         7   2017-01-07
         8   2017-01-08
         dtype: datetime64[ns]
-        >>> datetime_series.dt.weekday
+        >>> datetime_series.dt.day_of_week
         0    5
         1    6
         2    0
@@ -4403,11 +4485,15 @@ class DatetimeProperties(BaseDatelikeProperties):
         8    6
         dtype: int16
         """
+        _warn_pandas_31_deprecation(
+            "Series.dt.weekday is deprecated and will be removed in a "
+            "future version. Use Series.dt.day_of_week instead."
+        )
         return self._return_result_like_self(self.series._column.weekday)
 
     @property
     @_performance_tracking
-    def dayofweek(self) -> Series:
+    def day_of_week(self) -> Series:
         """
         The day of the week with Monday=0, Sunday=6.
 
@@ -4428,7 +4514,7 @@ class DatetimeProperties(BaseDatelikeProperties):
         7   2017-01-07
         8   2017-01-08
         dtype: datetime64[ns]
-        >>> datetime_series.dt.dayofweek
+        >>> datetime_series.dt.day_of_week
         0    5
         1    6
         2    0
@@ -4451,7 +4537,13 @@ class DatetimeProperties(BaseDatelikeProperties):
         res = res.astype(get_dtype_of_same_kind(self.series.dtype, target))
         return self._return_result_like_self(res)
 
-    day_of_week = dayofweek
+    @property
+    def dayofweek(self) -> Series:
+        _warn_pandas_31_deprecation(
+            "Series.dt.dayofweek is deprecated and will be removed in a "
+            "future version. Use Series.dt.day_of_week instead."
+        )
+        return self.day_of_week
 
     @property
     @_performance_tracking
@@ -4477,7 +4569,7 @@ class DatetimeProperties(BaseDatelikeProperties):
         7   2017-01-07
         8   2017-01-08
         dtype: datetime64[ns]
-        >>> datetime_series.dt.dayofyear
+        >>> datetime_series.dt.day_of_year
         0    366
         1      1
         2      2
@@ -4489,6 +4581,10 @@ class DatetimeProperties(BaseDatelikeProperties):
         8      8
         dtype: int16
         """
+        _warn_pandas_31_deprecation(
+            "Series.dt.dayofyear is deprecated and will be removed in a "
+            "future version. Use Series.dt.day_of_year instead."
+        )
         return self._return_result_like_self(self.series._column.day_of_year)
 
     @property
@@ -4788,7 +4884,13 @@ class DatetimeProperties(BaseDatelikeProperties):
         res = self.series._column.days_in_month
         return self._return_result_like_self(res)
 
-    daysinmonth = days_in_month
+    @property
+    def daysinmonth(self) -> Series:
+        _warn_pandas_31_deprecation(
+            "Series.dt.daysinmonth is deprecated and will be removed in a "
+            "future version. Use Series.dt.days_in_month instead."
+        )
+        return self.days_in_month
 
     @property
     def tz(self) -> str | None:

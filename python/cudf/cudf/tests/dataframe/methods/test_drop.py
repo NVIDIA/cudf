@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pandas as pd
@@ -9,6 +9,9 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -33,11 +36,11 @@ def test_dataframe_drop_columns(pdf, columns, inplace):
         pdf = pdf.copy()
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.drop(columns=columns, inplace=inplace)
+    expected = pdf.drop(columns=columns)
     actual = gdf.drop(columns=columns, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)
@@ -54,6 +57,9 @@ def test_drop_cudf_obj_columns(obj):
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -82,16 +88,19 @@ def test_dataframe_drop_labels_axis_0(pdf, labels, inplace):
     pdf = pdf.copy()
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.drop(labels=labels, axis=0, inplace=inplace)
+    expected = pdf.drop(labels=labels, axis=0)
     actual = gdf.drop(labels=labels, axis=0, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "pdf",
     [
@@ -117,16 +126,19 @@ def test_dataframe_drop_index(pdf, index, inplace):
     pdf = pdf.copy()
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.drop(index=index, inplace=inplace)
+    expected = pdf.drop(index=index)
     actual = gdf.drop(index=index, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index,level",
     [
@@ -163,27 +175,30 @@ def test_dataframe_drop_multiindex(index, level, inplace):
     )
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.drop(index=index, inplace=inplace, level=level)
+    expected = pdf.drop(index=index, level=level)
     actual = gdf.drop(index=index, inplace=inplace, level=level)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("data", [{"c": range(1, 11)}, {"d": ["a", "v"] * 5}])
 @pytest.mark.parametrize("labels", [["a"], ["b"], "a", "b", ["a", "b"]])
 def test_dataframe_drop_labels_axis_1(data, labels, inplace):
     pdf = pd.DataFrame({"a": range(10), "b": range(10, 20), **data})
     gdf = cudf.from_pandas(pdf)
 
-    expected = pdf.drop(labels=labels, axis=1, inplace=inplace)
+    expected = pdf.drop(labels=labels, axis=1)
     actual = gdf.drop(labels=labels, axis=1, inplace=inplace)
 
     if inplace:
-        expected = pdf
+        assert actual is None
         actual = gdf
 
     assert_eq(expected, actual)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -9,6 +9,9 @@ import cudf
 from cudf.testing import assert_eq
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop_duplicates is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("keep", ["first", "last", False])
 @pytest.mark.parametrize("ignore_index", [True, False])
 @pytest.mark.parametrize(
@@ -34,6 +37,6 @@ def test_drop_duplicates_series(data, keep, ignore_index):
         gds.drop_duplicates(keep=keep, ignore_index=ignore_index),
     )
 
-    pds.drop_duplicates(keep=keep, inplace=True, ignore_index=ignore_index)
+    expected = pds.drop_duplicates(keep=keep, ignore_index=ignore_index)
     gds.drop_duplicates(keep=keep, inplace=True, ignore_index=ignore_index)
-    assert_eq(pds, gds)
+    assert_eq(expected, gds)

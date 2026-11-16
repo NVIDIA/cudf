@@ -6,9 +6,11 @@ import pytest
 
 import cudf
 from cudf.api.extensions import no_default
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 from cudf.testing._utils import (
     assert_exceptions_equal,
+    expect_warning_if,
 )
 
 
@@ -18,6 +20,9 @@ def drop(request):
     return request.param
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, "l0", 1, ["l0", 1]])
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser", no_default])
@@ -34,11 +39,11 @@ def test_reset_index(level, drop, inplace, original_name, name):
     ps = pd.Series(range(4), index=midx, name=original_name)
     gs = cudf.from_pandas(ps)
 
-    expect = ps.reset_index(level=level, drop=drop, name=name, inplace=inplace)
+    expect = ps.reset_index(level=level, drop=drop, name=name)
 
     got = gs.reset_index(level=level, drop=drop, name=name, inplace=inplace)
     if inplace:
-        expect = ps
+        assert got is None
         got = gs
     if isinstance(expect, pd.DataFrame) and expect.columns.dtype == "object":
         # pandas preserves None as a column label, returning Index[object]
@@ -47,6 +52,9 @@ def test_reset_index(level, drop, inplace, original_name, name):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, 1, [None]])
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser"])
@@ -62,10 +70,10 @@ def test_reset_index_dup_level_name(level, drop, inplace, original_name, name):
     ps = pd.Series(range(4), index=midx, name=original_name)
     gs = cudf.from_pandas(ps)
 
-    expect = ps.reset_index(level=level, drop=drop, inplace=inplace, name=name)
+    expect = ps.reset_index(level=level, drop=drop, name=name)
     got = gs.reset_index(level=level, drop=drop, inplace=inplace, name=name)
     if inplace:
-        expect = ps
+        assert got is None
         got = gs
     if isinstance(expect, pd.DataFrame) and expect.columns.dtype == "object":
         # pandas preserves None as a column label, returning Index[object]
@@ -75,6 +83,9 @@ def test_reset_index_dup_level_name(level, drop, inplace, original_name, name):
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("original_name", [None, "original_ser"])
 @pytest.mark.parametrize("name", [None, "ser"])
 def test_reset_index_named(drop, inplace, original_name, name):
@@ -90,11 +101,11 @@ def test_reset_index_named(drop, inplace, original_name, name):
     ps.index.name = "cudf"
     gs.index.name = "cudf"
 
-    expect = ps.reset_index(drop=drop, inplace=inplace, name=name)
+    expect = ps.reset_index(drop=drop, name=name)
     got = gs.reset_index(drop=drop, inplace=inplace, name=name)
 
     if inplace:
-        expect = ps
+        assert got is None
         got = gs
     if isinstance(expect, pd.DataFrame) and expect.columns.dtype == "object":
         # pandas preserves None as a column label, returning Index[object]
@@ -124,32 +135,42 @@ def test_reset_index_dup_level_name_exceptions():
     )
 
     # Cannot use drop=False and inplace=True to turn a series into dataframe.
-    assert_exceptions_equal(
-        lfunc=ps.reset_index,
-        rfunc=gs.reset_index,
-        lfunc_args_and_kwargs=(
-            [],
-            {"drop": False, "inplace": True},
-        ),
-        rfunc_args_and_kwargs=(
-            [],
-            {"drop": False, "inplace": True},
-        ),
-    )
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="The inplace keyword in Series.reset_index is deprecated",
+    ):
+        assert_exceptions_equal(
+            lfunc=ps.reset_index,
+            rfunc=gs.reset_index,
+            lfunc_args_and_kwargs=(
+                [],
+                {"drop": False, "inplace": True},
+            ),
+            rfunc_args_and_kwargs=(
+                [],
+                {"drop": False, "inplace": True},
+            ),
+        )
 
     # Pandas raises the above exception should these two inputs crosses.
-    assert_exceptions_equal(
-        lfunc=ps.reset_index,
-        rfunc=gs.reset_index,
-        lfunc_args_and_kwargs=(
-            [],
-            {"level": [None], "drop": False, "inplace": True},
-        ),
-        rfunc_args_and_kwargs=(
-            [],
-            {"level": [None], "drop": False, "inplace": True},
-        ),
-    )
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="The inplace keyword in Series.reset_index is deprecated",
+    ):
+        assert_exceptions_equal(
+            lfunc=ps.reset_index,
+            rfunc=gs.reset_index,
+            lfunc_args_and_kwargs=(
+                [],
+                {"level": [None], "drop": False, "inplace": True},
+            ),
+            rfunc_args_and_kwargs=(
+                [],
+                {"level": [None], "drop": False, "inplace": True},
+            ),
+        )
 
 
 @pytest.mark.parametrize("level", [-1, -2, [-1], [0, -1]])

@@ -11,11 +11,11 @@ import numpy as np
 import pylibcudf as plc
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column import column_empty
 from cudf.core.column.column import (
     ColumnBase,
     PylibcudfFunction,
-    pylibcudf_result_dtype_policy,
     pylibcudf_result_same_kind_dtype_policy,
     same_dtype_policy,
 )
@@ -109,6 +109,8 @@ class NumericalBaseColumn(ColumnBase, Scannable):
         V = self.var()
 
         if V == 0:
+            if PANDAS_GE_31:
+                return _get_nan_for_dtype(original_dtype)
             return original_dtype.type(0)
 
         term_one_section_one = (n * (n + 1)) / ((n - 1) * (n - 2) * (n - 3))
@@ -139,7 +141,7 @@ class NumericalBaseColumn(ColumnBase, Scannable):
         m2 = self.var(ddof=0)
 
         if m2 == 0:
-            return np.float64(0)
+            return np.float64(np.nan if PANDAS_GE_31 else 0)
 
         unbiased_coef = ((n * (n - 1)) ** 0.5) / (n - 2)
         skew = unbiased_coef * m3 / (m2 ** (3 / 2))
@@ -272,7 +274,7 @@ class NumericalBaseColumn(ColumnBase, Scannable):
             "cudf.core.column.numerical_base.NumericalBaseColumn",
             PylibcudfFunction(
                 plc.round.round,
-                pylibcudf_result_dtype_policy,
+                pylibcudf_result_same_kind_dtype_policy,
             ).execute_with_args(self, decimals, plc_how),
         )
 

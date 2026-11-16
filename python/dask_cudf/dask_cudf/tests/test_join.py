@@ -10,10 +10,16 @@ import pytest
 from dask import dataframe as dd
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 
 import dask_cudf
 
 param_nrows = [5, 10, 50, 100]
+_NATIVE_JOIN_SUFFIXES = (
+    {"suffixes": ("l", "r")}
+    if PANDAS_GE_31
+    else {"lsuffix": "l", "rsuffix": "r"}
+)
 
 
 @pytest.mark.parametrize("left_nrows", param_nrows)
@@ -40,7 +46,7 @@ def test_join_inner(left_nrows, right_nrows, left_nkeys, right_nkeys):
     )
 
     expect = left.set_index("x").join(
-        right.set_index("x"), how="inner", sort=True, lsuffix="l", rsuffix="r"
+        right.set_index("x"), how="inner", sort=True, **_NATIVE_JOIN_SUFFIXES
     )
     expect = expect.to_pandas()
 
@@ -102,7 +108,7 @@ def test_join_left(left_nrows, right_nrows, left_nkeys, right_nkeys, how):
     )
 
     expect = left.set_index("x").join(
-        right.set_index("x"), how=how, sort=True, lsuffix="l", rsuffix="r"
+        right.set_index("x"), how=how, sort=True, **_NATIVE_JOIN_SUFFIXES
     )
     expect = expect.to_pandas()
 

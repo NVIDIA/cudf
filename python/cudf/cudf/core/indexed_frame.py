@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import copy
+import datetime
 import itertools
 import textwrap
 import warnings
@@ -36,10 +37,12 @@ from cudf.api.types import (
     is_scalar,
     is_string_dtype,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core._internals import copying
 from cudf.core.column import (
     CategoricalColumn,
     ColumnBase,
+    DecimalColumn,
     access_columns,
     as_column,
     column_empty,
@@ -71,6 +74,7 @@ from cudf.core.window import ExponentialMovingWindow, Rolling
 from cudf.errors import MixedTypeError
 from cudf.utils import docutils, ioutils
 from cudf.utils._numba import _CUDFNumbaConfig
+from cudf.utils._warnings import _warn_pandas_31_deprecation
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
     SIZE_TYPE_DTYPE,
@@ -102,6 +106,7 @@ if TYPE_CHECKING:
         DataFrameOrSeries,
         Dtype,
         DtypeObj,
+        NoDefault,
         ScalarLike,
     )
     from cudf.core.column.lists import ListColumn
@@ -199,7 +204,12 @@ def _get_unique_drop_labels(array):
 def _indices_from_labels(obj, labels):
     if not isinstance(labels, cudf.MultiIndex):
         labels = as_column(labels)
-        labels = labels.astype(obj.index.dtype)
+        if not (
+            PANDAS_GE_31
+            and labels.dtype.kind == obj.index.dtype.kind == "f"
+            and labels.dtype.itemsize > obj.index.dtype.itemsize
+        ):
+            labels = labels.astype(obj.index.dtype)
         idx_labels = cudf.Index._from_column(labels)
     else:
         idx_labels = labels
@@ -277,7 +287,11 @@ class _FrameIndexer:
         key_val = key[0] if isinstance(key, (tuple, list)) else key
 
         if isinstance(idx, RangeIndex):
-            if isinstance(key_val, int) and (key_val == idx[-1] + idx.step):
+            if (
+                len(idx) > 0
+                and isinstance(key_val, int)
+                and key_val == idx[-1] + idx.step
+            ):
                 idx_copy = cudf.RangeIndex(
                     start=idx.start,
                     stop=idx.stop + idx.step,
@@ -303,13 +317,21 @@ class _FrameIndexer:
         # columns reflects the new lengths.
         old_ncols = len(self._frame._data)
         if columns_df is not None:
-            for col in columns_df._column_names:
-                self._frame._data._data[col] = _append_new_row(
-                    self._frame._data[col], value
+            new_columns = {
+                col: _append_new_row(
+                    self._frame._data[col], value, warn_if_cast=True
                 )
+                for col in columns_df._column_names
+            }
         elif column is not None:
-            new_col = _append_new_row(self._frame._column, value)
-            self._frame._data._data[self._frame.name] = new_col
+            new_columns = {
+                self._frame.name: _append_new_row(
+                    self._frame._column, value, warn_if_cast=True
+                )
+            }
+        else:
+            new_columns = {}
+        self._frame._data._data.update(new_columns)
 
         try:
             del self._frame._data.nrows
@@ -632,6 +654,19 @@ class IndexedFrame(Frame):
         # because pandas Index doesn't implement
         # this method.
         return self.round(decimals=digits)
+
+    def _check_inplace_deprecation(
+        self, inplace: bool | NoDefault, method: str
+    ) -> bool:
+        if inplace is no_default:
+            return False
+        _warn_pandas_31_deprecation(
+            f"The inplace keyword in {type(self).__name__}.{method} is "
+            "deprecated and will be removed in a future version (PDEP-8).\n"
+            "See https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace "
+            "for more details."
+        )
+        return inplace
 
     def _mimic_inplace(
         self, result: Self, inplace: bool = False
@@ -2773,7 +2808,7 @@ class IndexedFrame(Frame):
         axis: Axis = 0,
         level=None,
         ascending: bool | Iterable[bool] = True,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         kind: str = "quicksort",
         na_position: Literal["first", "last"] = "last",
         sort_remaining: bool = True,
@@ -2864,6 +2899,7 @@ class IndexedFrame(Frame):
 
             * Not supporting: kind, sort_remaining=False
         """
+        inplace = self._check_inplace_deprecation(inplace, "sort_index")
         if kind != "quicksort":
             raise NotImplementedError("kind is not yet supported")
 
@@ -2906,7 +2942,7 @@ class IndexedFrame(Frame):
             elif (ascending and idx.is_monotonic_increasing) or (
                 not ascending and idx.is_monotonic_decreasing
             ):
-                out = self.copy()
+                out = self.copy(deep=not PANDAS_GE_31)
             else:
                 inds = idx.argsort(
                     ascending=ascending, na_position=na_position
@@ -3416,6 +3452,12 @@ class IndexedFrame(Frame):
         4     True
         dtype: bool
         """
+        if PANDAS_GE_31 and isinstance(self, cudf.DataFrame) and self.empty:
+            return cudf.Series._from_column(
+                as_column(False, dtype=np.dtype("bool"), length=len(self)),
+                index=self.index,
+                attrs=self.attrs,
+            )
         subset = self._preprocess_subset(subset)
 
         name = None
@@ -3755,7 +3797,7 @@ class IndexedFrame(Frame):
         by,
         axis: Axis = 0,
         ascending: bool | Iterable[bool] = True,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         kind: str = "quicksort",
         na_position: Literal["first", "last"] = "last",
         ignore_index: bool = False,
@@ -3808,8 +3850,9 @@ class IndexedFrame(Frame):
         """
         if na_position not in {"first", "last"}:
             raise ValueError(f"invalid na_position: {na_position}")
-        if inplace:
+        if inplace is not no_default and inplace:
             raise NotImplementedError("`inplace` not currently implemented.")
+        inplace = self._check_inplace_deprecation(inplace, "sort_values")
         if kind != "quicksort":
             if kind not in {"mergesort", "heapsort", "stable"}:
                 raise AttributeError(
@@ -4071,7 +4114,7 @@ class IndexedFrame(Frame):
                 column_names = (
                     column_names
                     if column_names is not None
-                    else list(df._column_names)
+                    else df._data.to_pandas_index
                 )
                 df = cudf.DataFrame()
             else:
@@ -4116,7 +4159,53 @@ class IndexedFrame(Frame):
                 )
                 df.index = joined.index
                 if fill_value is not NA and rows_added:
+                    temporal_fill_dtypes = (
+                        {
+                            dtype
+                            for _, dtype in df._dtypes
+                            if isinstance(dtype, np.dtype)
+                            and dtype.kind in "mM"
+                        }
+                        if PANDAS_GE_31 and isinstance(fill_value, str)
+                        else set()
+                    )
+                    if temporal_fill_dtypes and cudf.get_option(
+                        "mode.pandas_compatible"
+                    ):
+                        raise NotImplementedError(
+                            "Temporal string reindex fill requires pandas "
+                            "dtype promotion."
+                        )
+                    if PANDAS_GE_31 and isinstance(
+                        fill_value, datetime.datetime
+                    ):
+                        for _, dtype in df._dtypes:
+                            if (
+                                isinstance(dtype, pd.ArrowDtype)
+                                and dtype.kind == "M"
+                                and (fill_value.tzinfo is None)
+                                != (dtype.pyarrow_dtype.tz is None)
+                            ):
+                                raise TypeError(
+                                    f"Invalid value '{fill_value}' for dtype '{dtype}'"
+                                )
                     df.loc[diff] = fill_value
+                    for dtype in temporal_fill_dtypes:
+                        promoted_dtype = np.dtype("object")
+                        if dtype.kind == "M":
+                            try:
+                                pd.array([fill_value], dtype="datetime64[ns]")
+                            except (TypeError, ValueError, OverflowError):
+                                pass
+                            else:
+                                promoted_dtype = np.dtype("datetime64[ns]")
+                        if promoted_dtype != dtype:
+                            _warn_pandas_31_deprecation(
+                                "reindexing with a fill_value that cannot be "
+                                "held by the original dtype is deprecated. "
+                                "Explicitly cast to a common dtype "
+                                f"(in this case {promoted_dtype}) instead."
+                            )
 
         index = index if index is not None else df.index
 
@@ -4364,14 +4453,14 @@ class IndexedFrame(Frame):
             )
 
         cols = (
-            col.round(decimals[name], how=how)
-            if name in decimals
-            and (
-                col.dtype.kind in "fiu"
-                or isinstance(
-                    col.dtype, (cudf.Decimal32Dtype, cudf.Decimal64Dtype)
-                )
+            (
+                col.round(decimals[name], how=how).astype(col.dtype)
+                if isinstance(col, DecimalColumn)
+                and isinstance(col.dtype, pd.ArrowDtype)
+                else col.round(decimals[name], how=how)
             )
+            if name in decimals
+            and (col.dtype.kind in "fiu" or isinstance(col, DecimalColumn))
             else col.copy(deep=True)
             for name, col in self._column_labels_and_values
         )
@@ -4546,7 +4635,7 @@ class IndexedFrame(Frame):
         how="any",
         thresh=None,
         subset=None,
-        inplace=False,
+        inplace: bool | NoDefault = no_default,
         ignore_index: bool = False,
     ):
         """
@@ -4642,11 +4731,12 @@ class IndexedFrame(Frame):
 
         Keep the DataFrame with valid entries in the same variable.
 
-        >>> df.dropna(inplace=True)
+        >>> df = df.dropna()
         >>> df
              name        toy       born
         0  Alfred  Batmobile 1940-04-25
         """
+        inplace = self._check_inplace_deprecation(inplace, "dropna")
         if axis in [0, "index"]:
             result = self._drop_na_rows(how=how, subset=subset, thresh=thresh)
             if ignore_index:
@@ -5424,7 +5514,7 @@ class IndexedFrame(Frame):
         index=None,
         columns=None,
         level=None,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         errors: Literal["ignore", "raise"] = "raise",
     ) -> Self | None:
         """Drop specified labels from rows or columns.
@@ -5589,6 +5679,7 @@ class IndexedFrame(Frame):
         falcon speed   320.0  250.0
                weight    1.0    0.8
         """
+        inplace = self._check_inplace_deprecation(inplace, "drop")
         if labels is not None:
             if index is not None or columns is not None:
                 raise ValueError(
@@ -6791,11 +6882,11 @@ class IndexedFrame(Frame):
 
     def convert_dtypes(
         self,
-        infer_objects: bool = True,
-        convert_string: bool = True,
-        convert_integer: bool = True,
-        convert_boolean: bool = True,
-        convert_floating: bool = True,
+        infer_objects: bool | NoDefault = no_default,
+        convert_string: bool | NoDefault = no_default,
+        convert_integer: bool | NoDefault = no_default,
+        convert_boolean: bool | NoDefault = no_default,
+        convert_floating: bool | NoDefault = no_default,
         dtype_backend=None,
     ) -> Self:
         """
@@ -6923,6 +7014,34 @@ class IndexedFrame(Frame):
                 f"dtype_backend {dtype_backend} is invalid, only "
                 "'numpy_nullable' and 'pyarrow' are allowed."
             )
+        for name, value in (
+            ("infer_objects", infer_objects),
+            ("convert_string", convert_string),
+            ("convert_integer", convert_integer),
+            ("convert_boolean", convert_boolean),
+            ("convert_floating", convert_floating),
+        ):
+            if value is not no_default:
+                _warn_pandas_31_deprecation(
+                    f"The {name} keyword in {type(self).__name__}."
+                    "convert_dtypes is deprecated and will be removed in a "
+                    "future version."
+                )
+        infer_objects = (
+            infer_objects if infer_objects is not no_default else True
+        )
+        convert_string = (
+            convert_string if convert_string is not no_default else True
+        )
+        convert_integer = (
+            convert_integer if convert_integer is not no_default else True
+        )
+        convert_boolean = (
+            convert_boolean if convert_boolean is not no_default else True
+        )
+        convert_floating = (
+            convert_floating if convert_floating is not no_default else True
+        )
         numpy_to_nullable = {
             "int8": pd.Int8Dtype(),
             "int16": pd.Int16Dtype(),
@@ -7006,7 +7125,6 @@ class IndexedFrame(Frame):
                 and eff_dtype.name in numpy_to_nullable
             ):
                 col_filled = col.fillna(0)
-                as_int = col_filled.astype(np.dtype(np.int64))
                 nan_blocks_int = (
                     pd.options.future.distinguish_nan_and_na
                     and col.nan_count > 0
@@ -7014,7 +7132,16 @@ class IndexedFrame(Frame):
                 if (
                     convert_integer
                     and not nan_blocks_int
-                    and bool(cp.allclose(col_filled, as_int))
+                    and (
+                        col_filled.can_cast_safely(np.dtype(np.int64))
+                        if PANDAS_GE_31
+                        else bool(
+                            cp.allclose(
+                                col_filled,
+                                col_filled.astype(np.dtype(np.int64)),
+                            )
+                        )
+                    )
                 ):
                     selected = True
                     new_col = col.nans_to_nulls().astype(
@@ -7519,7 +7646,9 @@ def _is_same_dtype(lhs_dtype, rhs_dtype):
         return False
 
 
-def _append_new_row(col: ColumnBase, value: ScalarLike) -> ColumnBase:
+def _append_new_row(
+    col: ColumnBase, value: ScalarLike, *, warn_if_cast: bool = False
+) -> ColumnBase:
     """Return a new column with a scalar `value` appended to the end of `col`.
     Cast to common type if possible
     """
@@ -7529,7 +7658,14 @@ def _append_new_row(col: ColumnBase, value: ScalarLike) -> ColumnBase:
         if (cudf.utils.utils.is_na_like(value) or value in {None, np.nan})
         else None,
     )
-    if val_col.dtype.kind != "f" and val_col.can_cast_safely(col.dtype):
+    if (
+        PANDAS_GE_31
+        and is_dtype_obj_string(col.dtype)
+        and is_dtype_obj_string(val_col.dtype)
+    ) or (
+        (PANDAS_GE_31 or val_col.dtype.kind != "f")
+        and val_col.can_cast_safely(col.dtype)
+    ):
         # If the value can be cast to the column dtype, do so
         val_col = val_col.astype(col.dtype)
         to_type = col.dtype
@@ -7573,4 +7709,29 @@ def _append_new_row(col: ColumnBase, value: ScalarLike) -> ColumnBase:
             "Cannot append mixed types: "
             f"Column dtype {col.dtype} is not compatible with {res_col.dtype}"
         )
+    if PANDAS_GE_31 and warn_if_cast and res_col.dtype != col.dtype:
+        if (
+            cudf.get_option("mode.pandas_compatible")
+            and col.dtype.kind == "b"
+            and res_col.dtype.kind != "b"
+        ):
+            raise MixedTypeError(
+                "Appending mixed boolean values requires object storage"
+            )
+        missing_integer_promotion = (
+            isinstance(col.dtype, np.dtype)
+            and col.dtype.kind in "iu"
+            and isinstance(res_col.dtype, np.dtype)
+            and res_col.dtype.kind == "f"
+            and res_col.has_nulls(include_nan=True)
+        )
+        if not missing_integer_promotion:
+            _warn_pandas_31_deprecation(
+                "Setting an item of incompatible dtype is deprecated "
+                "and will raise an error in a future version of pandas. "
+                f"The existing dtype {col.dtype} cannot hold the value being "
+                f"set, so the result has dtype {res_col.dtype}. Cast the "
+                f"object to {res_col.dtype} before this operation to "
+                "retain the current behavior."
+            )
     return res_col

@@ -19,6 +19,7 @@ from cudf.api.types import (
     is_scalar,
     is_string_dtype,
 )
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.accessors.lists import ListMethods
 from cudf.core.column.column import ColumnBase, as_column, column_empty
@@ -31,7 +32,7 @@ from cudf.utils.dtypes import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from cudf._typing import ColumnLike
+    from cudf._typing import ColumnLike, NoDefault
     from cudf.core.column.string import StringColumn
     from cudf.core.index import Index
     from cudf.core.series import Series
@@ -119,6 +120,14 @@ class StringMethods(BaseAccessor):
                 f"not {inferred_dtype}"
             )
         super().__init__(parent=parent)
+
+    def _return_predicate_result(self, column: ColumnBase) -> Series | Index:
+        if (
+            isinstance(self._column.dtype, pd.StringDtype)
+            and self._column.dtype.na_value is pd.NA
+        ):
+            column = column.astype(pd.BooleanDtype())
+        return self._return_or_inplace(column)
 
     def htoi(self) -> Series | Index:
         """
@@ -584,7 +593,7 @@ class StringMethods(BaseAccessor):
 
     def extract(
         self, pat: str, flags: int = 0, expand: bool = True
-    ) -> Series | Index:
+    ) -> Series | Index | cudf.DataFrame:
         r"""
         Extract capture groups in the regex `pat` as columns in a DataFrame.
 
@@ -600,7 +609,8 @@ class StringMethods(BaseAccessor):
         expand : bool, default True
             If True, return DataFrame with one column per capture group.
             If False, return a Series/Index if there is one capture group or
-            DataFrame if there are multiple capture groups.
+            DataFrame if there are multiple capture groups in a Series.
+            For an Index, ``expand=False`` requires one capture group.
 
         Returns
         -------
@@ -649,8 +659,25 @@ class StringMethods(BaseAccessor):
                 "unsupported value for `flags` parameter"
             )
 
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and flags & re.IGNORECASE
+        ):
+            raise NotImplementedError(
+                "Case-insensitive Arrow string extraction is not supported"
+            )
         compiled = re.compile(pat)
-        group_names = list(compiled.groupindex.keys())
+        if (
+            not expand
+            and isinstance(self._parent, cudf.Index)
+            and compiled.groups > 1
+        ):
+            raise ValueError("only one regex group is supported with Index")
+        group_names = {
+            group_number - 1: name
+            for name, group_number in compiled.groupindex.items()
+        }
         if len(group_names) > 0:
             pat = re.sub(r"\(\?P<([A-Za-z_][A-Za-z0-9_]*)>", "(", pat)
         data = self._column.extract(pat, flags)
@@ -658,14 +685,19 @@ class StringMethods(BaseAccessor):
         if len(data) == 1 and expand is False:
             _, data = data.popitem()  # type: ignore[assignment]
             if len(group_names) > 0:
-                result_name = group_names[0]
+                result_name = group_names.get(0)
         elif expand is False and len(data) > 1:
             expand = True
-        if len(group_names) == len(data):
-            named_data = {}
-            for key, value in data.items():
-                named_data[group_names[key]] = value
+        if group_names and isinstance(data, dict):
+            named_data: dict[int | str, StringColumn] = {
+                group_names.get(key, key): value for key, value in data.items()
+            }
             data = named_data  # type: ignore[assignment]
+        if expand and isinstance(self._parent, cudf.Index):
+            result = cudf.DataFrame._from_data(data)
+            if not group_names:
+                result._data.rangeindex = True
+            return result
         return self._return_or_inplace(
             data, expand=expand, replace_name=result_name
         )
@@ -828,6 +860,17 @@ class StringMethods(BaseAccessor):
                 "`case=False` only supported when `regex=False`"
             )
 
+        if (
+            regex
+            and isinstance(pat, str)
+            and re.search(r"(?<!\\)(?:\\\\)*\\[uUN]", pat)
+        ):
+            # libcudf does not interpret Python's Unicode escape syntax.
+            re.compile(pat)
+            raise NotImplementedError(
+                "Unicode regex escapes require Python regex matching"
+            )
+
         if is_scalar(pat):
             if regex:
                 pat = self._remove_named_capture_groups(pat)  # type: ignore[arg-type]
@@ -857,7 +900,7 @@ class StringMethods(BaseAccessor):
             result_col = result_col.fillna(False)
         if na is not no_default:
             result_col = result_col.fillna(na)
-        return self._return_or_inplace(result_col)
+        return self._return_predicate_result(result_col)
 
     def like(self, pat: str, esc: str | None = None) -> Series | Index:
         """
@@ -2645,7 +2688,14 @@ class StringMethods(BaseAccessor):
 
         result_table: StringColumn | dict[int, StringColumn]
         if expand:
-            if self._column.is_all_null:
+            if (
+                PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                and isinstance(self._parent, cudf.Series)
+                and len(self._column) == 0
+            ):
+                result_table = {}
+            elif self._column.is_all_null:
                 result_table = {0: self._column.copy()}
             else:
                 if regex is True:
@@ -2824,7 +2874,14 @@ class StringMethods(BaseAccessor):
 
         result_table: StringColumn | dict[int, StringColumn]
         if expand:
-            if self._column.is_all_null:
+            if (
+                PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                and isinstance(self._parent, cudf.Series)
+                and len(self._column) == 0
+            ):
+                result_table = {}
+            elif self._column.is_all_null:
                 result_table = {0: self._column.copy()}
             else:
                 if regex is True:
@@ -2970,6 +3027,14 @@ class StringMethods(BaseAccessor):
             raise TypeError(
                 f"sep should be a string, but got {type(sep).__name__}"
             )
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and isinstance(self._parent, cudf.Series)
+            and self._column.is_all_null
+        ):
+            data = {0: self._column.copy()} if len(self._column) else {}
+            return self._return_or_inplace(data, expand=expand)
         return self._return_or_inplace(
             self._column.partition(
                 plc.Scalar.from_py(sep, dtype=plc.DataType(plc.TypeId.STRING)),
@@ -3042,6 +3107,14 @@ class StringMethods(BaseAccessor):
             raise TypeError(
                 f"sep should be a string, but got {type(sep).__name__}"
             )
+        if (
+            PANDAS_GE_31
+            and isinstance(self._column.dtype, pd.ArrowDtype)
+            and isinstance(self._parent, cudf.Series)
+            and self._column.is_all_null
+        ):
+            data = {0: self._column.copy()} if len(self._column) else {}
+            return self._return_or_inplace(data, expand=expand)
         return self._return_or_inplace(
             self._column.rpartition(
                 plc.Scalar.from_py(sep, dtype=plc.DataType(plc.TypeId.STRING)),
@@ -4285,7 +4358,12 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return (
+                result
+                if PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                else result.astype(np.dtype(np.int64))
+            )
 
     def rindex(
         self, sub: str, start: int = 0, end: int | None = None
@@ -4345,12 +4423,17 @@ class StringMethods(BaseAccessor):
         if (result == -1).any():
             raise ValueError("substring not found")
         else:
-            return result.astype(np.dtype(np.int64))
+            return (
+                result
+                if PANDAS_GE_31
+                and isinstance(self._column.dtype, pd.ArrowDtype)
+                else result.astype(np.dtype(np.int64))
+            )
 
     def match(
         self,
         pat: str,
-        case: bool = True,
+        case: bool | NoDefault = no_default,
         flags: int = 0,
         na=no_default,
     ) -> Series | Index:
@@ -4401,7 +4484,19 @@ class StringMethods(BaseAccessor):
             The `flags` parameter currently only supports re.DOTALL,
             re.MULTILINE and re.IGNORECASE.
         """
-        if case is not True:
+        if PANDAS_GE_31 and case is not no_default:
+            if isinstance(pat, re.Pattern):
+                if case != (not bool(pat.flags & re.IGNORECASE)):
+                    raise ValueError(
+                        "Cannot both specify 'case' and pass a compiled "
+                        "regexp object with conflicting case-sensitivity"
+                    )
+            elif case and flags & re.IGNORECASE:
+                raise ValueError(
+                    "Cannot both specify case=True and pass 'flags' "
+                    "containing re.IGNORECASE"
+                )
+        if case is not no_default and case is not True:
             raise NotImplementedError("`case` parameter is not yet supported")
         if isinstance(pat, re.Pattern):
             if flags:
@@ -4420,7 +4515,7 @@ class StringMethods(BaseAccessor):
             result = result.fillna(na)
         elif self._column._PANDAS_NA_VALUE in {np.nan, None}:
             result = result.fillna(False)
-        return self._return_or_inplace(result)
+        return self._return_predicate_result(result)
 
     def url_decode(self) -> Series | Index:
         """

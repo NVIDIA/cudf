@@ -15,6 +15,7 @@ import pandas as pd
 import pylibcudf as plc
 
 from cudf.api.types import is_scalar
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.column import access_columns
 from cudf.core.dataframe import DataFrame
 from cudf.core.dtypes import (
@@ -210,7 +211,12 @@ def read_csv(
 
                 typ = cudf_dtype(col_type)
                 cudf_dtypes[k_str] = typ
-                plc_dtypes[k_str] = _get_plc_data_type_from_dtype(typ)
+                if not (
+                    PANDAS_GE_31
+                    and isinstance(typ, CategoricalDtype)
+                    and typ._categories is None
+                ):
+                    plc_dtypes[k_str] = _get_plc_data_type_from_dtype(typ)
         elif isinstance(
             dtype,
             (
@@ -227,9 +233,14 @@ def read_csv(
             else:
                 dtype = cudf_dtype(dtype)
             cudf_dtypes = dtype
-            cast("list", plc_dtypes).append(
-                _get_plc_data_type_from_dtype(dtype)
-            )
+            if not (
+                PANDAS_GE_31
+                and isinstance(dtype, CategoricalDtype)
+                and dtype._categories is None
+            ):
+                cast("list", plc_dtypes).append(
+                    _get_plc_data_type_from_dtype(dtype)
+                )
         elif isinstance(dtype, Collection):
             for index, col_dtype in enumerate(dtype):
                 if (

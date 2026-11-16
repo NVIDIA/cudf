@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import collections
+import contextlib
 import copy
 import cProfile
 import datetime
@@ -31,6 +32,7 @@ from numba import (
 
 from rmm import RMMError
 
+from cudf.core._compat import PANDAS_GE_31
 from cudf.pandas import LOADED, Profiler
 from cudf.pandas.fast_slow_proxy import (
     AttributeFallbackError,
@@ -304,6 +306,15 @@ def test_groupby_rolling(dataframe):
     tm.assert_frame_equal(expected, got)
 
 
+@pytest.mark.parametrize("window", ["expanding", "ewm"])
+def test_groupby_window_types(dataframe, window):
+    pdf, df = dataframe
+    kwargs = {"com": 0.5} if window == "ewm" else {}
+    expected = getattr(pdf.groupby("a"), window)(**kwargs).mean()
+    got = getattr(df.groupby("a"), window)(**kwargs).mean()
+    tm.assert_frame_equal(expected, got)
+
+
 def test_groupby_rolling_window(dataframe):
     pdf, df = dataframe
     expected = pdf.groupby("a").rolling(2, win_type="triang").mean()
@@ -469,7 +480,8 @@ def test_excel_round_trip(dataframe):
     excel_cudf_pandas.seek(0)
 
     tm.assert_frame_equal(
-        pd.read_excel(excel_pdf), xpd.read_excel(excel_cudf_pandas)
+        pd.read_excel(excel_pdf, engine="openpyxl"),
+        xpd.read_excel(excel_cudf_pandas, engine="openpyxl"),
     )
 
 
@@ -516,12 +528,18 @@ def test_module_attribute_types():
 
 
 def test_infer_freq():
-    expected = pd.infer_freq(
-        pd.date_range(start="2020/12/01", end="2020/12/30", periods=30)
+    context = (
+        pd.option_context("future.infer_freq_returns_offset", False)
+        if PANDAS_GE_31
+        else contextlib.nullcontext()
     )
-    got = xpd.infer_freq(
-        xpd.date_range(start="2020/12/01", end="2020/12/30", periods=30)
-    )
+    with context:
+        expected = pd.infer_freq(
+            pd.date_range(start="2020/12/01", end="2020/12/30", periods=30)
+        )
+        got = xpd.infer_freq(
+            xpd.date_range(start="2020/12/01", end="2020/12/30", periods=30)
+        )
     assert expected == got
 
 
@@ -606,6 +624,18 @@ def test_array_ufunc(series):
     got = np.subtract(sr, sr)
     assert isinstance(got, sr.__class__)
     tm.assert_equal(expect, got)
+
+
+@pytest.mark.parametrize("function", [np.add, np.where])
+def test_numpy_callable_dispatch(series, function):
+    psr, sr = series
+    if function is np.add:
+        expected = function(psr, 1)
+        got = function(sr, 1)
+    else:
+        expected = function(psr > 1, psr, 0)
+        got = function(sr > 1, sr, 0)
+    tm.assert_equal(expected, got)
 
 
 @pytest.mark.xfail(strict=False, reason="Fails in CI, passes locally.")
@@ -1212,10 +1242,23 @@ def test_dataframe_query():
 
 
 def test_private_method_result_wrapped():
-    xoffset = xpd.offsets.Day()
-    dt = datetime.datetime(2020, 1, 1)
-    result = xoffset._apply(dt)
+    df = xpd.DataFrame({"date": [datetime.datetime(2020, 1, 1)]})
+    result = df._get_value(0, "date")
     assert isinstance(result, xpd.Timestamp)
+
+
+@pytest.mark.parametrize("year", [1, 9999, 0, 10000, -1])
+def test_timestamp_datetime_range(year):
+    value = np.datetime64(f"{year:04d}-01-01", "s")
+    expected = pd.Timestamp(value)
+    result = xpd.Timestamp(value)
+    assert result == expected
+    assert result.year == expected.year
+    assert result.month == expected.month
+    assert result.day == expected.day
+    assert result.asm8 == expected.asm8
+    if 1 <= year <= 9999:
+        assert is_proxy_object(result)
 
 
 def test_numpy_var():
@@ -1621,7 +1664,9 @@ def test_cudf_pandas_debugging_failed(monkeypatch):
 
 
 def test_excelwriter_pathlike(tmpdir):
-    assert isinstance(pd.ExcelWriter(tmpdir.join("foo.xlsx")), os.PathLike)
+    with pd.ExcelWriter(tmpdir.join("foo.xlsx")) as writer:
+        pd.DataFrame().to_excel(writer)
+        assert isinstance(writer, os.PathLike)
 
 
 def test_is_proxy_object():
@@ -1689,8 +1734,17 @@ def test_at_iat(indexer):
 
 def test_at_setitem_empty():
     df = xpd.DataFrame({"name": []}, dtype="float64")
-    df.at[0, "name"] = 1.0
-    df.at[0, "new"] = 2.0
+    context = (
+        pytest.warns(
+            pd.errors.Pandas4Warning,
+            match="Setting a value on a DataFrame via .at",
+        )
+        if PANDAS_GE_31
+        else contextlib.nullcontext()
+    )
+    with context:
+        df.at[0, "name"] = 1.0
+        df.at[0, "new"] = 2.0
     expected = pd.DataFrame({"name": [1.0], "new": [2.0]})
     tm.assert_frame_equal(df, expected)
 

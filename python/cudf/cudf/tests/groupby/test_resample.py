@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
 
 
@@ -246,4 +247,17 @@ def test_resample_size_matches_pandas_with_empty_buckets():
         expected_empty,
         check_dtype=False,
         check_index_type=False,
+    )
+
+
+@pytest.mark.skipif(
+    not PANDAS_GE_31,
+    reason="pandas 3.1 supports empty dict resampling aggregation",
+)
+def test_series_resample_empty_aggregation_column_metadata():
+    index = pd.date_range("2000", periods=3)
+    source = pd.Series([1, 2, 3], index=index, name="a")
+    assert_eq(
+        source.resample("D").agg({}),
+        cudf.from_pandas(source).resample("D").agg({}),
     )

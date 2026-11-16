@@ -31,6 +31,13 @@ from .fast_slow_proxy import (
 )
 
 
+def _get_wrapped_constant(value, wrapped_objs):
+    # Keep the original object alive in each entry so its id cannot be reused.
+    # Looking up integer identities never invokes a constant's hash/equality.
+    entry = wrapped_objs.get(id(value))
+    return entry[1] if entry is not None and entry[0] is value else value
+
+
 def rename_root_module(module: str, root: str, new_root: str) -> str:
     """
     Rename a module to a new root.
@@ -106,7 +113,7 @@ class ModuleAcceleratorBase(
     # instance, so we keep a registry of all module attributes
     # that we can look up to see if we have already wrapped an
     # attribute before
-    _wrapped_objs: dict[Any, Any]
+    _wrapped_objs: dict[int, tuple[Any, Any]]
 
     def __new__(
         cls,
@@ -141,10 +148,15 @@ class ModuleAcceleratorBase(
         # instance, so we keep a registry of all module attributes
         # that we can look up to see if we have already wrapped an
         # attribute before
-        self._wrapped_objs = {}
-        self._wrapped_objs.update(get_final_type_map())
-        self._wrapped_objs.update(get_intermediate_type_map())
-        self._wrapped_objs.update(get_registered_functions())
+        self._wrapped_objs = {
+            id(original): (original, wrapped)
+            for registry in (
+                get_final_type_map(),
+                get_intermediate_type_map(),
+                get_registered_functions(),
+            )
+            for original, wrapped in registry.items()
+        }
 
         ModuleAcceleratorBase._instance = self
         return self
@@ -298,6 +310,12 @@ class ModuleAcceleratorBase(
         elif self.fast_lib == self.slow_lib:
             # no need to create a fast-slow wrapper
             wrapped_attr = slow_attr
+        if not isinstance(slow_attr, (type, ModuleType)) and not (
+            _is_function_or_method(slow_attr)
+        ):
+            # Constants do not need wrapping. Hashing them can invoke arbitrary
+            # code, including imports while this module is still being built.
+            return _get_wrapped_constant(slow_attr, self._wrapped_objs)
         if any(
             [
                 slow_attr in get_registered_functions(),
@@ -306,7 +324,7 @@ class ModuleAcceleratorBase(
             ]
         ):
             # attribute already registered in self._wrapped_objs
-            return self._wrapped_objs[slow_attr]
+            return self._wrapped_objs[id(slow_attr)][1]
         if isinstance(slow_attr, ModuleType) and slow_attr.__name__.startswith(
             self.slow_lib
         ):
@@ -320,12 +338,12 @@ class ModuleAcceleratorBase(
                     slow_attr.__name__, self.slow_lib, self.mod_name
                 )
             )
-        if slow_attr in self._wrapped_objs:
+        if id(slow_attr) in self._wrapped_objs:
             if type(fast_attr) is _Unusable:
                 # we don't want to replace a wrapped object that
                 # has a usable fast object with a wrapped object
                 # with a an unusable fast object.
-                return self._wrapped_objs[slow_attr]
+                return self._wrapped_objs[id(slow_attr)][1]
         if _is_function_or_method(slow_attr):
             wrapped_attr = _FunctionProxy(fast_attr, slow_attr)
         else:
@@ -468,7 +486,13 @@ class ModuleAccelerator(ModuleAcceleratorBase):
             real_attributes[key] = slow_attr
             try:
                 wrapped_attr = self._wrap_attribute(slow_attr, fast_attr, key)
-                self._wrapped_objs[slow_attr] = wrapped_attr
+                if isinstance(slow_attr, (type, ModuleType)) or (
+                    _is_function_or_method(slow_attr)
+                ):
+                    self._wrapped_objs[id(slow_attr)] = (
+                        slow_attr,
+                        wrapped_attr,
+                    )
             except TypeError:
                 # slow_attr is not hashable
                 pass
@@ -544,6 +568,14 @@ class ModuleAccelerator(ModuleAcceleratorBase):
         -------
         The requested attribute (either real or wrapped)
         """
+        if (
+            name == "Timestamp"
+            and real.get("__name__") == "pandas._libs.tslibs.timestamps"
+        ):
+            # pandas' Cython timezone bounds checks import this private class
+            # and cast Timestamp(0) directly to its C extension type. Cython
+            # callers have no Python frame for the denylist to recognize.
+            return real[name]
         use_real = (
             loader._disable_count[threading.get_ident()] > 0
             # If acceleration was disabled on the main thread, we should respect that.
@@ -560,18 +592,34 @@ class ModuleAccelerator(ModuleAcceleratorBase):
         )
         if not use_real:
             # Only need to check the denylist if we're not turned off.
-            frame = sys._getframe()
-            # We cannot possibly be at the top level.
-            assert frame.f_back
-            calling_module = pathlib.PurePath(frame.f_back.f_code.co_filename)
+            # Avoid keeping our own frame in a local variable: that creates
+            # a reference cycle which also retains the caller's objects.
+            calling_module = pathlib.PurePath(
+                sys._getframe(1).f_code.co_filename
+            )
             use_real = _caller_in_denylist(
                 calling_module, tuple(loader._denylist)
             )
+        if name not in real and (getattr_impl := real.get("__getattr__")):
+            # Dynamic aliases may be intentionally absent from __dir__, for
+            # example pandas' deprecated Groupby spellings. Resolve each access
+            # through the original implementation so its warnings are retained.
+            with warnings.catch_warnings(record=True) as caught:
+                value = getattr_impl(name)
+            for warning in caught:
+                warnings.warn(warning.message, warning.category, stacklevel=2)
+            if use_real:
+                return value
+            return loader._wrap_attribute(value, _Unusable(), name)
         try:
             if use_real:
                 return real[name]
             else:
-                return wrapped_objs[real[name]]
+                if not isinstance(real[name], (type, ModuleType)) and not (
+                    _is_function_or_method(real[name])
+                ):
+                    return _get_wrapped_constant(real[name], wrapped_objs)
+                return wrapped_objs[id(real[name])][1]
         except KeyError:
             raise AttributeError(f"No attribute '{name}'")
         except TypeError:

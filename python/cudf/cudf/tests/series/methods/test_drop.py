@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -12,6 +12,9 @@ from cudf.testing._utils import (
 )
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "ps",
     [
@@ -32,32 +35,38 @@ def test_series_drop_labels(ps, labels, inplace):
     ps = ps.copy()
     gs = cudf.from_pandas(ps)
 
-    expected = ps.drop(labels=labels, axis=0, inplace=inplace)
+    expected = ps.drop(labels=labels, axis=0)
     actual = gs.drop(labels=labels, axis=0, inplace=inplace)
 
     if inplace:
-        expected = ps
+        assert actual is None
         actual = gs
 
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("data", [["a"] * 20, ["b", None] * 10])
 @pytest.mark.parametrize("index", [[0], 1, pd.Index([1, 3, 5])])
 def test_series_drop_index(data, index, inplace):
     ps = pd.Series(data, index=range(0, 20), name="a")
     gs = cudf.from_pandas(ps)
 
-    expected = ps.drop(index=index, inplace=inplace)
+    expected = ps.drop(index=index)
     actual = gs.drop(index=index, inplace=inplace)
 
     if inplace:
-        expected = ps
+        assert actual is None
         actual = gs
 
     assert_eq(expected, actual)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in Series\\.drop is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize(
     "index,level",
     [
@@ -98,11 +107,11 @@ def test_series_drop_multiindex(index, level, inplace):
     )
     gs = cudf.from_pandas(ps)
 
-    expected = ps.drop(index=index, inplace=inplace, level=level)
+    expected = ps.drop(index=index, level=level)
     actual = gs.drop(index=index, inplace=inplace, level=level)
 
     if inplace:
-        expected = ps
+        assert actual is None
         actual = gs
 
     assert_eq(expected, actual)

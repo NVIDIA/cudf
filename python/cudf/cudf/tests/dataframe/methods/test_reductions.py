@@ -117,7 +117,7 @@ def test_with_multiindex():
             "a": [8, 4, 2, 3, 8],
         }
     )
-    pdf.set_index(["index_1", "index_2"], inplace=True)
+    pdf = pdf.set_index(["index_1", "index_2"])
 
     gdf = cudf.from_pandas(pdf)
 

@@ -1,8 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
 import numpy as np
+import pandas as pd
+import pyarrow as pa
 import pytest
 
 import dask
@@ -100,6 +102,32 @@ def test_sort_values_with_nulls(data, by, ascending, na_position):
 
     # cudf ordering for nulls is non-deterministic
     dd.assert_eq(got[by], expect[by], check_index=False)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["int32", "int64", "uint64", pd.Int64Dtype(), pd.ArrowDtype(pa.int64())],
+)
+@pytest.mark.parametrize("ascending", [True, False])
+@pytest.mark.parametrize("na_position", ["first", "last"])
+def test_sort_values_integer_null_partitions(dtype, ascending, na_position):
+    values = [None] * 8 + [3, 1, None, 2]
+    if dtype == "uint64":
+        values = [None] * 8 + [2**64 - 1, 2**64 - 3, None, 2**64 - 2]
+    frame = cudf.DataFrame({"a": cudf.Series(values, dtype=dtype)})
+    expected = frame.sort_values(
+        "a", ascending=ascending, na_position=na_position
+    ).reset_index(drop=True)
+    result = dask_cudf.from_cudf(frame, npartitions=3).sort_values(
+        "a", ascending=ascending, na_position=na_position
+    )
+    actual = result.compute().reset_index(drop=True)
+
+    assert (
+        actual["a"].to_arrow().to_pylist()
+        == expected["a"].to_arrow().to_pylist()
+    )
+    assert actual["a"].dtype == expected["a"].dtype
 
 
 @pytest.mark.parametrize("by", [["a", "b"], ["b", "a"]])

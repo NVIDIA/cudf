@@ -11,6 +11,9 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, "l0", 1, ["l0", 1]])
 @pytest.mark.parametrize(
     "column_names",
@@ -35,7 +38,6 @@ def test_reset_index(level, drop, column_names, inplace, col_level, col_fill):
     expect = pdf.reset_index(
         level=level,
         drop=drop,
-        inplace=inplace,
         col_level=col_level,
         col_fill=col_fill,
     )
@@ -47,12 +49,15 @@ def test_reset_index(level, drop, column_names, inplace, col_level, col_fill):
         col_fill=col_fill,
     )
     if inplace:
-        expect = pdf
+        assert got is None
         got = gdf
 
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("level", [None, 0, 1, [None]])
 @pytest.mark.parametrize("col_level", [0, 1])
 @pytest.mark.parametrize("col_fill", ["", "some_lv"])
@@ -67,7 +72,7 @@ def test_reset_index_dup_level_name(level, drop, inplace, col_level, col_fill):
             rfunc=gdf.reset_index,
             lfunc_args_and_kwargs=(
                 [],
-                {"level": level, "drop": drop, "inplace": inplace},
+                {"level": level, "drop": drop},
             ),
             rfunc_args_and_kwargs=(
                 [],
@@ -79,7 +84,6 @@ def test_reset_index_dup_level_name(level, drop, inplace, col_level, col_fill):
     expect = pdf.reset_index(
         level=level,
         drop=drop,
-        inplace=inplace,
         col_level=col_level,
         col_fill=col_fill,
     )
@@ -91,12 +95,15 @@ def test_reset_index_dup_level_name(level, drop, inplace, col_level, col_fill):
         col_fill=col_fill,
     )
     if inplace:
-        expect = pdf
+        assert got is None
         got = gdf
 
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("col_level", [0, 1])
 @pytest.mark.parametrize("col_fill", ["", "some_lv"])
 def test_reset_index_named(drop, inplace, col_level, col_fill):
@@ -105,18 +112,19 @@ def test_reset_index_named(drop, inplace, col_level, col_fill):
     pdf.index.name = "cudf"
     gdf.index.name = "cudf"
 
-    expect = pdf.reset_index(
-        drop=drop, inplace=inplace, col_level=col_level, col_fill=col_fill
-    )
+    expect = pdf.reset_index(drop=drop, col_level=col_level, col_fill=col_fill)
     got = gdf.reset_index(
         drop=drop, inplace=inplace, col_level=col_level, col_fill=col_fill
     )
     if inplace:
-        expect = pdf
+        assert got is None
         got = gdf
     assert_eq(expect, got)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.reset_index is deprecated:pandas.errors.Pandas4Warning"
+)
 @pytest.mark.parametrize("column_names", [["x", "y"], ["index", "y"]])
 @pytest.mark.parametrize("col_level", [0, 1])
 @pytest.mark.parametrize("col_fill", ["", "some_lv"])
@@ -126,14 +134,12 @@ def test_reset_index_unnamed(drop, inplace, column_names, col_level, col_fill):
     pdf.columns = column_names
     gdf.columns = column_names
 
-    expect = pdf.reset_index(
-        drop=drop, inplace=inplace, col_level=col_level, col_fill=col_fill
-    )
+    expect = pdf.reset_index(drop=drop, col_level=col_level, col_fill=col_fill)
     got = gdf.reset_index(
         drop=drop, inplace=inplace, col_level=col_level, col_fill=col_fill
     )
     if inplace:
-        expect = pdf
+        assert got is None
         got = gdf
     assert_eq(expect, got)
 

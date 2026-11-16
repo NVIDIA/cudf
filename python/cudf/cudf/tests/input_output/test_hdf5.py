@@ -12,7 +12,7 @@ import cudf
 from cudf.testing import assert_eq
 from cudf.testing._utils import NUMERIC_TYPES, UNSIGNED_TYPES
 
-pytest.importorskip("tables")
+tables = pytest.importorskip("tables")
 
 
 @pytest.fixture(scope="module", params=[0, 10])
@@ -54,6 +54,8 @@ def gdf(pdf):
 @pytest.fixture(params=["fixed", "table"])
 def hdf_files(request, tmp_path, pdf):
     pdf, nrows = pdf
+    if request.param == "table" and nrows == 0:
+        pytest.skip("Can't read 0 row table with format 'table'")
     if request.param == "fixed":
         pdf = pdf.drop("col_category", axis=1)
 
@@ -98,6 +100,8 @@ def test_hdf_reader(hdf_files, columns):
 @pytest.mark.parametrize("complib", ["zlib", "bzip2", "lzo", "blosc"])
 @pytest.mark.filterwarnings("ignore:Using CPU")
 def test_hdf_writer(tmp_path, pdf, gdf, complib, format):
+    if tables.which_lib_version(complib) is None:
+        pytest.skip(f"Compression library {complib} is not available")
     pdf, nrows = pdf
     if format == "table" and nrows == 0:
         pytest.skip("Can't read 0 row table with format 'table'")
@@ -110,8 +114,20 @@ def test_hdf_writer(tmp_path, pdf, gdf, complib, format):
     pdf_df_fname = tmp_path / "pdf_df.hdf"
     gdf_df_fname = tmp_path / "gdf_df.hdf"
 
-    pdf.to_hdf(pdf_df_fname, key="hdf_tests", format=format, complib=complib)
-    gdf.to_hdf(gdf_df_fname, key="hdf_tests", format=format, complib=complib)
+    pdf.to_hdf(
+        pdf_df_fname,
+        key="hdf_tests",
+        format=format,
+        complib=complib,
+        complevel=1,
+    )
+    gdf.to_hdf(
+        gdf_df_fname,
+        key="hdf_tests",
+        format=format,
+        complib=complib,
+        complevel=1,
+    )
 
     assert os.path.exists(pdf_df_fname)
     assert os.path.exists(gdf_df_fname)
@@ -126,10 +142,18 @@ def test_hdf_writer(tmp_path, pdf, gdf, complib, format):
         gdf_series_fname = tmp_path / (column + "_" + "gdf_series.hdf")
 
         pdf[column].to_hdf(
-            pdf_series_fname, key="hdf_tests", format=format, complib=complib
+            pdf_series_fname,
+            key="hdf_tests",
+            format=format,
+            complib=complib,
+            complevel=1,
         )
         gdf[column].to_hdf(
-            gdf_series_fname, key="hdf_tests", format=format, complib=complib
+            gdf_series_fname,
+            key="hdf_tests",
+            format=format,
+            complib=complib,
+            complevel=1,
         )
 
         assert os.path.exists(pdf_series_fname)

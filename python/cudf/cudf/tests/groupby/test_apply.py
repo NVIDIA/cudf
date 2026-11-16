@@ -11,6 +11,7 @@ import pytest
 
 import cudf
 from cudf import DataFrame
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.udf._ops import arith_ops, comparison_ops, unary_ops
 from cudf.core.udf.mlir_backend.groupby_typing import (
     SUPPORTED_GROUPBY_NUMPY_TYPES,
@@ -282,10 +283,9 @@ def test_groupby_apply_jit_unary_reductions(func, dtype, groupby_jit_datasets):
         for dataset_name in ("small", "large", "nans"):
             for special_val in (np.nan, np.inf, -np.inf):
                 data = groupby_jit_datasets[dataset_name].copy(deep=True)
-                with expect_warning_if(
-                    func in {"var", "std"} and not np.isnan(special_val),
-                    RuntimeWarning,
-                ):
+                # inf - inf is invalid in the variance calculation. Whether
+                # pandas emits a warning depends on its reduction backend.
+                with np.errstate(invalid="ignore"):
                     groupby_apply_jit_reductions_special_vals_inner(
                         func, data, dtype, special_val
                     )
@@ -435,7 +435,9 @@ def test_groupby_apply_jit_correlation(groupby_jit_datasets, dtype):
             with pytest.raises(UDFError, match=m):
                 run_groupby_apply_jit_test(dataset, func, keys)
             continue
-        with expect_warning_if(dtype in {"int32", "int64"}, RuntimeWarning):
+        with expect_warning_if(
+            dtype in {"int32", "int64"} and not PANDAS_GE_31, RuntimeWarning
+        ):
             run_groupby_apply_jit_test(dataset, func, keys)
 
 
@@ -451,7 +453,9 @@ def test_groupby_apply_jit_correlation_zero_variance(dtype):
     def func(group):
         return group["b"].corr(group["c"])
 
-    with expect_warning_if(dtype in {"int32", "int64"}, RuntimeWarning):
+    with expect_warning_if(
+        dtype in {"int32", "int64"} and not PANDAS_GE_31, RuntimeWarning
+    ):
         run_groupby_apply_jit_test(data, func, ["a"])
 
 

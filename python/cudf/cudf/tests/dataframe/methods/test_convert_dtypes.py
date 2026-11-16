@@ -1,11 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
+from cudf.testing._utils import expect_warning_if
 
 
 def _compare_to_pandas(column_specs, kwargs):
@@ -16,7 +18,13 @@ def _compare_to_pandas(column_specs, kwargs):
         {k: pd.Series(v, dtype=d) for k, (v, d) in column_specs.items()}
     )
     got = gdf.convert_dtypes(**kwargs)
-    expected = pdf.convert_dtypes(**kwargs)
+    deprecated_flags = set(kwargs) - {"dtype_backend"}
+    with expect_warning_if(
+        PANDAS_GE_31 and bool(deprecated_flags),
+        warning=pd.errors.Pandas4Warning,
+        match=r"The (infer_objects|convert_\w+) keyword in DataFrame.convert_dtypes is deprecated",
+    ):
+        expected = pdf.convert_dtypes(**kwargs)
     assert_eq(got, expected, check_dtype=True)
 
 
@@ -97,6 +105,9 @@ def test_convert_dtypes_dataframe_backend(dtype_backend):
     _compare_to_pandas(column_specs, {"dtype_backend": dtype_backend})
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The (infer_objects|convert_string|convert_integer|convert_boolean|convert_floating) keyword in DataFrame\\.convert_dtypes is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_convert_dtypes_dataframe_param_combinations(
     infer_objects,
     convert_string,

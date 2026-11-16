@@ -22,6 +22,7 @@ from collections.abc import (
     Mapping,
     MutableMapping,
     Sequence,
+    Sized,
 )
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never
@@ -30,6 +31,7 @@ import cupy
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 from numba_cuda_mlir import cuda
 from nvtx import annotate
 from pandas.io.formats import console
@@ -51,8 +53,10 @@ from cudf.api.types import (
     is_integer,
     is_list_like,
     is_scalar,
+    pandas_dtype,
 )
 from cudf.core import indexing_utils, reshape
+from cudf.core._compat import PANDAS_GE_31
 from cudf.core.algorithms import factorize
 from cudf.core.column import (
     CategoricalColumn,
@@ -107,10 +111,15 @@ from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
 from cudf.errors import MixedTypeError
 from cudf.options import get_option
 from cudf.utils import docutils, ioutils, queryutils
+from cudf.utils._warnings import (
+    _warn_pandas_31_deprecation,
+    _warn_pandas_31_numeric_only,
+)
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
     SIZE_TYPE_DTYPE,
     can_convert_to_column,
+    cudf_dtype_to_pa_type,
     dtype_from_pylibcudf_column,
     find_common_type,
     get_dtype_of_same_kind,
@@ -283,7 +292,14 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     return result
                 try:
                     result = columns_df.index._get_row_major(
-                        columns_df, row_arg, per_level=per_level
+                        columns_df,
+                        row_arg,
+                        per_level=per_level
+                        or (
+                            PANDAS_GE_31
+                            and isinstance(row_arg, tuple)
+                            and any(is_list_like(key) for key in row_arg)
+                        ),
                     )
                 except KeyError as e:
                     # Tag a row-label miss so __getitem__ raises instead of
@@ -384,9 +400,22 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 new_ser = Series._from_column(value, index=idx)
             else:
                 new_ser = Series(value, index=idx)
+            new_col_is_boolean = new_ser.dtype.kind == "b"
             if len(self._frame) != 0:
                 new_ser = new_ser._align_to_index(
                     self._frame.index, how="right"
+                )
+            if (
+                PANDAS_GE_31
+                and new_col_is_boolean
+                and new_ser.dtype == np.dtype("bool")
+                and new_ser._column.has_nulls()
+            ):
+                # pandas 3.1 creates an object column with bools and NaN.
+                # Nullable boolean storage would turn those NaNs into None.
+                # Defer before adding the column so fallback sees the original.
+                raise NotImplementedError(
+                    "Partial boolean column expansion with object NaN is not supported"
                 )
 
             if len(self._frame) == 0:
@@ -440,6 +469,20 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     if not is_scalar(key[0]):
                         raise
                     if not columns_df._num_columns:
+                        if (
+                            PANDAS_GE_31
+                            and not self._frame._num_columns
+                            and isinstance(key[1], slice)
+                            and key[1] == slice(None)
+                        ):
+                            # There are no data columns to transfer. Let pandas
+                            # resolve the new index label and preserve its
+                            # RangeIndex, name, and dtype rules.
+                            index_frame = pd.DataFrame(
+                                index=self._frame.index.to_pandas()
+                            )
+                            index_frame.loc[key] = value
+                            self._frame.index = ensure_index(index_frame.index)
                         return
                     # TODO: There is a potential bug here if the inplace modifications
                     # done above fail half-way we are left with a partially modified
@@ -569,6 +612,7 @@ class _DataFrameAtIndexer(_DataFrameLocIndexer):
         indexing_utils.validate_scalar_key(
             key, "Invalid call for scalar access (getting)!"
         )
+        indexing_utils.warn_if_expanding_at(self._frame, key)
         return super().__setitem__(key, value)
 
 
@@ -593,6 +637,8 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
 
     @_performance_tracking
     def _setitem_tuple_arg(self, key, value):
+        if is_list_like(key[1]) and getattr(key[0], "ndim", 1) != 1:
+            raise ValueError("Cross index must be 1 dimensional")
         columns_df = self._frame._from_data(
             self._frame._data.select_by_index(key[1]), self._frame.index
         )
@@ -634,6 +680,13 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
                 if is_scalar(key[1]):
                     for col in columns_df._column_names:
                         self._frame[col].iloc[key[0]] = value
+                elif (
+                    len(columns_df._column_names) == 1
+                    and not _is_scalar_or_zero_d_array(key[0])
+                    and len(value) == len(self._frame.iloc[key[0]])
+                ):
+                    col = next(iter(columns_df._column_names))
+                    self._frame[col].iloc[key[0]] = value
                 else:
                     for i, col in enumerate(columns_df._column_names):
                         self._frame[col].iloc[key[0]] = value[i]
@@ -846,6 +899,18 @@ def _listlike_to_column_accessor(
     else:
         if index is None:
             index = cudf.RangeIndex(len(data))
+        if (
+            PANDAS_GE_31
+            and all(isinstance(row, Sized) for row in data)
+            and len({len(row) for row in data}) > 1
+        ):
+            _warn_pandas_31_deprecation(
+                "Constructing a DataFrame from a list of sequences with "
+                "mismatched lengths is deprecated and will raise in a future "
+                "version. The shorter sequences are currently padded with "
+                "NaN; make all sequences the same length before constructing "
+                "instead."
+            )
         data = list(itertools.zip_longest(*data))
         if columns is None:
             if isinstance(first_element, tuple) and hasattr(
@@ -872,6 +937,8 @@ def _array_to_column_accessor(
     data: np.ndarray | cupy.ndarray,
     columns: pd.Index | None,
     nan_as_null: bool,
+    *,
+    dtype: Dtype | None = None,
 ) -> ColumnAccessor:
     """Convert a 1D or 2D numpy or cupy array to a ColumnAccessor for DataFrame.__init__"""
     if data.ndim not in {1, 2}:
@@ -892,7 +959,11 @@ def _array_to_column_accessor(
         columns_labels = pd.RangeIndex(data.shape[1])
     ca = ColumnAccessor(
         {
-            column_label: as_column(data[:, i], nan_as_null=nan_as_null)
+            column_label: as_column(
+                data[:, i],
+                nan_as_null=nan_as_null,
+                dtype=cudf.dtype(dtype) if dtype is not None else None,
+            )
             for column_label, i in zip(
                 columns_labels, range(data.shape[1]), strict=True
             )
@@ -1098,8 +1169,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
     Build DataFrame via list of rows as tuples:
 
     >>> df = cudf.DataFrame([
-    ...     (5, "cats", "jump", np.nan),
-    ...     (2, "dogs", "dig", 7.5),
+    ...     (5, "cats", "jump", np.nan, None),
+    ...     (2, "dogs", "dig", 7.5, None),
     ...     (3, "cows", "moo", -2.1, "occasionally"),
     ... ])
     >>> df
@@ -1151,6 +1222,14 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         if nan_as_null is no_default:
             nan_as_null = not get_option("mode.pandas_compatible")
 
+        if (
+            PANDAS_GE_31
+            and index is columns
+            and isinstance(index, (Index, pd.Index))
+        ):
+            index = index.copy(deep=False)
+            columns = columns.copy(deep=False)
+
         if columns is not None:
             if isinstance(columns, (Index, Series, cupy.ndarray)):
                 columns = ensure_index(columns).to_pandas()
@@ -1180,6 +1259,13 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             attrs = deepcopy(data.attrs)
             allows_duplicate_labels = data.flags.allows_duplicate_labels
             if isinstance(data, pd.DataFrame):
+                if get_option("mode.pandas_compatible") and any(
+                    isinstance(dtype, np.dtype) and not dtype.isnative
+                    for dtype in data.dtypes
+                ):
+                    raise NotImplementedError(
+                        "Non-native byte-order dtypes require pandas storage"
+                    )
                 cols = {
                     # Pass the Series (not ``col_value.array``) so that
                     # ``as_column`` sees the column's explicit dtype. For an
@@ -1309,7 +1395,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             arr_interface = data.__array_interface__
             if len(arr_interface["descr"]) == 1:
                 col_accessor = _array_to_column_accessor(
-                    np.asarray(data, order="F"), columns, nan_as_null
+                    np.asarray(data, order="F"),
+                    columns,
+                    nan_as_null,
+                    dtype=dtype
+                    if not np.dtype(arr_interface["typestr"]).isnative
+                    else None,
                 )
                 if index is None:
                     index = cudf.RangeIndex(arr_interface["shape"][0])
@@ -1697,6 +1788,28 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         8  8  8  8
         """
         if _is_scalar_or_zero_d_array(arg) or isinstance(arg, tuple):
+            if (
+                PANDAS_GE_31
+                and self._data.multiindex
+                and isinstance(arg, tuple)
+                and any(
+                    isinstance(key, (slice, list, np.ndarray)) for key in arg
+                )
+            ):
+                columns = self._data.to_pandas_index
+                assert isinstance(columns, pd.MultiIndex)
+                positions = columns.get_locs(arg)
+                selected_columns = columns[positions]
+                fixed_levels = [
+                    level
+                    for level, key in enumerate(arg)
+                    if not isinstance(key, (slice, list, np.ndarray))
+                ]
+                if fixed_levels:
+                    selected_columns = selected_columns.droplevel(fixed_levels)
+                result = self.iloc[:, positions]
+                result.columns = selected_columns
+                return result
             if isinstance(arg, tuple) and any(
                 isinstance(k, slice) for k in arg
             ):
@@ -2045,7 +2158,23 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         """
         new_df = self.copy(deep=False)
         for k, v in kwargs.items():
-            new_df[k] = v(new_df) if callable(v) else v
+            key: Hashable = k
+            if (
+                PANDAS_GE_31
+                and new_df._data.multiindex
+                and k not in new_df._data.to_pandas_index
+            ):
+                key = (k,) + ("",) * (new_df._data.nlevels - 1)
+                indexing_utils.warn_if_expanding_multiindex(
+                    new_df._data.to_pandas_index,
+                    k,
+                    target="column on a DataFrame",
+                    hint=(
+                        "DataFrame.assign cannot take a tuple key; use "
+                        f"df[{key}] = ... instead."
+                    ),
+                )
+            new_df[key] = v(new_df) if callable(v) else v
         return new_df
 
     @classmethod
@@ -2125,12 +2254,13 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     result_index_length = sum(len(obj) for obj in objs)
 
                 # remove columns not present in all objs
-                for obj in objs:
+                objs = [
                     obj.drop(
                         columns=non_intersecting_columns,
-                        inplace=True,
                         errors="ignore",
                     )
+                    for obj in objs
+                ]
         elif join == "outer":
             # Get a list of the unique table column names
             names = [name for f in objs for name in f._column_names]
@@ -2571,6 +2701,15 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             ca_attributes = _fill_same_ca_attributes(ca_attributes, self._data)
         elif isinstance(other, Series):
             if (
+                PANDAS_GE_31
+                and cudf.get_option("mode.pandas_compatible")
+                and isinstance(other.dtype, CategoricalDtype)
+                and fn not in {"__eq__", "__ne__"}
+            ):
+                raise NotImplementedError(
+                    "Categorical broadcasting requires pandas dispatch"
+                )
+            if (
                 not (self_pd_columns := self._data.to_pandas_index).equals(
                     other_pd_index := other.index.to_pandas()
                 )
@@ -2582,10 +2721,162 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     "whose columns & index are same respectively, "
                     "please reindex."
                 )
-            rhs = dict(zip(other_pd_index, other.to_numpy(), strict=True))
-            # For keys in right but not left, perform binops between NaN (not
-            # NULL!) and the right value (result is NaN).
-            left_default = as_column(np.nan, length=len(self))
+            nullable_series = (
+                PANDAS_GE_31
+                and is_pandas_nullable_extension_dtype(other.dtype)
+                and other.dtype.kind in "biuf"
+            )
+            if nullable_series:
+                for col in lhs.columns:
+                    if col.dtype.kind != "b" and other.dtype.kind != "b":
+                        continue
+                    if fn in {"__and__", "__or__", "__xor__"}:
+                        # Boolean extension arrays use Kleene null logic and
+                        # dtype-dependent dispatch for mixed boolean/integer
+                        # operands, which the numeric broadcast cannot retain.
+                        raise NotImplementedError(
+                            "Nullable boolean bitwise broadcasting is not supported"
+                        )
+                    if isinstance(col.dtype, pd.ArrowDtype) or isinstance(
+                        other.dtype, pd.ArrowDtype
+                    ):
+                        if fn in _EQUALITY_OPS:
+                            raise NotImplementedError(
+                                "Mixed boolean Arrow comparisons are not supported"
+                            )
+                        raise TypeError(
+                            f"operation '{fn[2:-2]}' not supported for dtype "
+                            f"'{col.dtype}' with dtype '{other.dtype}'"
+                        )
+                    if col.dtype.kind == other.dtype.kind == "b":
+                        if fn == "__sub__":
+                            raise TypeError(
+                                "numpy boolean subtract is not supported"
+                            )
+                        if fn in {
+                            "__truediv__",
+                            "__floordiv__",
+                            "__mod__",
+                            "__pow__",
+                        }:
+                            raise NotImplementedError(
+                                f"operator '{fn[2:-2]}' not implemented for bool dtypes"
+                            )
+
+                # pandas 3.1 dispatches column-wise operations through the
+                # Series' extension array, preserving its nullable dtype.
+                def _nullable_operand(col: ColumnBase) -> ColumnBase:
+                    if col.dtype.kind not in "biuf":
+                        return col
+                    dtype = find_common_type(
+                        [
+                            getattr(col.dtype, "numpy_dtype", col.dtype),
+                            other.dtype.numpy_dtype,
+                        ]
+                    )
+                    source_dtype = (
+                        col.dtype
+                        if isinstance(col.dtype, pd.ArrowDtype)
+                        else other.dtype
+                    )
+                    if isinstance(source_dtype, pd.ArrowDtype) and (
+                        col.dtype.kind != "b" and other.dtype.kind != "b"
+                    ):
+                        # Arrow promotes integer/float pairs to the float's
+                        # width, including int64 combined with float32.
+                        dtype = pd.ArrowDtype(
+                            pc.add(
+                                pa.array(
+                                    [], type=cudf_dtype_to_pa_type(col.dtype)
+                                ),
+                                pa.array(
+                                    [], type=cudf_dtype_to_pa_type(other.dtype)
+                                ),
+                            ).type
+                        )
+                    return col.astype(
+                        get_dtype_of_same_kind(source_dtype, dtype)
+                    )
+
+                lhs = lhs._from_columns_like_self(
+                    _nullable_operand(col) for col in lhs.columns
+                )
+                missing_dtype = np.dtype(np.float64)
+                frame_dtypes = [dtype for _, dtype in self._dtypes]
+                if frame_dtypes and all(
+                    not isinstance(dtype, pd.ArrowDtype)
+                    and dtype.kind in "iuf"
+                    for dtype in frame_dtypes
+                ):
+                    common_dtype = find_common_type(
+                        [
+                            getattr(dtype, "numpy_dtype", dtype)
+                            for dtype in frame_dtypes
+                        ]
+                    )
+                    if common_dtype.kind == "f":
+                        missing_dtype = common_dtype
+                left_default = _nullable_operand(
+                    column_empty(len(self), dtype=missing_dtype)
+                )
+                # Preserve extension dtype and nulls while broadcasting each
+                # value, matching pandas' extension-array operands.
+                rhs_values = (
+                    as_column(
+                        value,
+                        length=len(self),
+                        dtype=(
+                            pd.Float64Dtype()
+                            if (
+                                fn == "__floordiv__"
+                                and not reflect
+                                and other.dtype.kind == "b"
+                                and value is pd.NA
+                                and name in self._data
+                                and isinstance(
+                                    self._data[name].dtype, np.dtype
+                                )
+                                and self._data[name].dtype.kind in "iu"
+                            )
+                            else lhs[name].dtype
+                            if name in lhs and lhs[name].dtype.kind in "biuf"
+                            else left_default.dtype
+                            if name not in lhs
+                            else other.dtype
+                        ),
+                    )
+                    for name, value in zip(
+                        other_pd_index, other.to_pandas().array, strict=True
+                    )
+                )
+            else:
+                rhs_values = other.to_numpy()
+                if PANDAS_GE_31 and fill_value is not None:
+                    rhs_values = (
+                        as_column(value, length=len(self), dtype=other.dtype)
+                        for value in rhs_values
+                    )
+                left_default = as_column(np.nan, length=len(self))
+            rhs = dict(zip(other_pd_index, rhs_values, strict=True))
+            if PANDAS_GE_31 and fill_value is not None:
+                for name in lhs:
+                    if name not in rhs:
+                        rhs[name] = column_empty(len(self), dtype=other.dtype)
+            if (
+                nullable_series
+                and fn == "__floordiv__"
+                and not reflect
+                and other.dtype.kind == "b"
+            ):
+                for name, col in self._data.items():
+                    if (
+                        name not in rhs
+                        and isinstance(col.dtype, np.dtype)
+                        and col.dtype.kind in "iu"
+                    ):
+                        rhs[name] = column_empty(
+                            len(self), dtype=pd.Float64Dtype()
+                        )
             equal_columns = other_pd_index.equals(self_pd_columns)
             if equal_columns:
                 ca_attributes = _fill_same_ca_attributes(
@@ -2647,7 +2938,14 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         if left_default is not False:
             for k, v in rhs.items():
                 if k not in lhs:
-                    operands[k] = (left_default, v, reflect, None)
+                    operands[k] = (
+                        left_default,
+                        v,
+                        reflect,
+                        fill_value
+                        if PANDAS_GE_31 and isinstance(other, Series)
+                        else None,
+                    )
 
         if not equal_columns:
             if isinstance(other, DataFrame):
@@ -2757,10 +3055,20 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         """
 
         orient = orient.lower()
+        if not isinstance(data, dict) and orient != "index":
+            _warn_pandas_31_deprecation(
+                f"Passing a {type(data).__name__} to DataFrame.from_dict is "
+                "deprecated. Use the DataFrame constructor instead."
+            )
         if orient == "index":
             if isinstance(
                 next(iter(data.values()), None), (Series, cupy.ndarray)
             ):
+                if not isinstance(data, dict):
+                    _warn_pandas_31_deprecation(
+                        f"Passing a {type(data).__name__} to DataFrame.from_dict is "
+                        "deprecated. Use the DataFrame constructor instead."
+                    )
                 result = cls(data).T
                 result.columns = (
                     columns
@@ -3547,7 +3855,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         keys,
         drop: bool = True,
         append: bool = False,
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         verify_integrity: bool = False,
     ) -> Self | None:
         """Return a new DataFrame with a new index
@@ -3629,7 +3937,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
         `set_index` supports `inplace` parameter too:
 
-        >>> df.set_index("a", inplace=True)
+        >>> df = df.set_index("a")
         >>> df
            b    c
         a
@@ -3640,6 +3948,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         5  e  5.0
         """
 
+        inplace = self._check_inplace_deprecation(inplace, "set_index")
         if not isinstance(keys, list):
             keys = [keys]
         if len(keys) == 0:
@@ -3718,6 +4027,26 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 )
             else:
                 idx = Index._from_column(data_to_add[0], name=names[0])
+            if get_option("mode.pandas_compatible"):
+                if isinstance(keys[0], (cudf.RangeIndex, pd.RangeIndex)):
+                    idx = cudf.RangeIndex(
+                        keys[0].start,
+                        keys[0].stop,
+                        keys[0].step,
+                        name=names[0],
+                    )
+                elif (
+                    isinstance(idx.dtype, np.dtype)
+                    and idx.dtype.kind == "i"
+                    and len(idx) != 1
+                ):
+                    candidate = cudf.RangeIndex(
+                        0
+                    )._try_reconstruct_range_index(
+                        idx.astype(np.dtype(np.int64))
+                    )
+                    if isinstance(candidate, cudf.RangeIndex):
+                        idx = candidate
         else:
             idx = MultiIndex._from_data(dict(enumerate(data_to_add)))
             idx.names = names
@@ -3728,7 +4057,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             raise ValueError(f"Values in Index are not unique: {idx}")
 
         if to_drop:
-            df.drop(columns=to_drop, inplace=True)
+            for name in to_drop:
+                df._drop_column(name)
 
         df.index = idx
         return df if not inplace else None
@@ -3945,12 +4275,13 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         self,
         level=None,
         drop=False,
-        inplace=False,
+        inplace: bool | NoDefault = no_default,
         col_level=0,
         col_fill="",
         allow_duplicates: bool = False,
         names: Hashable | Sequence[Hashable] | None = None,
     ):
+        inplace = self._check_inplace_deprecation(inplace, "reset_index")
         if inplace and not self._flags.allows_duplicate_labels:
             raise ValueError(
                 "Cannot specify 'inplace=True' when "
@@ -4020,6 +4351,19 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             If False, a reindexing operation is performed if
             `value.index` is not equal to `self.index`.
         """
+        if self._data.multiindex:
+            if isinstance(name, tuple):
+                if len(name) != self._data.nlevels:
+                    raise ValueError(
+                        "Item must have length equal to number of levels."
+                    )
+            elif name not in self._data.to_pandas_index:
+                indexing_utils.warn_if_expanding_multiindex(
+                    self._data.to_pandas_index,
+                    name,
+                    target="column on a DataFrame",
+                    hint="Use a full-length tuple key instead.",
+                )
         num_cols = self._num_columns
         if loc < 0:
             loc += num_cols + 1
@@ -4212,7 +4556,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         self,
         subset=None,
         keep: Literal["first", "last", False] = "first",
-        inplace: bool = False,
+        inplace: bool | NoDefault = no_default,
         ignore_index: bool = False,
     ) -> Self | None:
         """
@@ -4287,6 +4631,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         2  Indomie   cup     3.5
         4  Indomie  pack     5.0
         """
+        inplace = self._check_inplace_deprecation(inplace, "drop_duplicates")
         outdf = super().drop_duplicates(
             subset=subset,
             keep=keep,
@@ -4310,7 +4655,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         columns=None,
         axis=0,
         copy=True,
-        inplace=False,
+        inplace: bool | NoDefault = no_default,
         level=None,
         errors="ignore",
     ):
@@ -4396,6 +4741,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             duplicates is passed, column names will be postfixed
             with a number.
         """
+        inplace = self._check_inplace_deprecation(inplace, "rename")
         if errors != "ignore":
             raise NotImplementedError(
                 "Only errors='ignore' is currently supported"
@@ -4466,14 +4812,18 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
 
         if columns:
             new_ca = result._data.rename_levels(mapper=columns, level=level)
-            # pandas' rename rebuilds the columns Index from the transformed
-            # labels (``Index(items, tupleize_cols=False)`` in
-            # ``_transform_index``), re-inferring dtypes rather than
-            # preserving the originals: renaming object-dtype columns to
-            # all-string labels yields ``str``, and MultiIndex level dtypes
-            # are likewise re-inferred.
             if new_ca.multiindex:
                 new_ca._level_dtypes = None
+            elif PANDAS_GE_31:
+                # pandas 3.1 preserves a label array's dtype when the renamed
+                # values fit. Resolve this using only the CPU column metadata;
+                # the original mapper has already run, so do not call it again.
+                renamed_labels = iter(new_ca.names)
+                new_ca.label_dtype = (
+                    pd.DataFrame(columns=self._data.to_pandas_index)
+                    .rename(columns=lambda _: next(renamed_labels))
+                    .columns.dtype
+                )
             else:
                 new_ca.label_dtype = pd.Index(
                     new_ca.names, tupleize_cols=False
@@ -4528,6 +4878,31 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * Not supporting: ``axis``, ``*args``, ``**kwargs``
 
         """
+        if (
+            PANDAS_GE_31
+            and isinstance(aggs, Iterable)
+            and not isinstance(aggs, (str, bytes))
+            and hasattr(aggs, "__len__")
+            and len(aggs) == 0
+        ):
+            reduction_axis = (
+                0 if axis is None else self._get_axis_from_axis_arg(axis)
+            )
+            if isinstance(aggs, dict):
+                if reduction_axis == 1:
+                    return DataFrame(
+                        index=self.index[:0], columns=pd.Index([])
+                    )
+                return DataFrame(
+                    index=pd.Index([]), columns=self._data.to_pandas_index[:0]
+                )
+            if reduction_axis == 1:
+                return DataFrame(index=self.index, columns=pd.Index([]))
+            return DataFrame(
+                index=pd.Index([]),
+                columns=self._data.to_pandas_index,
+                dtype=np.dtype("object"),
+            )
         dtypes = [dtype for _, dtype in self._dtypes]
         common_dtype = find_common_type(dtypes)
         if common_dtype.kind != "b" and any(
@@ -5217,12 +5592,21 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 # rows require.
                 if (
                     isinstance(target, np.dtype)
+                    and target.kind in "iu"
                     and result._data[name].null_count
                 ):
                     return
                 result[name] = result[name].astype(target)
 
             def _keep_left_dtype(target, right_dtype):
+                if (
+                    PANDAS_GE_31
+                    and isinstance(target, np.dtype)
+                    and isinstance(right_dtype, np.dtype)
+                    and target.kind == right_dtype.kind == "M"
+                ):
+                    # pandas 3.1 keeps the common timestamp resolution.
+                    return False
                 # pandas presents a shared-name key with the LEFT dtype when an
                 # extension dtype is involved (all joins) or for inner/left
                 # joins; right/outer numpy keys take the common type.
@@ -5292,10 +5676,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         other,
         on=None,
         how="left",
-        lsuffix="",
-        rsuffix="",
+        lsuffix=no_default,
+        rsuffix=no_default,
         sort=False,
         validate: str | None = None,
+        *,
+        suffixes=no_default,
     ):
         """Join columns with other DataFrame on index or on a key column.
 
@@ -5315,8 +5701,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * cross: creates the cartesian product from both frames, preserves the order
               of the left keys.
         lsuffix, rsuffix : str
-            The suffices to add to the left (*lsuffix*) and right (*rsuffix*)
+            The suffixes to add to the left (*lsuffix*) and right (*rsuffix*)
             column names when avoiding conflicts.
+
+            .. deprecated:: 27.2
+                Use ``suffixes`` instead with pandas 3.1 or later.
         sort : bool
             Set to True to ensure sorted ordering.
         validate : str, optional
@@ -5329,6 +5718,10 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             * "many_to_many" or "m:m": allowed, but does not result in checks.
 
             Currently not supported.
+        suffixes : tuple of str or None, optional
+            Suffixes for overlapping left and right column names. Requires
+            pandas 3.1 or later and cannot be combined with ``lsuffix`` or
+            ``rsuffix``. Defaults to ``('', '')``.
 
         Returns
         -------
@@ -5340,6 +5733,24 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             - *other* must be a single DataFrame for now.
             - *on* is not supported yet due to lack of multi-index support.
         """
+        legacy_suffixes = (
+            lsuffix is not no_default or rsuffix is not no_default
+        )
+        if suffixes is not no_default:
+            if not PANDAS_GE_31:
+                raise TypeError(
+                    "DataFrame.join() got an unexpected keyword argument 'suffixes'"
+                )
+            if legacy_suffixes:
+                raise ValueError(
+                    "Cannot specify both 'suffixes' and 'lsuffix'/'rsuffix'."
+                )
+            resolved_suffixes = suffixes
+        else:
+            resolved_suffixes = (
+                lsuffix if lsuffix is not no_default else "",
+                rsuffix if rsuffix is not no_default else "",
+            )
         if on is not None:
             raise NotImplementedError("The on parameter is not yet supported")
         elif validate is not None:
@@ -5352,7 +5763,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             left_index=True,
             right_index=True,
             how=how,
-            suffixes=(lsuffix, rsuffix),
+            suffixes=resolved_suffixes,
             sort=sort,
         )
         df.index.name = (
@@ -5369,6 +5780,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             and self_pd_cols.dtype == other_pd_cols.dtype
         ):
             df.columns = self_pd_cols.append(other_pd_cols)
+        if legacy_suffixes:
+            _warn_pandas_31_deprecation(
+                "The 'lsuffix' and 'rsuffix' keywords in DataFrame.join are "
+                "deprecated and will be removed in a future version. "
+                "Use the 'suffixes' keyword instead."
+            )
         return df
 
     @_performance_tracking
@@ -7187,6 +7604,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         numeric_only: bool = False,
         **kwargs,
     ) -> ScalarLike:
+        _warn_pandas_31_numeric_only(numeric_only, op)
         source = self
 
         if axis is None:
@@ -7230,6 +7648,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 try:
                     axis_0_results.append(_apply_reduction(col, op, kwargs))
                 except (AttributeError, ValueError) as err:
+                    if isinstance(err, pd.errors.OutOfBoundsTimedelta):
+                        raise
                     if numeric_only:
                         raise NotImplementedError(
                             f"Column {col_label} with type {col.dtype} does not support {op}"
@@ -7624,6 +8044,15 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                 or (common_dtype is not None and common_dtype.kind == "M")
                 else None
             )
+            if (
+                PANDAS_GE_31
+                and isinstance(common_dtype, np.dtype)
+                and common_dtype.kind == "M"
+                and method in {"std", "nanstd"}
+            ):
+                result_dtype = np.dtype(
+                    f"timedelta64[{np.datetime_data(common_dtype)[0]}]"
+                )
 
             if result_dtype is None and is_pandas_nullable_extension_dtype(
                 common_dtype
@@ -7737,6 +8166,83 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         5  False  2.0
         """
 
+        if PANDAS_GE_31:
+            if is_list_like(include):
+                include = tuple(include)
+            if is_list_like(exclude):
+                exclude = tuple(exclude)
+            specs = [
+                spec
+                for selection in (include, exclude)
+                for spec in (
+                    selection
+                    if isinstance(selection, (list, tuple))
+                    else (selection,)
+                )
+                if spec is not None
+            ]
+            if not any(
+                spec is Decimal32Dtype
+                or spec is Decimal64Dtype
+                or spec is Decimal128Dtype
+                or is_decimal32_dtype(spec)
+                or is_decimal64_dtype(spec)
+                or is_decimal128_dtype(spec)
+                for spec in specs
+            ):
+
+                def pandas_spec(spec):
+                    if spec is CategoricalDtype:
+                        return pd.CategoricalDtype
+                    if spec is IntervalDtype:
+                        return pd.IntervalDtype
+                    if isinstance(spec, (CategoricalDtype, IntervalDtype)):
+                        return spec.to_pandas()
+                    return spec
+
+                include = (
+                    tuple(pandas_spec(spec) for spec in include)
+                    if isinstance(include, tuple)
+                    else pandas_spec(include)
+                )
+                exclude = (
+                    tuple(pandas_spec(spec) for spec in exclude)
+                    if isinstance(exclude, tuple)
+                    else pandas_spec(exclude)
+                )
+                # pandas 3.1 matches dtype instances exactly. Use its public
+                # matcher on empty columns containing only dtype metadata;
+                # the actual column values stay on the device.
+                metadata = {}
+                for position, (_, dtype) in enumerate(self._dtypes):
+                    if isinstance(dtype, (CategoricalDtype, IntervalDtype)):
+                        dtype = dtype.to_pandas()
+                    elif isinstance(
+                        dtype,
+                        (
+                            Decimal32Dtype,
+                            Decimal64Dtype,
+                            Decimal128Dtype,
+                            ListDtype,
+                            StructDtype,
+                        ),
+                    ):
+                        dtype = (
+                            np.dtype("object")
+                            if cudf.get_option("mode.pandas_compatible")
+                            else pd.ArrowDtype(cudf_dtype_to_pa_type(dtype))
+                        )
+                    metadata[position] = pd.Series([], dtype=dtype)
+                positions = (
+                    pd.DataFrame(metadata)
+                    .select_dtypes(include=include, exclude=exclude)
+                    .columns.tolist()
+                )
+                result = self.iloc[:, positions]
+                if not positions and self._data.rangeindex:
+                    result._data.rangeindex = True
+                return result
+
         # Mirrors pandas.DataFrame.select_dtypes:
         # https://github.com/pandas-dev/pandas/blob/main/pandas/core/frame.py
 
@@ -7758,11 +8264,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             """
             if _is_categorical_dtype(entry):
                 return (pd.core.dtypes.dtypes.CategoricalDtypeType,)
-            elif is_decimal32_dtype(entry):
+            elif entry is Decimal32Dtype or is_decimal32_dtype(entry):
                 return (Decimal32Dtype,)
-            elif is_decimal64_dtype(entry):
+            elif entry is Decimal64Dtype or is_decimal64_dtype(entry):
                 return (Decimal64Dtype,)
-            elif is_decimal128_dtype(entry):
+            elif entry is Decimal128Dtype or is_decimal128_dtype(entry):
                 return (Decimal128Dtype,)
             elif (isinstance(entry, str) and entry == "int") or entry is int:
                 # Numpy maps int to different types (int32, int64) on Windows
@@ -7773,7 +8279,26 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             ) or entry is float:
                 # np.dtype("float") coerces to np.float64 from Numpy 1.20
                 return (np.float64, np.float32)
-            return (pd.core.dtypes.common.infer_dtype_from_object(entry),)
+            if isinstance(entry, str):
+                if entry in {"datetimetz", "datetime64tz"}:
+                    return (pd.DatetimeTZDtype.type,)
+                if entry in {"datetime", "timedelta"}:
+                    entry += "64"
+                entry = np.__dict__.get(entry, entry)
+            if isinstance(entry, type) and issubclass(entry, np.generic):
+                return (entry,)
+            dtype = pandas_dtype(entry)
+            if (
+                not PANDAS_GE_31
+                and isinstance(dtype, np.dtype)
+                and dtype.kind in "mM"
+                and np.datetime_data(dtype)[0] not in {"generic", "ns"}
+            ):
+                raise ValueError(
+                    f"{dtype.name!r} is too specific of a frequency, "
+                    f"try passing {dtype.type.__name__!r}"
+                )
+            return (getattr(dtype, "numpy_dtype", dtype).type,)
 
         include, exclude = (
             frozenset(
@@ -8215,6 +8740,12 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                             f"levels, not {lv + 1}"
                         )
                     level_indices.append(lv)
+
+        if PANDAS_GE_31 and len(set(level_indices)) != len(level_indices):
+            raise ValueError(
+                "level should not contain duplicate values, "
+                f"got level numbers {level_indices}"
+            )
 
         unnamed_levels_indices = [
             i for i in range(self._data.nlevels) if i not in level_indices
@@ -8931,7 +9462,9 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
     @_performance_tracking
-    def eval(self, expr: str, inplace: bool = False, **kwargs):
+    def eval(
+        self, expr: str, inplace: bool | NoDefault = no_default, **kwargs
+    ):
         """Evaluate a string describing operations on DataFrame columns.
 
         Operates on columns only, not specific rows or elements.
@@ -8991,9 +9524,9 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         3  4   4
         4  5   2
 
-        Use ``inplace=True`` to modify the original DataFrame.
+        Assign the result to retain the added column.
 
-        >>> df.eval('C = A + B', inplace=True)
+        >>> df = df.eval('C = A + B')
         >>> df
            A   B   C
         0  1  10  11
@@ -9033,6 +9566,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
               assignment statements where later statements are conditioned upon
               the output of earlier statements) is not supported.
         """
+        inplace = self._check_inplace_deprecation(inplace, "eval")
         if kwargs:
             raise ValueError(
                 "Keyword arguments other than `inplace` are not supported"

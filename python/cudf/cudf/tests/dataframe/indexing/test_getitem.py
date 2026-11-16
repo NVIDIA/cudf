@@ -8,8 +8,9 @@ import pandas as pd
 import pytest
 
 import cudf
+from cudf.core._compat import PANDAS_GE_31
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal
+from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
 
 
 def test_struct_of_struct_loc():
@@ -40,7 +41,12 @@ def test_dataframe_midx_cols_getitem():
             ["x", "y"],
         ],
     )
-    df = df.assign(bools=cudf.Series([True, False], dtype="bool"))
+    with expect_warning_if(
+        PANDAS_GE_31,
+        warning=pd.errors.Pandas4Warning,
+        match="Setting a new column on a DataFrame with a MultiIndex",
+    ):
+        df = df.assign(bools=cudf.Series([True, False], dtype="bool"))
     assert_eq(df["bools"], df.to_pandas()["bools"])
 
 
@@ -371,6 +377,9 @@ def test_getitem_slice_in_tuple_raises():
     mi = pd.MultiIndex.from_product([["x", "y"], [0, 1]])
     pdf = pd.DataFrame([[1, 1, 2, 2], [3, 3, 4, 4]], columns=mi)
     gdf = cudf.from_pandas(pdf)
+    if PANDAS_GE_31:
+        assert_eq(pdf[(slice(None), 0)], gdf[(slice(None), 0)])
+        return
     assert_exceptions_equal(
         lfunc=operator.getitem,
         rfunc=operator.getitem,

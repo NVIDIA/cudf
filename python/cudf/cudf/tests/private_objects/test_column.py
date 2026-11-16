@@ -36,8 +36,14 @@ def pandas_input(all_supported_types_as_str):
     else:
         if dtype.kind == "b":
             data = rng.choice([False, True], size=size)
-        elif dtype.kind in ("m", "M"):
-            # datetime or timedelta
+        elif dtype.kind == "m":
+            # Keep coarse units within pandas' timedelta boxing range.
+            data = (
+                random_ints(np.int64, size)
+                .view("timedelta64[ns]")
+                .astype(dtype)
+            )
+        elif dtype.kind == "M":
             data = random_ints(np.int64, size)
         elif dtype.kind == "U":
             # Unicode strings of integers like "12345"

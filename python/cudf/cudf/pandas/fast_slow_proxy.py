@@ -983,9 +983,17 @@ class _FinalProxy(_FastSlowProxy):
         elif base_class is ProxyNDarrayBase:
             proxy = base_class.__new__(cls, value)
         elif base_class is datetime.datetime:
+            try:
+                year = value.year
+            except (OverflowError, ValueError):
+                return value
+            if not datetime.MINYEAR <= year <= datetime.MAXYEAR:
+                # pandas Timestamp supports a wider range than its Python
+                # datetime base class. Keep those scalars on the slow side.
+                return value
             proxy = base_class.__new__(
                 cls,
-                year=value.year,
+                year=year,
                 month=value.month,
                 day=value.day,
                 hour=value.hour,
@@ -996,9 +1004,19 @@ class _FinalProxy(_FastSlowProxy):
                 fold=value.fold,
             )
         elif base_class is datetime.timedelta:
+            try:
+                days = value.days
+            except (OverflowError, ValueError):
+                return value
+            if (
+                not datetime.timedelta.min.days
+                <= days
+                <= datetime.timedelta.max.days
+            ):
+                return value
             proxy = base_class.__new__(
                 cls,
-                days=value.days,
+                days=days,
                 seconds=value.seconds,
                 microseconds=value.microseconds,
             )
@@ -1332,12 +1350,13 @@ class _FastSlowAttribute:
                     raise e
 
             if _is_function_or_method(slow_attr):
+                # This descriptor is shared by every instance. Transfer
+                # restrictions belong to the receiver and are checked when
+                # transforming its arguments, so caching them here would
+                # incorrectly restrict unrelated instances accessed later.
                 self._attr = _MethodProxy(
                     fast_attr,
                     slow_attr,
-                    _fsproxy_transfer_block=instance.get_transfer_blocking()
-                    if instance is not None
-                    else None,
                 )
             else:
                 # for anything else, use a fast-slow attribute:

@@ -79,17 +79,17 @@ def test_rename_reset_label_dtype():
     assert_eq(result, expected)
 
 
-def test_dataframe_rename_columns_reinfers_label_dtype():
-    # pandas rebuilds the columns Index from the transformed labels on
-    # rename, re-inferring its dtype (int8 -> int64) rather than
-    # preserving it.
+def test_dataframe_rename_columns_label_dtype_matches_pandas():
     gdf = cudf.DataFrame([[1, 2, 3]])
     gdf.columns = cudf.Index([4, 5, 6], dtype=np.int8)
     result = gdf.rename({4: 50}, axis="columns").columns
-    expected = pd.Index([50, 5, 6], dtype=np.int64)
+    expected = gdf.to_pandas().rename({4: 50}, axis="columns").columns
     assert_eq(result, expected)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The inplace keyword in DataFrame\\.rename is deprecated:pandas.errors.Pandas4Warning"
+)
 def test_dataframe_rename_duplicate_column():
     gdf = cudf.DataFrame({"a": [1, 2, 3], "b": [3, 4, 5]})
     with pytest.raises(

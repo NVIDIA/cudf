@@ -30,7 +30,7 @@ dependencies = [
     "numpy>=2.0,<3.0",
     "nvtx>=0.2.1",
     "packaging",
-    "pandas>=3.0.0,<3.1.0",
+    "pandas>=3.0.0,<3.1.2dev0",
     "pyarrow>=19.0.0",
     "pylibcudf==27.2.*,>=0.0.0a0",
     "rich",

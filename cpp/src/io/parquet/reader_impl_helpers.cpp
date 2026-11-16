@@ -322,19 +322,6 @@ struct schema_child_lookup {
 
 }  // namespace
 
-std::vector<data_type> get_output_types(
-  std::span<cudf::io::detail::inline_column_buffer const> output_buffers, type_id decimal_width)
-{
-  std::vector<data_type> output_dtypes;
-  output_dtypes.reserve(output_buffers.size());
-  std::ranges::transform(output_buffers, std::back_inserter(output_dtypes), [&](auto const& col) {
-    return (decimal_width != type_id::EMPTY and cudf::is_fixed_point(col.type))
-             ? data_type{decimal_width, col.type.scale()}
-             : col.type;
-  });
-  return output_dtypes;
-}
-
 type_id to_type_id(SchemaElement const& schema,
                    bool strings_to_categorical,
                    type_id timestamp_type_id,
@@ -398,29 +385,37 @@ type_id to_type_id(SchemaElement const& schema,
 
       case LogicalType::DECIMAL: {
         int32_t const decimal_precision = logical_type->precision();
-        if (physical_type == Type::INT32) {
-          return type_id::DECIMAL32;
-        } else if (physical_type == Type::INT64) {
-          return type_id::DECIMAL64;
-        } else if (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          if (std::cmp_less_equal(schema.type_length, sizeof(int32_t))) {
+        // Natural cudf decimal type for the physical type, or EMPTY if not representable
+        auto const natural_type_id = [&] {
+          if (physical_type == Type::INT32) {
             return type_id::DECIMAL32;
-          } else if (std::cmp_less_equal(schema.type_length, sizeof(int64_t))) {
+          } else if (physical_type == Type::INT64) {
             return type_id::DECIMAL64;
-          } else if (std::cmp_less_equal(schema.type_length, sizeof(__int128_t))) {
-            return type_id::DECIMAL128;
+          } else if (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
+            if (std::cmp_less_equal(schema.type_length, sizeof(int32_t))) {
+              return type_id::DECIMAL32;
+            } else if (std::cmp_less_equal(schema.type_length, sizeof(int64_t))) {
+              return type_id::DECIMAL64;
+            } else if (std::cmp_less_equal(schema.type_length, sizeof(__int128_t))) {
+              return type_id::DECIMAL128;
+            }
+            return type_id::EMPTY;
+          } else if (physical_type == Type::BYTE_ARRAY) {
+            CUDF_EXPECTS(decimal_precision <= MAX_DECIMAL128_PRECISION,
+                         "Invalid decimal precision");
+            if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
+              return type_id::DECIMAL32;
+            } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
+              return type_id::DECIMAL64;
+            } else {
+              return type_id::DECIMAL128;
+            }
           }
-        } else if (physical_type == Type::BYTE_ARRAY) {
-          CUDF_EXPECTS(decimal_precision <= MAX_DECIMAL128_PRECISION, "Invalid decimal precision");
-          if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-            return type_id::DECIMAL32;
-          } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-            return type_id::DECIMAL64;
-          } else {
-            return type_id::DECIMAL128;
-          }
-        } else {
           CUDF_FAIL("Invalid representation of decimal type");
+        }();
+        // Decode directly into the requested decimal width, if any
+        if (natural_type_id != type_id::EMPTY) {
+          return decimal_type_id != type_id::EMPTY ? decimal_type_id : natural_type_id;
         }
       } break;
 

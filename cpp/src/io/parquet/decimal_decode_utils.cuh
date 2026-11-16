@@ -54,6 +54,34 @@ template <typename T>
 }
 
 /**
+ * @brief Store a decimal unscaled value at the output decimal width
+ *
+ * Selects the integer storage type `T` (`int32_t`, `int64_t` or `__int128_t`) of the output decimal
+ * column from `dtype_len` and stores `get_value.template operator()<T>()` to `dst`. `get_value`
+ * produces the value at the output width, e.g. sign extending when widening and truncating when
+ * narrowing.
+ *
+ * @param dst Pointer to the output value
+ * @param dtype_len Size in bytes of the output decimal storage type
+ * @param get_value Callable templated on the output storage type returning the value to store
+ */
+CUDF_HOST_DEVICE inline void store_decimal(void* dst, uint32_t dtype_len, auto&& get_value)
+{
+  switch (dtype_len) {
+    case sizeof(int32_t):
+      *static_cast<int32_t*>(dst) = get_value.template operator()<int32_t>();
+      break;
+    case sizeof(int64_t):
+      *static_cast<int64_t*>(dst) = get_value.template operator()<int64_t>();
+      break;
+    case sizeof(__int128_t):
+      *static_cast<__int128_t*>(dst) = get_value.template operator()<__int128_t>();
+      break;
+    default: break;
+  }
+}
+
+/**
  * @brief Decode the next decimal from a PLAIN encoded BYTE_ARRAY buffer
  *
  * BYTE_ARRAY values are prefixed with their 4 byte little-endian length, so they must be decoded in

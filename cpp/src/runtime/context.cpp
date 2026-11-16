@@ -13,11 +13,18 @@
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cuda/numeric>
+
 #include <unistd.h>
 
+#include <charconv>
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <stdexcept>
+#include <string_view>
+#include <system_error>
 
 namespace cudf {
 
@@ -207,6 +214,40 @@ std::filesystem::path get_cudf_kernel_cache_dir()
     std::runtime_error);
 }
 
+/**
+ * @brief Returns the PCH heap size in bytes, validating an optional override in MiB.
+ */
+std::size_t get_jit_pch_heap_size()
+{
+  auto const* value = std::getenv("LIBCUDF_JIT_PCH_HEAP_SIZE");
+  if (value == nullptr) { return default_jit_pch_heap_size; }
+
+  constexpr std::size_t bytes_per_mib = 1024 * 1024;
+  auto const input                    = std::string_view{value};
+  std::size_t heap_mib{};
+  auto const [end, error] = std::from_chars(input.data(), input.data() + input.size(), heap_mib);
+  CUDF_EXPECTS(error == std::errc{},
+               std::format("LIBCUDF_JIT_PCH_HEAP_SIZE must be an integer in MiB representable as "
+                           "std::size_t; received '{}'",
+                           input),
+               std::invalid_argument);
+  CUDF_EXPECTS(end == input.data() + input.size(),
+               std::format("LIBCUDF_JIT_PCH_HEAP_SIZE must not contain trailing characters; "
+                           "received '{}'",
+                           input),
+               std::invalid_argument);
+  CUDF_EXPECTS(heap_mib != 0, "LIBCUDF_JIT_PCH_HEAP_SIZE must be nonzero", std::invalid_argument);
+  auto const heap_bytes = cuda::mul_overflow(heap_mib, bytes_per_mib);
+  CUDF_EXPECTS(!heap_bytes.overflow,
+               std::format("LIBCUDF_JIT_PCH_HEAP_SIZE overflows std::size_t when converted to "
+                           "bytes; received '{}'",
+                           input),
+               std::invalid_argument);
+  return heap_bytes.value;
+}
+
+// Runtime environment variables are documented in
+// docs/cudf/source/libcudf/environment_variables.md.
 context make_context(detail::init_flags flags)
 {
   auto const dump_codegen       = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_CODEGEN", false);
@@ -216,9 +257,8 @@ context make_context(detail::init_flags flags)
   auto const clear_jit_cache    = detail::get_bool_env_or("LIBCUDF_KERNEL_CACHE_CLEAR", false);
   auto const disable_cuda_cache = detail::get_bool_env_or("LIBCUDF_JIT_DISABLE_CUDA_CACHE", false);
   auto const jit_verbose        = detail::get_bool_env_or("LIBCUDF_JIT_VERBOSE", false);
-  auto const jit_pch_heap_size =
-    detail::getenv_or("LIBCUDF_JIT_PCH_HEAP_SIZE", default_jit_pch_heap_size);
-  auto const dump_jit_trace = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
+  auto const jit_pch_heap_size  = get_jit_pch_heap_size();
+  auto const dump_jit_trace     = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
   auto const dump_jit_time_profile =
     detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TIME_PROFILE", false);
   auto const preload_nvcomp = detail::get_bool_env_or("LIBCUDF_NVCOMP_PRELOAD", false);
@@ -242,7 +282,7 @@ context make_context(detail::init_flags flags)
                      .jit_verbose                = jit_verbose,
                      .dump_jit_trace             = dump_jit_trace,
                      .dump_jit_time_profile      = dump_jit_time_profile,
-                     .jit_pch_heap_size          = jit_pch_heap_size * 1024 * 1024,
+                     .jit_pch_heap_size          = jit_pch_heap_size,
                      .rtcx_cache_dir             = rtcx_cache_dir,
                      .jit_bundle_dir             = jit_bundle_dir,
                      .jit_tmp_dir                = jit_tmp_dir,

@@ -351,8 +351,8 @@ repos:
         exclude: |
           (?x)
             ^pyproject[.]toml$
-  - repo: https://github.com/rapidsai/dependency-file-generator
-    rev: v1.22.0
+  - repo: https://github.com/KyleFromNVIDIA/rapids-dependency-file-generator
+    rev: e14131fbe5ad8945d5a4cd6902a274e616b12e2d
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

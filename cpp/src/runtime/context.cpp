@@ -161,40 +161,39 @@ std::filesystem::path get_cudf_kernel_cache_dir()
     return (!ec || ec == std::errc::file_exists) && is_accessible_dir(p);
   };
 
-  if (auto path = detail::getenv_optional<std::string>("LIBCUDF_KERNEL_CACHE_PATH");
-      path.has_value()) {
+  if (auto const* path = std::getenv("LIBCUDF_KERNEL_CACHE_PATH"); path != nullptr) {
     // - if $LIBCUDF_KERNEL_CACHE_PATH exists, return it, otherwise create it
     // - if creation fails, warn and continue to next option
     // - check that we have read/write permissions to the directory, otherwise warn and continue
     // to next option
-    if (try_create_dirs(*path)) {
-      return *path;
+    if (try_create_dirs(path)) {
+      return path;
     } else {
       CUDF_LOG_WARN(
         std::format("Environment variable {} is set to {}, but the process "
                     "could not create the directory. Ignoring.",
                     "LIBCUDF_KERNEL_CACHE_PATH",
-                    *path));
+                    path));
     }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("XDG_CACHE_HOME"); base.has_value()) {
-    auto path = std::filesystem::path(*base) / "libcudf";
+  if (auto const* base = std::getenv("XDG_CACHE_HOME"); base != nullptr) {
+    auto path = std::filesystem::path(base) / "libcudf";
     if (try_create_dirs(path)) { return path; }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("HOME"); base.has_value()) {
-    if (is_accessible_dir(*base)) {
+  if (auto const* base = std::getenv("HOME"); base != nullptr) {
+    if (is_accessible_dir(base)) {
       // attempt to create the subdirectories if non-existent
-      auto path = std::filesystem::path(*base) / ".cache" / "libcudf";
+      auto path = std::filesystem::path(base) / ".cache" / "libcudf";
       if (try_create_dirs(path)) { return path; }
     }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("TMPDIR"); base.has_value()) {
-    if (is_accessible_dir(*base)) {
+  if (auto const* base = std::getenv("TMPDIR"); base != nullptr) {
+    if (is_accessible_dir(base)) {
       // attempt to create the subdirectory if non-existent
-      auto path = std::filesystem::path(*base) / "libcudf";
+      auto path = std::filesystem::path(base) / "libcudf";
       if (try_create_dirs(path)) { return path; }
     }
   }

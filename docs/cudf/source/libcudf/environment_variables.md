@@ -1,9 +1,9 @@
 # Environment variables
 
-These variables configure libcudf's runtime context and affect applications using the C++, Python, and Java interfaces. 
+These variables configure libcudf's runtime context and affect applications using the C++, Python, and Java interfaces.
 They are read when the context is first initialized. Set them before initializing libcudf; changing the environment afterward does not reconfigure the existing context.
 
-Boolean settings default to disabled. The recognized true values are `ON`, `on`, `1`, `true`, `TRUE`, and `True`. 
+Boolean settings default to disabled. The recognized true values are `ON`, `on`, `1`, `true`, `TRUE`, and `True`.
 Other parsed values disable them; use `OFF` or `0` to disable a setting explicitly.
 
 ## JIT compilation
@@ -13,7 +13,7 @@ Other parsed values disable them; use `OFF` or `0` to disable a setting explicit
 | `LIBCUDF_JIT_ENABLED` | `OFF` | Select JIT execution for APIs with a runtime-selectable JIT path, including AST column computation and Parquet filter evaluation. APIs explicitly requesting JIT execution do not require this setting. |
 | `LIBCUDF_JIT_PCH_HEAP_SIZE_MB` | `512` MiB | NVRTC precompiled-header heap size, expressed as a positive decimal integer in MiB. |
 
-`LIBCUDF_JIT_PCH_HEAP_SIZE_MB` accepts a MiB size without units, signs, or whitespace.
+`LIBCUDF_JIT_PCH_HEAP_SIZE_MB` must be non-zero, context initialization fails when the size is too large.
 
 ## Kernel cache
 

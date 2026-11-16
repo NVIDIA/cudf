@@ -74,13 +74,12 @@ void hash(XXH3_state_t* ctx, std::span<rtcx::memory_fragment const> memory_fragm
   }
 }
 
-void install_file_set(
-  std::string_view target_dir,
-  std::span<uint8_t const> compressed_binary,
-  size_t uncompressed_size,
-  std::span<cudf_cuda_embed::range_t const> file_ranges,  // NOLINT(modernize-avoid-c-arrays)
-  std::span<char const* const> destinations,
-  std::string_view compression)
+void install_file_set(std::string_view target_dir,
+                      std::span<uint8_t const> compressed_binary,
+                      size_t uncompressed_size,
+                      std::span<cudf_cuda_embed::range_t const> file_ranges,
+                      std::span<char const* const> destinations,
+                      std::string_view compression)
 {
   auto decompressed = rtcx::decompress_blob(compressed_binary, uncompressed_size, compression);
   for (size_t i = 0; i < file_ranges.size(); ++i) {
@@ -300,10 +299,10 @@ void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version
 
 void append_cccl_options(std::vector<std::string>& options)
 {
-  // Workaround for CCCL PCH reduction until (https://github.com/NVIDIA/cccl/pull/12560/) makes it
-  // into a release
+  // Workarounds for reducing CCCL's AST impact
 
-  // limit template unrolling in CCCL headers
+  // limit template unrolling in CCCL headers (until https://github.com/NVIDIA/cccl/pull/12560/
+  // makes it into a release)
   options.emplace_back("-D_CCCL_META_UNROLL_LIMIT=1");
 }
 

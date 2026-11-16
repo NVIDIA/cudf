@@ -19,6 +19,7 @@ files:
       - depends_on_cupy
       - depends_on_cuda_bindings
       - depends_on_cuda_bindings_build
+      - depends_on_cuda_core
       - depends_on_dask_cuda
       - depends_on_kvikio
       - depends_on_libkvikio
@@ -271,6 +272,10 @@ files:
       key: test
     includes:
       - cuda_version
+      # cudf[test] doesn't directly use cuda-core, but we include
+      # it to get a compatible cuda-bindings/cuda-core.
+      # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+      - depends_on_cuda_core
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
@@ -389,6 +394,10 @@ files:
       table: project.optional-dependencies
       key: test
     includes:
+      # pylibcudf[test] doesn't directly use cuda-core, but we include
+      # it to get a compatible cuda-bindings/cuda-core.
+      # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
+      - depends_on_cuda_core
       - depends_on_cupy
       - depends_on_numba_cuda_mlir
       - pyarrow_run
@@ -438,6 +447,7 @@ files:
     includes:
       - run_cudf_polars
       - depends_on_cuda_bindings
+      - depends_on_cuda_core
       - depends_on_rapidsmpf
       - depends_on_cudf_streaming
       - depends_on_kvikio
@@ -750,7 +760,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - &cmake_ver cmake>=4.0
+          - &cmake_ver cmake>=4.0,<4.5
           - ninja
   build_all:
     common:
@@ -1128,6 +1138,22 @@ dependencies:
           - matrix:
             packages:
               - cuda-bindings>=13.0.2,<13.5
+  depends_on_cuda_core:
+    common:
+      - output_types: [conda, constraints]
+        packages:
+          - cuda-core>=1.0,<2
+    specific:
+      - output_types: [requirements, pyproject]
+        matrices:
+          - matrix:
+              cuda: "12.*"
+            packages:
+              - cuda-core[cu12]>=1.0,<2
+          # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
+          - matrix:
+            packages:
+              - cuda-core[cu13]>=1.0,<2
   run_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

@@ -15,17 +15,24 @@
 #include <runtime/context.hpp>
 
 #define XXH_INLINE_ALL
+#include <unistd.h>
 #include <xxhash.h>
 
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 
@@ -209,8 +216,88 @@ constexpr int32_t MIN_NVRTC_VERSION_PCH =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--pch" NVRTC flag
 constexpr int32_t MIN_NVRTC_VERSION_MINIMAL =
   make_cuda_version(12, 8, 0);  // minimum CUDA version for the "--minimal" NVRTC flag
+constexpr int32_t MIN_NVRTC_VERSION_PROCESS_PCH_DIR =
+  make_cuda_version(13, 2, 0);  // first NVRTC version that picks a per-process PCH directory
 constexpr int32_t LTO_ARCHITECTURE =
   CUDF_LTO_ARCHITECTURE;  // target architecture for LTO IR compilation
+
+/**
+ * @brief Owns a PCH directory private to the current process.
+ *
+ * Without `--pch-dir`, NVRTC older than 13.2 writes automatic PCH files (e.g. `kernel.pch`) into
+ * the current working directory. Processes sharing a working directory then overwrite and delete
+ * each other's PCH files, which causes NVRTC compile errors and crashes. A PCH is only usable by
+ * the NVRTC instance that created it, so a per-process directory loses no reuse.
+ *
+ * The directory is created on first use and removed at process exit. A forked child creates its
+ * own directory and does not remove its parent's.
+ */
+class process_pch_dir {
+ public:
+  process_pch_dir()                                  = default;
+  process_pch_dir(process_pch_dir const&)            = delete;
+  process_pch_dir& operator=(process_pch_dir const&) = delete;
+  process_pch_dir(process_pch_dir&&)                 = delete;
+  process_pch_dir& operator=(process_pch_dir&&)      = delete;
+
+  ~process_pch_dir()
+  {
+    if (!path_.empty() && owner_ == ::getpid()) {
+      std::error_code ec;
+      std::filesystem::remove_all(path_, ec);  // best effort; never throw at exit
+    }
+  }
+
+  std::string get(std::string const& parent_dir)
+  {
+    std::lock_guard lock{mutex_};
+    if (path_.empty() || owner_ != ::getpid()) {
+      auto path_template = std::format("{}/nvrtc-pch-XXXXXX", parent_dir);
+      std::filesystem::create_directories(parent_dir);
+      auto const* created = ::mkdtemp(path_template.data());
+      auto const error    = errno;
+      CUDF_EXPECTS(created != nullptr,
+                   std::format("Failed to create NVRTC PCH directory from template {}: {}",
+                               path_template,
+                               std::strerror(error)),
+                   std::runtime_error);
+      path_  = std::move(path_template);
+      owner_ = ::getpid();
+    }
+    return path_;
+  }
+
+ private:
+  std::mutex mutex_;
+  std::string path_;
+  pid_t owner_ = 0;
+};
+
+/**
+ * @brief Appends the NVRTC automatic PCH options for this NVRTC version.
+ */
+void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version)
+{
+  if (nvrtc_version < MIN_NVRTC_VERSION_PCH) { return; }
+
+  auto& cfg = cudf::get_context().config();
+
+  options.emplace_back("--pch");
+
+  // NVRTC 13.2+ already places automatic PCH files in a per-process temporary directory
+  if (nvrtc_version < MIN_NVRTC_VERSION_PROCESS_PCH_DIR) {
+    static process_pch_dir pch_dir;
+    options.emplace_back(std::format("--pch-dir={}", pch_dir.get(cfg.jit_tmp_dir)));
+  }
+
+  if (cfg.jit_verbose) {
+    options.emplace_back("--pch-verbose=true");
+    options.emplace_back("--pch-messages=true");
+  } else {
+    options.emplace_back("--pch-verbose=false");
+    options.emplace_back("--pch-messages=false");
+  }
+}
 
 std::tuple<rtcx::library, rtcx::blob> compile_library(
   char const* name,
@@ -229,7 +316,6 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
   auto nvrtc_version      = ctx.nvrtc_version().value();
 
   auto include_dirs = bundle.get_include_directories();
-  auto use_pch      = nvrtc_version >= MIN_NVRTC_VERSION_PCH;
   auto use_minimal  = nvrtc_version >= MIN_NVRTC_VERSION_MINIMAL;
 
   std::vector<std::string> options;
@@ -255,17 +341,7 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
   // suppress warnings if not in verbose mode
   if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
 
-  if (use_pch) {
-    options.emplace_back("--pch");
-
-    if (cfg.jit_verbose) {
-      options.emplace_back("--pch-verbose=true");
-      options.emplace_back("--pch-messages=true");
-    } else {
-      options.emplace_back("--pch-verbose=false");
-      options.emplace_back("--pch-messages=false");
-    }
-  }
+  append_pch_options(options, nvrtc_version);
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
 
@@ -333,17 +409,7 @@ std::vector<std::string> make_lto_compile_options(char const* name,
   // suppress warnings if not in verbose mode
   if (!cfg.jit_verbose) { options.emplace_back("--disable-warnings"); }
 
-  if (use_pch && nvrtc_version >= MIN_NVRTC_VERSION_PCH) {
-    options.emplace_back("--pch");
-
-    if (cfg.jit_verbose) {
-      options.emplace_back("--pch-verbose=true");
-      options.emplace_back("--pch-messages=true");
-    } else {
-      options.emplace_back("--pch-verbose=false");
-      options.emplace_back("--pch-messages=false");
-    }
-  }
+  if (use_pch) { append_pch_options(options, nvrtc_version); }
 
   if (cfg.disable_cuda_cache) { options.emplace_back("--no-cache"); }
 

@@ -323,9 +323,15 @@ struct PyMod {
   TypeOut operator()(TypeLhs x, TypeRhs y) const
   {
     if constexpr (std::is_floating_point_v<TypeLhs> or std::is_floating_point_v<TypeRhs>) {
-      auto x1 = static_cast<double>(x);
-      auto y1 = static_cast<double>(y);
-      return fmod(fmod(x1, y1) + y1, y1);
+      auto const x1 = static_cast<double>(x);
+      auto const y1 = static_cast<double>(y);
+      auto mod      = std::fmod(x1, y1);
+      if (mod != 0.0) {
+        if ((y1 < 0.0) != (mod < 0.0)) { mod += y1; }
+      } else {
+        mod = std::copysign(0.0, y1);
+      }
+      return static_cast<TypeOut>(mod);
     } else {
       return ((x % y) + y) % y;
     }

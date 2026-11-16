@@ -57,21 +57,31 @@ public final class Table implements AutoCloseable {
    */
   public Table(long rowCount, ColumnVector... columns) {
     assert columns != null : "ColumnVectors can't be null";
-    long[] viewPointers = new long[columns.length];
-    for (int i = 0; i < columns.length; i++) {
-      assert (null != columns[i]) : "ColumnVectors can't be null";
-      viewPointers[i] = columns[i].getNativeView();
-    }
-    // Create the view first: it validates the row count, and nothing needs releasing if it throws
-    nativeHandle = createCudfTableView(viewPointers, rowCount);
-    rows = rowCount;
-
-    // Since Arrays are mutable objects make a copy
+    // Since Arrays are mutable objects make a copy. Take the references first, so that a closed
+    // column fails here with an IllegalStateException.
     this.columns = new ColumnVector[columns.length];
-    for (int i = 0; i < columns.length; i++) {
-      this.columns[i] = columns[i];
-      columns[i].incRefCount();
+    long[] viewPointers = new long[columns.length];
+    int referenced = 0;
+    try {
+      for (; referenced < columns.length; referenced++) {
+        assert (null != columns[referenced]) : "ColumnVectors can't be null";
+        columns[referenced].incRefCount();
+        this.columns[referenced] = columns[referenced];
+        viewPointers[referenced] = columns[referenced].getNativeView();
+      }
+      // This validates the row count against the columns
+      nativeHandle = createCudfTableView(viewPointers, rowCount);
+    } catch (Throwable t) {
+      for (int i = 0; i < referenced; i++) {
+        try {
+          this.columns[i].close();
+        } catch (Throwable s) {
+          t.addSuppressed(s);
+        }
+      }
+      throw t;
     }
+    rows = rowCount;
   }
 
   private static long rowCountOf(ColumnVector[] columns) {

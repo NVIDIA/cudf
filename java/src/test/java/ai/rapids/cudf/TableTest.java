@@ -358,7 +358,13 @@ public class TableTest extends CudfTestBase {
     }
     try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3)) {
       assertThrows(CudfException.class, () -> new Table(4, v1).close());
+      // The failed constructor must release its reference, so this close frees the column
+      assertEquals(1, v1.getRefCount());
     }
+    ColumnVector closed = ColumnVector.fromInts(1, 2, 3);
+    closed.close();
+    assertThrows(IllegalStateException.class, () -> new Table(closed).close());
+    assertThrows(IllegalStateException.class, () -> new Table(3, closed).close());
     assertThrows(IllegalArgumentException.class, () -> new Table(-1).close());
   }
 

@@ -583,7 +583,7 @@ _BIN_OPS = {
 
 
 def _raise_for_unsupported_scalar_types(val: Any):
-    if not (
+    if (
         isinstance(val, (int, float))
         or isinstance(val, (datetime.date, datetime.timedelta))
         or isinstance(val, str)
@@ -2182,7 +2182,17 @@ class ParquetDatasetWriter:
         self.partition_cols = partition_cols
         # Collection of `ParquetWriter`s, and the corresponding
         # partition_col values they're responsible for
-        self._chunked_writers: list[tuple[ParquetWriter, list[str], str]] = []
+        # (``None`` once a writer has been closed because all of its files
+        # were rotated out)
+        self._chunked_writers: list[
+            tuple[ParquetWriter, list[str], str] | None
+        ] = []
+        # Paths each writer may still write to; the writer is closed once
+        # empty. Files from one `write_table` call share a writer, so a
+        # partition that is not written again keeps it open until `close()`
+        self._live_paths: list[set[str]] = []
+        # Footer metadata of writers closed early, keyed by writer index
+        self._closed_metadata: dict[int, np.ndarray | None] = {}
         # Map of partition_col values to their ParquetWriter's index
         # in self._chunked_writers for reverse lookup
         self.path_cw_map: dict[str, int] = {}
@@ -2198,6 +2208,8 @@ class ParquetDatasetWriter:
             self.max_file_size = _parse_bytes(max_file_size)
 
         self._file_sizes: dict[str, int] = {}
+        # Files that hit `max_file_size` and must not be written again
+        self._rotated_paths: set[str] = set()
 
     @_performance_tracking
     def write_table(self, df):
@@ -2221,6 +2233,7 @@ class ParquetDatasetWriter:
         full_paths = []
         metadata_file_paths = []
         full_offsets = [0]
+        rotated_paths = set()
 
         for idx, keys in enumerate(part_names.itertuples(index=False)):
             subdir = fs.sep.join(
@@ -2266,9 +2279,15 @@ class ParquetDatasetWriter:
                     # Check if the same `new_file_name` exists and
                     # generate a `new_file_name`
                     while new_full_path in self._file_sizes and (
-                        self._file_sizes[new_full_path]
-                        + (current_file_size / parts)
-                    ) > (self.max_file_size):
+                        new_full_path in self._rotated_paths
+                        or (
+                            self._file_sizes[new_full_path]
+                            + (current_file_size / parts)
+                        )
+                        > self.max_file_size
+                    ):
+                        # This file is full and will not be written again
+                        rotated_paths.add(new_full_path)
                         curr_file_num += 1
                         new_file_name = (
                             f"{self.filename}_{curr_file_num}.parquet"
@@ -2316,14 +2335,16 @@ class ParquetDatasetWriter:
 
         # Write out the parts of grouped_df currently handled by existing cw's
         for cw_idx, path_to_part_info_map in existing_cw_batch.items():
-            cw = self._chunked_writers[cw_idx][0]
+            cw, cw_paths, _ = self._chunked_writers[cw_idx]
             # match found paths with this cw's paths and nullify partition info
             # for partition_col values not in this batch
             this_cw_part_info = [
-                path_to_part_info_map.get(path, (0, 0))
-                for path in self._chunked_writers[cw_idx][1]
+                path_to_part_info_map.get(path, (0, 0)) for path in cw_paths
             ]
             cw.write_table(grouped_df, this_cw_part_info)
+
+        # Release retired writers before opening any replacement files
+        self._release_rotated_writers(rotated_paths)
 
         if new_cw_paths:
             # Create new cw for unhandled paths encountered in this write_table
@@ -2336,8 +2357,27 @@ class ParquetDatasetWriter:
                 )
             )
             new_cw_idx = len(self._chunked_writers) - 1
+            self._live_paths.append(set(new_paths))
             self.path_cw_map.update({k: new_cw_idx for k in new_paths})
             self._chunked_writers[-1][0].write_table(grouped_df, part_info)
+
+    def _release_rotated_writers(self, rotated_paths) -> None:
+        """Close writers whose files have all been rotated out."""
+        self._rotated_paths.update(rotated_paths)
+        for path in rotated_paths:
+            cw_idx = self.path_cw_map.pop(path, None)
+            if cw_idx is None:
+                continue
+            live = self._live_paths[cw_idx]
+            live.discard(path)
+            if not live:
+                entry = self._chunked_writers[cw_idx]
+                assert entry is not None
+                writer, _, meta_paths = entry
+                self._closed_metadata[cw_idx] = writer.close(
+                    metadata_file_path=meta_paths
+                )
+                self._chunked_writers[cw_idx] = None
 
     @_performance_tracking
     def close(self, return_metadata=False):
@@ -2346,10 +2386,22 @@ class ParquetDatasetWriter:
         blob
         """
 
-        metadata = [
-            cw.close(metadata_file_path=meta_path if return_metadata else None)
-            for cw, _, meta_path in self._chunked_writers
-        ]
+        metadata = []
+        for idx, entry in enumerate(self._chunked_writers):
+            if entry is None:
+                metadata.append(self._closed_metadata.pop(idx))
+            else:
+                cw, _, meta_path = entry
+                metadata.append(
+                    cw.close(
+                        metadata_file_path=meta_path
+                        if return_metadata
+                        else None
+                    )
+                )
+        self._chunked_writers = []
+        self._live_paths = []
+        self.path_cw_map = {}
 
         if self.fs_meta.get("is_remote", False):
             local_path = self.path

@@ -36,6 +36,7 @@ classifiers = [
 
 [project.optional-dependencies]
 test = [
+    "cuda-core[cu13]>=1.0,<2",
     "cupy-cuda13x[ctk]>=14.0.1,!=14.1.0",
     "fastavro>=0.22.9",
     "mmh3",
@@ -119,7 +120,7 @@ build-backend = "scikit_build_core.build"
 dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [
-    "cmake>=4.0",
+    "cmake>=4.0,<4.5",
     "cuda-bindings>=13.0.2,<13.5",
     "cython>=3.2.2,<3.3.0a0",
     "libcudf==27.2.*,>=0.0.0a0",

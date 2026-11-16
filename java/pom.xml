@@ -10,7 +10,7 @@
 
     <groupId>ai.rapids</groupId>
     <artifactId>cudf</artifactId>
-    <version>26.12.0-SNAPSHOT</version>
+    <version>27.02.0-SNAPSHOT</version>
 
     <name>cudfjni</name>
     <description>

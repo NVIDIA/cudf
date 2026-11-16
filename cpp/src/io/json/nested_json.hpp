@@ -285,7 +285,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
  * @return Returns the post-processed token stream
  */
 CUDF_EXPORT
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
   cuda::stream_ref stream,

@@ -29,7 +29,6 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
 #include <cuda/std/cstdint>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>

@@ -37,6 +37,24 @@ namespace io::detail {
 [[nodiscard]] size_t max_compressed_size(compression_type compression, size_t uncompressed_size);
 
 /**
+ * @brief Gets the size of the scratch buffer the device engine needs to compress a batch.
+ *
+ * Covers the codec's scratch only, not the per-chunk bookkeeping that `compress()` allocates.
+ *
+ * @param compression Compression type
+ * @param num_chunks Number of chunks in the batch
+ * @param max_uncomp_chunk_size Size of the largest uncompressed chunk in the batch
+ * @param total_uncomp_size Total uncompressed size of the batch
+ * @param stream CUDA stream the batch will be compressed on
+ * @returns scratch size in bytes
+ */
+[[nodiscard]] size_t get_compression_scratch_size(compression_type compression,
+                                                  size_t num_chunks,
+                                                  size_t max_uncomp_chunk_size,
+                                                  size_t total_uncomp_size,
+                                                  cuda::stream_ref stream);
+
+/**
  * @brief Aggregate results of compression into a single statistics object.
  *
  * @param inputs List of uncompressed input buffers

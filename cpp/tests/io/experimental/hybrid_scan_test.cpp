@@ -431,7 +431,7 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
 
   // Four single-page row groups holding ascending values: [-100, -50], [-50, 0], [0, 49] and
   // [50, 99]. The writer records no NaN counts, so they are patched into the metadata below.
-  auto [written_table, parquet_buffer] = create_parquet_with_stats<T, 1>();
+  auto const& [written_table, parquet_buffer] = *get_parquet_with_stats<T, 1>();
 
   auto const stream = cudf::get_default_stream();
   auto const mr     = cudf::get_current_device_resource_ref();

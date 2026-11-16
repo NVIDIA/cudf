@@ -31,6 +31,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/ptx>
 #include <cuda/std/algorithm.max.h>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
@@ -225,9 +226,12 @@ CUDF_KERNEL __launch_bounds__(block_size) void mark_probe_kernel(
 
       bool found_empty = false;
       while (!found_empty) {
-        auto const bucket_idx  = *probing_iter;
-        auto* mutable_slot_p   = &storage.data()[bucket_idx];
-        auto const entry_value = *mutable_slot_p;
+        auto const bucket_idx = *probing_iter;
+        auto* mutable_slot_p  = &storage.data()[bucket_idx];
+        // Other threads may be marking this slot, so its hash is read with a weak PTX load of the
+        // width of their compare-and-swap. Its row index is not written during the probe.
+        auto const entry_value = slot_type{
+          cuda::ptx::ld(cuda::ptx::space_global, &mutable_slot_p->first), mutable_slot_p->second};
 
         if (slot_is_empty(entry_value, empty_sentinel)) {
           found_empty = true;

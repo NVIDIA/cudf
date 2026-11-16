@@ -25,6 +25,8 @@ Write enough for a maintainer to act or join the discussion. A small bug may nee
 
 3. **Read the evidence.** Use the supplied branches, notes, result files and CI runs. Check commands, versions, commits and measurements against the claims. If they disagree, explain the discrepancy and resolve it with the user before filing. Mark missing facts in the draft as `TODO(<what is needed>)`. Separate measured results, estimates and suspected causes.
 
+4. **For an issue arising from PR review**, read the PR description and relevant comments or review thread, including later replies. Link the exact comment or thread and the PR. Capture the problem, why it matters, the agreed follow-up scope and any dependencies on the PR. Check what the latest PR changes already address. Distinguish agreed deferred work from suggestions or unresolved feedback; do not assume opening an issue resolves a review thread or makes a blocking concern safe to defer. If the intent is unclear, ask the user what should move into the issue.
+
 ## Titles and labels
 
 | Kind | Title prefix | Labels to suggest |

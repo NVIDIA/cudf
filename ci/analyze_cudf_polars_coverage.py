@@ -46,33 +46,30 @@ def build_report(
         upstream_lines = set(upstream.lines(filename) or ())
         local_contexts = local.contexts_by_lineno(filename)
         upstream_contexts = upstream.contexts_by_lineno(filename)
-        categories: dict[str, list[Any]] = {
-            "local_only": [],
-            "upstream_only": [],
-            "both": [],
-        }
-        for line in sorted(local_lines | upstream_lines):
-            entry: dict[str, Any] = {"line": line}
-            for suite, contexts in (
-                ("local", local_contexts),
-                ("upstream", upstream_contexts),
-            ):
-                values = sorted(contexts.get(line, ()))
-                # Common paths have thousands of contexts; the raw databases
-                # remain the complete export without duplicating them in JSON.
-                entry[f"{suite}_contexts"] = values[:MAX_CONTEXTS_PER_LINE]
-                entry[f"{suite}_context_count"] = len(values)
-                entry[f"{suite}_contexts_truncated"] = (
-                    len(values) > MAX_CONTEXTS_PER_LINE
-                )
-            if line in local_lines and line in upstream_lines:
-                category = "both"
-            else:
-                category = (
-                    "local_only" if line in local_lines else "upstream_only"
-                )
-            categories[category].append(entry)
-            totals[category] += 1
+        categories = {}
+        for category, lines in {
+            "local_only": local_lines - upstream_lines,
+            "upstream_only": upstream_lines - local_lines,
+            "both": local_lines & upstream_lines,
+        }.items():
+            entries = []
+            for line in sorted(lines):
+                entry: dict[str, Any] = {"line": line}
+                for suite, contexts in (
+                    ("local", local_contexts),
+                    ("upstream", upstream_contexts),
+                ):
+                    values = sorted(contexts.get(line, ()))
+                    # Common paths have thousands of contexts; the raw databases
+                    # remain the complete export without duplicating them in JSON.
+                    entry[f"{suite}_contexts"] = values[:MAX_CONTEXTS_PER_LINE]
+                    entry[f"{suite}_context_count"] = len(values)
+                    entry[f"{suite}_contexts_truncated"] = (
+                        len(values) > MAX_CONTEXTS_PER_LINE
+                    )
+                entries.append(entry)
+            categories[category] = entries
+            totals[category] += len(lines)
         if any(categories.values()):
             files[filename] = categories
     return {"files": files, "summary": {**totals, "files": len(files)}}

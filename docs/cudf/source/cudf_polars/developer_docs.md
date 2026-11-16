@@ -646,29 +646,19 @@ truncated; the coverage databases retain every test node and its
 `|setup`, `|run`, or `|teardown` phase. The engine databases remain separate so
 the same upstream node can be examined under each configuration.
 
-For example, this finds a local-only line with a test-body context and prints
-all its local contexts, including those omitted from the JSON sample:
+To print every local context for a line, including those omitted from the JSON
+sample, use the local coverage database directly. Replace the source filename
+and line number below with the exact values from the report:
 
 ```bash
-python - coverage-results/cudf-polars-comparison/coverage-comparison.json <<'PY'
-import json
+python - coverage-results/cudf-polars-comparison/.coverage.local /absolute/source/filename.py 42 <<'PY'
 import sys
-from pathlib import Path
 
 from coverage import CoverageData
 
-report_path = Path(sys.argv[1]).resolve()
-report = json.loads(report_path.read_text())
-data = CoverageData(basename=str(report_path.parent / report["context_data"]["local"]))
+data = CoverageData(basename=sys.argv[1])
 data.read()
-filename, line = next(
-    (filename, entry["line"])
-    for filename, categories in report["files"].items()
-    for entry in categories["local_only"]
-    if any(context.endswith("|run") for context in entry["local_contexts"])
-)
-print(f"{filename}:{line}")
-print(*sorted(data.contexts_by_lineno(filename)[line]), sep="\n")
+print(*sorted(data.contexts_by_lineno(sys.argv[2])[int(sys.argv[3])]), sep="\n")
 PY
 ```
 

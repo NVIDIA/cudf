@@ -12,7 +12,10 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/ptx>
 #include <cuda/std/algorithm.min.h>
+#include <cuda/std/array>
+#include <cuda/std/bit>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 
@@ -21,6 +24,28 @@
 namespace cudf::io::orc::detail {
 
 using cudf::io::detail::string_index_pair;
+
+/**
+ * @brief Copies a chunk description that other blocks may be updating.
+ *
+ * Other blocks add to the 64-bit counters of a chunk with atomic operations, which a plain copy
+ * must not race with, so the chunk is read as 64-bit words with weak PTX loads.
+ *
+ * @param chunk The chunk description in global memory
+ * @return A copy of the chunk description
+ */
+static __device__ column_desc load_chunk(column_desc const* chunk)
+{
+  using word_type = uint64_t;
+  static_assert(alignof(column_desc) == alignof(word_type) and
+                sizeof(column_desc) % sizeof(word_type) == 0);
+  cuda::std::array<word_type, sizeof(column_desc) / sizeof(word_type)> words;
+  for (std::size_t i = 0; i < words.size(); ++i) {
+    words[i] =
+      cuda::ptx::ld(cuda::ptx::space_global, reinterpret_cast<word_type const*>(chunk) + i);
+  }
+  return cuda::std::bit_cast<column_desc>(words);
+}
 
 // Must be able to handle 512x 8-byte values. These values are base 128 encoded
 // so 8 byte value is expanded to 10 bytes.
@@ -1316,7 +1341,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
     chunk_id = stripe * num_columns + column;
   }
 
-  if (t == 0) s->chunk = chunks[chunk_id];
+  if (t == 0) s->chunk = load_chunk(chunks + chunk_id);
   __syncthreads();
   size_t const max_num_rows = s->chunk.column_num_rows - s->chunk.parent_validity_info.null_count;
 
@@ -1653,7 +1678,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
     chunk_id = blockIdx.x;
   }
   if (t == 0) {
-    s->chunk          = chunks[chunk_id];
+    s->chunk          = load_chunk(chunks + chunk_id);
     s->num_child_rows = 0;
   }
   __syncthreads();

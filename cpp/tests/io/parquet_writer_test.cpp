@@ -1616,6 +1616,27 @@ TEST_F(ParquetWriterTest, DictionaryAlwaysTest)
   EXPECT_TRUE(used_dict(1));
 }
 
+TEST_F(ParquetWriterTest, DISABLED_DictionaryMoreColumnsThanMaxGridY)
+{
+  // More columns than the CUDA grid y-dimension limit (65535)
+  constexpr cudf::size_type num_cols = 70'000;
+
+  auto const col      = cudf::test::strings_column_wrapper({"a", "b", "a", "c"});
+  auto const expected = table_view{std::vector<cudf::column_view>(num_cols, col)};
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryMoreColumnsThanMaxGridY.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 TEST_F(ParquetWriterTest, DictionaryPageSizeEst)
 {
   // one page

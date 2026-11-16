@@ -14,6 +14,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/barrier>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>

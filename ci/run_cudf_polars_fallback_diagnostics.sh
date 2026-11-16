@@ -13,8 +13,9 @@ fetch_status=0
 if [[ "${1:-}" == "--audit" || "${1:-}" == "--publish-audit" ]]; then
     [[ "$1" == "--publish-audit" ]] && publish_audit=true
     shift
-    if ! gh api --paginate --slurp \
-        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
+    # Smaller pages avoid intermittent server errors on runs with many jobs.
+    if ! rapids-retry --quiet gh api --paginate --slurp \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=50" \
         | jq '[.[].jobs[] | select(.name | startswith("cudf-polars-polars-tests"))]' \
         > "${report_dir}/expected-jobs"; then
         fetch_status=1

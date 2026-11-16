@@ -13,7 +13,6 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
-#include <cuda/atomic>
 #include <cuda/functional>
 #include <cuda/std/concepts>
 #include <cuda/std/limits>
@@ -57,6 +56,18 @@ __device__ constexpr int rolling_idx(int index) { return rolling_index<buffer_si
 
 // Largest scratch type of the bit packer
 using max_scratch_type = uint64_t;
+
+// Block-scope atomic OR for the bit packer's shared scratch words. atomicOr_block has no uint64_t
+// overload, so pass 64-bit words as the same-size unsigned long long
+template <cuda::std::unsigned_integral T>
+inline __device__ void atomic_or_block(T* address, T val)
+{
+  if constexpr (sizeof(T) == sizeof(unsigned long long)) {
+    atomicOr_block(reinterpret_cast<unsigned long long*>(address), val);
+  } else {
+    atomicOr_block(address, val);
+  }
+}
 
 // Version of bit packer that can handle up to 64 bits values.
 // T is the type to use for processing. if nbits <= 32 use uint32_t, otherwise max_scratch_type.
@@ -109,14 +120,8 @@ inline __device__ void bitpack_mini_block(
 
     // Atomically write result to scratch.
     auto const word = (lane_id * nbits) / div;
-    if (v1[0]) {
-      cuda::atomic_ref<scratch_type, cuda::thread_scope_block>{scratch[word]}.fetch_or(
-        v1[0], cuda::memory_order_relaxed);
-    }
-    if (v1[1]) {
-      cuda::atomic_ref<scratch_type, cuda::thread_scope_block>{scratch[word + 1]}.fetch_or(
-        v1[1], cuda::memory_order_relaxed);
-    }
+    if (v1[0]) { atomic_or_block(&scratch[word], v1[0]); }
+    if (v1[1]) { atomic_or_block(&scratch[word + 1], v1[1]); }
   }
   __syncwarp();
 

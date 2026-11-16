@@ -41,11 +41,11 @@
 
 namespace cudf::io::parquet::hybrid_scan::detail {
 
-using parquet::detail::chunk_page_info;
 using parquet::detail::ColumnChunkDesc;
 using parquet::detail::decode_big_endian_decimal;
 using parquet::detail::decode_byte_array_decimal;
 using parquet::detail::decode_error;
+using parquet::detail::int96_size;
 using parquet::detail::PageInfo;
 
 namespace {
@@ -70,8 +70,6 @@ concept SupportedFixedWidthType = is_supported_fixed_width_type<T>;
 template <typename T>
 concept SupportedDictionaryType = is_supported_dictionary_type<T>;
 
-/// Size of INT96 physical type
-auto constexpr INT96_SIZE = 12;
 /// Decode kernel block size. Must be a multiple of warp_size
 auto constexpr DECODE_BLOCK_SIZE = 4 * cudf::detail::warp_size;
 /// Maximum query block size. Must be a multiple of warp_size
@@ -230,33 +228,10 @@ __device__ __forceinline__ void decode_int96timestamp(uint8_t const* int96_ptr,
                                                       int32_t clock_rate,
                                                       int64_t* timestamp64)
 {
-  // Note: This function has been modified from the original at
-  // https://github.com/NVIDIA/cudf/blob/c89c83c00c729a86c56570693b627f31408bc2c9/cpp/src/io/parquet/page_data.cuh#L133-L198
-
-  int64_t nanos = cudf::io::unaligned_load<uint64_t>(int96_ptr);
-  int64_t days  = cudf::io::unaligned_load<uint32_t>(int96_ptr + sizeof(int64_t));
-
-  // Convert from Julian day at noon to UTC seconds
-  // TBD: Should be noon instead of midnight, but this matches pyarrow
-  cudf::duration_D duration_days{days - cudf::io::parquet::detail::julian_day_unix_epoch};
-
-  using cuda::std::chrono::duration_cast;
-
-  *timestamp64 = [&]() {
-    switch (clock_rate) {
-      case 1:  // seconds
-        return duration_cast<cudf::duration_s>(duration_days).count() +
-               duration_cast<cudf::duration_s>(cudf::duration_ns{nanos}).count();
-      case 1'000:  // milliseconds
-        return duration_cast<cudf::duration_ms>(duration_days).count() +
-               duration_cast<cudf::duration_ms>(cudf::duration_ns{nanos}).count();
-      case 1'000'000:  // microseconds
-        return duration_cast<cudf::duration_us>(duration_days).count() +
-               duration_cast<cudf::duration_us>(cudf::duration_ns{nanos}).count();
-      case 1'000'000'000:  // nanoseconds
-      default: return duration_cast<cudf::duration_ns>(duration_days).count() + nanos;
-    }
-  }();
+  *timestamp64 = parquet::detail::int96_to_timestamp(
+    cudf::io::unaligned_load<int64_t>(int96_ptr),
+    cudf::io::unaligned_load<int32_t>(int96_ptr + sizeof(int64_t)),
+    clock_rate);
 }
 
 /**
@@ -386,15 +361,15 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
   switch (physical_type) {
     case parquet::Type::INT96: {
       // Check if we have a stream overrun
-      if (is_stream_overrun(value_idx * INT96_SIZE, INT96_SIZE, page.uncompressed_page_size)) {
+      if (is_stream_overrun(value_idx * int96_size, int96_size, page.uncompressed_page_size)) {
         set_error(error, decode_error::DATA_STREAM_OVERRUN);
         return {};
       }
       // INT96 values are decoded into 64-bit timestamps. INT96 has no type length in the schema, so
-      // `INT96_SIZE` is used to index the page data.
+      // `int96_size` is used to index the page data.
       if constexpr (sizeof(T) == sizeof(int64_t) and
                     (cudf::is_timestamp<T>() or cuda::std::is_same_v<T, int64_t>)) {
-        decode_int96timestamp(page_data + (value_idx * INT96_SIZE),
+        decode_int96timestamp(page_data + (value_idx * int96_size),
                               chunk.ts_clock_rate,
                               reinterpret_cast<int64_t*>(&decoded_value));
       } else {
@@ -1099,7 +1074,7 @@ struct dictionary_caster {
 
     // Device vector to store the decoded values for all dictionaries
     cuda::device_buffer<T> decoded_data{stream, default_mr, total_num_values, cuda::no_init};
-    kernel_error error_code(stream);
+    kernel_error error_code(stream, mr.as_temporary());
 
     // Host vector of scalar device views from all literals
     std::vector<ast::generic_scalar_device_view> host_scalars;
@@ -1269,7 +1244,7 @@ struct dictionary_caster {
       cudf::detail::make_device_buffer_async(host_results_ptrs, stream, default_mr);
 
     // Error code for the dictionary decode kernel
-    kernel_error error_code(stream);
+    kernel_error error_code(stream, mr.as_temporary());
 
     if constexpr (not cuda::std::is_same_v<T, cudf::string_view>) {
       // Decode fixed width dictionaries and evaluate literals against them, one dictionary per

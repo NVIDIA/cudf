@@ -64,6 +64,8 @@ using max_scratch_type = uint64_t;
 // temp_space must hold warp_size max_scratch_type words for each warp of the block, whichever
 // type the warp uses.
 template <typename scratch_type>
+  requires(cuda::std::same_as<scratch_type, uint32_t> or
+           cuda::std::same_as<scratch_type, max_scratch_type>)
 inline __device__ void bitpack_mini_block(
   uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, max_scratch_type* temp_space)
 {

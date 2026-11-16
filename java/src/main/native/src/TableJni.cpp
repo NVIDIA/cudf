@@ -1213,10 +1213,18 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_columnViewsFromPacked(JNI
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    void const* metadata_address = env->GetDirectBufferAddress(buffer_obj);
-    JNI_NULL_CHECK(env, metadata_address, "metadata buffer address is null", nullptr);
-    cudf::table_view table = cudf::unpack(static_cast<uint8_t const*>(metadata_address),
-                                          reinterpret_cast<uint8_t const*>(j_data_address));
+    // A table with no columns and no rows packs to empty metadata, whose buffer has no address.
+    // The span overload of unpack returns an empty table for it.
+    auto const metadata_size = env->GetDirectBufferCapacity(buffer_obj);
+    auto const* metadata_address =
+      static_cast<uint8_t const*>(env->GetDirectBufferAddress(buffer_obj));
+    JNI_ARG_CHECK(env, metadata_size >= 0, "metadata is not a direct buffer", nullptr);
+    if (metadata_size > 0) {
+      JNI_NULL_CHECK(env, metadata_address, "metadata buffer address is null", nullptr);
+    }
+    cudf::table_view table = cudf::unpack(
+      std::span<uint8_t const>{metadata_address, static_cast<std::size_t>(metadata_size)},
+      reinterpret_cast<uint8_t const*>(j_data_address));
     // The row count goes first so that a table with zero columns keeps it.
     cudf::jni::native_jlongArray views(env, table.num_columns() + 1);
     views[0] = table.num_rows();

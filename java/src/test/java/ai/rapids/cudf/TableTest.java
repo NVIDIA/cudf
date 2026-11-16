@@ -459,6 +459,28 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testZeroColumnTableContiguousSplitEmptyPieces() {
+    // A piece with no columns and no rows packs to empty metadata
+    ContiguousTable[] splits = null;
+    try (Table t = new Table(10)) {
+      splits = t.contiguousSplit(0, 10);
+      assertEquals(3, splits.length);
+      long[] expectedRows = {0, 10, 0};
+      for (int i = 0; i < splits.length; i++) {
+        assertEquals(expectedRows[i], splits[i].getRowCount());
+        assertEquals(expectedRows[i], splits[i].getTable().getRowCount());
+        assertEquals(0, splits[i].getTable().getNumberOfColumns());
+      }
+    } finally {
+      if (splits != null) {
+        for (ContiguousTable split : splits) {
+          split.close();
+        }
+      }
+    }
+  }
+
+  @Test
   void testGetRows() {
     try (ColumnVector v1 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
          ColumnVector v2 = ColumnVector.build(DType.INT32, 5, Range.appendInts(5));
@@ -5306,6 +5328,25 @@ public class TableTest extends CudfTestBase {
           try (Table newTable = Table.fromPackedTable(metadata, newbuf)) {
             assertTablesAreEqual(t, newTable);
           }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFromPackedTableUsesBufferRemaining() {
+    try (Table t = buildTestTable();
+         ContiguousTable packed = t.contiguousSplit()[0]) {
+      ByteBuffer metadata = packed.getMetadataDirectBuffer();
+      int size = metadata.remaining();
+      // Only the bytes between position and limit are the metadata
+      for (ByteBuffer larger : new ByteBuffer[] {
+          ByteBuffer.allocateDirect(size + 16), ByteBuffer.allocate(size + 16)}) {
+        larger.position(8);
+        larger.put(metadata.duplicate());
+        larger.position(8).limit(8 + size);
+        try (Table unpacked = Table.fromPackedTable(larger, packed.getBuffer())) {
+          assertTablesAreEqual(t, unpacked);
         }
       }
     }

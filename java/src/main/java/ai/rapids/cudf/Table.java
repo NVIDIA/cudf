@@ -3900,8 +3900,9 @@ public final class Table implements AutoCloseable {
    * @return table which is zero-copy reconstructed from the packed-form
    */
   public static Table fromPackedTable(ByteBuffer metadata, DeviceMemoryBuffer data) {
-    // Ensure the metadata buffer is direct so it can be passed to JNI
-    ByteBuffer directBuffer = metadata;
+    // Ensure the metadata buffer is direct so it can be passed to JNI. Slice it so that JNI sees
+    // only the bytes between position and limit.
+    ByteBuffer directBuffer = metadata.slice();
     if (!directBuffer.isDirect()) {
       directBuffer = ByteBuffer.allocateDirect(metadata.remaining());
       directBuffer.put(metadata);

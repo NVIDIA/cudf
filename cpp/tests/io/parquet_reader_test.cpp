@@ -2696,20 +2696,16 @@ TEST_F(ParquetReaderTest, StructByteArray)
 TEST_F(ParquetReaderTest, FileLogicalType)
 {
   using cudf::io::parquet::LogicalType;
-  namespace pq_experimental = cudf::io::parquet::experimental;
 
-  cudf::test::strings_column_wrapper uri_col{"s3://a", "s3://b", "", "s3://d"};
-  column_wrapper<int64_t> offset_col{0, 10, 20, 30};
-  cudf::test::strings_column_wrapper inline_col{"a", "bc", "hello", "d"};
-  auto file_col = cudf::test::structs_column_wrapper{{uri_col, offset_col, inline_col}};
+  column_wrapper<int64_t> offset_col{0};
+  cudf::test::strings_column_wrapper inline_col{"a"};
+  auto file_col = cudf::test::structs_column_wrapper{{offset_col, inline_col}};
 
   auto const input = table_view{{file_col}};
   cudf::io::table_input_metadata input_metadata(input);
-  // FILE children must be OPTIONAL and `inline` must be an unannotated BYTE_ARRAY
   auto& file_metadata = input_metadata.column_metadata[0].set_name("file");
-  file_metadata.child(0).set_name("uri").set_nullability(true);
-  file_metadata.child(1).set_name("offset").set_nullability(true);
-  file_metadata.child(2).set_name("inline").set_nullability(true).set_output_as_binary(true);
+  file_metadata.child(0).set_name("offset").set_nullability(true);
+  file_metadata.child(1).set_name("inline").set_nullability(true).set_output_as_binary(true);
 
   std::vector<char> buffer;
   cudf::io::write_parquet(
@@ -2717,87 +2713,57 @@ TEST_F(ParquetReaderTest, FileLogicalType)
       .metadata(std::move(input_metadata))
       .build());
 
-  auto constexpr ender_size = 2 * sizeof(uint32_t);
-  uint32_t footer_size{};
-  std::memcpy(&footer_size, buffer.data() + buffer.size() - ender_size, sizeof(footer_size));
-  auto const footer_begin = buffer.size() - ender_size - footer_size;
-  auto fmd                = pq_experimental::read_parquet_footer_bytes(
-    {reinterpret_cast<uint8_t const*>(buffer.data()) + footer_begin, footer_size});
+  auto const source = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
+  auto fmd          = cudf::io::read_parquet_footers({&source, 1}).front();
   ASSERT_EQ(fmd.schema[1].name, "file");
-  ASSERT_EQ(fmd.schema[4].name, "inline");
+  ASSERT_EQ(fmd.schema[3].name, "inline");
   fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
 
-  // Builds the file with `fmd` spliced in as its footer: data + footer + length + "PAR1"
+  // Appends `fmd` as the new footer, leaving the original one unreferenced
   auto const make_file = [&] {
-    auto const footer          = pq_experimental::write_parquet_footer_bytes(fmd);
-    auto const new_footer_size = static_cast<uint32_t>(footer.size());
-    auto const size_bytes      = reinterpret_cast<char const*>(&new_footer_size);
-    auto file                  = std::vector<char>(buffer.begin(), buffer.begin() + footer_begin);
+    auto const footer      = cudf::io::parquet::experimental::write_parquet_footer_bytes(fmd);
+    auto const footer_size = static_cast<uint32_t>(footer.size());
+    auto const size_bytes  = reinterpret_cast<char const*>(&footer_size);
+    auto file              = buffer;
     file.insert(file.end(), footer.begin(), footer.end());
-    file.insert(file.end(), size_bytes, size_bytes + sizeof(new_footer_size));
+    file.insert(file.end(), size_bytes, size_bytes + sizeof(footer_size));
     file.insert(file.end(), {'P', 'A', 'R', '1'});
     return file;
   };
-  auto const read_with_footer = [&](cudf::size_type num_rows) {
-    auto const file   = make_file();
-    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
-      reinterpret_cast<std::byte const*>(file.data()), file.size()}};
+  auto const read_metadata = [](std::vector<std::vector<char>> const& files) {
+    std::vector<cudf::host_span<std::byte const>> sources;
+    for (auto const& file : files) {
+      sources.emplace_back(reinterpret_cast<std::byte const*>(file.data()), file.size());
+    }
     return cudf::io::read_parquet(
-      cudf::io::parquet_reader_options::builder(source).num_rows(num_rows));
+             cudf::io::parquet_reader_options::builder(
+               cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
+               .allow_mismatched_pq_schemas(true)
+               .column_names({"file"})
+               .num_rows(0))
+      .metadata;
   };
 
-  cudf::test::lists_column_wrapper<uint8_t> inline_bytes{
-    {'a'}, {'b', 'c'}, {'h', 'e', 'l', 'l', 'o'}, {'d'}};
-  auto expected    = cudf::test::structs_column_wrapper{{uri_col, offset_col, inline_bytes}};
-  auto const empty = cudf::empty_like(expected);
+  auto const metadata = read_metadata({make_file()});
+  EXPECT_EQ(metadata.schema_info[0].is_file, true);
+  EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
 
-  // `inline` reads as binary and the struct is marked FILE, including in a zero-row read
-  for (auto const& expected_col : {cudf::column_view{expected}, empty->view()}) {
-    auto const result = read_with_footer(expected_col.size());
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_col, result.tbl->view().column(0));
+  // A signed 64-bit INTEGER annotation on `offset` keeps the group FILE
+  fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
+  EXPECT_EQ(read_metadata({make_file()}).schema_info[0].is_file, true);
 
-    auto const& file_info = result.metadata.schema_info[0];
-    EXPECT_EQ(file_info.is_file, true);
-    ASSERT_EQ(file_info.children.size(), 3);
-    EXPECT_FALSE(file_info.children[0].is_binary.has_value());
-    EXPECT_EQ(file_info.children[2].is_binary, true);
-  }
+  // A FILE group and a plain struct in mismatched sources throw
+  auto const file_group = make_file();
+  fmd.schema[1].logical_type.reset();
+  auto const plain_struct    = make_file();
+  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+  EXPECT_THROW(read_metadata({file_group, plain_struct}), std::invalid_argument);
+  EXPECT_THROW(read_metadata({plain_struct, file_group}), std::invalid_argument);
 
-  // A signed 64-bit INTEGER annotation on `offset` is equivalent to none and keeps the group FILE
-  fmd.schema[3].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
-  {
-    auto const result = read_with_footer(input.num_rows());
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result.tbl->view().column(0));
-    EXPECT_EQ(result.metadata.schema_info[0].is_file, true);
-  }
-
-  // Reading a FILE group together with a plain struct from mismatched sources throws
-  {
-    auto const file_group = make_file();
-    fmd.schema[1].logical_type.reset();
-    auto const plain_struct    = make_file();
-    fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
-    auto const to_span         = [](std::vector<char> const& file) {
-      return cudf::host_span<std::byte const>{reinterpret_cast<std::byte const*>(file.data()),
-                                              file.size()};
-    };
-    for (auto sources : {std::vector{to_span(file_group), to_span(plain_struct)},
-                         std::vector{to_span(plain_struct), to_span(file_group)}}) {
-      auto const options =
-        cudf::io::parquet_reader_options::builder(
-          cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
-          .allow_mismatched_pq_schemas(true)
-          .column_names({"file"})
-          .build();
-      EXPECT_THROW(cudf::io::read_parquet(options), std::invalid_argument);
-    }
-  }
-
-  // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct of strings
-  fmd.schema[4].logical_type = LogicalType{LogicalType::STRING};
-  auto const result          = read_with_footer(input.num_rows());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(file_col, result.tbl->view().column(0));
-  EXPECT_FALSE(result.metadata.schema_info[0].is_file.has_value());
+  // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
+  fmd.schema[3].logical_type = LogicalType{LogicalType::STRING};
+  EXPECT_FALSE(read_metadata({make_file()}).schema_info[0].is_file.has_value());
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

@@ -1,30 +1,30 @@
-# Java API for cudf
+# cuDF for Java
 
-This project provides java bindings for cudf, to be able to process large amounts of data on
-a GPU. This is still a work in progress so some APIs may change until the 1.0 release.
+This project provides Java bindings for NVIDIA cuDF, a library for GPU-accelerated structured
+data processing.
+
+The API reference is published with the rest of the cuDF documentation at
+https://docs.nvidia.com/cudf/latest/java/.
 
 ## Behavior on Systems with Multiple GPUs
 
-The cudf project currently works with a single GPU per process. The CUDA runtime
-assigns the default GPU to all new operating system threads when they start to
-interact with CUDA. This means that if you use a multi-threaded environment,
-like Java processes tend to be, and try to use a non-default GPU for cudf you
-can run into hard to debug issues including resource leaks, invalid states,
-application crashes, and poor performance.
+The Java bindings work with a single GPU per process. The CUDA runtime assigns the default GPU to
+each new operating system thread when the thread first interacts with CUDA. In a multi-threaded
+environment, which is typical for Java processes, using a GPU other than the default one can lead to
+hard-to-debug problems, including resource leaks, invalid states, application crashes and poor
+performance.
 
-To prevent this the Java cudf API will remember the device used to initialize
-the Rapids Memory Manager (RMM), and automatically set the thread's active
-device to it, if needed. It will not set the device back when the cudf call
-completes. This is different from most CUDA libraries and can result in
-unexpected behavior if you try to mix these libraries using the same thread.
+To prevent this, the Java bindings remember the device that was used to initialize NVIDIA RMM and
+set the active device of each thread to that device the first time the thread calls into cuDF. They
+track this per thread and do not check the active device again, so if other code changes the device
+of a thread afterwards, later cuDF calls on that thread do not switch it back. The Java bindings
+also do not restore the previous device when a cuDF call completes. This differs from most CUDA
+libraries and can cause unexpected behavior if you mix them with the Java bindings on the same
+thread.
 
 ## Dependency
 
-This is a fat jar with the binary dependencies packaged in the jar.  This means the jar will only
-run on platforms the jar was compiled for.  When this is in an official Maven repository we will
-list the platforms that it is compiled and tested for.  In the mean time you will need to build it
-yourself. In official releases there should be no classifier on the jar and it should run against
-most modern cuda drivers.
+cuDF for Java is published to Maven Central as [`ai.rapids:cudf`](https://central.sonatype.com/artifact/ai.rapids/cudf):
 
 ```xml
 <dependency>
@@ -34,90 +34,124 @@ most modern cuda drivers.
 </dependency>
 ```
 
-In some cases there may be a classifier to indicate the version of cuda required. See the
-[Build From Source](#build-from-source) section below for more information about when this
-can happen. No official release of the jar will have a classifier on it.
+Replace `${cudf.version}` with a published cuDF version, or define the `cudf.version` property in
+your POM.
 
-CUDA 12.2:
+The jar bundles its native libraries, so it only runs on the platforms it was built for. Each
+release includes a jar for each supported CUDA major version and CPU architecture, selected with a
+classifier:
+
+| Classifier     | CUDA version | Minimum driver | Architecture |
+|----------------|--------------|----------------|--------------|
+| `cuda12`       | 12.2+        | 535            | x86_64       |
+| `cuda12-arm64` | 12.2+        | 535            | aarch64      |
+| `cuda13`       | 13.0+        | 580            | x86_64       |
+| `cuda13-arm64` | 13.0+        | 580            | aarch64      |
+
+See [Platform Support](https://docs.nvidia.com/datascience/platform-support/) for the CUDA toolkit
+versions, drivers and GPU architectures supported by each release.
+
+The jar statically links the CUDA runtime, but it requires two CUDA toolkit libraries for its CUDA
+major version to be installed: NVRTC (`libnvrtc.so.12` or `libnvrtc.so.13`) and nvJitLink
+(`libnvJitLink.so.12` or `libnvJitLink.so.13`). They are included in a full CUDA toolkit
+installation and in the `runtime` and `devel` variants of the
+[NVIDIA CUDA container images](https://hub.docker.com/r/nvidia/cuda), but not the `base` variant.
+They can also be installed on their own from the CUDA package repositories.
+
+The jar without a classifier is the same as the `cuda12` jar. For example, to use the CUDA 13 jar
+on x86_64:
+
 ```xml
 <dependency>
     <groupId>ai.rapids</groupId>
     <artifactId>cudf</artifactId>
-    <classifier>cuda12</classifier>
+    <classifier>cuda13</classifier>
     <version>${cudf.version}</version>
 </dependency>
 ```
 
 ## Build From Source
 
-Build [libcudf](../cpp) first, and make sure the JDK is installed and available. Specify
-the following cmake options to the libcudf build:
-```
--DCUDF_LARGE_STRINGS_DISABLED=ON -DCUDF_USE_ARROW_STATIC=ON -DCUDF_ENABLE_ARROW_S3=OFF
-```
-These options:
-- Disable large string support, see https://github.com/NVIDIA/cudf/issues/16215
-- Statically link Arrow to libcudf to remove Arrow as a runtime dependency.
+First build [libcudf](../cpp), and make sure JDK 8 or newer is installed and available. Pass the
+following CMake option to the libcudf build:
 
-After building libcudf, the Java bindings can be built via Maven, e.g.:
 ```
+-DCUDF_LARGE_STRINGS_DISABLED=ON
+```
+
+This disables large string support, which the Java bindings do not support yet. See
+https://github.com/NVIDIA/cudf/issues/16215.
+
+After building libcudf, build the Java bindings with Maven:
+
+```shell
+cd java
 mvn clean install
 ```
 
-If you have a compatible GPU on your build system the tests will use it.  If not you will see a
-lot of skipped tests.
+The jar gets a classifier based on the CUDA version reported by `nvcc` and the host architecture,
+as listed in the [Dependency](#dependency) section.
 
-### Using the Java CI Docker Image
+Without a compatible GPU, most tests are skipped but some fail, so skip the tests when building on
+such a machine:
 
-If you are interested in building a Java cudf jar that is similar to the official releases
-that can run on all modern Linux systems, see the [Java CI README](ci/README.md) for
-instructions on how to build within a Docker environment using devtoolset. Note that
-building the jar without the Docker setup and script will likely produce a jar that can
-only run in environments similar to that of the build machine.
-
-If you decide to build without Docker and the build script, examining the cmake and Maven
-settings in the [Java CI build script](ci/build-in-docker.sh) can be helpful if you are
-encountering difficulties during the build.
-
-### Building with a libcudf Archive
-
-When statically linking the CUDA runtime, it is recommended to build cuDF as an archive rather than
-a shared library, as this allows the Java bindings to only have a single shared library that uses
-the CUDA runtime. To build libcudf as an archive, specify `-DBUILD_SHARED_LIBS=OFF` as a cmake
-parameter when building libcudf, then specify `-DCUDF_JNI_LIBCUDF_STATIC=ON` when building the Java
-bindings with Maven.
-
-## Per-thread Default Stream
-
-The JNI code can be built with *per-thread default stream* (PTDS), which gives each host thread its
-own default CUDA stream, and can potentially increase the overlap of data copying and compute
-between different threads (see
-[blog post](https://developer.nvidia.com/blog/gpu-pro-tip-cuda-7-streams-simplify-concurrency/)).
-
-Since the PTDS option is for each compilation unit, it should be done at the same time across the
-whole codebase. To enable PTDS, first build cuDF:
-```shell script
-cd src/cudf/cpp/build
-cmake .. -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX -DCUDF_USE_PER_THREAD_DEFAULT_STREAM=ON
-make -j`nproc`
-make install
+```shell
+mvn clean install -DskipTests
 ```
 
-then build the jar:
-```shell script
-cd src/cudf/java
+### Building Jars Like the Official Releases
+
+A jar built directly on your machine will likely only run in environments similar to the build
+machine. To build a jar that is similar to the official releases and runs on all modern Linux
+systems, use the scripts described in the [Java CI README](ci/README.md). They build libcudf and
+the jar inside the same container image that CI uses, and do not require a GPU.
+
+If you build without these scripts and run into problems, the CMake and Maven settings in
+[build_static_libcudf_in_container.sh](ci/build_static_libcudf_in_container.sh) and
+[build_cudf_java_jar_in_container.sh](ci/build_cudf_java_jar_in_container.sh) can be a useful
+reference.
+
+### Building with a Static libcudf
+
+When statically linking the CUDA runtime, we recommend building libcudf as a static library rather
+than a shared library, so that the Java bindings have only a single shared library that uses the
+CUDA runtime. To do this, pass `-DBUILD_SHARED_LIBS=OFF` to CMake when building libcudf, and then
+pass `-DCUDF_JNI_LIBCUDF_STATIC=ON` to Maven when building the Java bindings.
+
+## Per-Thread Default Stream
+
+The JNI code can be built with *per-thread default stream* (PTDS), which gives each host thread its
+own default CUDA stream. This can increase the overlap of data copies and computation between
+threads (see this
+[blog post](https://developer.nvidia.com/blog/gpu-pro-tip-cuda-7-streams-simplify-concurrency/)).
+The official release jars are built with PTDS enabled.
+
+PTDS is set for each compilation unit, so it must be enabled for both libcudf and the JNI code. To
+enable it, first build libcudf from the root of the repository, together with the options listed
+in [Build From Source](#build-from-source):
+
+```shell
+cmake -S cpp -B cpp/build -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX -DCUDF_USE_PER_THREAD_DEFAULT_STREAM=ON
+cmake --build cpp/build --parallel
+cmake --install cpp/build
+```
+
+Then build the jar:
+
+```shell
+cd java
 mvn clean install -DCUDF_USE_PER_THREAD_DEFAULT_STREAM=ON
 ```
 
 ## GPUDirect Storage (GDS)
 
-The JNI code can be built with *GPUDirect Storage* (GDS) support, which enables direct copying
-between GPU device buffers and supported filesystems (see
-https://docs.nvidia.com/gpudirect-storage/).
+The JNI code can be built with *GPUDirect Storage* (GDS) support, which enables direct copies
+between GPU memory and supported file systems (see https://docs.nvidia.com/gpudirect-storage/).
 
-To enable GDS support, first make sure GDS is installed (see
-https://docs.nvidia.com/gpudirect-storage/troubleshooting-guide/index.html), then run:
-```shell script
-cd src/cudf/java
+To enable GDS support, first make sure that GDS is installed (see
+https://docs.nvidia.com/gpudirect-storage/troubleshooting-guide/index.html), and then run:
+
+```shell
+cd java
 mvn clean install -DUSE_GDS=ON
 ```

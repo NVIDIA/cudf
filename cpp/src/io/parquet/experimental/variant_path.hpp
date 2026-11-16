@@ -46,8 +46,9 @@ namespace cudf::io::parquet::experimental::detail {
  * one per slot.
  *
  * `path_offsets` and `path_indices` invert the path-to-slot mapping in CSR form: slot `k`'s value
- * is the output of the input paths at indices `path_indices[path_offsets[k] : path_offsets[k +
- * 1]]`, which is empty for a slot that only exists as a shared prefix.
+ * is the output of the input paths at indices
+ * `path_indices[path_offsets[k] : path_offsets[k + 1]]`, which is empty for a slot that only
+ * exists as a shared prefix.
  */
 struct variant_path_trie {
   std::vector<std::string> steps;     ///< Step tokens of every slot, concatenated in slot order

@@ -1621,7 +1621,7 @@ class staging_buffer {
   slice<T> add(std::vector<T> const& host)
   {
     auto const offset = cudf::detail::round_up_safe(size_, alignof(T));
-    // An empty vector's data() may be null, which memcpy does not accept even for zero bytes
+    // An empty vector's data() may be null, which is UB for memcpy even with zero bytes
     if (!host.empty()) { pieces_.push_back({offset, host.data(), host.size() * sizeof(T)}); }
     size_ = offset + host.size() * sizeof(T);
     return {offset, host.size()};

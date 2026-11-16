@@ -38,7 +38,9 @@ Write enough for a maintainer to act or join the discussion. A small bug may nee
 
 The first three prefixes come from the templates; the others are maintainer conventions. Use a specific symptom or change, with a component when helpful: `[BUG] cudf-polars: ...`. Match the prefix style within a story, including `[PERF]:` if that is what it uses.
 
-Verify label names before suggesting them: `gh label list -R NVIDIA/cudf --search <name>`. Areas include `libcudf`, `cuIO`, `Python`, `pylibcudf`, `cudf-polars` and `cudf.pandas`. Leave triage, priority, assignment, milestones and projects to maintainers unless asked.
+Verify label names before suggesting them: `gh label list -R NVIDIA/cudf --search <name>`. Areas include `libcudf`, `cuIO`, `Python`, `pylibcudf`, `cudf-polars` and `cudf.pandas`. Leave priority, assignment, milestones and projects to maintainers unless asked.
+
+Use the triage status established by the maintainer or supplied context. An issue may already be triaged before it is opened. Suggest a needs-triage label when review and classification remain necessary; do not add it automatically from the template. Verify the current label convention and show the proposed triage status with the draft metadata. Drafting an issue does not itself complete triage or authorize implementation.
 
 ## Body by kind
 

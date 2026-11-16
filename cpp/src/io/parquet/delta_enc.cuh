@@ -65,7 +65,7 @@ using max_scratch_type = uint64_t;
 // type the warp uses.
 template <typename scratch_type>
 inline __device__ void bitpack_mini_block(
-  uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, void* temp_space)
+  uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, max_scratch_type* temp_space)
 {
   using wide_type = cuda::std::
     conditional_t<cuda::std::same_as<scratch_type, max_scratch_type>, __uint128_t, uint64_t>;
@@ -78,8 +78,7 @@ inline __device__ void bitpack_mini_block(
 
   // The warps of a block can pack their mini-blocks with different scratch types, so each warp
   // gets a region sized for max_scratch_type. Regions sized by `scratch_type` would overlap.
-  auto const scratch = reinterpret_cast<scratch_type*>(static_cast<max_scratch_type*>(temp_space) +
-                                                       warp_id * warp_size);
+  auto const scratch = reinterpret_cast<scratch_type*>(temp_space + warp_id * warp_size);
 
   // zero out scratch
   scratch[lane_id] = 0;
@@ -156,7 +155,7 @@ class delta_binary_packer {
   typename warp_reduce::TempStorage* _warp_tmp;
   typename block_reduce::TempStorage* _block_tmp;
 
-  void* _bitpack_tmp;  // pointer to shared scratch memory used in bitpacking
+  delta::max_scratch_type* _bitpack_tmp;  // pointer to shared scratch memory used in bitpacking
 
   // Write the delta binary header. Only call from thread 0.
   inline __device__ void write_header()
@@ -193,7 +192,7 @@ class delta_binary_packer {
     _scan_tmp         = reinterpret_cast<index_scan::TempStorage*>(temp_storage);
     _warp_tmp         = reinterpret_cast<typename warp_reduce::TempStorage*>(temp_storage);
     _block_tmp        = reinterpret_cast<typename block_reduce::TempStorage*>(temp_storage);
-    _bitpack_tmp      = _buffer + delta::buffer_size;
+    _bitpack_tmp      = reinterpret_cast<delta::max_scratch_type*>(_buffer + delta::buffer_size);
     _current_idx      = 0;
     _values_in_buffer = 0;
     _buffer[0]        = 0;

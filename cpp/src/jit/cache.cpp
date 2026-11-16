@@ -300,10 +300,8 @@ void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version
 
 void append_cccl_options(std::vector<std::string>& options)
 {
-  // workarounds for CCCL PCH reduction until CCCL releases a fix
-
-  // see: https://github.com/NVIDIA/cccl/pull/12560/
-  // https://github.com/vllm-project/humming/pull/192
+  // Workaround for CCCL PCH reduction until (https://github.com/NVIDIA/cccl/pull/12560/) makes it
+  // into a release
 
   // limit template unrolling in CCCL headers
   options.emplace_back("-D_CCCL_META_UNROLL_LIMIT=1");

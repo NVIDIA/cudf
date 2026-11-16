@@ -560,8 +560,7 @@ namespace {
     case LogicalType::JSON:
     case LogicalType::BSON:
     case LogicalType::GEOMETRY:
-    case LogicalType::GEOGRAPHY:
-    case LogicalType::FILE: return physical == Type::BYTE_ARRAY;
+    case LogicalType::GEOGRAPHY: return physical == Type::BYTE_ARRAY;
     case LogicalType::UUID: return physical == Type::FIXED_LEN_BYTE_ARRAY;
     case LogicalType::FLOAT16: return physical == Type::FIXED_LEN_BYTE_ARRAY;
     case LogicalType::DATE: return physical == Type::INT32;
@@ -580,7 +579,8 @@ namespace {
       return is_int or physical == Type::FIXED_LEN_BYTE_ARRAY or physical == Type::BYTE_ARRAY;
     // Null type may annotate any physical type
     case LogicalType::UNKNOWN: return true;
-    // Nested annotations are not valid on leaf columns, and UNDEFINED is an unrecognized type
+    // MAP, LIST, VARIANT and FILE annotate groups, so they are not valid on leaf columns. UNDEFINED
+    // is an unrecognized type
     default: return false;
   }
 }

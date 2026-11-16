@@ -946,7 +946,8 @@ __device__ void gpuDecodeLevels(
   cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
 {
   auto cur_leaf_count = target_leaf_count;
-  while (s->setup.error == 0 && s->progress.nz_count < target_leaf_count &&
+  // Other warps may be setting the error code, which a plain load must not race with.
+  while (s->error_code() == 0 && s->progress.nz_count < target_leaf_count &&
          s->progress.input_value_count < s->setup.num_input_values) {
     // because the rep and def streams are encoded separately, we cannot request an exact
     // # of values to be decoded at once. we can only process the lowest # of decoded rep/def

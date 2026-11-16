@@ -20,6 +20,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
+#include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/extrema.h>
 
@@ -45,26 +46,37 @@ struct noinline_adapter_fn {
 };
 
 /**
- * @brief Ordering for arithmetic ARGMIN/ARGMAX that selects the first NaN
+ * @brief Ordering for arithmetic ARGMIN/ARGMAX that selects the row holding the MIN/MAX result
  *
- * NaN propagates as in the IEEE 754-2019 minimum/maximum operations: NaN is ordered before every
- * other value for ARGMIN and after every other value for ARGMAX. This is a strict weak ordering,
- * so `thrust::min_element`/`thrust::max_element` return the first NaN. `is_nan_bits` avoids FP64
- * instructions (see device_operators.cuh).
+ * `thrust::min_element` (ARGMIN) and `thrust::max_element` (ARGMAX) return the first row that is
+ * ordered at the extreme. Floating-point values use `ieee_extremum_precedes`: NaN is selected
+ * before every other value and -0 is less than +0, as in `DeviceMin`/`DeviceMax`.
+ *
+ * Elements given as (value, validity) pairs order a null after every valid element for ARGMIN
+ * and before every valid element for ARGMAX, so a null row is selected only if every row is null.
+ * Replacing nulls with the operator identity instead would tie with a valid infinity (or the
+ * largest/smallest integer) and could select the null row.
  */
 template <aggregation::Kind K>
 struct arithmetic_extremum_less {
   template <typename T>
+    requires(cuda::std::is_arithmetic_v<T>)
   __device__ bool operator()(T const& lhs, T const& rhs) const
   {
     if constexpr (cuda::std::is_floating_point_v<T>) {
-      auto const lhs_nan = cudf::detail::is_nan_bits(lhs);
-      auto const rhs_nan = cudf::detail::is_nan_bits(rhs);
-      if (lhs_nan || rhs_nan) {
-        return K == aggregation::ARGMIN ? (lhs_nan && !rhs_nan) : (!lhs_nan && rhs_nan);
-      }
+      return K == aggregation::ARGMIN ? cudf::detail::ieee_extremum_precedes<true>(lhs, rhs)
+                                      : cudf::detail::ieee_extremum_precedes<false>(rhs, lhs);
+    } else {
+      return lhs < rhs;
     }
-    return lhs < rhs;
+  }
+
+  template <typename T>
+  __device__ bool operator()(cuda::std::pair<T, bool> const& lhs,
+                             cuda::std::pair<T, bool> const& rhs) const
+  {
+    if (lhs.second && rhs.second) { return (*this)(lhs.first, rhs.first); }
+    return K == aggregation::ARGMIN ? (lhs.second && !rhs.second) : (!lhs.second && rhs.second);
   }
 };
 
@@ -151,9 +163,6 @@ class arg_minmax_dispatcher {
                                           cuda::stream_ref stream,
                                           cudf::memory_resources mr) const
   {
-    using Op        = std::conditional_t<K == aggregation::ARGMIN,
-                                         reduction::detail::op::min,
-                                         reduction::detail::op::max>;
     auto const less = arithmetic_extremum_less<K>{};
     // Dictionary keys are not guaranteed to be sorted, so the index of the min/max index does
     // not identify the min/max key. Read `keys[indices[i]]` directly per row via a lazy
@@ -161,22 +170,17 @@ class arg_minmax_dispatcher {
     if (is_dictionary(input.type())) {
       auto const d_dict = column_device_view::create(input, stream, mr.get_temporary_mr());
       if (input.has_nulls()) {
-        auto const transformer =
-          Op{}.template get_null_replacing_element_transformer<ElementType>();
-        auto const p =
+        auto const it =
           cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*d_dict, true);
-        auto const it = cuda::transform_iterator(p, transformer);
         return find_extremum_idx(it, input.size(), stream, mr, less);
       }
       auto const it = cudf::dictionary::detail::make_dictionary_iterator<ElementType>(*d_dict);
       return find_extremum_idx(it, input.size(), stream, mr, less);
     }
     if (input.has_nulls()) {
-      auto const d_input     = column_device_view::create(input, stream, mr.get_temporary_mr());
-      auto const transformer = Op{}.template get_null_replacing_element_transformer<ElementType>();
-      auto const it =
-        cuda::transform_iterator(d_input->pair_begin<ElementType, true>(), transformer);
-      return find_extremum_idx(it, input.size(), stream, mr, less);
+      auto const d_input = column_device_view::create(input, stream, mr.get_temporary_mr());
+      return find_extremum_idx(
+        d_input->pair_begin<ElementType, true>(), input.size(), stream, mr, less);
     } else {
       return find_extremum_idx(input.begin<ElementType>(), input.size(), stream, mr, less);
     }

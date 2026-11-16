@@ -15,6 +15,7 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/utilities/bit.hpp>
@@ -27,7 +28,9 @@
 #include <src/rolling/detail/rolling.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -925,6 +928,33 @@ TYPED_TEST(RollingMinMaxNaNTest, Dictionary)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     wrapper{T{3}, NaN, NaN, NaN, T{2}},
     rolling(*cudf::make_max_aggregation<cudf::rolling_aggregation>())->view());
+}
+
+TYPED_TEST(RollingMinMaxNaNTest, DictionarySignedZeros)
+{
+  using T = TypeParam;
+
+  // Dictionary keys are not required to be unique, so -0 and +0 can be separate keys. The
+  // selected row must hold a zero with the sign of the MIN (-0) or MAX (+0) result.
+  auto const keys    = cudf::test::fixed_width_column_wrapper<T>{-T{0}, T{0}};
+  auto const indices = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 0, 1};
+  auto const input   = cudf::make_dictionary_column(keys, indices);  // [-0, +0, -0, +0]
+  auto const rolling = [&](cudf::rolling_aggregation const& agg) {
+    // window of the current and previous rows
+    auto const result  = cudf::rolling_window(input->view(), 2, 0, 1, agg);
+    auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(result->view()));
+    return cudf::test::to_host<T>(decoded->view()).first;
+  };
+  auto const mins               = rolling(*cudf::make_min_aggregation<cudf::rolling_aggregation>());
+  auto const maxs               = rolling(*cudf::make_max_aggregation<cudf::rolling_aggregation>());
+  auto const expected_max_signs = std::vector<bool>{true, false, false, false};
+  for (std::size_t i = 0; i < mins.size(); ++i) {
+    SCOPED_TRACE("row " + std::to_string(i));
+    EXPECT_EQ(mins[i], T{0});
+    EXPECT_TRUE(std::signbit(mins[i]));
+    EXPECT_EQ(maxs[i], T{0});
+    EXPECT_EQ(std::signbit(maxs[i]), expected_max_signs[i]);
+  }
 }
 
 TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)

@@ -253,11 +253,13 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
         if (!has_nulls || dict.is_valid_nocheck(j)) {
           auto element = keys.element<T>(dict.element<dictionary32>(j).value());
           val          = agg_op(element, val);
-          // A NaN result must still select a row holding a NaN
+          // Select a row whose key is equivalent to the result: a NaN result selects a row
+          // holding a NaN, and a zero result selects a row holding a zero of the same sign
           auto const selected = [&] {
             if constexpr (cuda::std::is_floating_point_v<T>) {
-              return val == element ||
-                     (cudf::detail::is_nan_bits(val) && cudf::detail::is_nan_bits(element));
+              auto constexpr is_min = op == aggregation::ARGMIN;
+              return !cudf::detail::ieee_extremum_precedes<is_min>(val, element) &&
+                     !cudf::detail::ieee_extremum_precedes<is_min>(element, val);
             } else {
               return val == element;
             }

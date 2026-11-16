@@ -61,16 +61,17 @@ struct element_argminmax_fn {
       auto const comparison = lhs.compare(rhs);
       if (comparison == 0) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (comparison < 0) == arg_min ? lhs_idx : rhs_idx;
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      // Select the row holding the DeviceMin/DeviceMax result: the first NaN row for both argmin
+      // and argmax, with -0 less than +0 (see ieee_extremum_precedes).
+      auto const precedes = [&](T a, T b) {
+        return arg_min ? cudf::detail::ieee_extremum_precedes<true>(a, b)
+                       : cudf::detail::ieee_extremum_precedes<false>(a, b);
+      };
+      if (precedes(lhs, rhs)) { return lhs_idx; }
+      if (precedes(rhs, lhs)) { return rhs_idx; }
+      return lhs_idx < rhs_idx ? lhs_idx : rhs_idx;
     } else {
-      if constexpr (cuda::std::is_floating_point_v<T>) {
-        // NaN propagates as in the IEEE 754-2019 minimum/maximum operations: the first NaN
-        // row is selected for both argmin and argmax. is_nan_bits avoids FP64 instructions
-        // (see device_operators.cuh).
-        auto const lhs_nan = cudf::detail::is_nan_bits(lhs);
-        auto const rhs_nan = cudf::detail::is_nan_bits(rhs);
-        if (lhs_nan && rhs_nan) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
-        if (lhs_nan || rhs_nan) { return lhs_nan ? lhs_idx : rhs_idx; }
-      }
       if (lhs == rhs) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (lhs < rhs) == arg_min ? lhs_idx : rhs_idx;
     }

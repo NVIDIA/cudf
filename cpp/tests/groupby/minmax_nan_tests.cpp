@@ -16,14 +16,18 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <source_location>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 // min/max follow the IEEE 754-2019 minimum/maximum operations for floating-point values:
-// NaN propagates and -0 is less than +0. argmin/argmax select the first NaN.
+// NaN propagates and -0 is less than +0. A NaN result is the canonical quiet NaN. argmin/argmax
+// select the row holding the min/max result: the first NaN, and -0 before +0 for argmin.
 
 /**
  * @brief Checks the MIN, MAX, ARGMIN, and ARGMAX groupby results for the same input
@@ -171,19 +175,69 @@ TYPED_TEST(GroupbyMinMaxNaNTest, SignedZeros)
   requests[0].values = vals;
   requests[0].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
   requests[0].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_argmin_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_argmax_aggregation<cudf::groupby_aggregation>());
   auto gb_obj                       = cudf::groupby::groupby(cudf::table_view({keys}));
   auto const [result_keys, results] = gb_obj.aggregate(requests);
 
   auto const order  = cudf::sorted_order(result_keys->view());
-  auto const sorted = cudf::gather(
-    cudf::table_view({results[0].results[0]->view(), results[0].results[1]->view()}), *order);
-  auto const mins = cudf::test::to_host<T>(sorted->get_column(0).view()).first;
-  auto const maxs = cudf::test::to_host<T>(sorted->get_column(1).view()).first;
+  auto const sorted = cudf::gather(cudf::table_view({results[0].results[0]->view(),
+                                                     results[0].results[1]->view(),
+                                                     results[0].results[2]->view(),
+                                                     results[0].results[3]->view()}),
+                                   *order);
+  auto const mins   = cudf::test::to_host<T>(sorted->get_column(0).view()).first;
+  auto const maxs   = cudf::test::to_host<T>(sorted->get_column(1).view()).first;
   for (std::size_t i = 0; i < mins.size(); ++i) {
     EXPECT_EQ(mins[i], T{0});
     EXPECT_TRUE(std::signbit(mins[i]));
     EXPECT_EQ(maxs[i], T{0});
     EXPECT_FALSE(std::signbit(maxs[i]));
+  }
+
+  // argmin/argmax select the row holding the min/max result: -0 for argmin and +0 for argmax
+  using idx_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(idx_col{1, 3}, sorted->get_column(2).view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(idx_col{0, 4}, sorted->get_column(3).view());
+}
+
+TYPED_TEST(GroupbyMinMaxNaNTest, CanonicalNaN)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  using bits_t       = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t, uint64_t>;
+
+  // The sign and payload of the input NaNs do not affect the NaN result, whatever the order of
+  // the atomic updates
+  auto const neg_nan     = std::copysign(NaN, T{-1});
+  auto const payload_nan = std::bit_cast<T>(std::bit_cast<bits_t>(NaN) | bits_t{5});
+  auto constexpr size    = 10'000;
+  auto keys              = std::vector<int32_t>(size);
+  auto vals              = std::vector<T>(size);
+  for (int32_t row = 0; row < size; ++row) {
+    keys[row] = row % 10;
+    switch (row % 3) {
+      case 0: vals[row] = neg_nan; break;
+      case 1: vals[row] = payload_nan; break;
+      default: vals[row] = static_cast<T>(row); break;
+    }
+  }
+  auto const keys_col = cudf::test::fixed_width_column_wrapper<int32_t>(keys.begin(), keys.end());
+  auto const vals_col = cudf::test::fixed_width_column_wrapper<T>(vals.begin(), vals.end());
+
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = vals_col;
+  requests[0].aggregations.push_back(cudf::make_min_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+  auto gb_obj                 = cudf::groupby::groupby(cudf::table_view({keys_col}));
+  auto const [_keys, results] = gb_obj.aggregate(requests);
+  auto const canonical        = std::bit_cast<bits_t>(NaN);
+  for (auto const& result : results[0].results) {
+    auto const values = cudf::test::to_host<T>(result->view()).first;
+    EXPECT_EQ(values.size(), 10);
+    for (auto value : values) {
+      EXPECT_EQ(std::bit_cast<bits_t>(value), canonical);
+    }
   }
 }
 

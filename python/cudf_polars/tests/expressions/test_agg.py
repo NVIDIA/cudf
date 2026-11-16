@@ -431,6 +431,8 @@ def test_arg_max_min(engine: pl.GPUEngine, agg: str) -> None:
     [
         [1.0, float("nan"), 3.0, None],
         [None, float("nan"), float("nan")],
+        [float("nan"), float("inf")],
+        [float("nan"), float("-inf")],
     ],
 )
 def test_arg_max_min_nan(engine: pl.GPUEngine, agg: str, data: list) -> None:

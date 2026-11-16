@@ -222,13 +222,27 @@ std::unique_ptr<Base> make_sum_overflow_aggregation();
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_product_aggregation();
 
-/// Factory to create a MIN aggregation
-/// @return A MIN aggregation object
+/**
+ * @brief Factory to create a MIN aggregation
+ *
+ * For floating-point values, MIN follows the IEEE 754-2019 `minimum` operation: the result is NaN
+ * if any value is NaN, and -0.0 is less than +0.0. A NaN result is the canonical quiet NaN; the
+ * sign and payload of the input NaNs are not preserved.
+ *
+ * @return A MIN aggregation object
+ */
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_min_aggregation();
 
-/// Factory to create a MAX aggregation
-/// @return A MAX aggregation object
+/**
+ * @brief Factory to create a MAX aggregation
+ *
+ * For floating-point values, MAX follows the IEEE 754-2019 `maximum` operation: the result is NaN
+ * if any value is NaN, and +0.0 is greater than -0.0. A NaN result is the canonical quiet NaN; the
+ * sign and payload of the input NaNs are not preserved.
+ *
+ * @return A MAX aggregation object
+ */
 template <typename Base = aggregation>
 std::unique_ptr<Base> make_max_aggregation();
 
@@ -324,7 +338,10 @@ std::unique_ptr<Base> make_quantile_aggregation(std::vector<double> const& quant
 /**
  * @brief Factory to create an ARGMAX aggregation
  *
- * ARGMAX returns the index of the maximum element.
+ * ARGMAX returns the index of the maximum element. Equal elements select the smallest index. For
+ * floating-point values, ARGMAX selects the row holding the MAX result: the first NaN if any value
+ * is NaN, and a +0.0 rather than a -0.0.
+ *
  * @return A ARGMAX aggregation object
  */
 template <typename Base = aggregation>
@@ -333,7 +350,10 @@ std::unique_ptr<Base> make_argmax_aggregation();
 /**
  * @brief Factory to create an ARGMIN aggregation
  *
- * `argmin` returns the index of the minimum element.
+ * `argmin` returns the index of the minimum element. Equal elements select the smallest index.
+ * For floating-point values, ARGMIN selects the row holding the MIN result: the first NaN if any
+ * value is NaN, and a -0.0 rather than a +0.0.
+ *
  * @return A ARGMIN aggregation object
  */
 template <typename Base = aggregation>

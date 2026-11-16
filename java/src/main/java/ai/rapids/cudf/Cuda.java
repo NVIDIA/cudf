@@ -643,6 +643,31 @@ public class Cuda {
    * {@link #memPoolImportFromPosixFd(int)}. The pool must have been created with POSIX file
    * descriptor handles, for example by
    * {@link RmmCudaAsyncMemoryResource#HANDLE_TYPE_POSIX_FILE_DESCRIPTOR}.
+   * <p><b>Ownership and order of release across processes.</b> The exporting process owns the
+   * pool and every allocation in it. The importing process owns the pool and the pointers it
+   * imports, and releases them before the exporting process releases the originals:
+   * <ol>
+   *   <li>Exporting process: export the pool with this method and send the file descriptor to
+   *       the importing process, for example over a Unix domain socket. The returned file
+   *       descriptor belongs to the caller, which closes it once it has been sent.</li>
+   *   <li>Importing process: import the pool with {@link #memPoolImportFromPosixFd(int)}, which
+   *       closes the file descriptor it is given.</li>
+   *   <li>Exporting process, per allocation: once the work that writes the allocation has
+   *       completed, export it with {@link #memPoolExportPointer(long)} and send the export data
+   *       and the size of the allocation. Keep the allocation until the importing process
+   *       reports that it freed its pointer.</li>
+   *   <li>Importing process, per allocation: import it with
+   *       {@link #memPoolImportPointer(long, byte[])}, use it, free it with
+   *       {@link #freeAsync(long, Stream)}, synchronize that stream, then tell the exporting
+   *       process the pointer is freed.</li>
+   *   <li>Exporting process: free the allocation.</li>
+   *   <li>Importing process: once every pointer it imported from the pool is freed, destroy the
+   *       imported pool with {@link #memPoolDestroy(long)}. Until it is destroyed, the imported
+   *       pool keeps the exporting process's memory allocated.</li>
+   *   <li>Exporting process: close the memory resource that owns the pool after its
+   *       allocations are freed; RMM destroys the pool. Do not call
+   *       {@link #memPoolDestroy(long)} on a pool that RMM owns.</li>
+   * </ol>
    * <p>This method is experimental and subject to change.
    * @param pool the cudaMemPool_t to export
    * @return a new file descriptor that the caller owns and must close
@@ -656,6 +681,8 @@ public class Cuda {
    * or not the import succeeds; the imported pool keeps its own reference to the memory. The
    * caller must destroy the returned pool with {@link #memPoolDestroy(long)} after every pointer
    * imported from it has been freed.
+   * <p>See {@link #memPoolExportToPosixFd(long)} for which process owns what and the order of
+   * release across processes.
    * <p>This method is experimental and subject to change.
    * @param fd the file descriptor received from the exporting process
    * @return the imported cudaMemPool_t
@@ -666,6 +693,8 @@ public class Cuda {
   /**
    * Destroy a CUDA memory pool with cudaMemPoolDestroy. The call returns cudaErrorInvalidValue if
    * the pool cannot be destroyed.
+   * <p>See {@link #memPoolExportToPosixFd(long)} for which process owns what and the order of
+   * release across processes.
    * <p>This method is experimental and subject to change.
    * @param pool the cudaMemPool_t to destroy
    * @throws CudaException on any error.
@@ -682,6 +711,8 @@ public class Cuda {
    * <p>Tested only with one exported pointer per allocation, at the start of that allocation.
    * Exporting several pointers into one large allocation (for example sub-buffers at different
    * offsets) is not tested.
+   * <p>See {@link #memPoolExportToPosixFd(long)} for which process owns what and the order of
+   * release across processes.
    * <p>This method is experimental and subject to change.
    * @param ptr the device address to export
    * @return the cudaMemPoolPtrExportData bytes, to pass to
@@ -704,6 +735,8 @@ public class Cuda {
    * <p>Tested only with one exported pointer per allocation, at the start of that allocation.
    * Exporting several pointers into one large allocation (for example sub-buffers at different
    * offsets) is not tested.
+   * <p>See {@link #memPoolExportToPosixFd(long)} for which process owns what and the order of
+   * release across processes.
    * <p>This method is experimental and subject to change.
    * @param pool the pool imported with {@link #memPoolImportFromPosixFd(int)}
    * @param exportData the bytes returned by {@link #memPoolExportPointer(long)}
@@ -715,7 +748,8 @@ public class Cuda {
 
   /**
    * Free a pointer with cudaFreeAsync on the given stream. The memory is not released until the
-   * free completes on the stream.
+   * free completes on the stream. For a pointer from {@link #memPoolImportPointer(long, byte[])},
+   * see {@link #memPoolExportToPosixFd(long)} for the order of release across processes.
    * @param ptr the pointer to free, for example one returned by
    *            {@link #memPoolImportPointer(long, byte[])}
    * @param stream the stream to free on

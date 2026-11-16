@@ -242,7 +242,7 @@ context make_context(detail::init_flags flags)
                      .jit_verbose                = jit_verbose,
                      .dump_jit_trace             = dump_jit_trace,
                      .dump_jit_time_profile      = dump_jit_time_profile,
-                     .jit_pch_heap_size          = jit_pch_heap_size,
+                     .jit_pch_heap_size          = jit_pch_heap_size * 1024 * 1024,
                      .rtcx_cache_dir             = rtcx_cache_dir,
                      .jit_bundle_dir             = jit_bundle_dir,
                      .jit_tmp_dir                = jit_tmp_dir,

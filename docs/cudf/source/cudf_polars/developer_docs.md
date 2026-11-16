@@ -617,39 +617,27 @@ and matching list entries before selected PR runs can use them.
 
 ### Comparing local and upstream test coverage
 
-To find behavior that may need additional upstream tests, use a devcontainer
-with GPU access, cudf-polars built and installed in editable mode from this
-checkout, and its test dependencies (including pytest-cov and pytest-xdist)
-installed. Install a supported Polars version and place its
-matching `py-<version>` checkout in `polars/`.
-Then run this command in the cuDF devcontainer:
+In a GPU devcontainer, build and install this checkout's cudf-polars in
+editable mode with pytest-cov and pytest-xdist. Use a supported Polars version
+and its matching `py-<version>` checkout in `polars/`, then run:
 
 ```bash
 ci/run_cudf_polars_coverage_comparison.sh
 ```
 
-The command collects local coverage and runs the upstream suite with the
-in-memory and default-blocksize SPMD engines, without GPU run-list selection.
-The existing runners' skips, deselections, and slow-test filters still apply.
-Set `POLARS_DIR` to use another upstream checkout, or pass an output directory
-as the command's first argument.
+This collects local coverage and upstream coverage with the in-memory and
+default-blocksize SPMD engines. GPU run-list selection is disabled; existing
+runner exclusions still apply. Set `POLARS_DIR` for another checkout or pass
+an output directory as the first argument.
 
-The output directory (default: `coverage-results/cudf-polars-comparison/`)
-contains `.coverage.local`, `.coverage.upstream-in-memory`,
-`.coverage.upstream-spmd`, and `coverage-comparison.json`. Keep these files
-together. The JSON identifies local-only, upstream-only, and shared lines and
-records the Polars version, checkout revisions, and suite exit statuses.
-Collection metadata records the pytest options and SPMD blocksize passed by
-the command. The recorded cuDF revision identifies the runners and their
-collection filters.
-It samples up to 20 contexts per source line and reports when a sample is
-truncated; the coverage databases retain every test node and its
-`|setup`, `|run`, or `|teardown` phase. The engine databases remain separate so
-the same upstream node can be examined under each configuration.
+Outputs default to `coverage-results/cudf-polars-comparison/`. Keep
+`.coverage.local`, `.coverage.upstream-in-memory`, `.coverage.upstream-spmd`,
+and `coverage-comparison.json` together. The JSON classifies local-only,
+upstream-only, and shared lines with up to 20 context samples per line;
+the databases retain all contexts.
 
-To print every local context for a line, including those omitted from the JSON
-sample, use the local coverage database directly. Replace the source filename
-and line number below with the exact values from the report:
+To retrieve all local contexts, replace the filename and line below with
+exact values from the report:
 
 ```bash
 python - coverage-results/cudf-polars-comparison/.coverage.local /absolute/source/filename.py 42 <<'PY'
@@ -663,22 +651,10 @@ print(*sorted(data.contexts_by_lineno(sys.argv[2])[int(sys.argv[3])]), sep="\n")
 PY
 ```
 
-Local-only lines are a starting point for finding missing upstream assertions.
-Check their test contexts: import-time code, fixture setup, and assertion
-helpers also contribute coverage. An empty context represents unattributed
-coverage. An upstream test may be skipped, select a CPU engine, or fall back,
-so absent GPU coverage does not necessarily mean the behavior is untested
-upstream. Use the GPU execution diagnostics and inspect both tests' assertions
-before deciding what to contribute.
-
-The command exports available data even when a suite fails, then returns a
-nonzero status. Such reports are incomplete evidence. Missing data or missing
-test-body contexts prevent export rather than being interpreted as a coverage
-gap. Databases must measure the same cudf-polars source root; differing roots
-are rejected rather than remapped. To compare existing databases without
-rerunning tests, invoke
-`python ci/analyze_cudf_polars_coverage.py --help`; `--upstream-data` accepts multiple
-databases.
+Coverage differences identify investigation targets, not proven missing
+assertions or GPU execution. A failed suite makes the command exit nonzero;
+any resulting report is incomplete. To re-export saved databases, see
+`python ci/analyze_cudf_polars_coverage.py --help`.
 
 # Debugging
 

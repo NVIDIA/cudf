@@ -779,7 +779,7 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   // compute the first block (section) for each row
@@ -868,7 +868,7 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
                               input.size() * static_cast<cudf::size_type>(parameter_a.size()),
                               cudf::mask_state::UNALLOCATED,
                               stream,
-                              mr.get_output_mr());
+                              mr);
   auto d_results = results->mutable_view().data<hash_value_type>();
 
   cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * block_size,
@@ -924,6 +924,18 @@ std::unique_ptr<cudf::column> minhash_ngrams_fn(
   return results;
 }
 
+/**
+ * @brief Returns the memory resources for building the lists column before
+ * `purge_nonempty_nulls` is applied
+ *
+ * If the input has nulls, the lists column is copied by `purge_nonempty_nulls`
+ * and so the initial column (including the hashes child) is only temporary.
+ */
+cudf::memory_resources list_build_mr(cudf::column_view const& input, cudf::memory_resources mr)
+{
+  return input.has_nulls() ? mr.as_temporary() : mr;
+}
+
 std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 std::unique_ptr<cudf::column>&& hashes,
                                                 cudf::size_type seeds_size,
@@ -931,12 +943,12 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                                 cudf::memory_resources mr)
 {
   // build the offsets for the output lists column
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto const output_mr = mr.get_output_mr();
-  auto const zero      = cudf::numeric_scalar<cudf::size_type>(0, true, stream, temp_mr);
-  auto const size      = cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, temp_mr);
-  auto offsets         = cudf::detail::sequence(input.size() + 1, zero, size, stream, output_mr);
-  hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const list_mr = list_build_mr(input, mr);
+  auto const zero    = cudf::numeric_scalar<cudf::size_type>(0, true, stream, temp_mr);
+  auto const size    = cudf::numeric_scalar<cudf::size_type>(seeds_size, true, stream, temp_mr);
+  auto offsets       = cudf::detail::sequence(input.size() + 1, zero, size, stream, list_mr);
+  hashes->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, list_mr),
                         0);  // children have no nulls
 
   // build the lists column from the offsets and the hashes
@@ -944,10 +956,10 @@ std::unique_ptr<cudf::column> build_list_result(cudf::column_view const& input,
                                   std::move(offsets),
                                   std::move(hashes),
                                   input.null_count(),
-                                  cudf::detail::copy_bitmask(input, stream, mr));
+                                  cudf::detail::copy_bitmask(input, stream, list_mr));
   // expect this condition to be very rare
-  if (input.null_count() > 0) {
-    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, output_mr);
+  if (input.has_nulls()) {
+    result = cudf::detail::purge_nonempty_nulls(result->view(), stream, mr);
   }
   return result;
 }
@@ -962,8 +974,8 @@ std::unique_ptr<cudf::column> minhash(cudf::strings_column_view const& input,
                                       cudf::memory_resources mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
-  auto hashes =
-    detail::minhash_fn<HashFunction>(input, seed, parameter_a, parameter_b, width, stream, mr);
+  auto hashes        = detail::minhash_fn<HashFunction>(
+    input, seed, parameter_a, parameter_b, width, stream, list_build_mr(input.parent(), mr));
   return build_list_result(input.parent(), std::move(hashes), parameter_a.size(), stream, mr);
 }
 
@@ -977,7 +989,7 @@ std::unique_ptr<cudf::column> minhash_ngrams(cudf::lists_column_view const& inpu
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x86_32<cudf::string_view>;
   auto hashes        = detail::minhash_ngrams_fn<HashFunction>(
-    input, ngrams, seed, parameter_a, parameter_b, stream, mr);
+    input, ngrams, seed, parameter_a, parameter_b, stream, list_build_mr(input.parent(), mr));
   return build_list_result(input.parent(), std::move(hashes), parameter_a.size(), stream, mr);
 }
 
@@ -990,8 +1002,8 @@ std::unique_ptr<cudf::column> minhash64(cudf::strings_column_view const& input,
                                         cudf::memory_resources mr)
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
-  auto hashes =
-    detail::minhash_fn<HashFunction>(input, seed, parameter_a, parameter_b, width, stream, mr);
+  auto hashes        = detail::minhash_fn<HashFunction>(
+    input, seed, parameter_a, parameter_b, width, stream, list_build_mr(input.parent(), mr));
   return build_list_result(input.parent(), std::move(hashes), parameter_a.size(), stream, mr);
 }
 
@@ -1005,7 +1017,7 @@ std::unique_ptr<cudf::column> minhash64_ngrams(cudf::lists_column_view const& in
 {
   using HashFunction = cudf::hashing::detail::MurmurHash3_x64_128<cudf::string_view>;
   auto hashes        = detail::minhash_ngrams_fn<HashFunction>(
-    input, ngrams, seed, parameter_a, parameter_b, stream, mr);
+    input, ngrams, seed, parameter_a, parameter_b, stream, list_build_mr(input.parent(), mr));
   return build_list_result(input.parent(), std::move(hashes), parameter_a.size(), stream, mr);
 }
 

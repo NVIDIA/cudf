@@ -22,6 +22,7 @@ from cudf_polars.utils.config import ConfigOptions
 pytest.importorskip("cudf_polars_quent")
 
 import cudf_polars.quent._runtime
+from cudf_polars.quent._context import ReservationContextRegistry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterator
@@ -139,6 +140,7 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         _worker_handle=worker_handle,
         _buffer_resource=None,
         _reservation_ingestor=None,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):

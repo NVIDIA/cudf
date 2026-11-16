@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use uuid::Uuid;
 
-use crate::{actor::ActorSpan, reservation::OccupancySpan};
+use crate::{actor::ActorSpan, reservation::OccupancySpan, resource::DeclaredResource};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct OperatorReservationMetrics {
@@ -23,8 +23,9 @@ pub(crate) fn aggregate_operator_occupancy(
     occupancies: &[OccupancySpan],
     actors: &HashMap<Uuid, ActorSpan>,
     query_operator_ids: &HashSet<Uuid>,
-) -> HashMap<Uuid, OperatorReservationMetrics> {
-    let mut accumulators = HashMap::<Uuid, OperatorReservationAccumulator>::new();
+    resources: &HashMap<Uuid, DeclaredResource>,
+) -> HashMap<(Uuid, String), OperatorReservationMetrics> {
+    let mut accumulators = HashMap::<(Uuid, String), OperatorReservationAccumulator>::new();
 
     for occupancy in occupancies {
         let Some(operator_id) = occupancy
@@ -35,11 +36,19 @@ pub(crate) fn aggregate_operator_occupancy(
         else {
             continue;
         };
-        let accumulator = accumulators.entry(operator_id).or_default();
         for segment in &occupancy.segments {
             let Some(bytes) = segment.bytes.value else {
                 continue;
             };
+            let Some(memory_type) = resources
+                .get(&segment.resource_id)
+                .and_then(|resource| resource.memory_type.as_ref())
+            else {
+                continue;
+            };
+            let accumulator = accumulators
+                .entry((operator_id, memory_type.clone()))
+                .or_default();
             *accumulator
                 .byte_deltas
                 .entry(segment.span.start())
@@ -55,7 +64,7 @@ pub(crate) fn aggregate_operator_occupancy(
 
     accumulators
         .into_iter()
-        .map(|(operator_id, accumulator)| {
+        .map(|(key, accumulator)| {
             let mut held_bytes = 0_i128;
             let mut peak_bytes = 0_i128;
             for delta in accumulator.byte_deltas.values() {
@@ -64,7 +73,7 @@ pub(crate) fn aggregate_operator_occupancy(
             }
             debug_assert_eq!(held_bytes, 0);
             (
-                operator_id,
+                key,
                 OperatorReservationMetrics {
                     peak_bytes: peak_bytes
                         .try_into()
@@ -87,6 +96,7 @@ mod tests {
             Actor, ReservableMemory, ReservableMemoryUsage, ReservationOccupancyEvent, Worker,
         },
         reservation::build_occupancies,
+        resource::reservable_memory_resource_type,
     };
 
     fn occupancy_events(
@@ -131,6 +141,16 @@ mod tests {
         events
     }
 
+    fn memory_resource(id: u128, memory_type: &str) -> DeclaredResource {
+        DeclaredResource {
+            id: Uuid::from_u128(id),
+            instance_name: memory_type.to_owned(),
+            type_name: reservable_memory_resource_type(memory_type),
+            parent_group_id: Uuid::nil(),
+            memory_type: Some(memory_type.to_owned()),
+        }
+    }
+
     #[test]
     fn aggregates_concurrent_memory_types_zero_crossings_and_truncated_occupancy() {
         let actor_id = Uuid::from_u128(1);
@@ -167,13 +187,26 @@ mod tests {
         )]
         .into();
 
-        let metrics = aggregate_operator_occupancy(&occupancies, &actors, &[operator_id].into());
+        let resources = [
+            (Uuid::from_u128(20), memory_resource(20, "device")),
+            (Uuid::from_u128(21), memory_resource(21, "host")),
+        ]
+        .into();
+        let metrics =
+            aggregate_operator_occupancy(&occupancies, &actors, &[operator_id].into(), &resources);
 
         assert_eq!(
-            metrics[&operator_id],
+            metrics[&(operator_id, "device".to_owned())],
             OperatorReservationMetrics {
-                peak_bytes: 15,
-                byte_seconds: 325.0 / 1_000_000_000.0,
+                peak_bytes: 10,
+                byte_seconds: 160.0 / 1_000_000_000.0,
+            }
+        );
+        assert_eq!(
+            metrics[&(operator_id, "host".to_owned())],
+            OperatorReservationMetrics {
+                peak_bytes: 7,
+                byte_seconds: 165.0 / 1_000_000_000.0,
             }
         );
     }
@@ -203,6 +236,10 @@ mod tests {
         )]
         .into();
 
-        assert!(aggregate_operator_occupancy(&occupancies, &actors, &HashSet::new()).is_empty());
+        let resources = [(Uuid::from_u128(20), memory_resource(20, "device"))].into();
+        assert!(
+            aggregate_operator_occupancy(&occupancies, &actors, &HashSet::new(), &resources)
+                .is_empty()
+        );
     }
 }

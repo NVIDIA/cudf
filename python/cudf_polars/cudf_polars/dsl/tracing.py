@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import logging
 from typing import TYPE_CHECKING, Concatenate, TypeVar
 
 import nvtx
 
-from cudf_polars.utils.cleanup import run_cleanup_steps
-
 CUDF_POLARS_NVTX_DOMAIN = "cudf_polars"
+_logger = logging.getLogger(__name__)
 
 nvtx_annotate_cudf_polars = functools.partial(
     nvtx.annotate, domain=CUDF_POLARS_NVTX_DOMAIN
@@ -81,27 +81,26 @@ def log_do_evaluate[IRType: ir.IR, **P](
         try:
             result = func(cls, *args, **kwargs)
         except BaseException as error:
-            evaluation_error = error
             try:
-                run_cleanup_steps(
-                    "Quent evaluate failure finalization failed",
-                    lambda: runtime.emit_evaluate_end(
-                        quent_evaluate_id, None, evaluation_error
-                    ),
-                    runtime.drain_reservation_events,
+                runtime.emit_evaluate_end(
+                    quent_evaluate_id,
+                    None,
+                    error,
                 )
-            except Exception as cleanup_error:
-                raise BaseExceptionGroup(
-                    "Evaluation and Quent finalization failed",
-                    [evaluation_error, cleanup_error],
-                ) from None
+            except BaseException:
+                _logger.warning(
+                    "Quent evaluate failure finalization failed",
+                    exc_info=True,
+                )
             raise
         else:
-            run_cleanup_steps(
-                "Quent evaluate finalization failed",
-                lambda: runtime.emit_evaluate_end(quent_evaluate_id, result, None),
-                runtime.drain_reservation_events,
-            )
+            try:
+                runtime.emit_evaluate_end(quent_evaluate_id, result, None)
+            except BaseException:
+                _logger.warning(
+                    "Quent evaluate finalization failed",
+                    exc_info=True,
+                )
             return result
 
     return wrapper

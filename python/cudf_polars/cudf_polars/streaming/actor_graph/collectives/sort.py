@@ -202,6 +202,7 @@ async def _sample_chunks_for_size_estimate(
         sample_chunk_count,
         target_partition_size,
         metadata_in.local_count,
+        reservation_context=reservation_context,
     )
 
     # Allgather to get global size estimate across all ranks

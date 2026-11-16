@@ -366,12 +366,7 @@ cdef object pack(
     BufferResource br,
 ):
     """Pack a table into a single ``PackedData`` instance."""
-    packed = split_and_pack(
-        table,
-        (),
-        stream,
-        br,
-    )
+    packed = split_and_pack(table, (), stream, br)
     return packed[0]
 
 

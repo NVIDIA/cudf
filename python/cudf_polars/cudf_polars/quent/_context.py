@@ -76,6 +76,33 @@ class ReservationContextRegistry:
         with self._lock:
             return self._attribution.get(token)
 
+    def prune_actor(self, actor_id: uuid.UUID) -> set[ReservationContext]:
+        """Drop cached tokens for a completed Actor and return those tokens."""
+        with self._lock:
+            tokens = {
+                token
+                for (token_actor_id, _), token in self._tokens.items()
+                if token_actor_id == actor_id
+            }
+            self._tokens = {
+                key: token for key, token in self._tokens.items() if key[0] != actor_id
+            }
+            return tokens
+
+    def tokens_for_actor(self, actor_id: uuid.UUID) -> set[ReservationContext]:
+        """Return cached tokens for an Actor without pruning them."""
+        with self._lock:
+            return {
+                token
+                for (token_actor_id, _), token in self._tokens.items()
+                if token_actor_id == actor_id
+            }
+
+    def forget(self, token: ReservationContext) -> None:
+        """Drop attribution after all occupancy for a token has been released."""
+        with self._lock:
+            self._attribution.pop(token, None)
+
 
 class _ProcessorRegistry:
     """Map Python executor threads to generated Processor handles."""
@@ -354,3 +381,22 @@ class ActorBoundQuentIRExecutionState:
     scan_task_node_id: str | None = None
     scan_task_node_type: str | None = None
     io_bytes: int | None = None
+    _reservation_contexts: dict[ReservationSite, ReservationContext] = (
+        dataclasses.field(default_factory=dict, compare=False, repr=False)
+    )
+    _reservation_contexts_lock: threading.Lock = dataclasses.field(
+        default_factory=threading.Lock,
+        compare=False,
+        repr=False,
+    )
+
+    def reservation_context(self, site: ReservationSite) -> ReservationContext:
+        """Return this Actor's cached reservation context for a site."""
+        with self._reservation_contexts_lock:
+            if (token := self._reservation_contexts.get(site)) is not None:
+                return token
+            token = self.query_worker_state.runtime.reservation_context_registry.token(
+                self.actor_id, site
+            )
+            self._reservation_contexts[site] = token
+            return token

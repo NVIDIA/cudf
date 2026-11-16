@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use quent_analyzer::{AnalyzerResult, Entity, Span};
 use quent_dynamic_attributes::DynamicAttribute;
@@ -25,7 +25,7 @@ use crate::reservation::OCCUPANCY_ENTITY_TYPE;
 use crate::reservation_metrics::aggregate_operator_occupancy;
 use crate::resource::{
     DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-    PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE,
+    PROCESSOR_RESOURCE_TYPE,
 };
 
 impl CudfPolarsUiAnalyzer {
@@ -60,7 +60,7 @@ impl CudfPolarsUiAnalyzer {
             })
             .collect();
 
-        let resource_types = [
+        let mut resource_types: HashMap<_, _> = [
             (
                 PROCESSOR_RESOURCE_TYPE.to_owned(),
                 UiResourceTypeDecl {
@@ -103,10 +103,23 @@ impl CudfPolarsUiAnalyzer {
                     ],
                 },
             ),
-            (
-                RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
+        ]
+        .into_iter()
+        .collect();
+        let reservable_resource_types: Vec<_> = self
+            .resources
+            .values()
+            .filter(|resource| resources.contains_key(&resource.id))
+            .filter_map(|resource| resource.memory_type.as_ref().map(|_| &resource.type_name))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for type_name in &reservable_resource_types {
+            resource_types.insert(
+                type_name.clone(),
                 UiResourceTypeDecl {
-                    name: RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
+                    name: type_name.clone(),
                     capacities: vec![UiCapacityDecl {
                         name: "bytes".to_owned(),
                         kind: CapacityKind::Occupancy,
@@ -117,10 +130,8 @@ impl CudfPolarsUiAnalyzer {
                         FsmTypeSelection::Type(OCCUPANCY_ENTITY_TYPE.to_owned()),
                     ],
                 },
-            ),
-        ]
-        .into_iter()
-        .collect();
+            );
+        }
         let group_type = |name: &str, contains_resource_types: Vec<String>| ResourceGroupTypeDecl {
             name: name.to_owned(),
             display_order: vec![
@@ -129,30 +140,23 @@ impl CudfPolarsUiAnalyzer {
             ],
             contains_resource_types,
         };
+        let grouped_resource_types = [
+            vec![
+                PROCESSOR_RESOURCE_TYPE.to_owned(),
+                DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
+            ],
+            reservable_resource_types.clone(),
+        ]
+        .concat();
         let resource_group_types = [
             (
                 "engine".to_owned(),
-                group_type(
-                    "engine",
-                    vec![
-                        PROCESSOR_RESOURCE_TYPE.to_owned(),
-                        DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
-                        RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
-                    ],
-                ),
+                group_type("engine", grouped_resource_types.clone()),
             ),
             (
                 "worker".to_owned(),
-                group_type(
-                    "worker",
-                    vec![
-                        PROCESSOR_RESOURCE_TYPE.to_owned(),
-                        DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
-                        RESERVABLE_MEMORY_RESOURCE_TYPE.to_owned(),
-                    ],
-                ),
+                group_type("worker", grouped_resource_types),
             ),
             (
                 "thread_pool".to_owned(),
@@ -280,13 +284,20 @@ impl CudfPolarsUiAnalyzer {
         .collect();
 
         let query_operator_ids = view.operators().map(|operator| operator.id()).collect();
-        let reservation_metrics =
-            aggregate_operator_occupancy(&self.occupancies, &self.actors, &query_operator_ids);
+        let mut reservation_metrics = aggregate_operator_occupancy(
+            &self.occupancies,
+            &self.actors,
+            &query_operator_ids,
+            &self.resources,
+        )
+        .into_iter()
+        .collect::<Vec<_>>();
+        reservation_metrics.sort_by(|(left, _), (right, _)| left.cmp(right));
         let mut operators: HashMap<_, _> = view
             .operators()
             .map(|operator| (operator.id(), operator.to_ui(epoch)))
             .collect();
-        for (operator_id, metrics) in reservation_metrics {
+        for ((operator_id, memory_type), metrics) in reservation_metrics {
             let operator = operators
                 .get_mut(&operator_id)
                 .expect("reservation metric operator came from this query");
@@ -298,14 +309,14 @@ impl CudfPolarsUiAnalyzer {
             statistics.custom_statistics.extend([
                 OperatorStatistic {
                     value: DynamicAttribute::u64(
-                        "peak_reserved_but_unconsumed_bytes",
+                        format!("peak_reserved_but_unconsumed_bytes.{memory_type}"),
                         metrics.peak_bytes,
                     ),
                     quantity: Some("bytes".to_owned()),
                 },
                 OperatorStatistic {
                     value: DynamicAttribute::f64(
-                        "reserved_but_unconsumed_byte_seconds",
+                        format!("reserved_but_unconsumed_byte_seconds.{memory_type}"),
                         metrics.byte_seconds,
                     ),
                     quantity: Some("byte-seconds".to_owned()),

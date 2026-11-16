@@ -238,11 +238,9 @@ class QuentWorkerRuntime:
     _worker_handle: quent_bindings.WorkerInitHandle | None
     _buffer_resource: BufferResource | None
     _reservation_ingestor: ReservationDeltaIngestor | None
+    _reservation_context_registry: ReservationContextRegistry
     _reservation_events_lock: threading.Lock = dataclasses.field(
         default_factory=threading.Lock
-    )
-    _reservation_context_registry: ReservationContextRegistry = dataclasses.field(
-        default_factory=ReservationContextRegistry
     )
 
     @classmethod
@@ -316,13 +314,31 @@ class QuentWorkerRuntime:
         """Return this worker session's reservation attribution registry."""
         return self._reservation_context_registry
 
-    def drain_reservation_events(self) -> None:
+    def drain_reservation_events(self) -> bool:
         """Drain and ingest reservation events without overlapping another drain."""
         with self._reservation_events_lock:
             if self._buffer_resource is None or self._reservation_ingestor is None:
-                return
-            events = self._buffer_resource.drain_reservation_events()
+                return True
+            try:
+                events = self._buffer_resource.drain_reservation_events()
+            except Exception:
+                _logger.warning(
+                    "Failed to drain reservation event recording",
+                    exc_info=True,
+                )
+                return False
             self._ingest_reservation_deltas(events)
+            return True
+
+    def complete_actor_reservations(self, actor_id: uuid.UUID) -> None:
+        """Drain and release completed-Actor occupancy with a zero balance."""
+        if not self.drain_reservation_events():
+            return
+        with self._reservation_events_lock:
+            tokens = self._reservation_context_registry.tokens_for_actor(actor_id)
+            if self._reservation_ingestor is not None:
+                self._reservation_ingestor.complete_actor(actor_id, tokens)
+            self._reservation_context_registry.prune_actor(actor_id)
 
     def retarget_buffer_resource(self, buffer_resource: BufferResource) -> None:
         """Finish recording on the old resource and start a fresh session."""

@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from rapidsmpf.memory.reservation_events import ReservationContext
 from collections.abc import Iterable
 from typing import Self
 
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.communicator import Communicator
+from rapidsmpf.memory.reservation_events import ReservationContext
 from rapidsmpf.streaming.core.channel import Channel
 from rapidsmpf.streaming.core.context import Context
 from rapidsmpf.streaming.core.message import Message

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use quent_analyzer::{AnalyzerError, AnalyzerResult, Entity};
 use quent_query_engine_analyzer::QueryEngineModel;
@@ -60,7 +60,7 @@ impl CudfPolarsUiAnalyzer {
                     self.resources
                         .values()
                         .filter(|resource| {
-                            resource.type_name == resource_type_name
+                            resource.type_name.as_str() == resource_type_name
                                 && self.resource_in_group(resource, *resource_group_id, engine_id)
                         })
                         .map(|resource| resource.id)
@@ -88,10 +88,12 @@ impl CudfPolarsUiAnalyzer {
                         let operator_id = occupancy
                             .actor_id
                             .and_then(|actor_id| self.actors.get(&actor_id))
-                            .map(|actor| actor.operator_id)?;
-                        if !query_operator_ids.contains(&operator_id)
-                            || (!requested_operator_ids.is_empty()
-                                && !requested_operator_ids.contains(&operator_id))
+                            .map(|actor| actor.operator_id);
+                        if operator_id.is_some_and(|operator_id| {
+                            !query_operator_ids.contains(&operator_id)
+                                || (!requested_operator_ids.is_empty()
+                                    && !requested_operator_ids.contains(&operator_id))
+                        }) || (operator_id.is_none() && !requested_operator_ids.is_empty())
                             || !occupancy.lifecycle().ok()?.intersects(&window)
                         {
                             return None;
@@ -99,10 +101,24 @@ impl CudfPolarsUiAnalyzer {
                         let matching_segments = occupancy.segments.iter().filter(|segment| {
                             uses_scope(segment.resource_id) && segment.bytes.value.unwrap_or(0) > 0
                         });
-                        let metric: u64 = matching_segments
-                            .filter_map(|segment| segment.span.intersection(&window))
-                            .map(|span| span.duration())
-                            .sum();
+                        let duration_by_memory_type = matching_segments
+                            .filter_map(|segment| {
+                                Some((
+                                    self.resources
+                                        .get(&segment.resource_id)?
+                                        .memory_type
+                                        .as_ref()?,
+                                    segment.span.intersection(&window)?.duration(),
+                                ))
+                            })
+                            .fold(
+                                HashMap::<_, u64>::new(),
+                                |mut durations, (memory_type, duration)| {
+                                    *durations.entry(memory_type).or_default() += duration;
+                                    durations
+                                },
+                            );
+                        let metric = duration_by_memory_type.into_values().max().unwrap_or(0);
                         if scope.is_some() && metric == 0 {
                             return None;
                         }
@@ -154,7 +170,12 @@ impl CudfPolarsUiAnalyzer {
                         if min_usage.is_some_and(|minimum| metric < minimum) {
                             return None;
                         }
-                        Some((evaluate.to_ui_fsm(epoch), operator_id, metric, evaluate.id))
+                        Some((
+                            evaluate.to_ui_fsm(epoch),
+                            Some(operator_id),
+                            metric,
+                            evaluate.id,
+                        ))
                     })
                     .collect::<Vec<_>>(),
             );
@@ -184,10 +205,7 @@ impl CudfPolarsUiAnalyzer {
             items: items
                 .into_iter()
                 .map(|(fsm, operator_id, usage_duration, _)| EntityListItem {
-                    entity: QueryEngineFsm {
-                        fsm,
-                        operator_id: Some(operator_id),
-                    },
+                    entity: QueryEngineFsm { fsm, operator_id },
                     usage_duration_s: quent_time::to_secs(usage_duration),
                 })
                 .collect(),

@@ -25,7 +25,7 @@ use crate::{
     reservation::OCCUPANCY_ENTITY_TYPE,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
-        PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE, resource_type,
+        PROCESSOR_RESOURCE_TYPE, is_reservable_memory_resource_type, resource_type,
     },
 };
 
@@ -105,16 +105,14 @@ impl CudfPolarsUiAnalyzer {
 
         if !matches!(
             resource_type_name.as_str(),
-            PROCESSOR_RESOURCE_TYPE
-                | DEVICE_MEMORY_RESOURCE_TYPE
-                | DATA_CHANNEL_RESOURCE_TYPE
-                | RESERVABLE_MEMORY_RESOURCE_TYPE
-        ) {
+            PROCESSOR_RESOURCE_TYPE | DEVICE_MEMORY_RESOURCE_TYPE | DATA_CHANNEL_RESOURCE_TYPE
+        ) && !is_reservable_memory_resource_type(&resource_type_name)
+        {
             return Err(AnalyzerError::InvalidArgument(format!(
                 "unknown resource type {resource_type_name:?}"
             )));
         }
-        let expected_entity_type = if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+        let expected_entity_type = if is_reservable_memory_resource_type(&resource_type_name) {
             OCCUPANCY_ENTITY_TYPE
         } else {
             EVALUATE_ENTITY_TYPE
@@ -139,13 +137,16 @@ impl CudfPolarsUiAnalyzer {
         });
         let resource_type = resource_type(&resource_type_name);
         let occupancies = self.occupancies.iter().filter(|occupancy| {
-            occupancy.actor_id.is_none_or(|actor_id| {
-                self.actors.get(&actor_id).is_some_and(|actor| {
-                    query_operator_ids.contains(&actor.operator_id)
-                        && (requested_operator_ids.is_empty()
-                            || requested_operator_ids.contains(&actor.operator_id))
-                })
-            })
+            occupancy.actor_id.map_or_else(
+                || requested_operator_ids.is_empty(),
+                |actor_id| {
+                    self.actors.get(&actor_id).is_some_and(|actor| {
+                        query_operator_ids.contains(&actor.operator_id)
+                            && (requested_operator_ids.is_empty()
+                                || requested_operator_ids.contains(&actor.operator_id))
+                    })
+                },
+            )
         });
         let data = if entity_type_name.is_some() {
             let mut builder = ResourceTimelineByKeyBuilder::try_new(
@@ -181,7 +182,7 @@ impl CudfPolarsUiAnalyzer {
                     )?;
                 }
             }
-            if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+            if is_reservable_memory_resource_type(&resource_type_name) {
                 for occupancy in occupancies {
                     for segment in &occupancy.segments {
                         if selected_resource_ids.contains(&segment.resource_id) {
@@ -241,7 +242,7 @@ impl CudfPolarsUiAnalyzer {
                     })?;
                 }
             }
-            if resource_type_name == RESERVABLE_MEMORY_RESOURCE_TYPE {
+            if is_reservable_memory_resource_type(&resource_type_name) {
                 for occupancy in occupancies {
                     for segment in &occupancy.segments {
                         if selected_resource_ids.contains(&segment.resource_id) {

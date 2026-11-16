@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import logging
 import math
 import operator
 import struct
@@ -81,6 +82,7 @@ type OrderingMetadata = dict[int, OrderKey]
 CUDF_ROW_LIMIT = 2**31 - 1
 # Stay well below the cuDF row limit when forming a single table/partition.
 MAX_ROWS_PER_PARTITION = CUDF_ROW_LIMIT // 4
+_logger = logging.getLogger(__name__)
 
 
 def reservation_context(
@@ -93,8 +95,7 @@ def reservation_context(
     actor_id = quent_state.actor_id
     if not isinstance(actor_id, uuid.UUID):
         raise TypeError("Quent reservation actor_id must be a UUID")
-    runtime = quent_state.query_worker_state.runtime
-    return runtime.reservation_context_registry.token(actor_id, site)
+    return quent_state.reservation_context(site)
 
 
 class ChunkStore:
@@ -276,15 +277,15 @@ async def shutdown_on_error(
         runtime.session._actors[actor_id] = started.running()
 
     actor_error: BaseException | None = None
-    actor_finalization_errors: list[BaseException] = []
     try:
         yield ActorScope(tracer=tracer, ir_context=ir_context)
     except BaseException as caught:
         actor_error = caught
         try:
             await shutdown_channels(context, *channels)
-        except BaseException as error:
-            actor_finalization_errors.append(error)
+        except BaseException:
+            _logger.warning("Actor channel shutdown failed", exc_info=True)
+        raise
     finally:
         if (
             created_quent_actor
@@ -297,7 +298,13 @@ async def shutdown_on_error(
             )
             is not None
         ):
-            record_channel_metrics(tracer, chs_in=chs_in, chs_out=chs_out)
+            runtime = quent_ir_execution_state.query_worker_state.runtime
+            try:
+                record_channel_metrics(tracer, chs_in=chs_in, chs_out=chs_out)
+            except BaseException:
+                _logger.warning(
+                    "Quent channel metric finalization failed", exc_info=True
+                )
             values: _quent.OperatorStatisticsDict = {
                 "output_rows": tracer.row_count,
                 "input_bytes": sum(tracer.input_bytes.values()),
@@ -306,39 +313,45 @@ async def shutdown_on_error(
                 "duplicated": tracer.duplicated,
                 "decision": tracer.decision,
             }
-            prefilters: list[_quent.RuntimePrefilterStatisticsDict] = [
-                {
-                    "placement": value.placement,
-                    "method": value.decision.method,
-                    "reason": value.decision.reason,
-                    "target_side": value.target_side,
-                    "domain_side": value.domain_side,
-                    "domain": value.domain,
-                    "target_on": value.target_on,
-                    "domain_on": value.domain_on,
-                    "target_bytes": value.decision.target_bytes,
-                    "domain_rows": value.decision.domain_rows,
-                    "estimated_cardinality": value.decision.estimated_cardinality,
-                    "bloom_bytes": value.decision.bloom_bytes,
-                    "exact_bytes": value.decision.exact_bytes,
-                    "input_rows": value.input_rows,
-                    "output_rows": value.output_rows,
-                }
-                for value in tracer.prefilters
-            ]
-            runtime = quent_ir_execution_state.query_worker_state.runtime
-            operator = runtime.session.binding_context.operator_observer().handle(
-                quent_ir_execution_state.operator_id
-            )
-            for prefilter in prefilters:
-                operator.runtime_prefilter_statistics(
-                    actor=quent_ir_execution_state.actor_id,
-                    values=prefilter,
-                )
+            operator: _quent.OperatorHandle | None
             try:
-                await ir_context.to_thread(runtime.drain_reservation_events)
-            except BaseException as error:
-                actor_finalization_errors.append(error)
+                operator = runtime.session.binding_context.operator_observer().handle(
+                    quent_ir_execution_state.operator_id
+                )
+            except BaseException:
+                operator = None
+                _logger.warning("Quent operator lookup failed", exc_info=True)
+            if operator is not None:
+                for value in tracer.prefilters:
+                    try:
+                        prefilter: _quent.RuntimePrefilterStatisticsDict = {
+                            "placement": value.placement,
+                            "method": value.decision.method,
+                            "reason": value.decision.reason,
+                            "target_side": value.target_side,
+                            "domain_side": value.domain_side,
+                            "domain": value.domain,
+                            "target_on": value.target_on,
+                            "domain_on": value.domain_on,
+                            "target_bytes": value.decision.target_bytes,
+                            "domain_rows": value.decision.domain_rows,
+                            "estimated_cardinality": (
+                                value.decision.estimated_cardinality
+                            ),
+                            "bloom_bytes": value.decision.bloom_bytes,
+                            "exact_bytes": value.decision.exact_bytes,
+                            "input_rows": value.input_rows,
+                            "output_rows": value.output_rows,
+                        }
+                        operator.runtime_prefilter_statistics(
+                            actor=quent_ir_execution_state.actor_id,
+                            values=prefilter,
+                        )
+                    except BaseException:
+                        _logger.warning(
+                            "Quent runtime prefilter finalization failed",
+                            exc_info=True,
+                        )
             try:
                 if actor_error is None:
                     runtime.session._actors.pop(
@@ -353,23 +366,23 @@ async def shutdown_on_error(
                         error=str(actor_error),
                         values=values,
                     )
-            except BaseException as error:
-                actor_finalization_errors.append(error)
+            except BaseException:
+                _logger.warning("Quent actor finalization failed", exc_info=True)
+            if operator is not None:
+                try:
+                    operator.statistics(values=values)
+                except BaseException:
+                    _logger.warning("Quent operator finalization failed", exc_info=True)
             try:
-                operator.statistics(values=values)
-            except BaseException as error:
-                actor_finalization_errors.append(error)
-    if actor_error is not None:
-        if actor_finalization_errors:
-            raise BaseExceptionGroup(
-                "Actor and Quent finalization failed",
-                [actor_error, *actor_finalization_errors],
-            ) from None
-        raise actor_error
-    if actor_finalization_errors:
-        raise BaseExceptionGroup(
-            "Quent actor finalization failed", actor_finalization_errors
-        )
+                await ir_context.to_thread(
+                    runtime.complete_actor_reservations,
+                    quent_ir_execution_state.actor_id,
+                )
+            except BaseException:
+                _logger.warning(
+                    "Quent actor reservation finalization failed",
+                    exc_info=True,
+                )
 
 
 async def send_metadata(
@@ -1077,6 +1090,7 @@ async def _sample_chunks(
     *,
     cardinality_estimator: CardinalityEstimator | None = None,
     cardinality_columns: Sequence[int] = (),
+    reservation_context: ReservationContext | None = None,
 ) -> TableSizeStats:
     """
     Sample chunks from a channel and extrapolate to a per-rank size estimate.
@@ -1099,6 +1113,8 @@ async def _sample_chunks(
     cardinality_columns
         Column indices whose row tuples are counted. An empty sequence selects
         all columns.
+    reservation_context
+        Optional reservation telemetry context for cardinality estimation.
 
     Returns
     -------
@@ -1112,7 +1128,7 @@ async def _sample_chunks(
         ch_in_chunk_count=local_count,
         cardinality_estimator=cardinality_estimator,
         cardinality_columns=tuple(cardinality_columns),
-    ).sample()
+    ).sample(reservation_context=reservation_context)
 
 
 async def replay_buffered_channel(

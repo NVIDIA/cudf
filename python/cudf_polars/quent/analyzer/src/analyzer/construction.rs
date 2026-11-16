@@ -22,7 +22,7 @@ use crate::{
     reservation::build_occupancies,
     resource::{
         DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, DeclaredResource,
-        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE, RESERVABLE_MEMORY_RESOURCE_TYPE,
+        DeclaredResourceGroup, PROCESSOR_RESOURCE_TYPE, reservable_memory_resource_type,
     },
 };
 
@@ -89,8 +89,9 @@ impl CudfPolarsUiAnalyzer {
                         DeclaredResource {
                             id: event.id,
                             instance_name: instance_name.clone(),
-                            type_name: PROCESSOR_RESOURCE_TYPE,
+                            type_name: PROCESSOR_RESOURCE_TYPE.to_owned(),
                             parent_group_id: thread_pool.target,
+                            memory_type: None,
                         },
                     );
                 }
@@ -104,8 +105,9 @@ impl CudfPolarsUiAnalyzer {
                         DeclaredResource {
                             id: event.id,
                             instance_name: instance_name.clone(),
-                            type_name: DATA_CHANNEL_RESOURCE_TYPE,
+                            type_name: DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
                             parent_group_id: worker.target,
+                            memory_type: None,
                         },
                     );
                 }
@@ -119,14 +121,16 @@ impl CudfPolarsUiAnalyzer {
                         DeclaredResource {
                             id: event.id,
                             instance_name: instance_name.clone(),
-                            type_name: DEVICE_MEMORY_RESOURCE_TYPE,
+                            type_name: DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
                             parent_group_id: worker.target,
+                            memory_type: None,
                         },
                     );
                 }
                 CudfPolarsEvent::ReservableMemory(ReservableMemoryEvent::Declared {
                     instance_name,
                     worker,
+                    memory_type,
                     ..
                 }) => {
                     resources.insert(
@@ -134,8 +138,9 @@ impl CudfPolarsUiAnalyzer {
                         DeclaredResource {
                             id: event.id,
                             instance_name: instance_name.clone(),
-                            type_name: RESERVABLE_MEMORY_RESOURCE_TYPE,
+                            type_name: reservable_memory_resource_type(memory_type),
                             parent_group_id: worker.target,
+                            memory_type: Some(memory_type.clone()),
                         },
                     );
                 }

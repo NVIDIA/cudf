@@ -488,6 +488,7 @@ async def _choose_modulus(
         sample_chunk_count,
         target_partition_size,
         metadata_in.local_count,
+        reservation_context=reservation_context,
     )
     if comm.nranks > 1 and not metadata_in.duplicated:
         total_bytes, total_count = await allgather_reduce(

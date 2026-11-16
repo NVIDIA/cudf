@@ -511,8 +511,16 @@ async def _split_key_run(
     """Split off the first or last run of equal ordering keys."""
     if not (nrows := chunk.shape[0]):
         return None, None
+    token = reservation_context(
+        ir_context.actor_bound_quent_ir_execution_state,
+        ReservationSite.ORDERED_GROUPBY_SPLIT,
+    )
     chunk, extra = await make_table_chunks_available_or_wait(
-        context, chunk, reserve_extra=0, net_memory_delta=0
+        context,
+        chunk,
+        reserve_extra=0,
+        net_memory_delta=0,
+        reservation_context=token,
     )
     with opaque_memory_usage(extra):
         split = await ir_context.to_thread(_key_run_split, chunk, keys, leading=leading)
@@ -521,7 +529,11 @@ async def _split_key_run(
         if split == nrows:
             return chunk, None
     chunk, extra = await make_table_chunks_available_or_wait(
-        context, chunk, reserve_extra=chunk.data_alloc_size(), net_memory_delta=0
+        context,
+        chunk,
+        reserve_extra=chunk.data_alloc_size(),
+        net_memory_delta=0,
+        reservation_context=token,
     )
     with opaque_memory_usage(extra):
         table = chunk.table_view()
@@ -538,7 +550,10 @@ async def _split_key_run(
 
 
 async def _rank_ordering(
-    context: Context, ordering: Ordering, nranks: int
+    context: Context,
+    ordering: Ordering,
+    nranks: int,
+    ir_context: IRExecutionContext,
 ) -> Ordering | None:
     """Select only the boundaries between ranks from an ordered partitioning."""
     npartitions = ordering.num_boundaries + 1
@@ -554,6 +569,10 @@ async def _rank_ordering(
         ordering.get_boundaries(context.br()),
         reserve_extra=0,
         net_memory_delta=0,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.ORDERED_GROUPBY_BOUNDARIES,
+        ),
     )
     with opaque_memory_usage(extra):
         indices = plc.Column.from_iterable_of_py(
@@ -895,7 +914,14 @@ class _OrderedGroupBy:
         """Find the lower owner of each rank's leading prefix run."""
         stream = self.ir_context.get_cuda_stream()
         chunk, extra = await make_table_chunks_available_or_wait(
-            self.context, initial, reserve_extra=0, net_memory_delta=0
+            self.context,
+            initial,
+            reserve_extra=0,
+            net_memory_delta=0,
+            reservation_context=reservation_context(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.ORDERED_GROUPBY_FIRST_KEYS,
+            ),
         )
         with opaque_memory_usage(extra):
             table = chunk.table_view()
@@ -919,7 +945,15 @@ class _OrderedGroupBy:
                 exclusive_view=False,
                 br=self.context.br(),
             )
-        gather = AllGatherManager(self.context, self.comm, self.first_key_id)
+        gather = AllGatherManager(
+            self.context,
+            self.comm,
+            self.first_key_id,
+            reservation_context=reservation_context(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.ORDERED_GROUPBY_FIRST_KEYS,
+            ),
+        )
         with gather.inserting() as inserter:
             await inserter.insert(0, first_chunk)
         gathered = await gather.extract_concatenated(stream, ir_context=self.ir_context)
@@ -936,6 +970,10 @@ class _OrderedGroupBy:
             self.inter_rank_ordering.get_boundaries(self.context.br()),
             reserve_extra=0,
             net_memory_delta=0,
+            reservation_context=reservation_context(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.ORDERED_GROUPBY_BOUNDARIES,
+            ),
         )
         with opaque_memory_usage(extra):
             routes = await self.ir_context.to_thread(
@@ -1033,6 +1071,10 @@ class _OrderedGroupBy:
             self.exchange_id,
             sources=sources,
             destinations=destinations,
+            reservation_context=reservation_context(
+                self.ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.ORDERED_GROUPBY_EXCHANGE,
+            ),
         ) as exchange:
             if not cursor.send_first:
                 exchange.start_finish()
@@ -1167,8 +1209,6 @@ async def _choose_strategy(
         The number of chunks received from the input channel.
     input_drained
         Whether the input channel is drained.
-    reservation_context
-        Reservation telemetry reservation_context for planning collectives.
     collective_ids
         The collective IDs.
     target_partition_size
@@ -1179,6 +1219,8 @@ async def _choose_strategy(
         Whether the operation should maintain input ordering semantics.
     tracer
         Optional tracer for runtime metrics.
+    reservation_context
+        Reservation telemetry context for planning collectives.
 
     Returns
     -------
@@ -1446,7 +1488,7 @@ async def groupby_actor(
                 )
             )
             compatible_inter_rank = (
-                await _rank_ordering(context, inter_rank_ordering, nranks)
+                await _rank_ordering(context, inter_rank_ordering, nranks, ir_context)
                 if inter_rank_ordering is not None
                 and inter_rank_ordering.keys == ordered_keys
                 and nranks > 1

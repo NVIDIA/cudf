@@ -1,17 +1,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
-from rapidsmpf.memory.reservation_events import ReservationContext
 
 from collections.abc import Iterable
 from typing import Self, overload
 
 from pylibcudf.table import Table
-
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
 from rapidsmpf.memory.memory_reservation import MemoryReservation
 from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.memory.reservation_events import ReservationContext
 from rapidsmpf.streaming.core.context import Context
 from rapidsmpf.streaming.core.message import Message
 from rmm.pylibrmm.stream import Stream

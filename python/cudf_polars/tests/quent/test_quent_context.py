@@ -11,10 +11,13 @@ execution.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import re
+import sys
 import uuid
-from typing import TYPE_CHECKING, cast
-from unittest.mock import MagicMock, call
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -23,6 +26,7 @@ from rapidsmpf.memory.buffer_resource import ReservationEvent, ReservationEventB
 from rapidsmpf.memory.reservation_events import ReservationContext
 
 import cudf_polars.quent._runtime as quent_runtime
+from cudf_polars.dsl.tracing import log_do_evaluate
 from cudf_polars.engine.spmd import synchronize_quent_reset_contexts
 from cudf_polars.quent._context import (
     ActorBoundQuentIRExecutionState,
@@ -34,7 +38,10 @@ from cudf_polars.quent._context import (
 )
 from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.quent._runtime import QuentWorkerRuntime
-from cudf_polars.streaming.actor_graph.utils import reservation_context
+from cudf_polars.streaming.actor_graph.utils import (
+    reservation_context,
+    shutdown_on_error,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -111,11 +118,14 @@ def test_ir_execution_state_bind_actor() -> None:
     assert actor_state.operator_id == state.operator_id
 
 
-def test_reservation_context() -> None:
+def test_reservation_context(monkeypatch: pytest.MonkeyPatch) -> None:
     actor_id = uuid.uuid4()
     registry = ReservationContextRegistry()
-    state = MagicMock(
+    create_token = MagicMock(wraps=registry.token)
+    monkeypatch.setattr(registry, "token", create_token)
+    state = ActorBoundQuentIRExecutionState(
         actor_id=actor_id,
+        operator_id=uuid.uuid4(),
         query_worker_state=MagicMock(
             runtime=MagicMock(reservation_context_registry=registry)
         ),
@@ -127,11 +137,101 @@ def test_reservation_context() -> None:
     token = reservation_context(state, ReservationSite.EVALUATE_MAIN)
     assert token.is_attributed
     assert reservation_context(state, ReservationSite.EVALUATE_MAIN) == token
+    create_token.assert_called_once_with(actor_id, ReservationSite.EVALUATE_MAIN)
     assert registry.resolve(token) == (actor_id, "evaluate.main")
     with pytest.raises(TypeError, match="UUID"):
         reservation_context(
             MagicMock(actor_id="not-a-uuid"), ReservationSite.EVALUATE_MAIN
         )
+
+
+def test_reservation_site_values_are_unique_lowercase_dotted() -> None:
+    values = [site.value for site in ReservationSite.__members__.values()]
+    assert len(values) == len(set(values))
+    assert all(re.fullmatch(r"[a-z]+(?:\.[a-z]+)*", value) for value in values)
+
+
+@pytest.mark.parametrize("error", [RuntimeError("failed"), asyncio.CancelledError()])
+def test_evaluate_finalization_failure_preserves_original_error(
+    error: BaseException,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "cudf_polars_quent",
+        MagicMock(now_v7=uuid.uuid4),
+    )
+    runtime = MagicMock()
+    runtime.emit_evaluate_end.side_effect = RuntimeError("telemetry failed")
+    state = MagicMock(
+        query_worker_state=MagicMock(runtime=runtime),
+        scan_task_node_id=None,
+    )
+    context = MagicMock(actor_bound_quent_ir_execution_state=state)
+
+    class TestIR:
+        _n_non_child_args = 0
+
+    def do_evaluate(cls: type[TestIR], /, *, context: object) -> object:
+        raise error
+
+    wrapped = cast("Any", log_do_evaluate)(do_evaluate)
+
+    with pytest.raises(type(error)) as caught:
+        wrapped(TestIR, context=context)
+
+    assert caught.value is error
+    runtime.drain_reservation_events.assert_not_called()
+
+
+def test_successful_evaluate_ignores_finalization_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "cudf_polars_quent",
+        MagicMock(now_v7=uuid.uuid4),
+    )
+    runtime = MagicMock()
+    runtime.emit_evaluate_end.side_effect = RuntimeError("telemetry failed")
+    state = MagicMock(
+        query_worker_state=MagicMock(runtime=runtime),
+        scan_task_node_id=None,
+    )
+    context = MagicMock(actor_bound_quent_ir_execution_state=state)
+    expected = MagicMock()
+
+    class TestIR:
+        _n_non_child_args = 0
+
+    def do_evaluate(cls: type[TestIR], /, *, context: object) -> object:
+        return expected
+
+    wrapped = cast("Any", log_do_evaluate)(do_evaluate)
+
+    assert wrapped(TestIR, context=context) is expected
+    runtime.drain_reservation_events.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [RuntimeError("failed"), asyncio.CancelledError()])
+def test_shutdown_failure_preserves_original_error(error: BaseException) -> None:
+    channel = MagicMock(
+        shutdown=AsyncMock(side_effect=RuntimeError("shutdown failed")),
+        shutdown_metadata=AsyncMock(),
+    )
+
+    async def run() -> None:
+        async with shutdown_on_error(
+            MagicMock(),
+            chs_in=(channel,),
+            trace_ir=MagicMock(),
+        ):
+            raise error
+
+    with pytest.raises(type(error)) as caught:
+        asyncio.run(run())
+
+    assert caught.value is error
 
 
 def test_worker_resources_declares_inter_rank_channel() -> None:
@@ -244,6 +344,7 @@ def test_worker_runtime_finalizes_events_before_worker_exit() -> None:
         _worker_handle=worker_handle,
         _buffer_resource=buffer_resource,
         _reservation_ingestor=ingestor,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
 
     runtime.close()
@@ -315,11 +416,58 @@ def test_worker_runtime_drains_events() -> None:
         _worker_handle=MagicMock(),
         _buffer_resource=buffer_resource,
         _reservation_ingestor=ingestor,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
 
     runtime.drain_reservation_events()
 
     ingestor.ingest.assert_called_once_with(batch)
+
+
+def test_worker_runtime_drain_failure_is_nonfatal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    buffer_resource = MagicMock()
+    buffer_resource.drain_reservation_events.side_effect = RuntimeError("drain failed")
+    ingestor = MagicMock()
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=MagicMock(),
+        worker_resources=MagicMock(),
+        _worker_handle=MagicMock(),
+        _buffer_resource=buffer_resource,
+        _reservation_ingestor=ingestor,
+        _reservation_context_registry=ReservationContextRegistry(),
+    )
+
+    runtime.drain_reservation_events()
+
+    assert "Failed to drain reservation event recording" in caplog.text
+    ingestor.ingest.assert_not_called()
+
+
+def test_actor_tokens_are_not_pruned_when_drain_fails() -> None:
+    actor_id = uuid.uuid4()
+    registry = ReservationContextRegistry()
+    token = registry.token(actor_id, ReservationSite.EVALUATE_MAIN)
+    buffer_resource = MagicMock()
+    buffer_resource.drain_reservation_events.side_effect = RuntimeError("drain failed")
+    ingestor = MagicMock()
+    runtime = QuentWorkerRuntime(
+        config=QuentConfig(),
+        session=MagicMock(),
+        worker_resources=MagicMock(),
+        _worker_handle=MagicMock(),
+        _buffer_resource=buffer_resource,
+        _reservation_ingestor=ingestor,
+        _reservation_context_registry=registry,
+    )
+
+    runtime.complete_actor_reservations(actor_id)
+
+    assert registry.token(actor_id, ReservationSite.EVALUATE_MAIN) == token
+    assert registry.resolve(token) == (actor_id, "evaluate.main")
+    ingestor.complete_actor.assert_not_called()
 
 
 def test_worker_runtime_retargets_and_seeds_memory_limits() -> None:
@@ -350,6 +498,7 @@ def test_worker_runtime_retargets_and_seeds_memory_limits() -> None:
         _worker_handle=MagicMock(),
         _buffer_resource=old_resource,
         _reservation_ingestor=ingestor,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
 
     runtime.retarget_buffer_resource(new_resource)
@@ -382,6 +531,7 @@ def test_worker_runtime_close_logs_event_errors(
         _worker_handle=worker_handle,
         _buffer_resource=buffer_resource,
         _reservation_ingestor=ingestor,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
 
     runtime.close()
@@ -404,6 +554,7 @@ def test_emit_evaluate_failure() -> None:
         _worker_handle=MagicMock(),
         _buffer_resource=None,
         _reservation_ingestor=None,
+        _reservation_context_registry=ReservationContextRegistry(),
     )
     runtime.session._evaluations = {
         evaluate_id: running_evaluation,

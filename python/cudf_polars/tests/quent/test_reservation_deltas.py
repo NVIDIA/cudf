@@ -36,7 +36,7 @@ def _batch(
 
 
 def _ingestor() -> tuple[
-    ReservationDeltaIngestor, ReservationContextRegistry, MagicMock
+    ReservationDeltaIngestor, ReservationContextRegistry, MagicMock, MagicMock
 ]:
     context = MagicMock()
     initial = context.reservation_occupancy_observer.return_value.handle.return_value
@@ -48,11 +48,11 @@ def _ingestor() -> tuple[
         {"device": uuid.UUID(int=2)},
         registry,
     )
-    return ingestor, registry, initial.into_dynamic.return_value
+    return ingestor, registry, initial.into_dynamic.return_value, context
 
 
 def test_ingests_checked_aggregate_balances_including_zero() -> None:
-    ingestor, registry, handle = _ingestor()
+    ingestor, registry, handle, _ = _ingestor()
     actor = uuid.uuid4()
     token = registry.token(actor, ReservationSite.EVALUATE_MAIN)
 
@@ -69,7 +69,7 @@ def test_ingests_checked_aggregate_balances_including_zero() -> None:
 
 
 def test_unattributed_context_is_valid() -> None:
-    ingestor, _, handle = _ingestor()
+    ingestor, _, handle, _ = _ingestor()
     ingestor.ingest(_batch((100, ReservationContext(), 1)))
     handle.created_at.assert_called_once_with(
         100, worker=uuid.UUID(int=1), actor=None, site=None
@@ -78,7 +78,7 @@ def test_unattributed_context_is_valid() -> None:
 
 
 def test_diagnostics_are_nonfatal_and_preserve_checked_balance() -> None:
-    ingestor, registry, handle = _ingestor()
+    ingestor, registry, handle, _ = _ingestor()
     token = registry.token(uuid.uuid4(), ReservationSite.EVALUATE_MAIN)
     unknown = ReservationContextCreator().create()
     batch = _batch(
@@ -98,3 +98,65 @@ def test_diagnostics_are_nonfatal_and_preserve_checked_balance() -> None:
     assert "underflow" in diagnostics
     assert "overflow" in diagnostics
     assert handle.held_at.call_count == 2
+
+
+def test_completed_actor_releases_at_zero_and_prunes_registry() -> None:
+    ingestor, registry, handle, context = _ingestor()
+    actor = uuid.uuid4()
+    token = registry.token(actor, ReservationSite.EVALUATE_MAIN)
+    ingestor.ingest(_batch((100, token, 8), (101, token, -8)))
+
+    ingestor.complete_actor(actor, registry.prune_actor(actor))
+
+    handle.released_at.assert_called_once()
+    assert registry.resolve(token) is None
+
+    recreated = registry.token(actor, ReservationSite.EVALUATE_MAIN)
+    assert recreated != token
+    ingestor.ingest(_batch((102, recreated, 1)))
+    identifiers = [
+        call.args[0]
+        for call in context.reservation_occupancy_observer.return_value.handle.call_args_list
+    ]
+    assert len(identifiers) == 2
+    assert identifiers[0] != identifiers[1]
+
+
+def test_completed_actor_releases_when_delayed_delta_reaches_zero() -> None:
+    ingestor, registry, handle, _ = _ingestor()
+    actor = uuid.uuid4()
+    token = registry.token(actor, ReservationSite.EVALUATE_MAIN)
+    ingestor.ingest(_batch((100, token, 8)))
+
+    ingestor.complete_actor(actor, registry.prune_actor(actor))
+
+    handle.released_at.assert_not_called()
+    assert registry.resolve(token) == (actor, "evaluate.main")
+
+    ingestor.ingest(_batch((101, token, -8)))
+
+    handle.released_at.assert_called_once_with(101)
+    assert registry.resolve(token) is None
+
+
+def test_runtime_recreation_does_not_reuse_occupancy_identifier() -> None:
+    identifiers = []
+    for _ in range(2):
+        ingestor, registry, _, context = _ingestor()
+        token = registry.token(uuid.uuid4(), ReservationSite.EVALUATE_MAIN)
+        ingestor.ingest(_batch((100, token, 1)))
+        identifiers.append(
+            context.reservation_occupancy_observer.return_value.handle.call_args.args[0]
+        )
+
+    assert identifiers[0] != identifiers[1]
+
+
+def test_diagnostics_are_bounded_by_category() -> None:
+    ingestor, _, _, _ = _ingestor()
+    creator = ReservationContextCreator()
+    ingestor.ingest(_batch(*((index, creator.create(), 1) for index in range(100))))
+
+    diagnostics = ingestor.diagnostics()
+    assert len(diagnostics) == 1
+    assert "100 occurrences" in diagnostics[0]

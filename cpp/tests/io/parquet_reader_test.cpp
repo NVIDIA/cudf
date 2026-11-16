@@ -166,6 +166,10 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
+  // This is a regression test for a ptxas codegen bug (not a race) and for the page-header
+  // overflow path that is mostly host logic. It takes hours when racecheck is used.
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
   // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
   // counting page headers without an offset index (1M).
@@ -6586,6 +6590,10 @@ TEST_F(ParquetReaderTest, ByteBoundsAndFilters)
 
 TEST_F(ParquetReaderTest, TableTooLargeOverflows)
 {
+  // This test checks the host-side size_type overflow handling using over 2 billion rows.
+  // It takes over an hour when racecheck is used.
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   using T                             = bool;
   constexpr int64_t per_file_num_rows = std::numeric_limits<cudf::size_type>::max() / 2 + 1000;
   static_assert(per_file_num_rows <= std::numeric_limits<cudf::size_type>::max(),

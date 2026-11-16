@@ -466,7 +466,7 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
       }
       // Handle other int32 encoded values including smaller bitwidths and decimals
       else {
-        // Reading smaller bitwidth values. Decimals may be read at any `decimal_width`
+        // Reading smaller bitwidth values. Decimals may be narrowed to a smaller `decimal_width`
         if (not is_decimal and (sizeof(T) > sizeof(int32_t) or sizeof(T) != int32_type_len)) {
           set_error(error, decode_error::INVALID_DATA_TYPE);
           return {};
@@ -495,9 +495,9 @@ __device__ T decode_fixed_width_value(PageInfo const& page,
           decoded_value = T{typename T::duration(static_cast<typename T::rep>(timestamp))};
         }
       }
-      // Handle durations and other int64 encoded values including decimals. Load as signed to sign
-      // extend decimals into wider types
+      // Handle durations and other int64 encoded values including decimals
       else {
+        // Load as signed to sign extend decimals into wider types
         decoded_value = static_cast<T>(
           cudf::io::unaligned_load<int64_t>(page_data + (value_idx * sizeof(int64_t))));
       }

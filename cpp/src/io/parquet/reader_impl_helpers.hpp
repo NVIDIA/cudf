@@ -474,7 +474,7 @@ class aggregate_reader_metadata {
    *
    * @return Boolean vector indicating if the output column cannot use bloom filters
    */
-  [[nodiscard]] thrust::host_vector<bool> calc_bloom_mismatch_mask(
+  [[nodiscard]] thrust::host_vector<bool> calc_bloom_hash_mismatch_mask(
     std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
 
   /**

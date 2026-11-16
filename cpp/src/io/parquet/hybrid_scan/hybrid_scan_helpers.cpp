@@ -401,14 +401,14 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::reference_wrapper<ast::expression const> filter)
 {
   // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
-  auto const bloom_mismatch_mask =
-    calc_bloom_mismatch_mask(output_dtypes, output_column_schemas);
+  auto const bloom_hash_mismatch_mask =
+    calc_bloom_hash_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{bloom_mismatch_mask.data(), bloom_mismatch_mask.size()}};
+    std::span{bloom_hash_mismatch_mask.data(), bloom_hash_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return {}; }
@@ -635,14 +635,14 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   cuda::stream_ref stream) const
 {
   // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
-  auto const bloom_mismatch_mask =
-    calc_bloom_mismatch_mask(output_dtypes, output_column_schemas);
+  auto const bloom_hash_mismatch_mask =
+    calc_bloom_hash_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{bloom_mismatch_mask.data(), bloom_mismatch_mask.size()}};
+    std::span{bloom_hash_mismatch_mask.data(), bloom_hash_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }

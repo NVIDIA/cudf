@@ -589,8 +589,8 @@ join_indices retrieve_matches(size_type num_rows,
                               cuda::stream_ref stream,
                               cudf::memory_resources resources)
 {
-  // Count and retrieval share one grid of resident blocks, so each warp's count is the size of
-  // its output range.
+  // Count and retrieval launch the same grid and walk rows in the same order, so each warp's count
+  // is the size of its output range.
   int blocks_per_sm{};
   CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
     &blocks_per_sm, retrieve_kernel<GroupSize, Equal, Hasher>, block_size, 0));

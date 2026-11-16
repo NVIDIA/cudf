@@ -89,6 +89,10 @@ public final class Table implements AutoCloseable {
    * Create a Table from an array of existing on device cudf::column pointers. Ownership of the
    * columns is transferred to the ColumnVectors held by the new Table. In the case of an exception
    * the columns will be deleted.
+   * <p>
+   * The row count is taken from the first column, so this cannot describe a table with no
+   * columns. Native methods that return a table should return its row count followed by the
+   * columns, decoded with {@link #fromRowCountAndColumns(long[])}.
    * @param cudfColumns - Array of nativeHandles
    */
   public Table(long[] cudfColumns) {

@@ -454,7 +454,7 @@ std::unique_ptr<column> contains(strings_column_view const& input,
                                      mr);
   auto d_results = results->mutable_view().data<bool>();
   if (d_target.empty()) {
-    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                  d_results,
                  d_results + num_rows,
                  true);
@@ -462,8 +462,8 @@ std::unique_ptr<column> contains(strings_column_view const& input,
     return results;
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
-  auto const tmp_mr    = cudf::get_current_device_resource_ref();
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const tmp_mr    = mr.get_temporary_mr();
   // [0, 32): bin counts; [32, 64): scatter cursors
   auto hist = cuda::device_buffer<size_type>(stream, tmp_mr, 2 * LRB_NUM_BINS, cuda::no_init);
   CUDF_CUDA_TRY(cudaMemsetAsync(hist.data(), 0, hist.size() * sizeof(size_type), stream.get()));
@@ -507,8 +507,8 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
   CUDF_EXPECTS(targets.size() == strings.size(),
                "strings and targets column must be the same size");
 
-  auto const d_strings = column_device_view::create(strings.parent(), stream);
-  auto const d_targets = column_device_view::create(targets.parent(), stream);
+  auto const d_strings = column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto const d_targets = column_device_view::create(targets.parent(), stream, mr.as_temporary());
 
   auto results = make_numeric_column(data_type{type_id::BOOL8},
                                      strings.size(),
@@ -517,7 +517,7 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
                                      stream,
                                      mr);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     results->mutable_view().data<bool>(),

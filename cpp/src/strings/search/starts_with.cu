@@ -53,16 +53,15 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   if (target.size() == 0)  // empty target string returns true
   {
-    auto const true_scalar =
-      make_fixed_width_scalar<bool>(true, stream, cudf::get_current_device_resource_ref());
-    auto results = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
+    auto const true_scalar = make_fixed_width_scalar<bool>(true, stream, mr.as_temporary());
+    auto results           = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
     results->set_null_mask(cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                            strings.null_count());
     return results;
   }
 
   auto d_target       = string_view(target.data(), target.size());
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -74,7 +73,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
@@ -113,9 +112,9 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
   CUDF_EXPECTS(targets.size() == strings.size(),
                "strings and targets column must be the same size");
 
-  auto targets_column = column_device_view::create(targets.parent(), stream);
+  auto targets_column = column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto d_targets      = *targets_column;
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create output column
   auto results      = make_numeric_column(data_type{type_id::BOOL8},
@@ -128,7 +127,7 @@ std::unique_ptr<column> starts_ends_with_fn(strings_column_view const& strings,
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     d_results,

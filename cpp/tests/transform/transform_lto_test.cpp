@@ -105,7 +105,7 @@ TEST_F(TransformLTOTest, InvSqrt)
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::invsqrt];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   auto result = cudf::transform_lto(udf,
                                     cudf::lto_binary_type::FATBIN,
@@ -134,7 +134,7 @@ TEST_F(TransformLTOTest, Distance)
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::distance];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   auto result = cudf::transform_lto(udf,
                                     cudf::lto_binary_type::FATBIN,
@@ -169,7 +169,7 @@ TEST_F(TransformLTOTest, ToUpper)
     {cudf::data_type{cudf::type_id::UINT8}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::to_upper];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   auto result = cudf::transform_lto(udf,
                                     cudf::lto_binary_type::FATBIN,
@@ -196,7 +196,7 @@ TEST_F(TransformLTOTest, SumOfSquares)
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::sum_of_squares];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   auto result = cudf::transform_lto(udf,
                                     cudf::lto_binary_type::FATBIN,
@@ -226,7 +226,7 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
     {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::lehmer_mean];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   cudf::transform_input inputs[] = {a, b};
 
@@ -274,7 +274,7 @@ TEST_F(TransformLTOTest, BankersRounding)
                                 cudf::output_nullability::ALL_VALID};
 
   auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::bankers_rounding];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range.offset, range.size)};
 
   cudf::transform_input inputs[]   = {input};
   cudf::transform_output outputs[] = {output};

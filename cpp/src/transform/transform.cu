@@ -978,7 +978,7 @@ dispatch_lto_kernel_fragment(bool is_null_aware,
     auto instance   = strip_whitespace(cudf_fragments::transform_kernel_INSTANCE[i]);
     if (target == instance) {
       auto range = cudf_fragments::file_ranges[file_index];
-      return std::make_tuple(cudf_fragments::files.subspan(range[0], range[1]),
+      return std::make_tuple(cudf_fragments::files.subspan(range.offset, range.size),
                              lto_binary_type::FATBIN,
                              cudf_fragments::transform_kernel_INSTANCE[i]);
     }

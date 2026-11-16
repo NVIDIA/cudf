@@ -154,7 +154,7 @@ __device__ void transform(float* out, float a, float b) {
     {cudf::data_type{cudf::type_to_id<TypeOut>()}, cudf::output_nullability::ALL_VALID}};
 
   auto const range = cudf_benchmark_fragments::file_ranges[fragment_id];
-  std::span<uint8_t const> udf{cudf_benchmark_fragments::files.subspan(range[0], range[1])};
+  std::span<uint8_t const> udf{cudf_benchmark_fragments::files.subspan(range.offset, range.size)};
 
   auto result = use_lto ? cudf::transform_lto(udf,
                                               cudf::lto_binary_type::FATBIN,

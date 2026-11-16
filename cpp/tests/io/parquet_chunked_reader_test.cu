@@ -1428,10 +1428,10 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
   EXPECT_GT(num_chunks, 1);
 }
 
-TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIsChargedForEveryPage)
+TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIncludedForEveryPage)
 {
   // A subpass allocates level and string offset buffers for all of its pages, so the input limit
-  // must charge them for every page, not just the last one.
+  // must include them for every page, not just the last one.
   constexpr cudf::size_type num_rows  = 100'000;
   constexpr cudf::size_type page_rows = 5'000;
   auto const values                   = cuda::counting_iterator<int32_t>{0};
@@ -1443,7 +1443,7 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIsChargedForEveryPage)
   int32s_col const ints(values, values + num_rows, valids);
   strings_col const strings(strs.begin(), strs.begin() + num_rows, valids);
   auto const expected = cudf::table_view{{ints, strings}};
-  auto const filepath = temp_env->get_temp_filepath("ScratchIsChargedForEveryPage.parquet");
+  auto const filepath = temp_env->get_temp_filepath("ScratchIncludedForEveryPage.parquet");
   cudf::io::write_parquet(
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .compression(cudf::io::compression_type::SNAPPY)
@@ -1452,8 +1452,8 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIsChargedForEveryPage)
       .build());
 
   // Reading the file allocates about 400 KB of string offsets (4 B per value) plus the definition
-  // level buffers of both columns, 20 pages each. Charged per column, that scratch pushes the read
-  // past a 1 MiB input limit; charged one page at a time, the read fits in one chunk.
+  // level buffers of both columns, 20 pages each. Summed per column, that scratch pushes the read
+  // past a 1 MiB input limit; counted one page at a time, the read fits in one chunk.
   constexpr std::size_t input_limit = 1024 * 1024;
   auto const [result, num_chunks]   = chunked_read(filepath, 0, input_limit);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());

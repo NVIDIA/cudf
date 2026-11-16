@@ -23,7 +23,6 @@
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/strings/detail/utf8.hpp>
 #include <cudf/strings/string_view.cuh>
-#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -35,7 +34,6 @@
 #include <cooperative_groups/reduce.h>
 #include <cuda/atomic>
 #include <cuda/buffer>
-#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
@@ -786,13 +784,13 @@ std::unique_ptr<cudf::column> minhash_fn(cudf::strings_column_view const& input,
   auto const num_rows = input.size();
   auto block_offsets =
     cuda::device_buffer<cudf::size_type>(stream, temp_mr, num_rows + 1, cuda::no_init);
-  auto sections_fn = cuda::proclaim_return_type<cudf::size_type>(
-    [d_strings = *d_strings, num_rows] __device__(cudf::size_type idx) {
-      // the value for the last element (idx == num_rows) is ignored by the exclusive scan
-      if (idx == num_rows || d_strings.is_null(idx)) { return 1; }
-      auto const size = d_strings.element<cudf::string_view>(idx).size_bytes();
-      return cuda::std::max(cudf::detail::div_rounding_up_safe(size, section_bytes), 1);
-    });
+  auto sections_fn = [d_strings = *d_strings,
+                      num_rows] __device__(cudf::size_type idx) -> cudf::size_type {
+    // the value for the last element (idx == num_rows) is ignored by the exclusive scan
+    if (idx == num_rows || d_strings.is_null(idx)) { return 1; }
+    auto const size = d_strings.element<cudf::string_view>(idx).size_bytes();
+    return cuda::std::max(cudf::detail::div_rounding_up_safe(size, section_bytes), 1);
+  };
   auto const sections_itr =
     cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0}, sections_fn);
   auto const total_blocks = cudf::detail::sizes_to_offsets(

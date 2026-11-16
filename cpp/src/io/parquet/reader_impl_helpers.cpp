@@ -187,11 +187,12 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
 namespace {
 
 /**
- * @brief Check if two logical types are identical in everything the reader uses.
+ * @brief Check if two logical types match in type, time unit, integer bit width and signedness.
  *
- * `isAdjustedToUTC` is not compared as the reader returns the same timestamp type either way.
+ * ENUM and STRING are treated as equal. `isAdjustedToUTC` is not compared as the reader returns
+ * the same timestamp type either way.
  */
-bool compare_logical_types(LogicalType const& lhs, LogicalType const& rhs)
+[[nodiscard]] bool compare_logical_types(LogicalType const& lhs, LogicalType const& rhs)
 {
   // A converted-only ENUM is backfilled as STRING and both are read as strings
   auto const type = [](LogicalType const& t) {
@@ -208,10 +209,10 @@ bool compare_logical_types(LogicalType const& lhs, LogicalType const& rhs)
 /**
  * @brief Check if two schema elements have the same physical and annotated type.
  *
- * `converted_type` is deprecated and writers may or may not emit it next to the logical type.
- * Compare logical types when both elements have one, else fall back to converted types.
+ * Compare logical types when both elements have one, else fall back to (deprecated) converted
+ * types.
  */
-bool compare_schema_types(SchemaElement const& lhs, SchemaElement const& rhs)
+[[nodiscard]] bool compare_schema_types(SchemaElement const& lhs, SchemaElement const& rhs)
 {
   auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
                                    ? compare_logical_types(*lhs.logical_type, *rhs.logical_type)
@@ -1107,16 +1108,18 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        // Same as `SchemaElement::operator==` but compares annotations via `compare_schema_types`.
-        // The root's name is writer specific (e.g. "schema" or "root"), so it is not compared.
-        auto const elements_match = [](SchemaElement const& lhs, SchemaElement const& rhs) {
-          return compare_schema_types(lhs, rhs) and lhs.name == rhs.name and
-                 lhs.num_children == rhs.num_children and lhs.field_id == rhs.field_id;
-        };
+
+        // Compare schemas element-wise, skipping the root element's name.
         auto const schemas_match =
           schema.front().num_children == pfm.schema.front().num_children and
-          std::ranges::equal(
-            schema | std::views::drop(1), pfm.schema | std::views::drop(1), elements_match);
+          std::ranges::equal(schema | std::views::drop(1),
+                             pfm.schema | std::views::drop(1),
+                             [](auto const& lhs, auto const& rhs) {
+                               return lhs.name == rhs.name and
+                                      lhs.num_children == rhs.num_children and
+                                      lhs.field_id == rhs.field_id and
+                                      compare_schema_types(lhs, rhs);
+                             });
         CUDF_EXPECTS(schemas_match and same_logical_groups(pfm),
                      "All sources must have the same schema");
       }

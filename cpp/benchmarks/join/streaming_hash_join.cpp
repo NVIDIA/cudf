@@ -7,12 +7,11 @@
 
 #include <benchmarks/common/memory_stats.hpp>
 
-#include <cudf/column/column_factories.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
+#include <cudf/replace.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
-
-#include <thrust/execution_policy.h>
-#include <thrust/tabulate.h>
 
 #include <array>
 #include <memory>
@@ -23,36 +22,20 @@ namespace {
 
 constexpr cudf::size_type benchmark_rows = 100'000;
 
+using key_scalar = cudf::numeric_scalar<cudf::size_type>;
+
 std::unique_ptr<cudf::column> make_right_batch(cudf::size_type offset,
                                                cudf::size_type rows,
                                                bool duplicate_heavy)
 {
-  auto column = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, rows, cudf::mask_state::UNALLOCATED);
-  thrust::tabulate(thrust::device,
-                   column->mutable_view().begin<cudf::size_type>(),
-                   column->mutable_view().end<cudf::size_type>(),
-                   [offset, duplicate_heavy] __device__(cudf::size_type row) {
-                     auto const global_row = offset + row;
-                     // Keep 90% of build rows at key zero. Probing [0, 100k) produces a
-                     // representative duplicate-heavy result without a quadratic output.
-                     return duplicate_heavy && global_row < benchmark_rows * 9 / 10
-                              ? cudf::size_type{0}
-                              : global_row - (duplicate_heavy ? benchmark_rows * 9 / 10 - 1 : 0);
-                   });
-  return column;
+  if (!duplicate_heavy) { return cudf::sequence(rows, key_scalar{offset}); }
+  // Keep 90% of build rows at key zero. Probing [0, 100k) produces a representative
+  // duplicate-heavy result without a quadratic output.
+  auto const keys = cudf::sequence(rows, key_scalar{offset - (benchmark_rows * 9 / 10 - 1)});
+  return cudf::clamp(keys->view(), key_scalar{0}, key_scalar{0, false});
 }
 
-std::unique_ptr<cudf::column> make_probe()
-{
-  auto column = cudf::make_numeric_column(
-    cudf::data_type{cudf::type_id::INT32}, benchmark_rows, cudf::mask_state::UNALLOCATED);
-  thrust::tabulate(thrust::device,
-                   column->mutable_view().begin<cudf::size_type>(),
-                   column->mutable_view().end<cudf::size_type>(),
-                   [] __device__(cudf::size_type row) { return row; });
-  return column;
-}
+std::unique_ptr<cudf::column> make_probe() { return cudf::sequence(benchmark_rows, key_scalar{0}); }
 
 }  // namespace
 

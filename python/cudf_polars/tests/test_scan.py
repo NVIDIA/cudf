@@ -273,7 +273,7 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
 def test_scan_parquet_timestamps_from_different_writers(
     engine: pl.GPUEngine, tmp_path, tz
 ):
-    # pyarrow also writes the deprecated converted type, polars does not
+    # pyarrow also writes the deprecated converted type for UTC, polars does not
     t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
     pq.write_table(
         pa.table({"t": pa.array([t], pa.timestamp("us", tz))}),

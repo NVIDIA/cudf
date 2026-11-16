@@ -1115,8 +1115,10 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
     cudf::jni::native_jlongArray result(env, 2);
     rmm::mr::cuda_async_memory_resource res{init, release, export_type};
     cudaMemPool_t pool = res.pool_handle();
-    result[0]          = make_jni_resource(std::move(res));
-    result[1]          = reinterpret_cast<jlong>(pool);
+    // The first element access can throw. Do it while res is still owned here, so a failure
+    // cannot leak the resource that make_jni_resource hands off as a raw handle.
+    result[1] = reinterpret_cast<jlong>(pool);
+    result[0] = make_jni_resource(std::move(res));
     return result.get_jArray();
   }
   JNI_CATCH(env, nullptr);

@@ -57,7 +57,8 @@ macro(add_fragment)
     )
   endif()
 
-  target_compile_definitions(${OBJECT_ID} PRIVATE ${ARG_DEFINITIONS})
+  # Use the same header interfaces as runtime-compiled device code.
+  target_compile_definitions(${OBJECT_ID} PRIVATE CUDF_RUNTIME_COMPILATION=1 ${ARG_DEFINITIONS})
   set_target_properties(
     ${OBJECT_ID}
     PROPERTIES CUDA_SEPARABLE_COMPILATION ON

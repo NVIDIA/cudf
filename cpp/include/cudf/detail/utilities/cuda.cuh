@@ -6,8 +6,9 @@
 #pragma once
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/config.hpp>
 
-#ifndef __CUDACC_RTC__
+#if !CUDF_RUNTIME_COMPILATION
 
 #include <cudf/utilities/default_stream.hpp>
 
@@ -25,7 +26,7 @@ namespace detail {
  */
 static constexpr size_type warp_size{32};
 
-#ifndef __CUDACC_RTC__
+#if !CUDF_RUNTIME_COMPILATION
 
 /**
  * @brief Performs a sum reduction of values from the same lane across all

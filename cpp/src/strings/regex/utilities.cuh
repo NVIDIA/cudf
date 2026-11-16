@@ -43,8 +43,9 @@ constexpr auto regex_launch_kernel_block_size = 256;
  *
  * The carveout is a process-wide attribute of the kernel and the search sets intermediate values
  * before the final one. A concurrent launch of the same kernel from another host thread may use
- * one of those values. The carveout is only a hint so this can only affect that launch's occupancy
- * and never its correctness.
+ * one of those values, and concurrent searches may cause each other to choose a larger or smaller
+ * carveout than needed. The carveout is only a hint so this can only affect occupancy and never
+ * correctness.
  *
  * @param kernel The kernel to be launched
  * @param shmem_size Dynamic shared memory size per block in bytes
@@ -63,10 +64,10 @@ void set_regex_carveout(Kernel kernel, int32_t shmem_size)
   // binary search for the smallest carveout percentage that keeps the maximum occupancy
   auto const max_blocks = blocks_per_sm(100);
   if (max_blocks <= 0) { return; }
-  // the range includes 100 which always keeps max_blocks so the result is never the end iterator
-  auto const percents = std::views::iota(0, 101);
-  auto const carveout = *std::ranges::partition_point(
+  auto const percents = std::views::iota(0, 100);
+  auto const itr      = std::ranges::partition_point(
     percents, [&](int percent) { return blocks_per_sm(percent) < max_blocks; });
+  auto const carveout = itr == percents.end() ? 100 : *itr;
   CUDF_CUDA_TRY(
     cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
 }

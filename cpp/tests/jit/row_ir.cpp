@@ -392,7 +392,7 @@ return cudf::errc::SUCCESS;
 
   EXPECT_EQ(transform_args.udf, expected_udf);
 
-  auto const udf_module =
+  auto udf_module =
     cudf::compile_cuda_to_lto_ir(transform_args.udf.c_str(), {}, {}, {}, true, "cudf_row_ir");
   auto const udf_fragment = udf_module.view();
   auto result             = cudf::transform(

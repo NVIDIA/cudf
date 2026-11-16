@@ -732,19 +732,7 @@ rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )
 
-ConfigureTest(
-  TRANSFORM_LTO_TEST transform/transform_lto_test.cpp
-  ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
-)
-add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
-target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-
-# Share the LTO and PTX modules between the integration test executables.
-foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST TRANSFORM_TEST FILTER_TEST BINARYOP_TEST)
-  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
-  add_dependencies(${test} cudf_test_fragments)
-  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-endforeach()
+ConfigureTest(TRANSFORM_LTO_TEST transform/transform_lto_test.cpp)
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------
@@ -785,9 +773,6 @@ if(CUDF_BUILD_STREAMS_TEST_UTIL)
 endif()
 
 ConfigureTest(STREAM_BINARYOP_TEST streams/binaryop_test.cpp STREAM_MODE testing)
-target_sources(STREAM_BINARYOP_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
-target_include_directories(STREAM_BINARYOP_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-add_dependencies(STREAM_BINARYOP_TEST cudf_test_fragments)
 ConfigureTest(STREAM_COLUMN_VIEW_TEST streams/column_view_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_CONCATENATE_TEST streams/concatenate_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_COPYING_TEST streams/copying_test.cpp STREAM_MODE testing)
@@ -808,9 +793,6 @@ ConfigureTest(
   STREAM_IO_HYBRID_SCAN_TEST streams/io/experimental/hybrid_scan_test.cpp STREAM_MODE testing
 )
 ConfigureTest(STREAM_JOIN_TEST streams/join_test.cpp STREAM_MODE testing)
-target_sources(STREAM_JOIN_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
-target_include_directories(STREAM_JOIN_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-add_dependencies(STREAM_JOIN_TEST cudf_test_fragments)
 ConfigureTest(STREAM_LABELING_BINS_TEST streams/labeling_bins_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_LISTS_TEST streams/lists_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_MERGE_TEST streams/merge_test.cpp STREAM_MODE testing)
@@ -840,11 +822,6 @@ ConfigureTest(STREAM_SCALAR_TEST streams/scalar_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_SEARCH_TEST streams/search_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_SORTING_TEST streams/sorting_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_STREAM_COMPACTION_TEST streams/stream_compaction_test.cpp STREAM_MODE testing)
-target_sources(
-  STREAM_STREAM_COMPACTION_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
-)
-target_include_directories(STREAM_STREAM_COMPACTION_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-add_dependencies(STREAM_STREAM_COMPACTION_TEST cudf_test_fragments)
 ConfigureTest(
   STREAM_STRINGS_TEST
   streams/strings/attributes_test.cpp
@@ -877,11 +854,6 @@ ConfigureTest(
   testing
 )
 ConfigureTest(STREAM_TRANSFORM_TEST streams/transform_test.cpp STREAM_MODE testing)
-target_sources(
-  STREAM_TRANSFORM_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
-)
-target_include_directories(STREAM_TRANSFORM_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-add_dependencies(STREAM_TRANSFORM_TEST cudf_test_fragments)
 ConfigureTest(STREAM_TRANSPOSE_TEST streams/transpose_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_UNARY_TEST streams/unary_test.cpp STREAM_MODE testing)
 
@@ -898,6 +870,26 @@ ConfigureTest(
   ROARING_DISABLE_AVX=1
   CROARING_COMPILER_SUPPORTS_AVX512=0
 )
+
+# Share the LTO and PTX modules between the test executables.
+foreach(
+  test IN
+  ITEMS AST_TEST
+        BINARYOP_TEST
+        FILTER_TEST
+        JOIN_TEST
+        MIXED_JOIN_TEST
+        STREAM_BINARYOP_TEST
+        STREAM_JOIN_TEST
+        STREAM_STREAM_COMPACTION_TEST
+        STREAM_TRANSFORM_TEST
+        TRANSFORM_LTO_TEST
+        TRANSFORM_TEST
+)
+  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+  add_dependencies(${test} cudf_test_fragments)
+  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endforeach()
 
 # ##################################################################################################
 # Install tests ####################################################################################

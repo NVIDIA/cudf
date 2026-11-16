@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from collections.abc import Callable, Sequence
-from pylibcudf.udf import TransformUDF, UserData
+from collections.abc import Sequence
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
@@ -9,7 +8,8 @@ from pylibcudf.column import Column
 from pylibcudf.expressions import Expression
 from pylibcudf.gpumemoryview import gpumemoryview
 from pylibcudf.table import Table
-from pylibcudf.types import DataType, NullAware, OutputNullability
+from pylibcudf.types import DataType, OutputNullability
+from pylibcudf.udf import TransformUDF, UserData
 from pylibcudf.utils import CudaStreamLike
 
 def column_nans_to_nulls(
@@ -43,14 +43,13 @@ def mask_to_bools(
 ) -> Column: ...
 def transform(
     inputs: Sequence[Column | UserData],
-    transform_udf: Callable | TransformUDF,
-    output_type: DataType,
-    is_null_aware: NullAware = NullAware.NO,
+    udf: TransformUDF,
+    output_type: DataType | list[DataType],
     null_policy: OutputNullability = OutputNullability.PRESERVE,
     row_size: int | None = None,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
-) -> Column: ...
+) -> Table: ...
 def encode(
     input: Table,
     stream: CudaStreamLike | None = None,

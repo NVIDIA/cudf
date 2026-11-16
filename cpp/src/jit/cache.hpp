@@ -101,13 +101,15 @@ struct [[nodiscard]] kernel : kernel_ref {
  * @param headers Matching null-terminated header contents
  * @param include_paths Filesystem header directories, searched before bundled directories
  * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
+ * @param std C++ language standard passed to NVRTC
  */
 rtcx::blob get_user_fragment(char const* name,
                              char const* source_code,
                              std::span<char const* const> header_include_names,
                              std::span<char const* const> headers,
                              std::span<char const* const> include_paths,
-                             bool use_pch);
+                             bool use_pch,
+                             std::string_view std);
 
 /**
  * @brief Gets a cached kernel LTO fragment from an embedded CUDA source file

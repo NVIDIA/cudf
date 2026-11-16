@@ -254,15 +254,16 @@ cpdef Column mask_to_bools(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cdef vector[cpp_transform.lto_fragment] _to_lto_fragments(
-    fragments, uint8_t binary_type
-):
+cdef vector[cpp_transform.lto_fragment] _to_lto_fragments(fragments):
     # The caller retains the bytes owning these non-owning spans.
     cdef vector[cpp_transform.lto_fragment] result
     cdef cpp_transform.lto_fragment fragment
     cdef bytes data
-    fragment.type = <cpp_transform.lto_binary_type>binary_type
-    for data in fragments:
+    cdef uint8_t binary_type
+    for source in fragments:
+        binary_type = source.type
+        fragment.type = <cpp_transform.lto_binary_type>binary_type
+        data = source.data
         fragment.data = span[const_uint8_t](
             <const uint8_t*>PyBytes_AsString(data), len(data)
         )
@@ -270,32 +271,27 @@ cdef vector[cpp_transform.lto_fragment] _to_lto_fragments(
     return result
 
 
-cpdef Column transform(
+cpdef Table transform(
     inputs,
-    transform_udf,
-    DataType output_type,
-    null_aware is_null_aware,
+    udf,
+    output_type,
     output_nullability null_policy,
     object row_size=None,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Create a new column by applying a transform function against
-       multiple input columns.
+    """Create a table by applying a transform function against multiple inputs.
 
     Parameters
     ----------
     inputs : Sequence[Column | UserData]
         Ordered columns and borrowed pointers. Length-one columns broadcast.
-    transform_udf : callable or TransformUDF
-        Value-returning Python device callable, implicitly compiled to the CUDF ABI,
-        or an explicit symbol and compiled CUDF ABI LTO IR or PTX modules.
-        Set TransformUDF.indexed to request a logical row index before ordinary inputs.
-    output_type : DataType
-        The output type that is compatible with the output type in the unary_udf.
-    is_null_aware: NullAware
-        If `NO`, the UDF gets non-nullable parameters
-        If `YES`, the UDF gets nullable parameters
+    udf : TransformUDF
+        User-defined function to apply.
+        See :class:`pylibcudf.udf.TransformUDF` for the calling convention.
+    output_type : DataType or list[DataType]
+        The output types produced by ``udf``, in output-pointer order.
+        A single type is equivalent to a one-item list.
     null_policy: OutputNullability
         If `PRESERVE`, null-masks are produced if necessary.
         If `ALL_VALID`, null-masks are not produced.
@@ -305,22 +301,20 @@ cpdef Column transform(
     stream : Stream | None
         CUDA stream on which to perform the operation.
     mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
+        Device memory resource used to allocate the returned columns' device memory.
 
     Returns
     -------
-    Column
-        The transformed column having the UDF applied to each element.
+    Table
+        The transformed columns, in output-pointer order.
     """
     cdef vector[cpp_transform.transform_input] c_inputs
-    cdef unique_ptr[column] c_result
     cdef unique_ptr[table] c_table_result
-    cdef vector[unique_ptr[column]] c_columns
     cdef vector[unique_ptr[column]] string_offsets
     cdef vector[cpp_transform.transform_output] c_outputs
     cdef cpp_transform.transform_output c_output
     cdef unique_ptr[cpp_transform.scalar_column_view] c_scalar_input
-    from .udf import UserData, _as_transform_udf
+    from .udf import TransformUDF, UserData
 
     cdef cpp_transform.transform_udf c_udf
     cdef vector[cpp_transform.lto_fragment] c_fragments
@@ -331,6 +325,16 @@ cpdef Column transform(
     cdef size_type smallest_size
     cdef size_type largest_size
     cdef size_type base_size
+    cdef list output_types
+
+    if not isinstance(udf, TransformUDF):
+        raise TypeError("udf must be a TransformUDF")
+    if isinstance(output_type, DataType):
+        output_types = [output_type]
+    elif isinstance(output_type, list):
+        output_types = output_type
+    else:
+        raise TypeError("output_type must be a DataType or a list of DataType")
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
@@ -349,17 +353,11 @@ cpdef Column transform(
         c_row_size = base_size
     else:
         raise ValueError("row_size is required when there are no column inputs")
-    compiled = _as_transform_udf(
-        transform_udf,
-        [None if isinstance(value, UserData) else value.type().id() for value in inputs],
-        output_type.id(),
-        is_null_aware == null_aware.YES,
-    )
-    # Retain compiled's symbol and byte owners throughout linking and execution.
-    symbol = compiled.symbol.encode()
-    c_fragments = _to_lto_fragments(compiled.fragments, compiled.binary_type)
-    c_udf.is_null_aware = null_aware.YES if compiled.is_null_aware else null_aware.NO
-    c_udf.indexed = compiled.indexed
+    # The descriptor retains module bytes throughout linking and execution.
+    symbol = udf.symbol.encode()
+    c_fragments = _to_lto_fragments(udf.fragments)
+    c_udf.is_null_aware = null_aware.YES if udf.is_null_aware else null_aware.NO
+    c_udf.indexed = udf.indexed
     c_udf.symbol = string_view(symbol.data(), symbol.size())
     c_udf.fragments = span[cpp_transform.const_lto_fragment](c_fragments.data(), c_fragments.size())
 
@@ -379,9 +377,12 @@ cpdef Column transform(
         else:
             c_inputs.push_back(cpp_transform.transform_input(input_view))
 
-    c_output.type = output_type.c_obj
     c_output.nullability = null_policy
-    c_outputs.push_back(c_output)
+    for dtype in output_types:
+        if not isinstance(dtype, DataType):
+            raise TypeError("output_type entries must be DataType objects")
+        c_output.type = (<DataType>dtype).c_obj
+        c_outputs.push_back(c_output)
 
     with nogil:
         c_table_result = cpp_transform.transform(
@@ -393,10 +394,8 @@ cpdef Column transform(
             _cs,
             mr.get_mr()
         )
-        c_columns = dereference(c_table_result).release()
-        c_result = move(c_columns[0])
 
-    return Column.from_libcudf(move(c_result), _stream, mr)
+    return Table.from_libcudf(move(c_table_result), _stream, mr)
 
 cpdef tuple[Table, Column] encode(
     Table input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None

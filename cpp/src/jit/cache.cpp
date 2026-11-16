@@ -305,7 +305,8 @@ void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version
 
 std::vector<std::string> make_lto_compile_options(char const* name,
                                                   std::span<char const* const> include_paths,
-                                                  bool use_pch)
+                                                  bool use_pch,
+                                                  std::string_view std)
 {
   auto& ctx = cudf::get_context();
   auto& cfg = ctx.config();
@@ -330,7 +331,7 @@ std::vector<std::string> make_lto_compile_options(char const* name,
 
   if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
-  options.emplace_back("-std=c++20");
+  options.emplace_back(std::format("-std={}", std));
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");
   options.emplace_back("--dopt=on");
@@ -387,7 +388,7 @@ rtcx::blob compile_kernel_fragment(char const* name,
 {
   CUDF_FUNC_RANGE();
 
-  auto options = make_lto_compile_options(name, {}, true);
+  auto options = make_lto_compile_options(name, {}, true, "c++20");
 
   return compile_fragment(name, cuda_code, header_include_names, headers, options);
 }
@@ -397,11 +398,12 @@ rtcx::blob compile_user_fragment(char const* name,
                                  std::span<char const* const> header_include_names,
                                  std::span<char const* const> headers,
                                  std::span<char const* const> include_paths,
-                                 bool use_pch)
+                                 bool use_pch,
+                                 std::string_view std)
 {
   CUDF_FUNC_RANGE();
 
-  auto options = make_lto_compile_options(name, include_paths, use_pch);
+  auto options = make_lto_compile_options(name, include_paths, use_pch, std);
 
   return compile_fragment(name, cuda_code, header_include_names, headers, options);
 }
@@ -418,7 +420,8 @@ rtcx::blob get_user_fragment(char const* name,
                              std::span<char const* const> header_include_names,
                              std::span<char const* const> headers,
                              std::span<char const* const> include_paths,
-                             bool use_pch)
+                             bool use_pch,
+                             std::string_view std)
 {
   CUDF_FUNC_RANGE();
 
@@ -432,14 +435,16 @@ rtcx::blob get_user_fragment(char const* name,
             "driver={}\n"
             "arch={}\n"
             "bundle={}\n"
-            "use_pch={}\n",
+            "use_pch={}\n"
+            "std={}\n",
     name,
     ctx.nvrtc_version().value(),
     props.runtime_version,
     props.driver_version,
     LTO_ARCHITECTURE,
     ctx.jit_bundle().get_hash(),
-    use_pch);
+    use_pch,
+    std);
 
   XXH3_state_t state;
   XXH3_INITSTATE(&state);
@@ -460,7 +465,7 @@ rtcx::blob get_user_fragment(char const* name,
 
   auto compile = [&] {
     return compile_user_fragment(
-      name, source_code, header_include_names, headers, include_paths, use_pch);
+      name, source_code, header_include_names, headers, include_paths, use_pch, std);
   };
 
   return ctx.rtcx_cache()
@@ -473,7 +478,8 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const* const> includes,
                                          std::span<char const* const> include_paths,
                                          bool use_pch,
-                                         std::string_view pch_key)
+                                         std::string_view pch_key,
+                                         std::string_view std)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(include_names.size() == includes.size(),
@@ -482,7 +488,7 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
 
   auto const source_name = std::format("{}.cu", pch_key);
   return compiled_fragment(get_user_fragment(
-    source_name.c_str(), source_code, include_names, includes, include_paths, use_pch));
+    source_name.c_str(), source_code, include_names, includes, include_paths, use_pch, std));
 }
 
 std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,

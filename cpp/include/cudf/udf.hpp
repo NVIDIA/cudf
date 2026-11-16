@@ -105,13 +105,15 @@ struct [[nodiscard]] compiled_fragment {
                                                   std::span<char const* const>,
                                                   std::span<char const* const>,
                                                   bool,
+                                                  std::string_view,
                                                   std::string_view);
 };
 
 /**
  * @brief Compiles CUDA device source into an owning LTO IR fragment.
  *
- * Compiled fragments are cached by source, in-memory headers, ordered include paths and PCH use.
+ * Compiled fragments are cached by source, in-memory headers, ordered include paths, PCH use and
+ * C++ standard.
  *
  * CUDA UDFs can include `<cudf/udf_includes.hpp>` for the common cuDF value types,
  * cstring, optional, span, and device operator headers.
@@ -130,6 +132,7 @@ struct [[nodiscard]] compiled_fragment {
  * @param include_paths Filesystem header directories, searched before bundled header directories
  * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
  * @param pch_key PCH key used to identify or create the precompiled header
+ * @param std C++ language standard passed to NVRTC, such as "c++17" or "c++20"
  * @return Shared ownership of the compiled bytes
  * @throws std::invalid_argument for mismatched header spans
  * @throws std::runtime_error if compilation fails
@@ -139,7 +142,8 @@ compiled_fragment compile_cuda_to_lto_ir(char const* source_code,
                                          std::span<char const* const> includes      = {},
                                          std::span<char const* const> include_paths = {},
                                          bool use_pch                               = true,
-                                         std::string_view pch_key = "cudf_user_fragment");
+                                         std::string_view pch_key = "cudf_user_fragment",
+                                         std::string_view std     = "c++20");
 
 /** @} */  // end of group
 

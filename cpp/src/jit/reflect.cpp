@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_child_offsets.hpp>
+#include <cudf/detail/utilities/strings.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
@@ -16,8 +17,6 @@
 #include <rtcx/rtcx.hpp>
 
 #include <format>
-#include <iterator>
-#include <numeric>
 #include <stdexcept>
 #include <utility>
 
@@ -363,15 +362,7 @@ std::string reflect_udf_signature(bool is_null_aware,
 {
   auto params =
     reflect_udf_parameter_types(is_null_aware, inputs, outputs, use_physical_types, index_count);
-  auto joined =
-    params.empty()
-      ? ""
-      : std::accumulate(
-          std::next(params.begin()), params.end(), params[0], [](auto const& a, auto const& b) {
-            return std::format("{}, {}", a, b);
-          });
-
-  return std::format("cudf::errc({})", joined);
+  return std::format("cudf::errc({})", cudf::detail::string_join(params, {}, ", "));
 }
 
 std::string reflect_udf_signature(bool is_null_aware,

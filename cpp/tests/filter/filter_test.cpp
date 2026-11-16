@@ -78,7 +78,7 @@ TYPED_TEST(FilterNumericTest, NoAssertions)
 
   std::vector<std::unique_ptr<cudf::column>> results;
 
-  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
+  auto symbol                    = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
 
   ASSERT_NO_THROW(results = transform_and_apply_retention_mask(
@@ -104,7 +104,7 @@ TYPED_TEST(FilterChronoTest, NoAssertions)
     cudf::test::fixed_width_column_wrapper<T>{{T{}, T{}, T{}, T{}, T{}, T{}}, {1, 1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
+  auto symbol                    = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
   ASSERT_NO_THROW(results = transform_and_apply_retention_mask(
                     std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
@@ -129,7 +129,7 @@ TYPED_TEST(FilterFixedPointTest, NoAssertions)
     {2, 3, 5, 6, 7}, {1, 1, 1, 1, 1}, numeric::scale_type{0}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
+  auto symbol                    = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
 
   ASSERT_NO_THROW(results = transform_and_apply_retention_mask(
@@ -148,7 +148,7 @@ TEST_F(FilterTestFixture, StringNoAssertions)
   auto expected = cudf::test::strings_column_wrapper{{"2", "3", "5", "6", "7"}, {1, 1, 1, 1, 1}};
 
   std::vector<std::unique_ptr<cudf::column>> results;
-  auto const symbol              = this->equality_symbol(cudf::column_view{a}.type());
+  auto symbol                    = this->equality_symbol(cudf::column_view{a}.type());
   cudf::transform_input inputs[] = {a, b};
   ASSERT_NO_THROW(results = transform_and_apply_retention_mask(
                     std::span{inputs}, get_filter_udf(symbol), cudf::table_view{{a}}));
@@ -183,9 +183,8 @@ TEST_F(FilterTest, Basic)
 
 TEST_F(FilterTest, ScalarFilter)
 {
-  auto a = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
-  auto b = cudf::test::fixed_width_column_wrapper<int32_t>{2};
-
+  auto a        = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  auto b        = cudf::test::fixed_width_column_wrapper<int32_t>{2};
   auto expected = cudf::test::fixed_width_column_wrapper<int32_t>{{2, 4, 6, 8, 10}};
 
   cudf::transform_input inputs[] = {a, cudf::scalar_column_view(b)};

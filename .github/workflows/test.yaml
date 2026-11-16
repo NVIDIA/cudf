@@ -471,7 +471,10 @@ jobs:
         run: |
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name "${AUDIT_ARTIFACT}" --dir audit
-          jq -e '.status == "current"' audit/run-list-drift.json
+          jq -e '.status == "current"' audit/run-list-drift.json || {
+            jq '{status, errors, differences: (.differences | map_values({added: (.added | length), lost_gpu_execution: (.lost_gpu_execution | length), stale: (.stale | length)}))}' audit/run-list-drift.json
+            exit 1
+          }
   narwhals-tests:
     permissions:
       actions: read

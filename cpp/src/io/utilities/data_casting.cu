@@ -12,6 +12,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -451,7 +452,7 @@ CUDF_KERNEL void parse_fn_string_parallel(str_tuple_it str_tuples,
   for (size_type istring = get_next_string(); istring < total_out_strings;
        istring           = get_next_string()) {
     // skip nulls
-    if (null_mask != nullptr && not bit_is_set(null_mask, istring)) {
+    if (null_mask != nullptr && not cudf::detail::weak_bit_is_set(null_mask, istring)) {
       if (!d_chars && lane == 0) { d_sizes[istring] = 0; }
       continue;  // gride-stride return;
     }
@@ -743,7 +744,7 @@ struct string_parse {
 
   __device__ void operator()(size_type idx)
   {
-    if (null_mask != nullptr && not bit_is_set(null_mask, idx)) {
+    if (null_mask != nullptr && not cudf::detail::weak_bit_is_set(null_mask, idx)) {
       if (!d_chars) { d_sizes[idx] = 0; }
       return;
     }
@@ -952,7 +953,10 @@ std::unique_ptr<column> parse_data(
     col_size,
     [str_tuples, col = *output_dv_ptr, options, col_type, null_count_data] __device__(
       size_type row) {
-      if (col.is_null(row)) { return; }
+      if (col.nullable() and
+          not cudf::detail::weak_bit_is_set(col.null_mask(), col.offset() + row)) {
+        return;
+      }
       auto const in = str_tuples[row];
 
       auto const is_null_literal =

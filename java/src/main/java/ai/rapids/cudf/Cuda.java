@@ -662,8 +662,8 @@ public class Cuda {
   public static native long memPoolImportFromPosixFd(int fd) throws CudaException;
 
   /**
-   * Destroy a CUDA memory pool with cudaMemPoolDestroy. For an imported pool this fails while
-   * any pointer imported from it has not been freed.
+   * Destroy a CUDA memory pool with cudaMemPoolDestroy. The call returns cudaErrorInvalidValue if
+   * the pool cannot be destroyed.
    * @param pool the cudaMemPool_t to destroy
    * @throws CudaException on any error.
    */

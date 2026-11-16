@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 __all__ = ["MemoryResourceSampler"]
 
 
-class MemoryResourceSampler:
+class MemoryResourceSampler[StateT]:
     """
     Sample device memory usage during query execution.
 
@@ -26,6 +26,12 @@ class MemoryResourceSampler:
         Callable that returns the current number of allocated device bytes. It's
         expected that this is cheap to read and doesn't acquire any kind of lock
         to compute the allocation.
+    start
+        Record the initial reading and return the sampling state.
+    record
+        Record a subsequent reading and return the updated sampling state.
+    stop
+        Stop the final sampling state.
     interval_s
         Seconds between readings. Must be positive.
 
@@ -39,30 +45,41 @@ class MemoryResourceSampler:
         self,
         *,
         read_bytes: Callable[[], int],
+        start: Callable[[int], StateT],
+        record: Callable[[StateT, int], StateT],
+        stop: Callable[[StateT], object],
         interval_s: float,
     ) -> None:
         if interval_s <= 0:
             raise ValueError(f"interval_s must be positive, got {interval_s}")
         self._read_bytes = read_bytes
+        self._start = start
+        self._record = record
+        self._stop = stop
         self._interval_s = interval_s
-        self._active = False
 
     @contextlib.contextmanager
-    def monitor(
-        self,
-        *,
-        record: Callable[[int], object],
-        stop: Callable[[], object],
-    ) -> Iterator[None]:
+    def monitor(self) -> Iterator[None]:
         """Sample until the context exits."""
-        self._active = True
         stop_event = threading.Event()
         error: Exception | None = None
+        state: StateT | None = None
+
+        def start() -> bool:
+            nonlocal error, state
+            try:
+                state = self._start(self._read_bytes())
+            except Exception as current_error:
+                error = current_error
+                stop_event.set()
+                return False
+            return True
 
         def sample() -> bool:
-            nonlocal error
+            nonlocal error, state
+            assert state is not None
             try:
-                record(self._read_bytes())
+                state = self._record(state, self._read_bytes())
             except Exception as current_error:
                 error = current_error
                 stop_event.set()
@@ -74,7 +91,7 @@ class MemoryResourceSampler:
                 pass
 
         thread: threading.Thread | None = None
-        if sample():
+        if start():
             thread = threading.Thread(
                 target=run, name="cudf-polars-memory-sampler", daemon=True
             )
@@ -85,12 +102,12 @@ class MemoryResourceSampler:
             stop_event.set()
             if thread is not None:
                 thread.join()
-            try:
-                stop()
-            except Exception as current_error:
-                if error is None:
-                    error = current_error
-            self._active = False
+            if state is not None:
+                try:
+                    self._stop(state)
+                except Exception as current_error:
+                    if error is None:
+                        error = current_error
             if error is not None:
                 warnings.warn(
                     f"cudf-polars-memory-sampler stopped after an error: {error!r}",

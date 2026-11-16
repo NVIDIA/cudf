@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import itertools
 import threading
 import time
 import uuid
@@ -23,18 +22,6 @@ def _wait_for(condition, timeout_s: float = 10.0) -> None:
     while not condition():
         assert time.monotonic() < deadline, "timed out"
         time.sleep(0.001)
-
-
-def _sampler(
-    *,
-    interval_s: float = 0.001,
-    read_bytes=None,
-) -> MemoryResourceSampler:
-    counter = itertools.count(1)
-    return MemoryResourceSampler(
-        read_bytes=read_bytes or (lambda: next(counter) * 1000),
-        interval_s=interval_s,
-    )
 
 
 def _sampler_threads() -> list[threading.Thread]:
@@ -66,14 +53,27 @@ def test_sampler_callback_errors_warn_instead_of_raising(callback: str) -> None:
         if callback == "stop":
             raise OSError("callback failed")
 
+    state = object()
+
+    def start(nbytes: int) -> object:
+        record(nbytes)
+        return state
+
+    def transition(current: object, nbytes: int) -> object:
+        record(nbytes)
+        return current
+
     sampler = MemoryResourceSampler(
         read_bytes=read_bytes,
+        start=start,
+        record=transition,
+        stop=lambda _: stop(),
         interval_s=0.001,
     )
     if callback in {"read-periodic", "record"}:
         with (
             pytest.warns(RuntimeWarning, match="callback failed"),
-            sampler.monitor(record=record, stop=stop),
+            sampler.monitor(),
         ):
             _wait_for(lambda: calls > 1)
 
@@ -83,6 +83,9 @@ def test_sampler_rejects_non_positive_interval(interval_s: float) -> None:
     with pytest.raises(ValueError, match="must be positive"):
         MemoryResourceSampler(
             read_bytes=lambda: 0,
+            start=lambda _: object(),
+            record=lambda state, _: state,
+            stop=lambda _: None,
             interval_s=interval_s,
         )
 

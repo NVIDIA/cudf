@@ -228,20 +228,6 @@ class QuentWorkerRuntime:
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
     allocated_bytes: Callable[[], int] | None = None
-    _sampler: MemoryResourceSampler | None = dataclasses.field(
-        default=None, init=False, repr=False
-    )
-    _sampler_fsm: quent_bindings.MemoryResourceSamplerSamplingHandle | None = (
-        dataclasses.field(default=None, init=False, repr=False)
-    )
-
-    def __post_init__(self) -> None:
-        interval_s = self.config.device_memory_poll_interval_s
-        if self.allocated_bytes is not None and interval_s is not None:
-            self._sampler = MemoryResourceSampler(
-                read_bytes=self.allocated_bytes,
-                interval_s=interval_s,
-            )
 
     @classmethod
     def create(
@@ -316,27 +302,38 @@ class QuentWorkerRuntime:
 
         return QuentQueryWorkerState(runtime=self, query_id=query_id)
 
-    def _record_device_memory(self, query_id: uuid.UUID, nbytes: int) -> None:
-        """Record one reading as the next state of the query's sampler FSM."""
-        usage: quent_bindings.SampledMemoryResourceUsageRefDict = {
+    def _device_memory_usage(
+        self, nbytes: int
+    ) -> quent_bindings.SampledMemoryResourceUsageRefDict:
+        return {
             "target": self.worker_resources.sampled_memory_resource_id,
             "data": {"bytes": nbytes},
         }
-        fsm = self._sampler_fsm
-        if fsm is None:
-            self._sampler_fsm = (
-                self.session.binding_context.memory_resource_sampler_observer()
-                .handle()
-                .sampling(query=query_id, memory=usage)
-            )
-        else:
-            self._sampler_fsm = fsm.sampling(query=query_id, memory=usage)
 
-    def _stop_device_memory(self) -> None:
+    def _start_device_memory(
+        self, query_id: uuid.UUID, nbytes: int
+    ) -> quent_bindings.MemoryResourceSamplerSamplingHandle:
+        """Create the sampler FSM with its initial reading."""
+        return (
+            self.session.binding_context.memory_resource_sampler_observer()
+            .handle()
+            .sampling(query=query_id, memory=self._device_memory_usage(nbytes))
+        )
+
+    def _record_device_memory(
+        self,
+        fsm: quent_bindings.MemoryResourceSamplerSamplingHandle,
+        query_id: uuid.UUID,
+        nbytes: int,
+    ) -> quent_bindings.MemoryResourceSamplerSamplingHandle:
+        """Record one reading as the next state of the query's sampler FSM."""
+        return fsm.sampling(query=query_id, memory=self._device_memory_usage(nbytes))
+
+    def _stop_device_memory(
+        self, fsm: quent_bindings.MemoryResourceSamplerSamplingHandle
+    ) -> None:
         """Close the sampler FSM, ending its last reading."""
-        fsm, self._sampler_fsm = self._sampler_fsm, None
-        if fsm is not None:
-            fsm.stopped()
+        fsm.stopped()
 
     @contextlib.contextmanager
     def monitor_device_memory(self, query_id: uuid.UUID) -> Iterator[None]:
@@ -353,14 +350,21 @@ class QuentWorkerRuntime:
         Does nothing when no reader was supplied or sampling is disabled with
         ``QuentConfig.device_memory_poll_interval_s=None``.
         """
-        sampler = self._sampler
-        if sampler is None:
+        read_bytes = self.allocated_bytes
+        interval_s = self.config.device_memory_poll_interval_s
+        if read_bytes is None or interval_s is None:
             yield
             return
-        with sampler.monitor(
-            record=lambda nbytes: self._record_device_memory(query_id, nbytes),
+        sampler = MemoryResourceSampler(
+            read_bytes=read_bytes,
+            start=lambda nbytes: self._start_device_memory(query_id, nbytes),
+            record=lambda fsm, nbytes: self._record_device_memory(
+                fsm, query_id, nbytes
+            ),
             stop=self._stop_device_memory,
-        ):
+            interval_s=interval_s,
+        )
+        with sampler.monitor():
             yield
 
     def emit_physical_plan(
@@ -469,7 +473,6 @@ class QuentWorkerRuntime:
         worker_handle = self._worker_handle
         self._worker_handle = None
         # Don't keep the memory resource alive past engine shutdown.
-        self._sampler = None
         self.allocated_bytes = None
         steps: list[Callable[[], object]] = []
         if worker_handle is not None:

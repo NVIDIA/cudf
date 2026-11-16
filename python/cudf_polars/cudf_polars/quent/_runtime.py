@@ -231,21 +231,16 @@ class QuentWorkerRuntime:
     _sampler: MemoryResourceSampler | None = dataclasses.field(
         default=None, init=False, repr=False
     )
-    # One MemoryResourceSampler FSM per query currently being sampled. Only
-    # touched from the sampler, which serializes its callbacks.
-    _sampler_fsms: dict[
-        uuid.UUID, quent_bindings.MemoryResourceSamplerSamplingHandle
-    ] = dataclasses.field(default_factory=dict, init=False, repr=False)
+    _sampler_fsm: quent_bindings.MemoryResourceSamplerSamplingHandle | None = (
+        dataclasses.field(default=None, init=False, repr=False)
+    )
 
     def __post_init__(self) -> None:
         interval_s = self.config.device_memory_poll_interval_s
         if self.allocated_bytes is not None and interval_s is not None:
             self._sampler = MemoryResourceSampler(
                 read_bytes=self.allocated_bytes,
-                record=self._record_device_memory,
-                stop=self._stop_device_memory,
                 interval_s=interval_s,
-                name="cudf-polars-memory-sampler",
             )
 
     @classmethod
@@ -327,19 +322,19 @@ class QuentWorkerRuntime:
             "target": self.worker_resources.sampled_memory_resource_id,
             "data": {"bytes": nbytes},
         }
-        fsm = self._sampler_fsms.get(query_id)
+        fsm = self._sampler_fsm
         if fsm is None:
-            self._sampler_fsms[query_id] = (
+            self._sampler_fsm = (
                 self.session.binding_context.memory_resource_sampler_observer()
                 .handle()
                 .sampling(query=query_id, memory=usage)
             )
         else:
-            self._sampler_fsms[query_id] = fsm.sampling(query=query_id, memory=usage)
+            self._sampler_fsm = fsm.sampling(query=query_id, memory=usage)
 
-    def _stop_device_memory(self, query_id: uuid.UUID) -> None:
-        """Close the query's sampler FSM, ending its last reading."""
-        fsm = self._sampler_fsms.pop(query_id, None)
+    def _stop_device_memory(self) -> None:
+        """Close the sampler FSM, ending its last reading."""
+        fsm, self._sampler_fsm = self._sampler_fsm, None
         if fsm is not None:
             fsm.stopped()
 
@@ -362,11 +357,11 @@ class QuentWorkerRuntime:
         if sampler is None:
             yield
             return
-        sampler.attach(query_id)
-        try:
+        with sampler.monitor(
+            record=lambda nbytes: self._record_device_memory(query_id, nbytes),
+            stop=self._stop_device_memory,
+        ):
             yield
-        finally:
-            sampler.detach(query_id)
 
     def emit_physical_plan(
         self,
@@ -473,13 +468,10 @@ class QuentWorkerRuntime:
         """Close the Worker and its process-local Collector client."""
         worker_handle = self._worker_handle
         self._worker_handle = None
-        # Stop sampling and don't keep the memory resource alive past engine
-        # shutdown.
-        sampler, self._sampler = self._sampler, None
+        # Don't keep the memory resource alive past engine shutdown.
+        self._sampler = None
         self.allocated_bytes = None
         steps: list[Callable[[], object]] = []
-        if sampler is not None:
-            steps.append(sampler.close)
         if worker_handle is not None:
             steps.append(worker_handle.exit)
         steps.append(self.session.close)

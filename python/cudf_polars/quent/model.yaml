@@ -276,7 +276,10 @@ entities:
           limits: { sets-resource-bounds: true }
 
   ReservableMemory:
-    doc: Reservable bytes of one memory type on a worker's rapidsmpf BufferResource.
+    doc: >-
+      Reservable bytes of one memory type on a worker's rapidsmpf
+      BufferResource. The set of memory types and each memory types' limits
+      are defined by the rapidsmpf BufferResource.
     resource:
       bytes: { kind: occupancy, known-bounds: true }
     events:
@@ -404,7 +407,14 @@ fsms:
           values: OperatorStatistics
 
   ReservationOccupancy:
-    doc: Aggregate reserved-but-not-yet-consumed bytes for one context and memory type.
+    doc: >-
+      Reserved-but-not-yet-consumed bytes for one memory type by an Actor.
+
+      Reservations are made against a specific `ReservableMemory` resource (a
+      memory tier with some maximum capacity). This metric increases when a new
+      reservation is made. It decreases when allocations are made against the
+      reservation.
+
     states:
       created:
         initial: true

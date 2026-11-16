@@ -36,6 +36,7 @@
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/cmath>
+#include <cuda/ptx>
 #include <cuda/std/array>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
@@ -270,6 +271,25 @@ struct slot_table_ref {
     return window;
   }
 
+  /**
+   * @brief Loads the slots of `bucket` while other threads may be claiming them.
+   *
+   * A plain C++ load must not race with the compare-and-swap that claims a slot, so each slot is
+   * read with a weak PTX load of the same width. The values may already be stale: only the
+   * compare-and-swap claims a slot.
+   */
+  [[nodiscard]] __device__ cuda::std::array<slot_type, bucket_size> weak_load(
+    cuda::std::uint32_t bucket) const
+  {
+    auto const* const slots = bucket_slots(bucket);
+    cuda::std::array<slot_type, bucket_size> window;
+#pragma unroll
+    for (cuda::std::uint32_t slot = 0; slot < bucket_size; ++slot) {
+      window[slot] = cuda::ptx::ld(cuda::ptx::space_global, slots + slot);
+    }
+    return window;
+  }
+
   /// Returns a bit for each slot of `window` whose fingerprint matches `hash`.
   template <cuda::std::size_t N>
   [[nodiscard]] __device__ cuda::std::uint32_t candidates(
@@ -349,7 +369,7 @@ CUDF_KERNEL void insert_kernel(size_type num_rows,
     auto [bucket, step] = table.probe_sequence(hash);
     // The table has more slots than rows, so a bucket with an empty slot is always found.
     for (auto inserted = false; !inserted; bucket = table.next(bucket, step)) {
-      auto const window = table.load<bucket_size>(bucket, 0);
+      auto const window = table.weak_load(bucket);
       auto* const slots = table.bucket_slots(bucket);
       for (cuda::std::uint32_t slot = 0; slot < bucket_size && !inserted; ++slot) {
         auto expected = empty_slot;

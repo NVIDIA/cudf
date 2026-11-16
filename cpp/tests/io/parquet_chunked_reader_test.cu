@@ -1436,12 +1436,12 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIncludedForEveryPage)
   constexpr cudf::size_type page_rows = 5'000;
   auto const values                   = cuda::counting_iterator<int32_t>{0};
   auto const valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) { return i % 7 != 0; });
   auto const strs = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
                       return std::string(1 + (i % 3), static_cast<char>('a' + (i % 26)));
                     });
-  int32s_col const ints(values, values + num_rows, valids);
-  strings_col const strings(strs.begin(), strs.begin() + num_rows, valids);
+  int32s_col const ints(values, values + num_rows, valids.begin());
+  strings_col const strings(strs.begin(), strs.begin() + num_rows, valids.begin());
   auto const expected = cudf::table_view{{ints, strings}};
   auto const filepath = temp_env->get_temp_filepath("ScratchIncludedForEveryPage.parquet");
   cudf::io::write_parquet(

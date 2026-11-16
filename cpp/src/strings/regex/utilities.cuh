@@ -20,6 +20,8 @@
 #include <cuda/buffer>
 #include <cuda/stream>
 
+#include <algorithm>
+#include <ranges>
 #include <stdexcept>
 
 namespace cudf {
@@ -61,17 +63,12 @@ void set_regex_carveout(Kernel kernel, int32_t shmem_size)
   // binary search for the smallest carveout percentage that keeps the maximum occupancy
   auto const max_blocks = blocks_per_sm(100);
   if (max_blocks <= 0) { return; }
-  int lo = 0;
-  int hi = 100;
-  while (lo < hi) {
-    auto const mid = (lo + hi) / 2;
-    if (blocks_per_sm(mid) >= max_blocks) {
-      hi = mid;
-    } else {
-      lo = mid + 1;
-    }
-  }
-  CUDF_CUDA_TRY(cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, hi));
+  // the range includes 100 which always keeps max_blocks so the result is never the end iterator
+  auto const percents = std::views::iota(0, 101);
+  auto const carveout = *std::ranges::partition_point(
+    percents, [&](int percent) { return blocks_per_sm(percent) < max_blocks; });
+  CUDF_CUDA_TRY(
+    cudaFuncSetAttribute(kernel, cudaFuncAttributePreferredSharedMemoryCarveout, carveout));
 }
 
 template <typename ForEachFunction, typename ProgDevice>

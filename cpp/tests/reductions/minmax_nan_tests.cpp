@@ -10,18 +10,33 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numeric>
+#include <type_traits>
 #include <vector>
 
 // min/max follow the IEEE 754-2019 minimum/maximum operations for floating-point values:
-// NaN propagates and -0 is less than +0. argmin/argmax select the first NaN.
+// NaN propagates and -0 is less than +0. Combining a NaN with another value gives the canonical
+// quiet NaN, so the result bits do not depend on the evaluation order. argmin/argmax select the
+// row holding the min/max result: the first NaN, and -0 before +0 for argmin.
+
+namespace {
+template <typename T>
+bool is_canonical_nan(T value)
+{
+  using bits_t = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t, uint64_t>;
+  return std::bit_cast<bits_t>(value) == std::bit_cast<bits_t>(std::numeric_limits<T>::quiet_NaN());
+}
+}  // namespace
 
 template <typename T>
 struct MinMaxNaNTest : public cudf::test::BaseFixture {
@@ -138,8 +153,10 @@ TYPED_TEST(MinMaxNaNTest, SignedZeros)
   using T       = TypeParam;
   using wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
-  auto const min_agg = cudf::make_min_aggregation<cudf::reduce_aggregation>();
-  auto const max_agg = cudf::make_max_aggregation<cudf::reduce_aggregation>();
+  auto const min_agg    = cudf::make_min_aggregation<cudf::reduce_aggregation>();
+  auto const max_agg    = cudf::make_max_aggregation<cudf::reduce_aggregation>();
+  auto const argmin_agg = cudf::make_argmin_aggregation<cudf::reduce_aggregation>();
+  auto const argmax_agg = cudf::make_argmax_aggregation<cudf::reduce_aggregation>();
   for (auto const& input : {wrapper{T{0}, -T{0}, T{0}}, wrapper{-T{0}, T{0}, -T{0}}}) {
     auto const min = this->reduce_value(input, *min_agg);
     auto const max = this->reduce_value(input, *max_agg);
@@ -148,6 +165,93 @@ TYPED_TEST(MinMaxNaNTest, SignedZeros)
     EXPECT_EQ(max, T{0});
     EXPECT_FALSE(std::signbit(max));
   }
+
+  // argmin/argmax select the row holding the min/max result, so -0 is selected for argmin and +0
+  // for argmax
+  auto const check_index =
+    [&](cudf::column_view const& input, cudf::size_type argmin, cudf::size_type argmax) {
+      EXPECT_EQ(this->reduce_index(input, *argmin_agg), argmin);
+      EXPECT_EQ(this->reduce_index(input, *argmax_agg), argmax);
+    };
+  check_index(wrapper{T{0}, -T{0}, T{0}}, 1, 0);
+  check_index(wrapper{-T{0}, T{0}, -T{0}}, 0, 1);
+  check_index(wrapper{{T{1}, T{0}, -T{0}}, {0, 1, 1}}, 2, 1);
+
+  // Dictionary keys are not required to be unique, so -0 and +0 can be separate keys
+  auto const keys    = wrapper{T{0}, -T{0}};
+  auto const indices = cudf::test::fixed_width_column_wrapper<int32_t>{0, 1, 0};
+  auto const dict    = cudf::make_dictionary_column(keys, indices);
+  check_index(dict->view(), 1, 0);
+}
+
+TYPED_TEST(MinMaxNaNTest, CanonicalNaN)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = TestFixture::NaN;
+  using wrapper      = cudf::test::fixed_width_column_wrapper<T>;
+  using bits_t       = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t, uint64_t>;
+
+  // The sign and payload of the input NaNs do not affect the NaN result
+  auto const neg_nan     = std::copysign(NaN, T{-1});
+  auto const payload_nan = std::bit_cast<T>(std::bit_cast<bits_t>(NaN) | bits_t{5});
+  auto const min_agg     = cudf::make_min_aggregation<cudf::reduce_aggregation>();
+  auto const max_agg     = cudf::make_max_aggregation<cudf::reduce_aggregation>();
+  for (auto const& input : {wrapper{neg_nan},
+                            wrapper{T{1}, neg_nan},
+                            wrapper{neg_nan, T{1}, NaN},
+                            wrapper{payload_nan, T{2}, neg_nan}}) {
+    EXPECT_TRUE(is_canonical_nan(this->reduce_value(input, *min_agg)));
+    EXPECT_TRUE(is_canonical_nan(this->reduce_value(input, *max_agg)));
+    auto const [mm_min, mm_max] = cudf::minmax(input);
+    EXPECT_TRUE(
+      is_canonical_nan(static_cast<cudf::numeric_scalar<T> const*>(mm_min.get())->value()));
+    EXPECT_TRUE(
+      is_canonical_nan(static_cast<cudf::numeric_scalar<T> const*>(mm_max.get())->value()));
+  }
+}
+
+TYPED_TEST(MinMaxNaNTest, NullsAndInfinities)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = TestFixture::NaN;
+  auto constexpr inf = std::numeric_limits<T>::infinity();
+  using wrapper      = cudf::test::fixed_width_column_wrapper<T>;
+
+  // A null row is never selected over a valid row, including a valid infinity
+  this->check(wrapper{{T{0}, inf}, {0, 1}}, {false, inf, inf, 1, 1});
+  this->check(wrapper{{T{0}, -inf}, {0, 1}}, {false, -inf, -inf, 1, 1});
+  this->check(wrapper{{NaN, inf, -inf, NaN}, {0, 1, 1, 0}}, {false, -inf, inf, 2, 1});
+
+  auto const argmin_agg = cudf::make_argmin_aggregation<cudf::reduce_aggregation>();
+  auto const argmax_agg = cudf::make_argmax_aggregation<cudf::reduce_aggregation>();
+  auto const dict       = cudf::test::dictionary_column_wrapper<T>({T{0}, inf, -inf}, {0, 1, 1});
+  EXPECT_EQ(this->reduce_index(dict, *argmin_agg), 2);
+  EXPECT_EQ(this->reduce_index(dict, *argmax_agg), 1);
+  auto const dict_inf = cudf::test::dictionary_column_wrapper<T>({T{0}, inf}, {0, 1});
+  EXPECT_EQ(this->reduce_index(dict_inf, *argmin_agg), 1);
+  EXPECT_EQ(this->reduce_index(dict_inf, *argmax_agg), 1);
+}
+
+struct ArgMinMaxNullTest : public cudf::test::BaseFixture {};
+
+TEST_F(ArgMinMaxNullTest, IntegerLimits)
+{
+  using T       = int32_t;
+  using wrapper = cudf::test::fixed_width_column_wrapper<T>;
+
+  // A null row is never selected over a valid row holding the largest or smallest value
+  auto const reduce_index = [](cudf::column_view const& input,
+                               cudf::reduce_aggregation const& agg) {
+    auto const result = cudf::reduce(input, agg, cudf::data_type{cudf::type_id::INT32});
+    EXPECT_TRUE(result->is_valid());
+    return static_cast<cudf::numeric_scalar<cudf::size_type> const*>(result.get())->value();
+  };
+  auto const argmin_agg = cudf::make_argmin_aggregation<cudf::reduce_aggregation>();
+  auto const argmax_agg = cudf::make_argmax_aggregation<cudf::reduce_aggregation>();
+  auto constexpr max    = std::numeric_limits<T>::max();
+  auto constexpr min    = std::numeric_limits<T>::min();
+  EXPECT_EQ(reduce_index(wrapper({0, max}, {0, 1}), *argmin_agg), 1);
+  EXPECT_EQ(reduce_index(wrapper({0, min}, {0, 1}), *argmax_agg), 1);
 }
 
 TYPED_TEST(MinMaxNaNTest, Scan)
@@ -303,12 +407,15 @@ TYPED_TEST(MinMaxNaNTotallyOrderedTest, SignedZeros)
   auto const min_agg = cudf::make_min_aggregation<cudf::reduce_aggregation>(TestFixture::ordered);
   auto const argmin_agg =
     cudf::make_argmin_aggregation<cudf::reduce_aggregation>(TestFixture::ordered);
-  for (auto const& input : {wrapper{T{0}, NaN, -T{0}, T{0}}, wrapper{-T{0}, T{0}, NaN, -T{0}}}) {
-    auto const min = this->reduce_value(input, *min_agg);
+  // argmin selects the row holding the min result: the first -0
+  auto const inputs  = {wrapper{T{0}, NaN, -T{0}, T{0}}, wrapper{-T{0}, T{0}, NaN, -T{0}}};
+  auto const argmins = {2, 0};
+  for (auto [input, argmin] = std::pair{inputs.begin(), argmins.begin()}; input != inputs.end();
+       ++input, ++argmin) {
+    auto const min = this->reduce_value(*input, *min_agg);
     EXPECT_EQ(min, T{0});
     EXPECT_TRUE(std::signbit(min));
-    // -0 and +0 are equal values for argmin, so the first zero is selected
-    EXPECT_EQ(this->reduce_index(input, *argmin_agg), 0);
+    EXPECT_EQ(this->reduce_index(*input, *argmin_agg), *argmin);
   }
 }
 

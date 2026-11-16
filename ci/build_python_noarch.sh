@@ -22,6 +22,8 @@ RAPIDS_PACKAGE_VERSION=$(head -1 ./VERSION)
 export RAPIDS_PACKAGE_VERSION
 
 # populates `RATTLER_CHANNELS` array and `RATTLER_ARGS` array
+# shellcheck disable=SC2034
+RAPIDS_PREPEND_CONDA_CHANNELS=(file:///opt/dfg-prototype)
 source rapids-rattler-channel-string
 
 PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"

@@ -299,6 +299,21 @@ void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version
   }
 }
 
+void append_cccl_options(std::vector<std::string>& options)
+{
+  // workarounds for CCCL PCH reduction until CCCL releases a fix
+
+  // see: https://github.com/NVIDIA/cccl/pull/12560/
+  // https://github.com/vllm-project/humming/pull/192
+
+  // limit template unrolling in CCCL headers
+  options.emplace_back("-D_CCCL_META_UNROLL_LIMIT=1");
+
+  // CCCL's FP16 and FP8 are unused and increase PCH size in CCCL's headers
+  options.emplace_back("-DCCCL_DISABLE_FP16_SUPPORT");
+  options.emplace_back("-DCCCL_DISABLE_NVFP8_SUPPORT");
+}
+
 std::tuple<rtcx::library, rtcx::blob> compile_library(
   char const* name,
   char const* cuda_code,
@@ -332,6 +347,7 @@ std::tuple<rtcx::library, rtcx::blob> compile_library(
   if (sm >= 100) { options.emplace_back("--device-float128"); }
 
   options.emplace_back("-std=c++20");
+  append_cccl_options(options);
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");
   options.emplace_back("--dopt=on");
@@ -399,6 +415,7 @@ std::vector<std::string> make_lto_compile_options(char const* name,
   if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
   options.emplace_back("-std=c++20");
+  append_cccl_options(options);
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");
   options.emplace_back("--dopt=on");

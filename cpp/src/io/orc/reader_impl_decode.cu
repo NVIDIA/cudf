@@ -431,7 +431,7 @@ void decode_stream_data(int64_t num_dicts,
     update_null_mask(chunks, out_buffers, stream, mr);
   }
 
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, mr.as_temporary());
   decode_column_data(chunks.base_device_ptr(),
                      global_dict.data(),
                      row_groups,

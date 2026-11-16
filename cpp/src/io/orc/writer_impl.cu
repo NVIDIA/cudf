@@ -2230,7 +2230,7 @@ void rebase_date_columns(orc_table_view& orc_table,
                  "Legacy ORC calendar does not support TIMESTAMP columns");
   }
   if (orc_table.num_rows() == 0) { return; }
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
   for (auto const& col : orc_table.columns) {
     if (col.orc_kind() != DATE) { continue; }
     auto const& view = col.view();

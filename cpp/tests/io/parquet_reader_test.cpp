@@ -45,6 +45,7 @@
 #include <locale>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -2717,11 +2718,14 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
   auto fmd          = cudf::io::read_parquet_footers({&source, 1}).front();
   ASSERT_EQ(fmd.schema[1].name, "file");
+  ASSERT_EQ(fmd.schema[2].name, "offset");
   ASSERT_EQ(fmd.schema[3].name, "inline");
   fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+  // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
+  fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
 
   // Appends `fmd` as the new footer, leaving the original one unreferenced
-  auto const make_file = [&] {
+  auto const rewrite_file_footer = [&] {
     auto const footer      = cudf::io::parquet::experimental::write_parquet_footer_bytes(fmd);
     auto const footer_size = static_cast<uint32_t>(footer.size());
     auto const size_bytes  = reinterpret_cast<char const*>(&footer_size);
@@ -2731,7 +2735,8 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     file.insert(file.end(), {'P', 'A', 'R', '1'});
     return file;
   };
-  auto const read_metadata = [](std::vector<std::vector<char>> const& files) {
+  auto const read_metadata = [](std::span<std::vector<char> const> files,
+                                bool allow_mismatched = true) {
     std::vector<cudf::host_span<std::byte const>> sources;
     for (auto const& file : files) {
       sources.emplace_back(reinterpret_cast<std::byte const*>(file.data()), file.size());
@@ -2739,31 +2744,31 @@ TEST_F(ParquetReaderTest, FileLogicalType)
     return cudf::io::read_parquet(
              cudf::io::parquet_reader_options::builder(
                cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
-               .allow_mismatched_pq_schemas(true)
+               .allow_mismatched_pq_schemas(allow_mismatched)
                .column_names({"file"})
                .num_rows(0))
       .metadata;
   };
 
-  auto const metadata = read_metadata({make_file()});
+  auto const file_group = rewrite_file_footer();
+  auto const metadata   = read_metadata(std::array{file_group});
   EXPECT_EQ(metadata.schema_info[0].is_file, true);
   EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
 
-  // A signed 64-bit INTEGER annotation on `offset` keeps the group FILE
-  fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
-  EXPECT_EQ(read_metadata({make_file()}).schema_info[0].is_file, true);
-
-  // A FILE group and a plain struct in mismatched sources throw
-  auto const file_group = make_file();
+  // A FILE group and a plain struct across sources throw, with or without mismatched schemas
   fmd.schema[1].logical_type.reset();
-  auto const plain_struct    = make_file();
+  auto const plain_struct    = rewrite_file_footer();
   fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
-  EXPECT_THROW(read_metadata({file_group, plain_struct}), std::invalid_argument);
-  EXPECT_THROW(read_metadata({plain_struct, file_group}), std::invalid_argument);
+  for (auto const allow_mismatched : {true, false}) {
+    EXPECT_THROW(read_metadata(std::array{file_group, plain_struct}, allow_mismatched),
+                 std::logic_error);
+    EXPECT_THROW(read_metadata(std::array{plain_struct, file_group}, allow_mismatched),
+                 std::logic_error);
+  }
 
   // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
   fmd.schema[3].logical_type = LogicalType{LogicalType::STRING};
-  EXPECT_FALSE(read_metadata({make_file()}).schema_info[0].is_file.has_value());
+  EXPECT_FALSE(read_metadata(std::array{rewrite_file_footer()}).schema_info[0].is_file.has_value());
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

@@ -1015,13 +1015,27 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     // Validate that all sources have the same schema unless we are reading select columns
     // from mismatched sources, in which case, we will only check the projected columns later.
     if (not has_cols_from_mismatched_srcs) {
+      // `SchemaElement::operator==` ignores logical types, so compare FILE groups separately
+      auto const is_file_group = [](std::vector<SchemaElement> const& tree, size_t idx) {
+        return is_valid_file_group(
+          tree[idx],
+          tree[idx].children_idx |
+            std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
+      };
+      auto const same_file_groups = [&](std::vector<SchemaElement> const& other) {
+        return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
+          return is_file_group(schema, idx) == is_file_group(other, idx);
+        });
+      };
+
       // Verify that the input files have matching numbers of columns and schema.
       for (auto const& pfm : per_file_metadata) {
         if (pfm.row_groups.size() > 0) {
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema, "All sources must have the same schema");
+        CUDF_EXPECTS(schema == pfm.schema and same_file_groups(pfm.schema),
+                     "All sources must have the same schema");
       }
 
       // Record fields that are nullable in any source other than the first one

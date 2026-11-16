@@ -17,7 +17,7 @@ if [[ ! -d "${polars_dir}/py-polars/tests" ]]; then
 fi
 
 if ! nvidia-smi > /dev/null; then
-    echo "GPU unavailable. Run this command in a devcontainer with GPU access enabled." >&2
+    echo "GPU unavailable. Check NVIDIA driver/GPU access and ensure nvidia-smi is on PATH." >&2
     exit 2
 fi
 

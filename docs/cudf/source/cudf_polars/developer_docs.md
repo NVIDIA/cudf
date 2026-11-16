@@ -617,9 +617,11 @@ and matching list entries before selected PR runs can use them.
 
 ### Comparing local and upstream test coverage
 
-In a GPU devcontainer, build and install this checkout's cudf-polars in
-editable mode with pytest-cov and pytest-xdist. Use a supported Polars version
-and its matching `py-<version>` checkout in `polars/`, then run:
+Use a GPU-enabled Linux environment with `nvidia-smi`, Git, and the existing
+test runners' dependencies (including GNU coreutils and binutils). Build and
+install this checkout's cudf-polars in editable mode with its test dependencies,
+including pytest-cov and pytest-xdist. A devcontainer is optional. Use a supported
+Polars version and its matching `py-<version>` checkout in `polars/`, then run:
 
 ```bash
 ci/run_cudf_polars_coverage_comparison.sh

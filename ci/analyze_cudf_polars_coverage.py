@@ -17,7 +17,7 @@ from coverage import CoverageData
 MAX_CONTEXTS_PER_LINE = 20
 
 
-def _read_data(path: Path) -> CoverageData:
+def _read_data(path: Path) -> tuple[CoverageData, str]:
     if not path.is_file() or not path.stat().st_size:
         raise ValueError(f"Missing or empty coverage data: {path}")
     data = CoverageData(basename=str(path))
@@ -29,8 +29,7 @@ def _read_data(path: Path) -> CoverageData:
             f"No test-body coverage contexts in {path}; collect with "
             "--cov-context=test using pytest-xdist."
         )
-    _source_root(data)
-    return data
+    return data, _source_root(data)
 
 
 def _source_root(data: CoverageData) -> str:
@@ -50,13 +49,6 @@ def build_report(
     local: CoverageData, upstream: CoverageData
 ) -> dict[str, Any]:
     """Compare source lines without inferring equivalent test assertions."""
-    local_root = _source_root(local)
-    upstream_root = _source_root(upstream)
-    if local_root != upstream_root:
-        raise ValueError(
-            f"Coverage source roots differ: local={local_root}, upstream={upstream_root}. "
-            "Collect all suites using the same editable cudf-polars checkout."
-        )
     files = {}
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
     filenames = local.measured_files() | upstream.measured_files()
@@ -112,13 +104,19 @@ def main() -> None:
     parser.add_argument("--upstream-spmd-exit-status", type=int)
     args = parser.parse_args()
     try:
-        local = _read_data(args.local_data)
+        local, local_root = _read_data(args.local_data)
         upstream = CoverageData(no_disk=True)
         for path in args.upstream_data:
-            upstream.update(_read_data(path))
-        report = build_report(local, upstream)
+            data, upstream_root = _read_data(path)
+            if local_root != upstream_root:
+                raise ValueError(
+                    f"Coverage source roots differ: local={local_root}, upstream={upstream_root} ({path}). "
+                    "Collect all suites using the same editable cudf-polars checkout."
+                )
+            upstream.update(data)
     except ValueError as error:
         parser.error(str(error))
+    report = build_report(local, upstream)
     report["provenance"] = {
         "cudf_sha": args.cudf_sha,
         "polars_sha": args.polars_sha,

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <tests/transform/udf.hpp>
+#include <tests/udf.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -65,7 +65,7 @@ TEST_F(BinaryopPTXTest, ColumnColumnPTX)
 
   cudf::binary_operation(lhs,
                          rhs,
-                         cudf::test::get_ptx_transform_udf("add_i32_i64"),
+                         cudf::test::get_ptx_udf("add_i32_i64"),
                          cudf::data_type(cudf::type_to_id<int64_t>()),
                          cudf::test::get_default_stream());
 }

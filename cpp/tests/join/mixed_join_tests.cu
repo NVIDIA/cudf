@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
@@ -30,8 +32,6 @@
 #include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
-#include <cudf_test_fragments.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -47,13 +47,6 @@
 #include <vector>
 
 namespace {
-cudf::transform_udf get_join_udf(std::string_view symbol)
-{
-  static cudf::lto_fragment const fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::mixed_join_udfs)};
-  return {symbol, {&fragment, 1}};
-}
-
 using PairJoinReturn   = std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
                                    std::unique_ptr<rmm::device_uvector<cudf::size_type>>>;
 using SingleJoinReturn = std::unique_ptr<rmm::device_uvector<cudf::size_type>>;
@@ -458,7 +451,7 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          get_join_udf(jit_predicate),
+          cudf::test::get_udf(jit_predicate),
           cudf::join_kind::INNER_JOIN);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
@@ -922,7 +915,7 @@ TEST_F(MixedInnerJoinTest2, InvalidJoinKind)
                                              right_table,
                                              left_span,
                                              right_span,
-                                             get_join_udf(jit_pred),
+                                             cudf::test::get_udf(jit_pred),
                                              cudf::join_kind::LEFT_SEMI_JOIN),
                std::invalid_argument);
 }
@@ -948,16 +941,22 @@ TEST_F(MixedInnerJoinTest2, UnsupportedColumnType)
 
   // JIT filter (compiled predicate) — struct in left table
 
-  EXPECT_THROW(
-    cudf::filter_join_indices_jit(
-      struct_table, valid_table, span, span, get_join_udf(jit_pred), cudf::join_kind::INNER_JOIN),
-    std::invalid_argument);
+  EXPECT_THROW(cudf::filter_join_indices_jit(struct_table,
+                                             valid_table,
+                                             span,
+                                             span,
+                                             cudf::test::get_udf(jit_pred),
+                                             cudf::join_kind::INNER_JOIN),
+               std::invalid_argument);
 
   // JIT filter (compiled predicate) — struct in right table
-  EXPECT_THROW(
-    cudf::filter_join_indices_jit(
-      valid_table, struct_table, span, span, get_join_udf(jit_pred), cudf::join_kind::INNER_JOIN),
-    std::invalid_argument);
+  EXPECT_THROW(cudf::filter_join_indices_jit(valid_table,
+                                             struct_table,
+                                             span,
+                                             span,
+                                             cudf::test::get_udf(jit_pred),
+                                             cudf::join_kind::INNER_JOIN),
+               std::invalid_argument);
 
   // JIT filter (AST predicate) — struct in left table
   EXPECT_THROW(cudf::filter_join_indices_jit(
@@ -994,7 +993,7 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
                                   right_conditional,
                                   cudf::device_span<cudf::size_type const>(*hash_result.first),
                                   cudf::device_span<cudf::size_type const>(*hash_result.second),
-                                  get_join_udf(jit_pred),
+                                  cudf::test::get_udf(jit_pred),
                                   cudf::join_kind::INNER_JOIN);
 
   // XOR popcount per equality-matched pair:
@@ -1043,9 +1042,7 @@ TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
   cudf::hash_join hash_joiner(right_equality, cudf::null_equality::EQUAL);
   auto hash_result = hash_joiner.inner_join(left_equality);
 
-  // transform/fragments/ast_udfs.cu
-  auto const fragments    = std::array{cudf::lto_fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udfs)}};
+  auto const fragments    = cudf::test::get_udf_fragments();
   auto const type         = cudf::data_type{cudf::type_id::INT32};
   auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
 
@@ -1175,7 +1172,7 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          get_join_udf(jit_predicate),
+          cudf::test::get_udf(jit_predicate),
           cudf::join_kind::LEFT_JOIN);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
@@ -2225,9 +2222,10 @@ struct FilteredFullJoinTest : public cudf::test::BaseFixture {
               expected);
     if (std::all_of(left_valid.begin(), left_valid.end(), [](bool v) { return v; }) &&
         std::all_of(right_valid.begin(), right_valid.end(), [](bool v) { return v; })) {
-      EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(
-                  left, right, li, ri, get_join_udf(make_jit_comparison<int>("greater")), kind)),
-                expected);
+      EXPECT_EQ(
+        to_pairs(cudf::filter_join_indices_jit(
+          left, right, li, ri, cudf::test::get_udf(make_jit_comparison<int>("greater")), kind)),
+        expected);
     }
     EXPECT_EQ(to_pairs(maps), original_maps);
     maps = {};
@@ -2274,8 +2272,9 @@ TEST_F(FilteredFullJoinTest, EmptyMapsWithNonemptyTables)
   EXPECT_TRUE(
     to_pairs(cudf::filter_join_indices_jit(table, table, empty, empty, predicate, kind)).empty());
   EXPECT_TRUE(
-    to_pairs(cudf::filter_join_indices_jit(
-               table, table, empty, empty, get_join_udf(make_jit_comparison<int>("greater")), kind))
+    to_pairs(
+      cudf::filter_join_indices_jit(
+        table, table, empty, empty, cudf::test::get_udf(make_jit_comparison<int>("greater")), kind))
       .empty());
 }
 
@@ -2302,7 +2301,7 @@ TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
                                   cudf::table_view{{right}},
                                   maps,
                                   maps,
-                                  get_join_udf(udf),
+                                  cudf::test::get_udf(udf),
                                   GetParam());
     FAIL() << "Expected predicate evaluation to fail";
   } catch (cudf::evaluation_error const& error) {
@@ -2315,7 +2314,7 @@ TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
                                                    cudf::table_view{{valid_right}},
                                                    maps,
                                                    maps,
-                                                   get_join_udf(udf),
+                                                   cudf::test::get_udf(udf),
                                                    GetParam())),
             (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
 
@@ -2341,7 +2340,7 @@ TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
                                                    cudf::table_view{{right}},
                                                    skipped_maps,
                                                    maps,
-                                                   get_join_udf(udf),
+                                                   cudf::test::get_udf(udf),
                                                    GetParam())),
             expected);
 }

@@ -380,4 +380,301 @@ __device__ errc add_i32_i64(int64_t* out, int32_t a, int64_t b)
 __device__ errc division_by_zero(int32_t*, int32_t, int32_t) { return errc::DIVISION_BY_ZERO; }
 
 }  // extern "C"
+
+__device__ unsigned long long issued_ids = 0;
+
+extern "C" {
+
+__device__ errc lto_add_one(int32_t* out, int32_t a)
+{
+  *out = a + 1;
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_twice(int32_t* out, int32_t a)
+{
+  *out = a * 2;
+  return errc::SUCCESS;
+}
+
+// Fails a row with a negative argument.
+__device__ errc lto_checked_halve(int32_t* out, int32_t a)
+{
+  if (a < 0) { return errc::ARITHMETIC_OVERFLOW; }
+  *out = a / 2;
+  return errc::SUCCESS;
+}
+
+// Divides 100 by its argument, failing a zero with DIVISION_BY_ZERO and a negative argument with
+// the lower code ARITHMETIC_OVERFLOW.
+__device__ errc lto_checked_hundred_over(int32_t* out, int32_t a)
+{
+  if (a == 0) { return errc::DIVISION_BY_ZERO; }
+  if (a < 0) { return errc::ARITHMETIC_OVERFLOW; }
+  *out = 100 / a;
+  return errc::SUCCESS;
+}
+
+// Fails a row with the error code it is given; zero succeeds.
+__device__ errc lto_fail_with(int32_t* out, int32_t code)
+{
+  *out = code;
+  return static_cast<errc>(code);
+}
+
+// Named like a parameter and a local of the generated function, which must not hide them.
+__device__ errc in_0(int32_t* out, int32_t a)
+{
+  *out = a + 1;
+  return errc::SUCCESS;
+}
+
+__device__ errc tmp_0(int32_t* out, int32_t a)
+{
+  *out = a * 2;
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_xor_popcount(int32_t* out, int32_t a, int32_t b)
+{
+  *out = __popc(a ^ b);
+  return errc::SUCCESS;
+}
+
+// Returns a new number on every call and ignores its argument, so it is not pure.
+__device__ errc lto_next_id(int64_t* out, int32_t)
+{
+  *out = static_cast<int64_t>(atomicAdd(&issued_ids, 1ULL));
+  return errc::SUCCESS;
+}
+
+// The Monday on or before a day; 1970-01-01 was a Thursday.
+__device__ errc lto_week_start_ns(timestamp_ns* out, timestamp_ns in)
+{
+  constexpr long long ticks_per_day = 86'400'000'000'000LL;
+  auto const ticks                  = in.time_since_epoch().count();
+  auto days                         = ticks / ticks_per_day;
+  if (ticks % ticks_per_day != 0 && ticks < 0) { --days; }
+  auto const shifted = days + 3;
+  auto weeks         = shifted / 7;
+  if (shifted % 7 != 0 && shifted < 0) { --weeks; }
+  *out = timestamp_ns{duration_ns{(weeks * 7 - 3) * ticks_per_day}};
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_decimal_add(numeric::decimal64* out,
+                                numeric::decimal32 a,
+                                numeric::decimal64 b,
+                                int32_t output_scale)
+{
+  auto const widened_a = numeric::decimal64{numeric::scaled_integer<int64_t>{a.value(), a.scale()}};
+  auto const sum       = (widened_a + b).rescaled(numeric::scale_type{output_scale});
+  // The caller uses only the representation, so this scale deliberately differs from output_scale.
+  *out = numeric::decimal64{numeric::scaled_integer<int64_t>{sum.value(), numeric::scale_type{0}}};
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_string_tail(string_view* out, string_view input)
+{
+  *out = input.empty() ? input : input.substr(1, input.length() - 1);
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_nullable_string_tail(cuda::std::optional<string_view>* out,
+                                         cuda::std::optional<string_view> input)
+{
+  auto const value = input.value_or(string_view{});
+  *out             = value.empty() ? value : value.substr(1, value.length() - 1);
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_constant(int32_t* out)
+{
+  *out = 42;
+  return errc::SUCCESS;
+}
+
+__device__ errc lto_nullable_constant(cuda::std::optional<int32_t>* out)
+{
+  *out = cuda::std::nullopt;
+  return errc::SUCCESS;
+}
+
+}  // extern "C"
+
+using numeric::decimal128;
+using numeric::decimal32;
+using numeric::decimal64;
+
+template <typename T>
+__device__ errc is_equal(bool* out, T a, T b)
+{
+  *out = (a == b);
+  return errc::SUCCESS;
+}
+
+extern "C" {
+
+#define DEFINE_EQUALITY_UDF(type) \
+  __device__ errc is_equal_##type(bool* out, type a, type b) { return is_equal(out, a, b); }
+
+DEFINE_EQUALITY_UDF(int8_t)
+DEFINE_EQUALITY_UDF(int16_t)
+DEFINE_EQUALITY_UDF(int32_t)
+DEFINE_EQUALITY_UDF(int64_t)
+DEFINE_EQUALITY_UDF(uint8_t)
+DEFINE_EQUALITY_UDF(uint16_t)
+DEFINE_EQUALITY_UDF(uint32_t)
+DEFINE_EQUALITY_UDF(uint64_t)
+DEFINE_EQUALITY_UDF(float)
+DEFINE_EQUALITY_UDF(double)
+DEFINE_EQUALITY_UDF(timestamp_D)
+DEFINE_EQUALITY_UDF(timestamp_s)
+DEFINE_EQUALITY_UDF(timestamp_ms)
+DEFINE_EQUALITY_UDF(timestamp_us)
+DEFINE_EQUALITY_UDF(timestamp_ns)
+DEFINE_EQUALITY_UDF(duration_D)
+DEFINE_EQUALITY_UDF(duration_s)
+DEFINE_EQUALITY_UDF(duration_ms)
+DEFINE_EQUALITY_UDF(duration_us)
+DEFINE_EQUALITY_UDF(duration_ns)
+DEFINE_EQUALITY_UDF(string_view)
+DEFINE_EQUALITY_UDF(decimal32)
+DEFINE_EQUALITY_UDF(decimal64)
+DEFINE_EQUALITY_UDF(decimal128)
+
+#undef DEFINE_EQUALITY_UDF
+
+__device__ errc is_even(bool* out, int32_t a)
+{
+  *out = (a % 2 == 0);
+  return errc::SUCCESS;
+}
+
+__device__ errc nullable_is_even(cuda::std::optional<bool>* out, cuda::std::optional<int32_t> a)
+{
+  *out = a.has_value() && (*a % 2 == 0);
+  return errc::SUCCESS;
+}
+
+__device__ errc is_divisible(bool* out, int32_t a, int32_t b)
+{
+  *out = ((a % b) == 0);
+  return errc::SUCCESS;
+}
+
+__device__ errc filter_climate(bool* out,
+                               [[maybe_unused]] string_view country,
+                               string_view tz,
+                               float tmp,
+                               float hum,
+                               float min_tmp,
+                               float max_tmp,
+                               float min_hum,
+                               float max_hum,
+                               string_view tz1,
+                               string_view tz2)
+{
+  *out = (tmp >= min_tmp && tmp <= max_tmp) && (hum >= min_hum && hum <= max_hum) &&
+         (tz == tz1 || tz == tz2);
+
+  return errc::SUCCESS;
+}
+
+__device__ errc less_than_ten(bool* out, int32_t value)
+{
+  *out = value < 10;
+  return errc::SUCCESS;
+}
+
+}  // extern "C"
+
+template <typename T>
+__device__ errc greater(bool* output, T left, T right)
+{
+  *output = left > right;
+  return errc::SUCCESS;
+}
+
+template <typename T>
+__device__ errc equal_first(bool* output, T left0, T, T right0, T)
+{
+  *output = left0 == right0;
+  return errc::SUCCESS;
+}
+
+template <typename T>
+__device__ errc greater_second(bool* output, T, T left1, T, T right1)
+{
+  *output = left1 > right1;
+  return errc::SUCCESS;
+}
+
+extern "C" {
+
+__device__ errc greater_equal_double(bool* output, double left_col0, double right_col0)
+{
+  *output = left_col0 >= right_col0;
+
+  return errc::SUCCESS;
+}
+
+__device__ errc greater_both_int32_t(
+  bool* output, int32_t left_col0, int32_t left_col1, int32_t right_col0, int32_t right_col1)
+{
+  *output = (left_col0 > right_col0) && (left_col1 > right_col1);
+
+  return errc::SUCCESS;
+}
+
+__device__ errc equal_int32_t(bool* output, int32_t left_col0, int32_t right_col0)
+{
+  *output = left_col0 == right_col0;
+
+  return errc::SUCCESS;
+}
+
+__device__ errc xor_popcount(bool* output, int32_t left_val, int32_t right_val)
+{
+  *output = __popc(left_val ^ right_val) <= 1;
+
+  return errc::SUCCESS;
+}
+
+__device__ errc checked_greater_equal(bool* output, int a, int b)
+{
+  if (a < 0) { return errc::ARITHMETIC_OVERFLOW; }
+  if (b == 0) { return errc::DIVISION_BY_ZERO; }
+  *output = a >= b;
+  return errc::SUCCESS;
+}
+
+#define DEFINE_JOIN_COMPARISONS(type)                                 \
+  __device__ errc greater_##type(bool* output, type left, type right) \
+  {                                                                   \
+    return greater(output, left, right);                              \
+  }                                                                   \
+  __device__ errc equal_first_##type(                                 \
+    bool* output, type left0, type left1, type right0, type right1)   \
+  {                                                                   \
+    return equal_first(output, left0, left1, right0, right1);         \
+  }                                                                   \
+  __device__ errc greater_second_##type(                              \
+    bool* output, type left0, type left1, type right0, type right1)   \
+  {                                                                   \
+    return greater_second(output, left0, left1, right0, right1);      \
+  }
+
+DEFINE_JOIN_COMPARISONS(int8_t)
+DEFINE_JOIN_COMPARISONS(int16_t)
+DEFINE_JOIN_COMPARISONS(int32_t)
+DEFINE_JOIN_COMPARISONS(int64_t)
+DEFINE_JOIN_COMPARISONS(uint8_t)
+DEFINE_JOIN_COMPARISONS(uint16_t)
+DEFINE_JOIN_COMPARISONS(uint32_t)
+DEFINE_JOIN_COMPARISONS(uint64_t)
+
+#undef DEFINE_JOIN_COMPARISONS
+
+}  // extern "C"
 }  // namespace cudf::test_udfs

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
@@ -19,8 +21,6 @@
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/udf.hpp>
-
-#include <cudf_test_fragments.hpp>
 
 #include <array>
 #include <span>
@@ -408,10 +408,8 @@ TEST_F(StreamCompactionTest, FilterUDF)
   auto const expected            = int32s_col{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}.release();
   auto const input               = cudf::table_view{{col}};
   cudf::transform_input inputs[] = {col};
-  cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                    cudf_test_fragments::get(cudf_test_fragments::filter_udfs)};
   auto const predicate =
-    cudf::transform(cudf::transform_udf{"less_than_ten", {&fragment, 1}},
+    cudf::transform(cudf::test::get_udf("less_than_ten"),
                     std::span{inputs},
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                       cudf::output_nullability::PRESERVE}},

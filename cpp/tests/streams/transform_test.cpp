@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <tests/transform/udf.hpp>
+#include <tests/udf.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -43,8 +43,8 @@ void test_udf(cudf::transform_udf udf, Data data_init, cudf::size_type size)
 TEST_F(TransformTest, Transform)
 {
   auto data_init = [](cudf::size_type row) { return row % 3; };
-  test_udf<float>(cudf::test::get_transform_udf("fourth_power"), data_init, 500);
-  test_udf<float>(cudf::test::get_ptx_transform_udf("fourth_power"), data_init, 500);
+  test_udf<float>(cudf::test::get_udf("fourth_power"), data_init, 500);
+  test_udf<float>(cudf::test::get_ptx_udf("fourth_power"), data_init, 500);
 }
 
 TEST_F(TransformTest, ComputeColumn)

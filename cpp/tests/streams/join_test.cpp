@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
@@ -22,8 +24,6 @@
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/udf.hpp>
-
-#include <cudf_test_fragments.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -253,15 +253,13 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                           cudf::join_kind::FULL_JOIN,
                                           size,
                                           stream);
-  cudf::lto_fragment const fragment{cudf::lto_binary_type::FATBIN,
-                                    cudf_test_fragments::get(cudf_test_fragments::mixed_join_udfs)};
-  auto jit_result = cudf::filter_join_indices_jit(conditional0.view().select({0}),
+  auto jit_result     = cudf::filter_join_indices_jit(conditional0.view().select({0}),
                                                   conditional1.view().select({0}),
                                                   left_indices,
                                                   right_indices,
-                                                  {"greater_int32_t", {&fragment, 1}},
+                                                  cudf::test::get_udf("greater_int32_t"),
                                                   cudf::join_kind::FULL_JOIN,
-                                                  {},
+                                                      {},
                                                   stream);
   EXPECT_EQ(size, table0.num_rows() + table1.num_rows());
   EXPECT_EQ(result.first->size(), table0.num_rows() + table1.num_rows());

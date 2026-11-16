@@ -23,7 +23,7 @@
 
 #include "assert_unary.h"
 
-#include <tests/transform/udf.hpp>
+#include <tests/udf.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -68,7 +68,7 @@ TEST_F(AssertsTest, TypeSupport)
   cudf::transform_input inputs[] = {a, b, cudf::scalar_column_view(t)};
 
   EXPECT_NO_THROW((void)std::move(
-    cudf::transform(cudf::test::get_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_udf("lerp"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                       cudf::output_nullability::PRESERVE}},
@@ -77,7 +77,7 @@ TEST_F(AssertsTest, TypeSupport)
       ->release()
       .front()));
 
-  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_transform_udf("lerp"),
+  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_udf("lerp"),
                                                inputs,
                                                std::array{cudf::transform_output{
                                                  cudf::data_type{cudf::type_id::STRUCT},
@@ -90,7 +90,7 @@ TEST_F(AssertsTest, TypeSupport)
 
   cudf::transform_input struct_inputs[] = {struct_col, cudf::scalar_column_view(t)};
 
-  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_transform_udf("lerp"),
+  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_udf("lerp"),
                                                struct_inputs,
                                                std::array{cudf::transform_output{
                                                  cudf::data_type{cudf::type_id::FLOAT32},
@@ -106,7 +106,7 @@ TEST_F(AssertsTest, UnequalRowCount)
 {
   cudf::transform_input inputs[] = {a, b, bad_col};
 
-  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_transform_udf("lerp"),
+  EXPECT_THROW((void)std::move(cudf::transform(cudf::test::get_udf("lerp"),
                                                inputs,
                                                std::array{cudf::transform_output{
                                                  cudf::data_type{cudf::type_id::FLOAT32},
@@ -122,7 +122,7 @@ TEST_F(AssertsTest, NullSupport)
 {
   cudf::transform_input inputs[] = {a, b_nulls, cudf::scalar_column_view(t)};
   EXPECT_NO_THROW((void)std::move(
-    cudf::transform(cudf::test::get_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_udf("lerp"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                       cudf::output_nullability::PRESERVE}},
@@ -138,7 +138,7 @@ TEST_F(RuntimeSupportTest, TransformProgram)
   std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                             cudf::output_nullability::ALL_VALID}};
 
-  cudf::transform_program program{cudf::test::get_transform_udf("lerp"), inputs, outputs, {}};
+  cudf::transform_program program{cudf::test::get_udf("lerp"), inputs, outputs, {}};
 
   std::array input_specs{
     cudf::transform_input_spec{.type = cudf::type_id::FLOAT32},
@@ -146,12 +146,10 @@ TEST_F(RuntimeSupportTest, TransformProgram)
     cudf::transform_input_spec{.type = cudf::type_id::FLOAT32, .is_scalar = true}};
   std::array output_specs{cudf::transform_output_spec{
     .type = cudf::type_id::FLOAT32, .nullability = cudf::output_nullability::ALL_VALID}};
-  cudf::transform_program spec_program{
-    cudf::test::get_transform_udf("lerp"), input_specs, output_specs};
+  cudf::transform_program spec_program{cudf::test::get_udf("lerp"), input_specs, output_specs};
 
-  auto expected =
-    cudf::transform(cudf::test::get_transform_udf("lerp"), inputs, outputs, {}, std::nullopt);
-  auto result = program.run(inputs, outputs, {}, std::nullopt);
+  auto expected = cudf::transform(cudf::test::get_udf("lerp"), inputs, outputs, {}, std::nullopt);
+  auto result   = program.run(inputs, outputs, {}, std::nullopt);
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
 
   result = spec_program.run(inputs, outputs, {}, std::nullopt);
@@ -168,7 +166,7 @@ TEST_F(RuntimeSupportTest, TransformProgramIncompatibleSpecifications)
   cudf::transform_input inputs[] = {a, b, cudf::scalar_column_view(t)};
   std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                             cudf::output_nullability::ALL_VALID}};
-  cudf::transform_program program{cudf::test::get_transform_udf("lerp"), inputs, outputs, {}};
+  cudf::transform_program program{cudf::test::get_udf("lerp"), inputs, outputs, {}};
 
   auto integers = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
   cudf::transform_input different_type[] = {a, integers, cudf::scalar_column_view(t)};
@@ -223,11 +221,11 @@ TEST_F(UnaryOperationIntegrationTest, Transform_FP32_FP32)
   auto op        = [](dtype a) { return a * a * a * a; };
   auto data_init = [](cudf::size_type row) { return row % 3; };
 
-  test_udf<dtype>(cudf::test::get_transform_udf("fourth_power"), op, data_init, 500);
-  test_udf<dtype>(cudf::test::get_ptx_transform_udf("fourth_power"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_udf("fourth_power"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_ptx_udf("fourth_power"), op, data_init, 500);
 
-  test_udf<dtype>(cudf::test::get_transform_udf("fourth_power"), op, data_init, 0);
-  test_udf<dtype>(cudf::test::get_ptx_transform_udf("fourth_power"), op, data_init, 0);
+  test_udf<dtype>(cudf::test::get_udf("fourth_power"), op, data_init, 0);
+  test_udf<dtype>(cudf::test::get_ptx_udf("fourth_power"), op, data_init, 0);
 }
 
 TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
@@ -238,8 +236,8 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT32_INT32)
   auto op        = [](dtype a) { return a * a - a; };
   auto data_init = [](cudf::size_type row) { return row % 78; };
 
-  test_udf<dtype>(cudf::test::get_transform_udf("mulsub"), op, data_init, 500);
-  test_udf<dtype>(cudf::test::get_ptx_transform_udf("mulsub"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_udf("mulsub"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_ptx_udf("mulsub"), op, data_init, 500);
 }
 
 TEST_F(UnaryOperationIntegrationTest, Transform_INT8_INT8)
@@ -250,8 +248,8 @@ TEST_F(UnaryOperationIntegrationTest, Transform_INT8_INT8)
   auto op        = [](dtype a) { return std::toupper(a); };
   auto data_init = [](cudf::size_type row) { return 'a' + (row % 26); };
 
-  test_udf<dtype>(cudf::test::get_transform_udf("ascii_upper"), op, data_init, 500);
-  test_udf<dtype>(cudf::test::get_ptx_transform_udf("ascii_upper"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_udf("ascii_upper"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_ptx_udf("ascii_upper"), op, data_init, 500);
 }
 
 TEST_F(UnaryOperationIntegrationTest, Transform_Datetime)
@@ -266,7 +264,7 @@ TEST_F(UnaryOperationIntegrationTest, Transform_Datetime)
   auto random_eng = cudf::test::UniformRandomGenerator<cudf::timestamp_us::rep>(0, 100000000);
   auto data_init  = [&random_eng](cudf::size_type row) { return random_eng.generate(); };
 
-  test_udf<dtype>(cudf::test::get_transform_udf("add_day"), op, data_init, 500);
+  test_udf<dtype>(cudf::test::get_udf("add_day"), op, data_init, 500);
 }
 
 TEST_F(UnaryOperationIntegrationTest, TransformDictionaryString)
@@ -283,7 +281,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryString)
     cudf::transform_input inputs[] = {*a_encoded};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_string"),
+      cudf::transform(cudf::test::get_udf("decode_string"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::STRING},
                                                         cudf::output_nullability::PRESERVE}},
@@ -308,7 +306,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryString)
     cudf::transform_input inputs[] = {*a_encoded};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_string"),
+      cudf::transform(cudf::test::get_udf("decode_string"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::STRING},
                                                         cudf::output_nullability::PRESERVE}},
@@ -332,7 +330,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     cudf::transform_input inputs[] = {*a_encoded};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -344,7 +342,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(out->view(), a->view());
 
     auto out_ptx = std::move(
-      cudf::transform(cudf::test::get_ptx_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_ptx_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -367,7 +365,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     cudf::transform_input inputs[] = {*a_encoded};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -379,7 +377,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(out->view(), a->view());
 
     auto out_ptx = std::move(
-      cudf::transform(cudf::test::get_ptx_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_ptx_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -398,7 +396,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     cudf::transform_input inputs[] = {*a_encoded};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -423,7 +421,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     cudf::transform_input inputs[] = {sliced_input};
 
     auto out = std::move(
-      cudf::transform(cudf::test::get_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -434,7 +432,7 @@ TEST_F(UnaryOperationIntegrationTest, TransformDictionaryFloat)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(out->view(), sliced_expect);
 
     auto out_ptx = std::move(
-      cudf::transform(cudf::test::get_ptx_transform_udf("decode_float"),
+      cudf::transform(cudf::test::get_ptx_udf("decode_float"),
                       inputs,
                       std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT32},
                                                         cudf::output_nullability::PRESERVE}},
@@ -470,7 +468,7 @@ TEST_F(TernaryOperationTest, TransformWithScalar)
 
   cudf::transform_input cuda_inputs[]       = {a, b, cudf::scalar_column_view(c)};
   std::unique_ptr<cudf::column> cuda_result = std::move(
-    cudf::transform(cudf::test::get_transform_udf("addmul"),
+    cudf::transform(cudf::test::get_udf("addmul"),
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<T>()),
                                                       cudf::output_nullability::PRESERVE}},
@@ -483,7 +481,7 @@ TEST_F(TernaryOperationTest, TransformWithScalar)
 
   cudf::transform_input ptx_inputs[]       = {a, b, cudf::scalar_column_view(c)};
   std::unique_ptr<cudf::column> ptx_result = std::move(
-    cudf::transform(cudf::test::get_ptx_transform_udf("addmul"),
+    cudf::transform(cudf::test::get_ptx_udf("addmul"),
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<T>()),
                                                       cudf::output_nullability::PRESERVE}},
@@ -526,8 +524,7 @@ TYPED_TEST(TernaryDecimalOperationTest, TransformDecimalsAndScalar)
   cudf::transform_input inputs[]            = {a, b, cudf::scalar_column_view(c)};
   std::unique_ptr<cudf::column> cuda_result = std::move(
     cudf::transform(
-      cudf::test::get_transform_udf(
-        std::format("decimal_arithmetic_{}", sizeof(typename T::rep) * 8)),
+      cudf::test::get_udf(std::format("decimal_arithmetic_{}", sizeof(typename T::rep) * 8)),
       inputs,
       std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<T>(), RES.scale()),
                                         cudf::output_nullability::PRESERVE}},
@@ -550,7 +547,7 @@ TEST_F(StringOperationTest, StringComparison)
   auto expected = cudf::test::fixed_width_column_wrapper<bool>{true, true, false, false, true};
   cudf::transform_input inputs[] = {a, b, c};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("compare"),
+    cudf::transform(cudf::test::get_udf("compare"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
@@ -571,7 +568,7 @@ TEST_F(StringOperationTest, StringContains)
     cudf::test::fixed_width_column_wrapper<bool>{false, true, false, false, true, false};
   cudf::transform_input inputs[] = {a, b};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("string_contains"),
+    cudf::transform(cudf::test::get_udf("string_contains"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
@@ -591,7 +588,7 @@ TEST_F(StringOperationTest, StringFind)
   auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 1};
   cudf::transform_input inputs[] = {a, b};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("string_find"),
+    cudf::transform(cudf::test::get_udf("string_find"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -614,7 +611,7 @@ TEST_F(StringOperationTest, MixedTypes)
     cudf::test::fixed_width_column_wrapper<bool>{true, true, false, false, false, false};
   cudf::transform_input inputs[] = {a, b, c, d};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("compare_string_and_integer"),
+    cudf::transform(cudf::test::get_udf("compare_string_and_integer"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
@@ -638,7 +635,7 @@ TEST_F(StringOperationTest, Output)
     cudf::test::strings_column_wrapper{"this", "is", "the", "largest", "lexicographical", "test"};
   cudf::transform_input inputs[] = {a, b, c, d};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("max_string"),
+    cudf::transform(cudf::test::get_udf("max_string"),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
@@ -652,7 +649,7 @@ TEST_F(StringOperationTest, Output)
   auto expected_empty                  = cudf::test::strings_column_wrapper{};
   cudf::transform_input empty_inputs[] = {empty, empty, empty, empty};
   auto result_empty                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("max_string"),
+    cudf::transform(cudf::test::get_udf("max_string"),
                     empty_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
@@ -672,12 +669,12 @@ TEST_F(StringOperationTest, OutputNullAware)
   cudf::transform_input inputs[]   = {input};
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::PRESERVE}};
-  auto result = cudf::transform(
-    cudf::test::get_transform_udf("nullable_string_identity", cudf::null_aware::YES),
-    inputs,
-    outputs,
-    {},
-    std::nullopt);
+  auto result =
+    cudf::transform(cudf::test::get_udf("nullable_string_identity", cudf::null_aware::YES),
+                    inputs,
+                    outputs,
+                    {},
+                    std::nullopt);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
 }
@@ -695,11 +692,8 @@ TEST_F(StringOperationTest, OutputOffsetted)
     "xaa1", "xxbb2", "xxxcc3", "xxxxdd4", "xxxxxee5", "xxxxxxff6"};
   cudf::transform_input inputs[]   = {a, b, c};
   cudf::transform_output outputs[] = {cudf::data_type(cudf::type_id::STRING)};
-  auto result                      = cudf::transform(cudf::test::get_transform_udf("concat"),
-                                inputs,
-                                outputs,
-                                std::move(strings_offsets),
-                                std::nullopt);
+  auto result                      = cudf::transform(
+    cudf::test::get_udf("concat"), inputs, outputs, std::move(strings_offsets), std::nullopt);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
 
@@ -708,7 +702,7 @@ TEST_F(StringOperationTest, OutputOffsetted)
   std::vector<std::unique_ptr<cudf::column>> program_string_offsets;
   program_string_offsets.push_back(std::move(program_offsets));
   cudf::transform_program program{
-    cudf::test::get_transform_udf("concat"), inputs, outputs, program_string_offsets};
+    cudf::test::get_udf("concat"), inputs, outputs, program_string_offsets};
 
   auto int64_offsets =
     cudf::test::fixed_width_column_wrapper<int64_t>{0, 4, 9, 15, 22, 30, 39}.release();
@@ -744,7 +738,7 @@ TEST_F(StringOperationTest, OutputOffsettedMixed)
   cudf::transform_output outputs[] = {{cudf::data_type(cudf::type_id::INT32)},
                                       {cudf::data_type(cudf::type_id::STRING)},
                                       {cudf::data_type(cudf::type_id::BOOL8)}};
-  auto result = cudf::transform(cudf::test::get_transform_udf("concat_with_metadata"),
+  auto result                      = cudf::transform(cudf::test::get_udf("concat_with_metadata"),
                                 inputs,
                                 outputs,
                                 std::move(strings_offsets),
@@ -781,7 +775,7 @@ TEST_F(StringOperationTest, StringConcat)
                                     cudf::scalar_column_view(scratch_sizes)};
 
   auto result = std::move(
-    cudf::transform(cudf::test::get_transform_udf("format_name", cudf::null_aware::NO, true),
+    cudf::transform(cudf::test::get_udf("format_name", cudf::null_aware::NO, true),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
@@ -798,7 +792,7 @@ TEST_F(StringOperationTest, EmptyInput)
   auto empty                          = cudf::test::strings_column_wrapper();
   cudf::transform_input bool_inputs[] = {empty, empty};
   auto result                         = std::move(
-    cudf::transform(cudf::test::get_transform_udf("string_contains"),
+    cudf::transform(cudf::test::get_udf("string_contains"),
                     bool_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::PRESERVE}},
@@ -810,7 +804,7 @@ TEST_F(StringOperationTest, EmptyInput)
 
   cudf::transform_input str_inputs[] = {empty, empty};
   result                             = std::move(
-    cudf::transform(cudf::test::get_transform_udf("matching_string"),
+    cudf::transform(cudf::test::get_udf("matching_string"),
                     str_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::STRING),
                                                       cudf::output_nullability::PRESERVE}},
@@ -838,8 +832,8 @@ TEST_F(StringOperationTest, MultiOutput)
   cudf::transform_output outputs[] = {{.type = cudf::data_type(cudf::type_id::STRING)},
                                       {.type = cudf::data_type(cudf::type_id::STRING)},
                                       {.type = cudf::data_type(cudf::type_id::STRING)}};
-  auto result                      = cudf::transform(
-    cudf::test::get_transform_udf("capture_group"), inputs, outputs, {}, std::nullopt);
+  auto result =
+    cudf::transform(cudf::test::get_udf("capture_group"), inputs, outputs, {}, std::nullopt);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result->view());
 }
@@ -882,7 +876,7 @@ TEST_F(NullTest, ColumnNulls)
 
   cudf::transform_input cuda_inputs[] = {*low, *high, *t};
   auto cuda_result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_udf("lerp"),
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -895,7 +889,7 @@ TEST_F(NullTest, ColumnNulls)
 
   cudf::transform_input ptx_inputs[] = {*low, *high, *t};
   auto ptx_result                    = std::move(
-    cudf::transform(cudf::test::get_ptx_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_ptx_udf("lerp"),
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -928,7 +922,7 @@ TEST_F(NullTest, ColumnNulls_And_Scalar)
 
   cudf::transform_input cuda_inputs[] = {*low, *high, cudf::scalar_column_view(*t_scalar)};
   auto cuda_result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_udf("lerp"),
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -941,7 +935,7 @@ TEST_F(NullTest, ColumnNulls_And_Scalar)
 
   cudf::transform_input ptx_inputs[] = {*low, *high, cudf::scalar_column_view(*t_scalar)};
   auto ptx_result                    = std::move(
-    cudf::transform(cudf::test::get_ptx_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_ptx_udf("lerp"),
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -973,7 +967,7 @@ TEST_F(NullTest, ColumnNulls_And_ScalarNull)
   cudf::transform_input cuda_inputs[] = {*low, *high, cudf::scalar_column_view(*t_scalar)};
 
   auto cuda_result = std::move(
-    cudf::transform(cudf::test::get_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_udf("lerp"),
                     cuda_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -987,7 +981,7 @@ TEST_F(NullTest, ColumnNulls_And_ScalarNull)
   cudf::transform_input ptx_inputs[] = {*low, *high, cudf::scalar_column_view(*t_scalar)};
 
   auto ptx_result = std::move(
-    cudf::transform(cudf::test::get_ptx_transform_udf("lerp"),
+    cudf::transform(cudf::test::get_ptx_udf("lerp"),
                     ptx_inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::PRESERVE}},
@@ -1009,7 +1003,7 @@ TEST_F(NullTest, IsNull)
 
   cudf::transform_input inputs[] = {*value};
   auto result                    = std::move(
-    cudf::transform(cudf::test::get_transform_udf("is_null", cudf::null_aware::YES),
+    cudf::transform(cudf::test::get_udf("is_null", cudf::null_aware::YES),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::BOOL8),
                                                       cudf::output_nullability::ALL_VALID}},
@@ -1040,7 +1034,7 @@ TEST_F(NullTest, NullProject)
 
   cudf::transform_input inputs[] = {*low, *high, *t};
   auto cuda_result               = std::move(
-    cudf::transform(cudf::test::get_transform_udf("null_lerp", cudf::null_aware::YES),
+    cudf::transform(cudf::test::get_udf("null_lerp", cudf::null_aware::YES),
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT32),
                                                       cudf::output_nullability::ALL_VALID}},
@@ -1064,9 +1058,8 @@ TEST_F(UnaryOperationIntegrationTest, Transform_ErrorHandling)
     cudf::transform_output outputs[] = {
       {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::ALL_VALID}};
     std::unique_ptr<cudf::table> result;
-    ASSERT_NO_THROW(
-      result = cudf::transform(
-        cudf::test::get_transform_udf("divide_checked"), inputs, outputs, {}, std::nullopt));
+    ASSERT_NO_THROW(result = cudf::transform(
+                      cudf::test::get_udf("divide_checked"), inputs, outputs, {}, std::nullopt));
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
   }
@@ -1076,10 +1069,9 @@ TEST_F(UnaryOperationIntegrationTest, Transform_ErrorHandling)
     cudf::transform_output outputs[] = {
       {cudf::data_type(cudf::type_id::INT32), cudf::output_nullability::ALL_VALID}};
     std::unique_ptr<cudf::table> result;
-    EXPECT_THROW(
-      result = cudf::transform(
-        cudf::test::get_transform_udf("divide_checked"), inputs, outputs, {}, std::nullopt),
-      cudf::evaluation_error);
+    EXPECT_THROW(result = cudf::transform(
+                   cudf::test::get_udf("divide_checked"), inputs, outputs, {}, std::nullopt),
+                 cudf::evaluation_error);
   }
 }
 

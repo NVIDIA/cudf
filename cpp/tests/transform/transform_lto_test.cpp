@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <tests/transform/udf.hpp>
+#include <tests/udf.hpp>
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
@@ -139,7 +139,7 @@ TEST_F(TransformLTOTest, InvSqrt)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto result = cudf::transform(cudf::test::get_transform_udf("invsqrt"),
+  auto result = cudf::transform(cudf::test::get_udf("invsqrt"),
                                 inputs,
                                 outputs,
                                 {},
@@ -162,7 +162,7 @@ TEST_F(TransformLTOTest, Distance)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto result = cudf::transform(cudf::test::get_transform_udf("distance"),
+  auto result = cudf::transform(cudf::test::get_udf("distance"),
                                 inputs,
                                 outputs,
                                 {},
@@ -191,7 +191,7 @@ TEST_F(TransformLTOTest, ToUpper)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::UINT8}, cudf::output_nullability::ALL_VALID}};
 
-  auto result = cudf::transform(cudf::test::get_transform_udf("to_upper"),
+  auto result = cudf::transform(cudf::test::get_udf("to_upper"),
                                 inputs,
                                 outputs,
                                 {},
@@ -212,7 +212,7 @@ TEST_F(TransformLTOTest, SumOfSquares)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto result = cudf::transform(cudf::test::get_transform_udf("sum_of_squares"),
+  auto result = cudf::transform(cudf::test::get_udf("sum_of_squares"),
                                 inputs,
                                 outputs,
                                 {},
@@ -238,7 +238,7 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
 
   cudf::transform_input inputs[] = {a, b};
 
-  auto result      = cudf::transform(cudf::test::get_transform_udf("lehmer_mean"),
+  auto result      = cudf::transform(cudf::test::get_udf("lehmer_mean"),
                                 inputs,
                                 outputs,
                                      {},
@@ -256,7 +256,7 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
 
   cudf::transform_input inputs_fail[] = {a_fail, b};
 
-  EXPECT_THROW(cudf::transform(cudf::test::get_transform_udf("lehmer_mean"),
+  EXPECT_THROW(cudf::transform(cudf::test::get_udf("lehmer_mean"),
                                inputs_fail,
                                outputs,
                                {},
@@ -278,7 +278,7 @@ TEST_F(TransformLTOTest, BankersRounding)
   cudf::transform_input inputs[]   = {input};
   cudf::transform_output outputs[] = {output};
 
-  auto result = cudf::transform(cudf::test::get_transform_udf("bankers_round"),
+  auto result = cudf::transform(cudf::test::get_udf("bankers_round"),
                                 inputs,
                                 outputs,
                                 {},

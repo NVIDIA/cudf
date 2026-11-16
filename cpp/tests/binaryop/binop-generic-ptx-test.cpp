@@ -23,7 +23,7 @@
 
 #include <tests/binaryop/assert-binops.h>
 #include <tests/binaryop/binop-fixture.hpp>
-#include <tests/transform/udf.hpp>
+#include <tests/udf.hpp>
 
 #include <cudf/binaryop.hpp>
 #include <cudf/udf.hpp>
@@ -48,10 +48,8 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_FP32_FP32_FP32)
   auto lhs = make_random_wrapped_column<TypeLhs>(500);
   auto rhs = make_random_wrapped_column<TypeRhs>(500);
 
-  auto out = cudf::binary_operation(lhs,
-                                    rhs,
-                                    cudf::test::get_ptx_transform_udf("add_f32"),
-                                    cudf::data_type(cudf::type_to_id<TypeOut>()));
+  auto out = cudf::binary_operation(
+    lhs, rhs, cudf::test::get_ptx_udf("add_f32"), cudf::data_type(cudf::type_to_id<TypeOut>()));
 
   // Allow for floating-point rounding in the cubic expression.
   ASSERT_BINOP<TypeOut, TypeLhs, TypeRhs>(*out, lhs, rhs, CADD, NearEqualComparator<TypeOut>{2});
@@ -70,10 +68,8 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT32)
   auto lhs = make_random_wrapped_column<TypeLhs>(500);
   auto rhs = make_random_wrapped_column<TypeRhs>(500);
 
-  auto out = cudf::binary_operation(lhs,
-                                    rhs,
-                                    cudf::test::get_ptx_transform_udf("add_i32"),
-                                    cudf::data_type(cudf::type_to_id<TypeOut>()));
+  auto out = cudf::binary_operation(
+    lhs, rhs, cudf::test::get_ptx_udf("add_i32"), cudf::data_type(cudf::type_to_id<TypeOut>()));
 
   ASSERT_BINOP<TypeOut, TypeLhs, TypeRhs>(*out, lhs, rhs, CADD);
 }
@@ -91,10 +87,8 @@ TEST_F(BinaryOperationGenericPTXTest, CAdd_Vector_Vector_INT64_INT32_INT64)
   auto lhs = make_random_wrapped_column<TypeLhs>(500);
   auto rhs = make_random_wrapped_column<TypeRhs>(500);
 
-  auto out = cudf::binary_operation(lhs,
-                                    rhs,
-                                    cudf::test::get_ptx_transform_udf("add_i32_i64"),
-                                    cudf::data_type(cudf::type_to_id<TypeOut>()));
+  auto out = cudf::binary_operation(
+    lhs, rhs, cudf::test::get_ptx_udf("add_i32_i64"), cudf::data_type(cudf::type_to_id<TypeOut>()));
 
   ASSERT_BINOP<TypeOut, TypeLhs, TypeRhs>(*out, lhs, rhs, CADD);
 }
@@ -104,7 +98,7 @@ TEST_F(BinaryOperationGenericPTXTest, PropagatesErrorStatus)
   cudf::test::fixed_width_column_wrapper<int32_t> input{1, 2, 3};
   EXPECT_THROW(cudf::binary_operation(input,
                                       input,
-                                      cudf::test::get_ptx_transform_udf("division_by_zero"),
+                                      cudf::test::get_ptx_udf("division_by_zero"),
                                       cudf::data_type{cudf::type_id::INT32}),
                cudf::evaluation_error);
 }

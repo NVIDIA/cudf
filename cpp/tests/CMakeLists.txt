@@ -718,15 +718,12 @@ ConfigureTest(ENCODE_TEST encode/encode_tests.cpp)
 ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_expressions_tests.cpp)
 
 # ##################################################################################################
-# * transform LTO tests
+# * shared test UDF fragments and transform LTO tests
 # -------------------------------------------------------------------------------------
 rtcx_add_embed(cudf_test_fragments)
 
-add_fragment(cudf_test_fragments FRAGMENT udfs_lto_ir SOURCE transform/fragments/udfs.cu)
-add_fragment(cudf_test_fragments FRAGMENT udfs_ptx SOURCE transform/fragments/udfs.cu PTX)
-add_fragment(cudf_test_fragments FRAGMENT ast_udfs SOURCE transform/fragments/ast_udfs.cu)
-add_fragment(cudf_test_fragments FRAGMENT filter_udfs SOURCE filter/fragments/filter_udfs.cu)
-add_fragment(cudf_test_fragments FRAGMENT mixed_join_udfs SOURCE join/fragments/mixed_join_udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT udfs_lto_ir SOURCE fragments/udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT udfs_ptx SOURCE fragments/udfs.cu PTX)
 
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"

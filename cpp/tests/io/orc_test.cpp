@@ -3141,6 +3141,10 @@ TEST_F(OrcWriterTest, DISABLED_Over65kColumns)
 
 TEST_F(OrcWriterTest, MultipleBlocksInStripeFooter)
 {
+  // This is a regression test for the host-side writing of stripe footers that span multiple
+  // compression blocks. It takes over 20 minutes when racecheck is used.
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   std::vector<std::string> vals_col(8, "a");
   str_col col{vals_col.begin(), vals_col.end()};
   cudf::column_view col_view = col;

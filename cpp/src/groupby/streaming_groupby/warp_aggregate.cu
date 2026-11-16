@@ -125,7 +125,7 @@ __device__ void aggregate_value(hash::rep_type_t<T> input,
     }
     auto const combined = combine ? reduce_group_value(thread_group, value, Op{}) : value;
     if (!combine || thread_group.thread_rank() == 0) {
-      if (column.validity != nullptr && !cudf::bit_is_set(column.validity, target)) {
+      if (column.validity != nullptr && !cudf::detail::weak_bit_is_set(column.validity, target)) {
         cudf::set_bit(column.validity, target);
       }
       auto* const output = static_cast<Result*>(column.output);

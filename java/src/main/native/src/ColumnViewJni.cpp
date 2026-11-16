@@ -1555,7 +1555,9 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                                                                  jobjectArray j_modules,
                                                                  jintArray j_binary_types,
                                                                  jboolean j_null_aware,
-                                                                 jboolean j_indexed)
+                                                                 jboolean j_indexed,
+                                                                 jint j_dtype,
+                                                                 jint j_scale)
 {
   JNI_NULL_CHECK(env, j_symbol, "UDF symbol is null", 0);
   JNI_NULL_CHECK(env, j_modules, "UDF modules are null", 0);
@@ -1590,7 +1592,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                                       j_null_aware ? cudf::null_aware::YES : cudf::null_aware::NO,
                                       static_cast<bool>(j_indexed)},
                   inputs,
-                  std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                  std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                     cudf::output_nullability::PRESERVE}},
                   {},
                   std::nullopt)

@@ -1115,14 +1115,22 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /////////////////////////////////////////////////////////////////////////////
 
   /**
-   * Transform a vector using a custom function.  Be careful this is not
+   * Transform a vector using a precompiled custom function. Be careful this is not
    * simple to do.  You need to be positive you know what type of data you are
    * processing and how the data is laid out.  This also only works on fixed
-   * length types.
-   * @param udf This function will be applied to every element in the vector
+   * length output types. The output type and scale must match the UDF's output parameter.
+   * @param udf the function applied to every element in the vector; see {@link TransformUDF}
+   *            for the UDF contract
+   * @param outputType the type of the output column
+   * @throws IllegalArgumentException if outputType is not a fixed-width type
    */
-  public final ColumnVector transform(TransformUDF udf) {
+  public final ColumnVector transform(TransformUDF udf, DType outputType) {
     Objects.requireNonNull(udf, "udf");
+    Objects.requireNonNull(outputType, "outputType");
+    if (outputType.getSizeInBytes() == 0) {
+      throw new IllegalArgumentException(
+          "transform only supports fixed-width output types, got " + outputType);
+    }
     LtoFragment[] fragments = udf.getFragments();
     byte[][] modules = new byte[fragments.length][];
     int[] binaryTypes = new int[fragments.length];
@@ -1131,7 +1139,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
       binaryTypes[i] = fragments[i].getBinaryType().getNativeId();
     }
     return new ColumnVector(transform(getNativeView(), udf.getSymbol(), modules, binaryTypes,
-        udf.isNullAware(), udf.isIndexed()));
+        udf.isNullAware(), udf.isIndexed(), outputType.getTypeId().getNativeId(),
+        outputType.getScale()));
   }
 
   /**
@@ -5187,7 +5196,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long containsVector(long valuesHandle, long searchSpaceHandle) throws CudfException;
 
   private static native long transform(long viewHandle, String symbol, byte[][] modules,
-                                       int[] binaryTypes, boolean nullAware, boolean indexed);
+                                       int[] binaryTypes, boolean nullAware, boolean indexed,
+                                       int outputTypeId, int outputScale);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

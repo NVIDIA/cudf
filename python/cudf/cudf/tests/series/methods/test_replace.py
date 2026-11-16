@@ -514,3 +514,13 @@ def test_replace_datetime_sub_resolution_value_is_noop():
         pd.Timestamp("2000-01-01 00:00:00.5"), pd.Timestamp("1999-01-01")
     )
     assert_eq(pd_result, cudf_result)
+
+
+@pytest.mark.parametrize("na", [cudf.NA, None])
+def test_series_replace_bool_with_na(na):
+    # https://github.com/NVIDIA/cudf/issues/24894
+    gsr = cudf.Series([False, True])
+    result = gsr.replace({False: na})
+    expected = cudf.Series([None, True], dtype=bool)
+    assert_eq(result, expected)
+    assert_eq(gsr.replace(False, na), expected)

@@ -371,6 +371,14 @@ std::unique_ptr<table> stable_segmented_sort_by_key(
  * This performs the equivalent of a sort and the slice of the resulting first k elements.
  * However, the returned column may or may not necessarily be sorted.
  *
+ * @note If several elements compare equal to the k-th element, which of them are returned is
+ * unspecified and may vary between runs.
+ *
+ * @note Nulls are ordered after all non-null elements regardless of `topk_order`, so the returned
+ * column contains nulls only when `k` exceeds the number of non-null elements. For floating-point
+ * columns, NaN elements compare equal to each other and greater than all other non-null elements,
+ * and -0.0 compares equal to +0.0.
+ *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *
  * @param col Column to compute top k
@@ -392,6 +400,14 @@ std::unique_ptr<column> top_k(column_view const& col,
  *
  * The indices will represent the top k elements but may or may not represent
  * those elements as k sorted values.
+ *
+ * @note If several elements compare equal to the k-th element, which of them are returned is
+ * unspecified and may vary between runs.
+ *
+ * @note Nulls are ordered after all non-null elements regardless of `topk_order`, so the returned
+ * indices refer to null elements only when `k` exceeds the number of non-null elements. For
+ * floating-point columns, NaN elements compare equal to each other and greater than all other
+ * non-null elements, and -0.0 compares equal to +0.0.
  *
  * @throw std::invalid_argument if k is greater than the number of rows in the column
  *

@@ -85,8 +85,8 @@ Benchmarks must support [comparing to pandas](#comparing-to-pandas) and [being r
 To satisfy these requirements, one must follow these rules when writing benchmarks:
 1. Import `cudf` and `cupy` from the config module:
    ```python
-       from ..common.config import cudf, cupy # Do this
-       import cudf, cupy # Not this
+   from ..common.config import cudf, cupy  # Do this
+   import cudf, cupy  # Not this
    ```
    This enables swapping out for `pandas` and `numpy` respectively.
 2. Avoid hard-coding benchmark dataset sizes, and instead use the sizes advertised by `config.py`.

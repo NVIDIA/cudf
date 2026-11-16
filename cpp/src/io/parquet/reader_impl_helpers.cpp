@@ -24,6 +24,7 @@
 #include <cudf/logger.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -178,6 +179,34 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
   }
   return cuda::std::nullopt;
 }
+
+namespace {
+
+/**
+ * @brief Check if two logical types have the same time unit.
+ */
+bool time_units_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const unit = [](auto const& t) {
+    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
+  };
+  return unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type);
+}
+
+/**
+ * @brief Check if two logical types are identical in everything the reader uses.
+ */
+bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
+  return lhs.type == rhs.type and time_units_match(lhs, rhs) and
+         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
+         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
+         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+}
+
+}  // namespace
 
 /**
  * @brief Lookup schema children by name or field ID across multiple sources.
@@ -1456,7 +1485,7 @@ aggregate_reader_metadata::get_column_chunk_metadata() const
 std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   std::span<std::string const> column_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(column_names.empty() or not per_file_metadata.empty(),
                "Cannot decode parquet column-chunk bounds without source metadata",
@@ -1484,10 +1513,10 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   columns.push_back(std::move(file_indices));
   columns.push_back(std::move(row_group_indices));
 
-  row_group_stats_caster const stats_col{.total_row_groups     = total_row_groups,
-                                         .per_file_metadata    = per_file_metadata,
-                                         .row_group_indices    = input_row_group_indices,
-                                         .has_is_null_operator = false};
+  row_group_stats_caster const stats_col{.total_row_groups        = total_row_groups,
+                                         .per_file_metadata       = per_file_metadata,
+                                         .row_group_indices       = input_row_group_indices,
+                                         .with_null_and_nan_stats = false};
 
   for (auto const& column_name : column_names) {
     auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
@@ -2147,9 +2176,17 @@ aggregate_reader_metadata::select_columns(
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
-    return lhs.type == rhs.type and lhs.converted_type == rhs.converted_type and
-           lhs.type_length == rhs.type_length and identities_match and
-           lhs.decimal_scale == rhs.decimal_scale and
+    // Writers may emit the deprecated converted type, the logical type, or both for the same
+    // column. The time units must always agree when both sources have a logical type, because
+    // the values are copied without conversion. Otherwise sources match if their converted types
+    // are equal or their logical types are identical.
+    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
+                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
+                                         (lhs.converted_type == rhs.converted_type or
+                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
+                                     : lhs.converted_type == rhs.converted_type;
+    return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
+           identities_match and lhs.decimal_scale == rhs.decimal_scale and
            lhs.decimal_precision == rhs.decimal_precision;
   };
 

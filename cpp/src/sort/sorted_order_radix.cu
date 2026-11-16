@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "sort_radix.cuh"
 #include "sort_radix.hpp"
 
 #include <cudf/column/column.hpp>
@@ -26,27 +27,11 @@ namespace detail {
 namespace {
 
 template <typename F>
-struct float_pair {
-  size_type s;  // index bias for sorting nan
-  F f;          // actual float value to sort
-};
-
-template <typename F>
-struct float_decomposer {
-  __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
-};
-
-template <typename F>
 struct float_to_pair_and_seq {
-  F const* fs;
+  float_to_pair_fn<F> to_pair;
   __device__ cuda::std::pair<float_pair<F>, size_type> operator()(cudf::size_type idx) const
   {
-    auto const f = fs[idx];
-    auto const s = (isnan(f) * (idx + 1));  // multiplier helps keep the sort stable for NaNs
-    return {float_pair<F>{s, f}, idx};
+    return {to_pair(idx), idx};
   }
 };
 
@@ -113,7 +98,7 @@ struct sorted_order_radix_fn {
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       zip_out,
-                      float_to_pair_and_seq<T>{input.begin<T>()});
+                      float_to_pair_and_seq<T>{{input.begin<T>(), input.size(), ascending}});
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;

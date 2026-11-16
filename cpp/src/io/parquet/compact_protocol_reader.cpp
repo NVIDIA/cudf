@@ -738,13 +738,18 @@ void CompactProtocolReader::read(FileMetaData* f)
 {
   using optional_list_column_order =
     parquet_field_optional<std::vector<ColumnOrder>, parquet_field_struct_list<ColumnOrder>>;
-  auto op = std::make_tuple(parquet_field_int32(1, f->version),
+  using optional_struct_blob =
+    parquet_field_optional<std::vector<uint8_t>, parquet_field_struct_blob>;
+  using optional_binary = parquet_field_optional<std::vector<uint8_t>, parquet_field_binary>;
+  auto op               = std::make_tuple(parquet_field_int32(1, f->version),
                             parquet_field_struct_list(2, f->schema),
                             parquet_field_int64(3, f->num_rows),
                             parquet_field_struct_list(4, f->row_groups),
                             parquet_field_struct_list(5, f->key_value_metadata),
                             parquet_field_string(6, f->created_by),
-                            optional_list_column_order(7, f->column_orders));
+                            optional_list_column_order(7, f->column_orders),
+                            optional_struct_blob(8, f->encryption_algorithm),
+                            optional_binary(9, f->footer_signing_key_metadata));
   function_builder(this, op);
   // Callers can check overread() after schema-init so a footer with no schema reports the
   // specific "Cannot initialize schema", not this generic error.
@@ -878,13 +883,18 @@ void CompactProtocolReader::read(RowGroup* r)
 
 void CompactProtocolReader::read(ColumnChunk* c)
 {
-  auto op = std::make_tuple(parquet_field_string(1, c->file_path),
+  using optional_struct_blob =
+    parquet_field_optional<std::vector<uint8_t>, parquet_field_struct_blob>;
+  using optional_binary = parquet_field_optional<std::vector<uint8_t>, parquet_field_binary>;
+  auto op               = std::make_tuple(parquet_field_string(1, c->file_path),
                             parquet_field_int64(2, c->file_offset),
                             parquet_field_struct(3, c->meta_data),
                             parquet_field_int64(4, c->offset_index_offset),
                             parquet_field_int32(5, c->offset_index_length),
                             parquet_field_int64(6, c->column_index_offset),
-                            parquet_field_int32(7, c->column_index_length));
+                            parquet_field_int32(7, c->column_index_length),
+                            optional_struct_blob(8, c->crypto_metadata),
+                            optional_binary(9, c->encrypted_column_metadata));
   function_builder(this, op);
 }
 

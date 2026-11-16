@@ -10,6 +10,7 @@
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -572,7 +573,7 @@ struct host_transition_table {
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::make_timezone_transition_table(tzif_dir, timezone_name, stream, mr);
@@ -583,13 +584,15 @@ namespace detail {
 std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_view> tzif_dir,
                                                       std::string_view timezone_name,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
   auto const tz_table = build_transition_table(tzif_dir, timezone_name);
   if (tz_table.empty()) { return std::make_unique<cudf::table>(); }
 
-  auto d_ttimes  = cudf::detail::make_device_uvector_async(tz_table.times, stream, mr);
-  auto d_offsets = cudf::detail::make_device_uvector_async(tz_table.offsets, stream, mr);
+  auto d_ttimes =
+    cudf::detail::make_device_uvector_async(tz_table.times, stream, mr.get_output_mr());
+  auto d_offsets =
+    cudf::detail::make_device_uvector_async(tz_table.offsets, stream, mr.get_output_mr());
 
   std::vector<std::unique_ptr<column>> tz_table_columns;
   tz_table_columns.emplace_back(std::make_unique<cudf::column>(

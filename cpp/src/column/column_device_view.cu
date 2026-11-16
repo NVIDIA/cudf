@@ -57,7 +57,7 @@ template <typename ColumnView, typename ColumnDeviceView>
 std::unique_ptr<ColumnDeviceView, std::function<void(ColumnDeviceView*)>>
 create_device_view_from_view(ColumnView const& source,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   size_type num_children = source.num_children();
   // First calculate the size of memory needed to hold the child columns. This is done by calling
@@ -79,7 +79,7 @@ create_device_view_from_view(ColumnView const& source,
   // from CPU to device.
   auto descendant_storage = std::make_unique<cuda::device_buffer<char>>(
     stream,
-    mr,
+    mr.get_output_mr(),
     descendant_storage_bytes,
     cuda::no_init,
     cuda::std::execution::prop{cuda::allocation_alignment, alignof(ColumnDeviceView)});
@@ -120,9 +120,7 @@ column_device_view::column_device_view(column_view source, void* h_ptr, void* d_
 
 // Construct a unique_ptr that invokes `destroy()` as it's deleter
 std::unique_ptr<column_device_view, std::function<void(column_device_view*)>>
-column_device_view::create(column_view source,
-                           cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+column_device_view::create(column_view source, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   size_type num_children = source.num_children();
   if (num_children == 0) {
@@ -176,7 +174,7 @@ void mutable_column_device_view::destroy() { delete this; }
 std::unique_ptr<mutable_column_device_view, std::function<void(mutable_column_device_view*)>>
 mutable_column_device_view::create(mutable_column_view source,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   return source.num_children() == 0
            ? std::unique_ptr<mutable_column_device_view>(new mutable_column_device_view(source))

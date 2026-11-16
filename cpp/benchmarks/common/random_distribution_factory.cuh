@@ -13,7 +13,7 @@
 #include <rmm/device_uvector.hpp>
 
 #include <cuda/buffer>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.clamp.h>
 #include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/random>

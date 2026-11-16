@@ -61,7 +61,7 @@ from cudf.core.indexed_frame import (
 from cudf.core.mixins import NoNewAttributesMixin
 from cudf.core.resample import SeriesResampler
 from cudf.core.single_column_frame import SingleColumnFrame
-from cudf.core.udf.scalar_function import SeriesApplyKernel
+from cudf.core.udf.mlir_backend.scalar_function import SeriesApplyKernel
 from cudf.utils import docutils
 from cudf.utils.docutils import copy_docstring
 from cudf.utils.dtypes import (
@@ -1251,7 +1251,7 @@ class Series(SingleColumnFrame, IndexedFrame):
         return NotImplemented
 
     @_performance_tracking
-    def map(self, arg, na_action: None | Literal["ignore"] = None) -> Self:
+    def map(self, arg, na_action: Literal["ignore"] | None = None) -> Self:
         """
         Map values of Series according to input correspondence.
 
@@ -1882,7 +1882,7 @@ class Series(SingleColumnFrame, IndexedFrame):
     @_performance_tracking
     def fillna(
         self,
-        value: None | ScalarLike | Series,
+        value: ScalarLike | Series | None,
         *,
         axis: Axis | None = None,
         inplace: bool = False,

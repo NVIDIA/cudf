@@ -78,16 +78,15 @@ void install_file_set(
   std::string_view target_dir,
   std::span<uint8_t const> compressed_binary,
   size_t uncompressed_size,
-  std::span<std::size_t const[2]> file_ranges,  // NOLINT(modernize-avoid-c-arrays)
+  std::span<cudf_cuda_embed::range_t const> file_ranges,  // NOLINT(modernize-avoid-c-arrays)
   std::span<char const* const> destinations,
   std::string_view compression)
 {
   auto decompressed = rtcx::decompress_blob(compressed_binary, uncompressed_size, compression);
   for (size_t i = 0; i < file_ranges.size(); ++i) {
-    auto file_data_range = file_ranges[i];
-    auto file_data       = std::span{decompressed.data() + file_data_range[0], file_data_range[1]};
-    auto dst_path        = destinations[i];
-    auto target_path     = std::format("{}/{}", target_dir, dst_path);
+    auto file_data   = file_ranges[i](std::span{decompressed});
+    auto dst_path    = destinations[i];
+    auto target_path = std::format("{}/{}", target_dir, dst_path);
 
     std::filesystem::create_directories(std::filesystem::path{target_path}.parent_path());
 

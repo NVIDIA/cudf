@@ -88,6 +88,7 @@ cdef extern from * nogil:
       auto indices = joiner.join(
         left_by, left_on, strategy, exact_matches, stream, mr);
       // cudf::column stores an rmm::device_buffer, so copy the returned CUDA buffer.
+      // TODO: Remove this once cudf::column stores its data in a cuda::buffer instead
       cudf::column_view view{cudf::data_type{cudf::type_id::INT32},
                              left_on.size(), indices.data(), nullptr, 0};
       return std::make_unique<cudf::column>(view, stream, mr);

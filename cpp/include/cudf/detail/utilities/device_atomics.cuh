@@ -27,6 +27,8 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/atomic>
+#include <cuda/memory>
+#include <cuda/ptx>
 #include <cuda/std/limits>
 
 namespace cudf {
@@ -369,7 +371,11 @@ __forceinline__ __device__ __int128_t atomic_add(__int128_t* address, __int128_t
   __int128_t expected, desired;
 
   do {
-    expected = *address;
+    // Other threads may be swapping `*address`, which a plain load must not race with. A weak PTX
+    // load of the same width reads global memory only.
+    expected = cuda::device::is_address_from(address, cuda::device::address_space::global)
+                 ? cuda::ptx::ld(cuda::ptx::space_global, address)
+                 : *static_cast<__int128_t const volatile*>(address);
     desired  = expected + val;
   } while (atomicCAS(address, expected, desired) != expected);
 

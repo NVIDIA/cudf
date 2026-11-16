@@ -119,6 +119,8 @@ DOCKER_ARGS=(
   --volume "${REPO_ROOT}:/repo"
   --volume "${OUTPUT_DIR}:/output"
   --workdir /repo
+  --env PIP_CACHE_DIR=/tmp/pip-cache
+  --env UV_CACHE_DIR=/tmp/uv-cache
   --env RAPIDS_CUDA_VERSION="${CUDA_VERSION}"
   --env PARALLEL_LEVEL="${PARALLEL_LEVEL}"
   --env HOST_UID="$(id -u)"

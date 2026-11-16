@@ -31,7 +31,7 @@ void streaming_groupby::merge(streaming_groupby const& other, cuda::stream_ref s
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::finalize(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return do_finalize(stream, mr);

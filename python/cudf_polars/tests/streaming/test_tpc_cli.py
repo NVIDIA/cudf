@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -23,6 +24,7 @@ from cudf_polars.streaming.benchmarks.utils import (
     drop_file_page_cache_recursively,
     parse_args,
 )
+from tests.streaming.conftest import tpc_streaming_options
 
 
 @pytest.mark.parametrize("query_id", [1, PDSHQueries.num_queries])
@@ -190,3 +192,19 @@ def test_sql_query_files_path_prefers_padded(tmp_path: Path) -> None:
 def test_sql_queries_duckdb_queries(tmp_path: Path) -> None:
     benchmark = SQLQueries("pdsh", tmp_path)
     assert benchmark().duckdb_queries == SQLQueryFiles(name="pdsh", directory=tmp_path)
+
+
+@pytest.mark.parametrize("given,expected", [(None, True), (True, True), (False, False)])
+def test_tpc_fixture_raise_on_fail(
+    given: bool | None,  # noqa: FBT001
+    expected: bool,  # noqa: FBT001
+) -> None:
+    defaults = {"raise_on_fail": given}
+
+    class Config:
+        def getoption(self, name: str) -> object:
+            return defaults.get(name)
+
+    request = SimpleNamespace(config=Config())
+    options = tpc_streaming_options.__wrapped__(request)  # type: ignore[attr-defined]
+    assert options.to_engine_options()["raise_on_fail"] is expected

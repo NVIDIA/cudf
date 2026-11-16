@@ -10,6 +10,7 @@ import pytest
 import polars as pl
 
 from cudf_polars import execute_with_cudf
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -249,6 +250,11 @@ def test_slice_column(engine: pl.GPUEngine, slice_column_data):
     else:
         q = slice_column_data.select(pl.col("a").str.slice(pl.col("start")))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+    translator = Translator(q._ldf.visit(), engine)
+    translator.translate_ir()
+    assert any(
+        "only supports literal start and stop" in str(e) for e in translator.errors
+    )
 
 
 @pytest.mark.parametrize("name", ["head", "tail"])
@@ -340,6 +346,34 @@ def test_to_datetime(
                 q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "format",
+    [
+        "%Y-%m-%dT%H:%M:%S%#z",
+        "%#z",
+        # A literal "%%" does not cancel a following "%#" flag.
+        "%Y-%m-%d %%%#z",
+    ],
+)
+def test_to_datetime_unsupported_format_raises(engine: pl.GPUEngine, format):
+    df = pl.LazyFrame({"a": ["2020-01-01T00:00:00Z", "invalid"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime, format, strict=False, cache=False)
+    )
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_to_datetime_escaped_percent_hash(engine: pl.GPUEngine):
+    # "%%" is a literal "%", so "%%#" is not the "#" flag. The literal suffix
+    # is "#x" rather than "#z": Polars matches the "%#z" substring of "%%#z"
+    # as a timezone directive and rejects every conversion.
+    df = pl.LazyFrame({"a": ["2020-01-01 %#x", "2021-06-15 %#x"]})
+    q = df.select(
+        pl.col("a").str.strptime(pl.Datetime("ms"), "%Y-%m-%d %%#x", cache=False)
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -890,9 +924,6 @@ def test_contains_any(engine: pl.GPUEngine, ldf, ascii_case_insensitive):
 
 
 def test_contains_any_empty(engine: pl.GPUEngine):
-    # libcudf's ``contains_multiple`` asserts ``num_blocks > 0`` and crashes
-    # on a zero-row input, so the expression short-circuits to an empty
-    # bool column.
     ldf = pl.LazyFrame({"a": pl.Series([], dtype=pl.String)})
     q = ldf.select(pl.col("a").str.contains_any(["a", "b"]))
     assert_gpu_result_equal(q, engine=engine)
@@ -1087,4 +1118,26 @@ def test_split_regex_not_supported(engine: pl.GPUEngine):
 def test_escape_regex(engine: pl.GPUEngine, data):
     lf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
     q = lf.select(pl.col("a").str.escape_regex())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("s").str.contains(""),
+        pl.col("s").str.find(""),
+        pl.col("s").str.head(0),
+        pl.col("s").str.tail(0),
+        pl.col("s").cast(pl.Int64, strict=False),
+    ],
+)
+def test_sliced_input_with_nulls(engine: pl.GPUEngine, expr):
+    # sort().slice() hands the expression a column with a nonzero offset.
+    ldf = pl.LazyFrame(
+        {
+            "s": ["0", None, "2", "3", "x", "5", None, "7", "x", "9"],
+            "k": range(10),
+        }
+    )
+    q = ldf.sort("k").slice(3, 6).select(expr)
     assert_gpu_result_equal(q, engine=engine)

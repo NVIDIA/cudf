@@ -53,14 +53,14 @@ using string_index_pair = cuda::std::pair<char const*, size_type>;
  * @param begin First string row (inclusive)
  * @param end Last string row (exclusive)
  * @param stream CUDA stream used for device memory operations
- * @param mr  Device memory resource used to allocate the returned column's device memory
+ * @param mr  Memory resources used for temporary allocations and the returned column
  * @return New strings column
  */
 template <typename IndexPairIterator>
 std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
                                             IndexPairIterator end,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   size_type strings_count = cuda::std::distance(begin, end);
@@ -103,14 +103,14 @@ std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
  * @param begin Iterator to the first string row
  * @param strings_count Number of rows
  * @param stream CUDA stream used for device memory operations
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return The offsets column
  */
 template <typename OutputType, typename IndexPairIterator>
 std::unique_ptr<column> make_offsets_child_column_async(IndexPairIterator begin,
                                                         size_type strings_count,
                                                         cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr)
+                                                        cudf::memory_resources mr)
 {
   auto offsets = make_numeric_column(
     data_type{type_to_id<OutputType>()}, strings_count + 1, mask_state::UNALLOCATED, stream, mr);
@@ -119,7 +119,7 @@ std::unique_ptr<column> make_offsets_child_column_async(IndexPairIterator begin,
       return idx < strings_count ? string_index_pair{begin[idx]}.second : OutputType{0};
     });
   auto const input_it = cudf::detail::make_counting_transform_iterator(0, sizes);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                          input_it,
                          input_it + strings_count + 1,
                          offsets->mutable_view().template data<OutputType>(),
@@ -193,7 +193,7 @@ CUDF_KERNEL void strings_validity_and_size_kernel(bitmask_type* null_mask,
  *        input, so callers can release the input early, stream-ordered on `stream`, and keep the
  *        peak memory usage low
  * @param stream CUDA stream used for device memory operations
- * @param mr Device memory resource used to allocate the returned columns' device memory
+ * @param mr Memory resources used for temporary allocations and the returned columns
  * @return The strings columns, in the order of `input`
  */
 template <typename IndexPairIterator>
@@ -201,17 +201,17 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
   std::vector<std::pair<IndexPairIterator, size_type>> const& input,
   std::function<void(std::size_t)> const& input_consumed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_columns = input.size();
 
   std::vector<cuda::device_buffer<cudf::bitmask_type>> null_masks;
   null_masks.reserve(num_columns);
 
-  auto d_chars_sizes = cudf::detail::make_zeroed_device_buffer_async<int64_t>(
-    num_columns, stream, cudf::get_current_device_resource_ref());
+  auto d_chars_sizes =
+    cudf::detail::make_zeroed_device_buffer_async<int64_t>(num_columns, stream, mr.as_temporary());
   auto d_valid_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
-    num_columns, stream, cudf::get_current_device_resource_ref());
+    num_columns, stream, mr.as_temporary());
 
   // Only the sizes are needed before the sync. Offsets are built per column afterwards, so they
   // never coexist with the inputs of all columns.

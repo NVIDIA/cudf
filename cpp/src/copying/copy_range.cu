@@ -94,7 +94,7 @@ struct out_of_place_copy_range_dispatch {
     cudf::size_type source_end,
     cudf::size_type target_begin,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     auto p_ret = std::make_unique<cudf::column>(target, stream, mr);
     if ((!p_ret->nullable()) && source.has_nulls(source_begin, source_end, stream)) {
@@ -133,7 +133,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_end,
   cudf::size_type target_begin,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return cudf::strings::detail::copy_range(
     source, target, source_begin, source_end, target_begin, stream, mr);
@@ -145,7 +145,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   cudf::size_type source_end,
   cudf::size_type target_begin,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   // check the keys in the source and target
   cudf::dictionary_column_view const dict_source(source);
@@ -184,7 +184,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   auto indices_column = std::make_unique<cudf::column>(
     new_indices.type(),
     new_indices.size(),
-    std::move(*(target_indices->release().data.release())),
+    std::move(*(target_indices->release().data)),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 
@@ -194,7 +194,7 @@ std::unique_ptr<cudf::column> out_of_place_copy_range_dispatch::operator()<cudf:
   // create column with keys_column and indices_column
   return make_dictionary_column(std::move(keys_column),
                                 std::move(indices_column),
-                                std::move(*(target_contents.null_mask.release())),
+                                std::move(*(target_contents.null_mask)),
                                 null_count);
 }
 
@@ -240,7 +240,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_end,
                                    size_type target_begin,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS((source_begin >= 0) && (source_end <= source.size()) &&
                  (source_begin <= source_end) && (target_begin >= 0) &&
@@ -280,7 +280,7 @@ std::unique_ptr<column> copy_range(column_view const& source,
                                    size_type source_end,
                                    size_type target_begin,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::copy_range(source, target, source_begin, source_end, target_begin, stream, mr);

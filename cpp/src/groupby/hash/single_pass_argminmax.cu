@@ -23,6 +23,8 @@ struct argminmax_dispatcher {
   {
     if constexpr (!is_reduction_supported<T>(aggregation::ARGMIN)) {
       CUDF_FAIL("Unsupported type for hash groupby aggregation");
+    } else if constexpr (cudf::is_nested<T>()) {
+      return compute_nested_argminmax(ctx, is_argmin, stream, mr);
     } else {
       // Both operations retain one comparator type, including the representation mapping used
       // by decimal and chrono columns. The selected row is always an original input index.

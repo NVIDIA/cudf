@@ -42,6 +42,7 @@ namespace detail {
  *
  * @tparam stable Whether to use stable sort
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
  */
 template <sort_method method>
 std::unique_ptr<column> sorted_order(table_view input,
@@ -108,8 +109,8 @@ std::unique_ptr<column> sorted_order(table_view input,
       row::primitive::lexicographic_comparator(input, column_order, null_precedence, stream);
     do_sort(comp.less(nullate::DYNAMIC{has_nulls(input)}));
   } else {
-    auto const comp =
-      row::lexicographic::self_comparator(input, column_order, null_precedence, stream);
+    auto const comp = cudf::detail::row::lexicographic::self_comparator(
+      input, column_order, null_precedence, stream, mr.as_temporary());
     if (cudf::detail::has_nested_columns(input)) {
       auto const comparator = comp.less<true>(nullate::DYNAMIC{has_nested_nulls(input)});
       do_sort(comparator);

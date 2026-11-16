@@ -16,6 +16,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -102,11 +103,10 @@ class row_lexicographic_comparator {
 
  private:
   struct element_comparator {
-    template <typename Element>
+    template <cudf::concepts::arithmetic Element>
     __device__ weak_ordering operator()(column_device_view const& col,
                                         size_type lhs_index,
                                         size_type rhs_index) const noexcept
-      requires(cudf::is_numeric<Element>())
     {
       return lexicographic::sorting_physical_element_comparator{}(col.element<Element>(lhs_index),
                                                                   col.element<Element>(rhs_index));
@@ -116,7 +116,6 @@ class row_lexicographic_comparator {
     __device__ weak_ordering operator()(column_device_view const&,
                                         size_type,
                                         size_type) const noexcept
-      requires(not cudf::is_numeric<Element>())
     {
       CUDF_UNREACHABLE("Primitive lexicographic comparison requires numeric columns.");
     }

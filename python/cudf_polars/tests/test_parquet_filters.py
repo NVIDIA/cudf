@@ -124,6 +124,56 @@ def test_parquet_filter_is_in_empty_list_literal(
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("negate", [False, True])
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["a"],
+        ["a", None],
+        pl.Series([None, None], dtype=pl.String).implode(),
+        ["a", *(f"x{i}" for i in range(20))],
+        ["a", None, *(f"x{i}" for i in range(20))],
+    ],
+    ids=[
+        "value",
+        "value-and-null",
+        "only-nulls",
+        "many-values",
+        "many-values-and-null",
+    ],
+)
+def test_parquet_filter_is_in_nulls_equal(
+    engine: pl.GPUEngine, tmp_path, negate, nulls_equal, values
+):
+    df = pl.DataFrame({"id": [1, 2, 3], "p": ["a", None, "b"]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("p").is_in(values, nulls_equal=nulls_equal)
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("negate", [False, True])
+@pytest.mark.parametrize("nulls_equal", [False, True])
+@pytest.mark.parametrize(
+    "values",
+    [[float("nan"), 1.0], [float("nan"), *map(float, range(20))]],
+    ids=["few-values", "many-values"],
+)
+def test_parquet_filter_is_in_nan(
+    engine: pl.GPUEngine, tmp_path, negate, nulls_equal, values
+):
+    df = pl.DataFrame({"x": [1.0, float("nan"), None, 2.0]})
+    df.write_parquet(tmp_path / "df.parquet")
+    predicate = pl.col("x").is_in(values, nulls_equal=nulls_equal)
+    q = pl.scan_parquet(tmp_path / "df.parquet").filter(
+        ~predicate if negate else predicate
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):
     df = pl.DataFrame({"x": [1, 2, 3], "y": [True, False, True]})
     df.write_parquet(tmp_path / "df.parquet")

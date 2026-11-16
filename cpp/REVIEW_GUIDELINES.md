@@ -42,6 +42,7 @@
 - CUDA stream/event leaks or improper cleanup
 - Missing RAII or proper cleanup, including in exception paths
 - Raw owning pointers instead of `std::unique_ptr`, `std::shared_ptr`, `std::reference_wrapper`
+- Moving from the raw pointer returned by `std::unique_ptr::release()` (e.g. `std::move(*ptr.release())`, `ptr.release()[0]`, `auto p = contents.data.release();`) leaks the host object; use `std::move(*ptr)` instead. (`table::release()` and `device_uvector::release()` return owning values and are fine.)
 
 ### API Breaking Changes
 - C++ API changes without proper deprecation warnings
@@ -220,6 +221,7 @@ Suggested fix:
 - Use `host_span`/`device_span`; no owning vectors passed by copy/reference unless explicitly moved
 - Prefer span parameters over pointer + size/length pairs (e.g. `T const* data, size_t size`)
 - Prefer `std::span` over `host_span<T>` whenever no host-device communication is required
+- Flag `host_span` passed as `std::span` anywhere in an API chain where `is_device_accessible()` is useful (e.g. a path to a host-device copy): the implicit conversion silently drops it and the copy takes the pageable path
 
 **Stream Management**:
 - Stream and MR as last two parameters (stream before MR)

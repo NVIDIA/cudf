@@ -212,9 +212,11 @@ async def _passthrough_union(
         ),
     )
 
-    # When a child has duplicated=True, every rank has produced the same
-    # rows, so we drop them everywhere except rank 0 to avoid N counting.
-    suppress = tuple(meta.duplicated and comm.rank != 0 for meta in metadata)
+    # Duplicated children are dropped on ranks other than 0, unless the
+    # output is itself duplicated.
+    suppress = tuple(
+        meta.duplicated and not duplicated and comm.rank != 0 for meta in metadata
+    )
 
     seq_num_offset = 0
     for ch_in, drop in zip(chs_in, suppress, strict=True):

@@ -15,6 +15,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/lists/sorting.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
@@ -40,6 +41,14 @@ namespace {
 std::unique_ptr<cudf::column> sorted(std::unique_ptr<cudf::column> col)
 {
   return std::move(cudf::sort(cudf::table_view({col->view()}))->release().front());
+}
+
+// segmented_top_k and segmented_top_k_order return each segment's rows in no particular order, so
+// tests sort each list before comparing.
+std::unique_ptr<cudf::column> sort_each_list(std::unique_ptr<cudf::column> col)
+{
+  return cudf::lists::sort_lists(
+    cudf::lists_column_view(col->view()), cudf::order::ASCENDING, cudf::null_order::AFTER);
 }
 }  // namespace
 
@@ -319,6 +328,143 @@ TYPED_TEST(TopKFloatingPoint, MultiBlock)
       expected_rows(110, cudf::order::ASCENDING, with_nulls),
       sorted(cudf::top_k_order(input, 110, cudf::order::ASCENDING))->view());
   }
+}
+
+TYPED_TEST(TopKFloatingPoint, Segmented)
+{
+  using T    = TypeParam;
+  using LCW  = cudf::test::lists_column_wrapper<T>;
+  using LCWO = cudf::test::lists_column_wrapper<cudf::size_type>;
+
+  auto const nan     = std::numeric_limits<T>::quiet_NaN();
+  auto const neg_nan = std::copysign(nan, T{-1});
+  auto const inf     = std::numeric_limits<T>::infinity();
+
+  // NaNs compare equal to each other and greater than every other value, whatever their sign;
+  // -0.0 compares equal to +0.0; nulls are ordered last in either direction. k = 3 never splits a
+  // group of equal values, so each expected set is unique. Segment 4 has fewer than k rows.
+  // clang-format off
+  auto input = cudf::test::fixed_width_column_wrapper<T>(
+    {T{2}, nan, T{1}, neg_nan, T{3},      // [0, 5):   NaNs of both signs
+     inf, -inf, T{0}, nan,                // [5, 9):   infinities
+     T{-0.0}, T{1}, T{0.0}, T{-1},        // [9, 13):  signed zeros
+     nan, T{0}, T{5}, nan, T{0},          // [13, 18): rows 14 and 17 are null
+     neg_nan, nan},                       // [18, 20): only NaNs
+    {1, 1, 1, 1, 1,
+     1, 1, 1, 1,
+     1, 1, 1, 1,
+     1, 0, 1, 1, 0,
+     1, 1});
+  // clang-format on
+  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 5, 9, 13, 18, 20});
+
+  {
+    auto const expected = LCW{
+      {T{3}, nan, nan}, {T{0}, inf, nan}, {T{-0.0}, T{0.0}, T{1}}, {T{5}, nan, nan}, {nan, nan}};
+    auto const expected_order = LCWO{{1, 3, 4}, {5, 7, 8}, {9, 10, 11}, {13, 15, 16}, {18, 19}};
+    auto result               = sort_each_list(cudf::segmented_top_k(input, offsets, 3));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    result = sort_each_list(cudf::segmented_top_k_order(input, offsets, 3));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order, result->view());
+  }
+  {
+    auto const expected       = LCW{{T{1}, T{2}, T{3}},
+                                    {-inf, T{0}, inf},
+                                    {T{-1}, T{-0.0}, T{0.0}},
+                                    {T{5}, nan, nan},
+                                    {nan, nan}};
+    auto const expected_order = LCWO{{0, 2, 4}, {5, 6, 7}, {9, 11, 12}, {13, 15, 16}, {18, 19}};
+    auto result = sort_each_list(cudf::segmented_top_k(input, offsets, 3, cudf::order::ASCENDING));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    result = sort_each_list(cudf::segmented_top_k_order(input, offsets, 3, cudf::order::ASCENDING));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order, result->view());
+  }
+}
+
+TYPED_TEST(TopKFloatingPoint, SegmentedMultiBlock)
+{
+  using T = TypeParam;
+
+  // Distinct finite values mixed with NaNs of both signs, infinities, a -0.0, and nulls, in
+  // segments of 1, 3000, 0, 10000, and 257 rows. In each segment with more than k rows, the NaNs
+  // and +infinities (descending) or the -infinities (ascending) number fewer than k, and every
+  // other valid value is distinct, so each expected set is unique.
+  auto constexpr num_rows = cudf::size_type{13'258};
+  auto constexpr k        = cudf::size_type{100};
+  auto const nan          = std::numeric_limits<T>::quiet_NaN();
+  auto const inf          = std::numeric_limits<T>::infinity();
+  auto values             = std::vector<T>(num_rows);
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    switch (row % 1000) {
+      case 0: values[row] = nan; break;
+      case 500: values[row] = std::copysign(nan, T{-1}); break;
+      case 250: values[row] = inf; break;
+      case 750: values[row] = -inf; break;
+      default: values[row] = static_cast<T>(row) - T{6001}; break;
+    }
+  }
+  values[6001]            = T{-0.0};
+  auto const is_valid     = [](cudf::size_type row) { return row % 13 != 5; };
+  auto const offsets_host = std::vector<cudf::size_type>{0, 1, 3001, 3001, 13'001, num_rows};
+
+  auto const rows  = cuda::counting_iterator<cudf::size_type>{0};
+  auto const input = cudf::test::fixed_width_column_wrapper<T>(
+    values.begin(), values.end(), cuda::transform_iterator(rows, is_valid));
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets_host.begin(),
+                                                                               offsets_host.end());
+
+  // NaNs compare equal to each other and greater than every other value.
+  auto const less = [](T lhs, T rhs) {
+    return std::isnan(rhs) ? !std::isnan(lhs) : (!std::isnan(lhs) && lhs < rhs);
+  };
+  auto const check = [&](cudf::order topk_order) {
+    auto expected_values  = std::vector<T>{};
+    auto expected_rows    = std::vector<cudf::size_type>{};
+    auto expected_offsets = std::vector<cudf::size_type>{0};
+    for (std::size_t seg = 0; seg + 1 < offsets_host.size(); ++seg) {
+      auto seg_rows = std::vector<cudf::size_type>{};
+      for (auto row = offsets_host[seg]; row < offsets_host[seg + 1]; ++row) {
+        if (is_valid(row)) { seg_rows.push_back(row); }
+      }
+      // Each segment has at least min(k, segment size) valid rows, so no nulls are selected
+      auto const seg_size = offsets_host[seg + 1] - offsets_host[seg];
+      ASSERT_GE(static_cast<cudf::size_type>(seg_rows.size()), std::min(k, seg_size));
+      std::stable_sort(seg_rows.begin(), seg_rows.end(), [&](auto lhs, auto rhs) {
+        return topk_order == cudf::order::ASCENDING ? less(values[lhs], values[rhs])
+                                                    : less(values[rhs], values[lhs]);
+      });
+      seg_rows.resize(std::min(k, static_cast<cudf::size_type>(seg_rows.size())));
+      auto seg_values = std::vector<T>{};
+      for (auto row : seg_rows) {
+        seg_values.push_back(values[row]);
+      }
+      std::sort(seg_rows.begin(), seg_rows.end());
+      std::sort(seg_values.begin(), seg_values.end(), less);
+      expected_rows.insert(expected_rows.end(), seg_rows.begin(), seg_rows.end());
+      expected_values.insert(expected_values.end(), seg_values.begin(), seg_values.end());
+      expected_offsets.push_back(static_cast<cudf::size_type>(expected_rows.size()));
+    }
+    auto const make_lists = [&](auto&& child) {
+      auto offsets_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+        expected_offsets.begin(), expected_offsets.end());
+      return cudf::make_lists_column(static_cast<cudf::size_type>(expected_offsets.size() - 1),
+                                     offsets_col.release(),
+                                     child.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    };
+    auto const expected = make_lists(
+      cudf::test::fixed_width_column_wrapper<T>(expected_values.begin(), expected_values.end()));
+    auto const expected_order = make_lists(cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+      expected_rows.begin(), expected_rows.end()));
+
+    auto result = sort_each_list(cudf::segmented_top_k(input, offsets, k, topk_order));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected->view(), result->view());
+    result = sort_each_list(cudf::segmented_top_k_order(input, offsets, k, topk_order));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order->view(), result->view());
+  };
+  check(cudf::order::DESCENDING);
+  check(cudf::order::ASCENDING);
 }
 
 template <typename T>

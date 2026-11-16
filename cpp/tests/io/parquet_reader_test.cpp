@@ -2851,6 +2851,99 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   EXPECT_FALSE(read_metadata(std::array{rewrite_file_footer()}).schema_info[0].is_file.has_value());
 }
 
+// Binary leaves of FILE and VARIANT groups are read as `list<uint8>` even when strings are
+// converted to categories. cudf cannot write these groups yet, so retag a written struct group.
+TEST_F(ParquetReaderTest, LogicalGroupBinaryLeavesNotCategorized)
+{
+  using cudf::io::parquet::LogicalType;
+  namespace pq_experimental = cudf::io::parquet::experimental;
+
+  // Writes `str` (strings) and `group` (struct of `names`) and retags `group` as `logical_type`
+  auto const write_with_group_type = [](cudf::column_view group_col,
+                                        std::vector<std::string> const& names,
+                                        cudf::column_view str_col,
+                                        LogicalType::Type logical_type) {
+    auto const input = table_view{{str_col, group_col}};
+    cudf::io::table_input_metadata input_metadata(input);
+    input_metadata.column_metadata[0].set_name("str");
+    auto& group_metadata = input_metadata.column_metadata[1].set_name("group");
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      group_metadata.child(i).set_name(names[i]).set_nullability(true);
+      if (group_col.child(i).type().id() == cudf::type_id::STRING and names[i] != "uri") {
+        group_metadata.child(i).set_output_as_binary(true);
+      }
+    }
+
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input)
+        .metadata(std::move(input_metadata))
+        .build());
+
+    auto constexpr ender_size = 2 * sizeof(uint32_t);
+    uint32_t footer_size{};
+    std::memcpy(&footer_size, buffer.data() + buffer.size() - ender_size, sizeof(footer_size));
+    auto const footer_begin = buffer.size() - ender_size - footer_size;
+    auto fmd                = pq_experimental::read_parquet_footer_bytes(
+      {reinterpret_cast<uint8_t const*>(buffer.data()) + footer_begin, footer_size});
+    EXPECT_EQ(fmd.schema[2].name, "group");
+    fmd.schema[2].logical_type = LogicalType{logical_type};
+
+    auto const footer          = pq_experimental::write_parquet_footer_bytes(fmd);
+    auto const new_footer_size = static_cast<uint32_t>(footer.size());
+    auto const size_bytes      = reinterpret_cast<char const*>(&new_footer_size);
+    buffer.resize(footer_begin);
+    buffer.insert(buffer.end(), footer.begin(), footer.end());
+    buffer.insert(buffer.end(), size_bytes, size_bytes + sizeof(new_footer_size));
+    buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+    return buffer;
+  };
+
+  auto const read_categorized = [](std::vector<char> const& file) {
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(file.data()), file.size()}};
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(source).convert_strings_to_categories(true));
+  };
+
+  cudf::test::strings_column_wrapper str_col{"x", "yy", "x", "zzz"};
+  cudf::test::strings_column_wrapper bin_col{"a", "bc", "hello", "d"};
+  cudf::test::lists_column_wrapper<uint8_t> bin_bytes{
+    {'a'}, {'b', 'c'}, {'h', 'e', 'l', 'l', 'o'}, {'d'}};
+
+  // FILE: `inline` is binary, while `uri` and the top-level strings are categorized
+  {
+    cudf::test::strings_column_wrapper uri_col{"s3://a", "s3://b", "", "s3://d"};
+    auto file_col     = cudf::test::structs_column_wrapper{{uri_col, bin_col}};
+    auto const result = read_categorized(
+      write_with_group_type(file_col, {"uri", "inline"}, str_col, LogicalType::FILE));
+
+    auto const tbl = result.tbl->view();
+    EXPECT_EQ(tbl.column(0).type().id(), cudf::type_id::INT32);
+    EXPECT_EQ(tbl.column(1).type().id(), cudf::type_id::STRUCT);
+    EXPECT_EQ(tbl.column(1).child(0).type().id(), cudf::type_id::INT32);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bin_bytes, tbl.column(1).child(1));
+    EXPECT_EQ(result.metadata.schema_info[1].is_file, true);
+    EXPECT_EQ(result.metadata.schema_info[1].children[1].is_binary, true);
+  }
+
+  // VARIANT: `metadata` and `value` are binary, while the top-level strings are categorized
+  {
+    cudf::test::strings_column_wrapper metadata_col{"m0", "m1", "m2", "m3"};
+    cudf::test::lists_column_wrapper<uint8_t> metadata_bytes{
+      {'m', '0'}, {'m', '1'}, {'m', '2'}, {'m', '3'}};
+    auto variant_col  = cudf::test::structs_column_wrapper{{metadata_col, bin_col}};
+    auto const result = read_categorized(
+      write_with_group_type(variant_col, {"metadata", "value"}, str_col, LogicalType::VARIANT));
+
+    auto const tbl = result.tbl->view();
+    EXPECT_EQ(tbl.column(0).type().id(), cudf::type_id::INT32);
+    EXPECT_EQ(tbl.column(1).type().id(), cudf::type_id::STRUCT);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(metadata_bytes, tbl.column(1).child(0));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bin_bytes, tbl.column(1).child(1));
+  }
+}
+
 TEST_F(ParquetReaderTest, NestingOptimizationTest)
 {
   // test nesting levels > cudf::io::parquet::detail::max_cacheable_nesting_decode_info deep.

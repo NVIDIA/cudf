@@ -718,6 +718,19 @@ class aggregate_reader_metadata {
   }
 
   /**
+   * @brief Checks if a schema element is a binary BYTE_ARRAY leaf of a logical group, i.e. the
+   * `inline` child of a valid FILE group or the `metadata` / `value` child of a VARIANT group
+   *
+   * Such leaves are always read as `list<uint8>` and are never converted to categories.
+   *
+   * @param schema_idx The index of the SchemaElement in the pfm_idx'th file
+   * @param pfm_idx The index of the per_file_metadata, default = 0 if not specified
+   *
+   * @return True if the schema element is a binary leaf of a logical group
+   */
+  [[nodiscard]] bool is_binary_leaf(int schema_idx, int pfm_idx = 0) const;
+
+  /**
    * @brief Extracts the schema_idx'th SchemaElement from the pfm_idx'th file
    *
    * @param schema_idx The index of the SchemaElement to be extracted.

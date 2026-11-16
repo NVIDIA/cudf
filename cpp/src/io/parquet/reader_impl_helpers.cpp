@@ -1617,6 +1617,25 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   return std::make_unique<table>(std::move(columns));
 }
 
+bool aggregate_reader_metadata::is_binary_leaf(int schema_idx, int pfm_idx) const
+{
+  auto const& schema_elem = get_schema(schema_idx, pfm_idx);
+  if (schema_elem.type != Type::BYTE_ARRAY or schema_elem.num_children != 0) { return false; }
+  auto const& parent = get_schema(schema_elem.parent_idx, pfm_idx);
+  if (not parent.logical_type.has_value()) { return false; }
+  switch (parent.logical_type->type) {
+    case LogicalType::VARIANT: return schema_elem.name == "metadata" or schema_elem.name == "value";
+    case LogicalType::FILE:
+      return schema_elem.name == "inline" and
+             is_valid_file_group(
+               parent,
+               parent.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+                 return get_schema(idx, pfm_idx);
+               }));
+    default: return false;
+  }
+}
+
 bool aggregate_reader_metadata::is_schema_index_mapped(int schema_idx, int src_idx) const
 {
   // Check if schema_idx or src_idx is invalid
@@ -2148,12 +2167,15 @@ aggregate_reader_metadata::select_columns(
 
       auto const& parent_schema = get_schema(schema_elem.parent_idx);
       auto const one_level_list = schema_elem.is_one_level_list(parent_schema);
+      // Binary leaves of logical groups (FILE, VARIANT) are never converted to categories
+      auto const binary_leaf         = is_binary_leaf(schema_idx);
+      auto const leaf_to_categorical = strings_to_categorical and not binary_leaf;
 
       // if we're at the root, this is a new output column
       auto const col_type =
         one_level_list
           ? type_id::LIST
-          : to_type_id(schema_elem, strings_to_categorical, timestamp_type_id, decimal_type_id);
+          : to_type_id(schema_elem, leaf_to_categorical, timestamp_type_id, decimal_type_id);
       auto const dtype = to_data_type(col_type, schema_elem);
 
       cudf::io::detail::inline_column_buffer output_col(
@@ -2193,15 +2215,6 @@ aggregate_reader_metadata::select_columns(
         }
       }
 
-      // Flag the `inline` child of a valid FILE group so that `make_column` materializes it as
-      // `list<uint8>` instead of strings.
-      if (output_col.is_file) {
-        auto const inline_col = std::ranges::find(output_col.children,
-                                                  std::string_view{"inline"},
-                                                  &cudf::io::detail::inline_column_buffer::name);
-        if (inline_col != output_col.children.end()) { inline_col->string_as_binary = true; }
-      }
-
       // if I have no children, we're at a leaf and I'm an input column (that is, one with actual
       // data stored) so add me to the list.
       if (schema_elem.num_children == 0) {
@@ -2212,7 +2225,7 @@ aggregate_reader_metadata::select_columns(
         if (one_level_list) {
           // determine the element data type
           auto const element_type =
-            to_type_id(schema_elem, strings_to_categorical, timestamp_type_id, decimal_type_id);
+            to_type_id(schema_elem, leaf_to_categorical, timestamp_type_id, decimal_type_id);
           auto const element_dtype = to_data_type(element_type, schema_elem);
 
           cudf::io::detail::inline_column_buffer element_col(
@@ -2235,13 +2248,10 @@ aggregate_reader_metadata::select_columns(
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
 
-        // Flag the `metadata` / `value` BYTE_ARRAY children of a VARIANT group so that
-        // `make_column` materializes them as `list<uint8>` instead of strings.
-        if (schema_elem.type == Type::BYTE_ARRAY && parent_schema.logical_type.has_value() &&
-            parent_schema.logical_type->type == LogicalType::VARIANT &&
-            (schema_elem.name == "metadata" || schema_elem.name == "value")) {
-          output_col.string_as_binary = true;
-        }
+        // Flag binary leaves of logical groups (the `inline` child of a valid FILE group and the
+        // `metadata` / `value` children of a VARIANT group) so that `make_column` materializes
+        // them as `list<uint8>` instead of strings.
+        if (binary_leaf) { output_col.string_as_binary = true; }
 
         path_is_valid = true;  // If we're able to reach leaf then path is valid
       }

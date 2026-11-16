@@ -790,6 +790,67 @@ TEST_F(FromArrowHostDeviceTest, FixedSizeListInvalidBounds)
                std::invalid_argument);
 }
 
+TEST_F(FromArrowHostDeviceTest, SpoofedRowCounts)
+{
+  // The row count checks run before any buffer is read, so arrays of a single row whose length
+  // claims more rows exercise them without large allocations.
+  constexpr auto max_rows = static_cast<int64_t>(std::numeric_limits<cudf::size_type>::max());
+
+  auto make_schema = [](ArrowType type) {
+    nanoarrow::UniqueSchema schema;
+    NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema.get(), type));
+    if (type == NANOARROW_TYPE_LIST || type == NANOARROW_TYPE_LARGE_LIST) {
+      NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32));
+    }
+    return schema;
+  };
+  auto make_array = [](ArrowSchema const* schema) {
+    nanoarrow::UniqueArray array;
+    NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema, nullptr));
+    NANOARROW_THROW_NOT_OK(ArrowArrayStartAppending(array.get()));
+    NANOARROW_THROW_NOT_OK(ArrowArrayAppendEmpty(array.get(), 1));
+    NANOARROW_THROW_NOT_OK(
+      ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, nullptr));
+    return array;
+  };
+  auto convert_with_length = [&](ArrowType type, int64_t length) {
+    auto schema        = make_schema(type);
+    auto array         = make_array(schema.get());
+    auto input         = as_host_device_array(array);
+    input.array.length = length;
+    return cudf::from_arrow_host_column(schema.get(), &input);
+  };
+
+  EXPECT_THROW(convert_with_length(NANOARROW_TYPE_INT32, -1), std::invalid_argument);
+  EXPECT_THROW(convert_with_length(NANOARROW_TYPE_INT32, max_rows + 1), std::overflow_error);
+  // A column of `max_rows` rows fits, but its offsets child of `max_rows + 1` rows does not.
+  EXPECT_THROW(convert_with_length(NANOARROW_TYPE_STRING, max_rows), std::overflow_error);
+  EXPECT_THROW(convert_with_length(NANOARROW_TYPE_LIST, max_rows), std::overflow_error);
+  EXPECT_THROW(convert_with_length(NANOARROW_TYPE_LARGE_LIST, max_rows), std::overflow_error);
+
+  // A large list whose child has more rows than the int32 offsets of a cudf list can address.
+  {
+    auto schema = make_schema(NANOARROW_TYPE_LARGE_LIST);
+    auto array  = make_array(schema.get());
+    auto input  = as_host_device_array(array);
+    std::array<int64_t, 2> offsets{0, max_rows + 1};
+    std::array<void const*, 2> buffers{nullptr, offsets.data()};
+    input.array.buffers = buffers.data();
+    EXPECT_THROW(cudf::from_arrow_host_column(schema.get(), &input), std::overflow_error);
+  }
+
+  // A table without columns takes its row count from the struct length.
+  {
+    nanoarrow::UniqueSchema schema;
+    ArrowSchemaInit(schema.get());
+    NANOARROW_THROW_NOT_OK(ArrowSchemaSetTypeStruct(schema.get(), 0));
+    auto array         = make_array(schema.get());
+    auto input         = as_host_device_array(array);
+    input.array.length = max_rows + 1;
+    EXPECT_THROW(cudf::from_arrow_host(schema.get(), &input), std::overflow_error);
+  }
+}
+
 TEST_F(FromArrowHostDeviceTest, StructColumn)
 {
   // Create cudf table

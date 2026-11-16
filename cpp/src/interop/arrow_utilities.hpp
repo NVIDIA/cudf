@@ -136,14 +136,15 @@ int initialize_array(ArrowArray* arr, ArrowType storage_type, cudf::column_view 
 /**
  * @brief Return the number of rows of an Arrow array as a cudf row count
  *
- * @throw std::overflow_error if the column, or its offsets child when `has_offsets`, would have
- * more rows than `size_type` can hold
+ * @throw std::overflow_error if the column, or its offsets child when `requires_offsets_child`,
+ * would have more rows than `size_type` can hold
  *
  * @param num_rows Number of rows of the Arrow array
- * @param has_offsets Whether the cudf column has an offsets child of `num_rows + 1` rows
+ * @param requires_offsets_child Whether the cudf column needs an offsets child, which always has
+ * `num_rows + 1` rows
  * @return `num_rows` as a `size_type`
  */
-size_type checked_row_count(int64_t num_rows, bool has_offsets = false);
+size_type checked_row_count(int64_t num_rows, bool requires_offsets_child = false);
 
 /**
  * @brief Copy the offsets of a string or list Arrow array, rebased to start at zero

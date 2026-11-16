@@ -28,8 +28,6 @@ class MemoryResourceSampler:
         to compute the allocation.
     interval_s
         Seconds between readings. Must be positive.
-    name
-        Name of the sampling thread.
 
     Raises
     ------

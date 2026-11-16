@@ -172,7 +172,10 @@ class DataFrame:
             # TODO: Remove the Array and Time casts when:
             # 1. libcudf can export Arrow fixed-size lists.
             # 2. libcudf natively supports TIME64 type
-            df = df.cast(pl.Schema(cast_dtypes), strict=True)
+            df = df.with_columns(
+                pl.col(name).cast(dtype, strict=True)
+                for name, dtype in cast_dtypes.items()
+            )
         categorical_columns = [c for c in self.columns if c.dtype.is_categorical]
         if categorical_columns:
             df = df.with_columns(
@@ -244,7 +247,9 @@ class DataFrame:
             name for name, dtype in df.schema.items() if isinstance(dtype, pl.Null)
         ]:
             # Null columns are stored as all-null INT8 (see DataType).
-            device_df = df.cast(dict.fromkeys(null_columns, pl.Int8()))
+            device_df = df.with_columns(
+                pl.col(name).cast(pl.Int8, strict=True) for name in null_columns
+            )
         else:
             device_df = df
         plc_table = plc.Table.from_arrow(device_df, stream=stream)

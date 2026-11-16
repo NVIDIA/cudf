@@ -238,16 +238,17 @@ def test_size_bytes():
 
 
 @pytest.mark.parametrize("n", [0, 3])
-def test_null_column_roundtrip(n):
+@pytest.mark.parametrize("name", ["n", ""])
+def test_null_column_roundtrip(n, name):
     stream = get_cuda_stream()
     df = pl.DataFrame(
         {
-            "n": pl.Series([None] * n, dtype=pl.Null),
+            name: pl.Series([None] * n, dtype=pl.Null),
             "a": pl.Series(range(n), dtype=pl.Int64),
         }
     )
     result = DataFrame.from_polars(df, stream=stream)
-    assert result.column_map["n"].obj.type().id() == plc.TypeId.INT8
+    assert result.column_map[name].obj.type().id() == plc.TypeId.INT8
     assert_frame_equal(result.to_polars(), df)
 
 

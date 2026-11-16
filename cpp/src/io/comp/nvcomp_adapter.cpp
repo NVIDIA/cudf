@@ -7,6 +7,7 @@
 
 #include "nvcomp_adapter.cuh"
 
+#include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
 #include <cudf/logger.hpp>
@@ -16,6 +17,7 @@
 #include <cuda/buffer>
 
 #include <io/utilities/hostdevice_vector.hpp>
+#include <nvcomp/cascaded.h>
 #include <nvcomp/deflate.h>
 #include <nvcomp/gzip.h>
 #include <nvcomp/lz4.h>
@@ -24,6 +26,8 @@
 
 #include <algorithm>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #define CUDF_NVCOMP_HAS_GZIP_COMPRESSION (NVCOMP_VER >= MAKE_SEMANTIC_VERSION(5, 3, 0))
 
@@ -302,24 +306,6 @@ nvcompStatus_t batched_compress_get_temp_size(compression_type compression,
   }
 }
 
-size_t batched_compress_temp_size(compression_type compression,
-                                  size_t batch_size,
-                                  size_t max_uncompressed_chunk_bytes,
-                                  size_t max_total_uncompressed_bytes,
-                                  cuda::stream_ref stream)
-{
-  size_t temp_size                   = 0;
-  nvcompStatus_t const nvcomp_status = batched_compress_get_temp_size(compression,
-                                                                      batch_size,
-                                                                      max_uncompressed_chunk_bytes,
-                                                                      &temp_size,
-                                                                      max_total_uncompressed_bytes,
-                                                                      stream);
-
-  CHECK_NVCOMP_STATUS(nvcomp_status);
-  return temp_size;
-}
-
 // Dispatcher for nvcompBatched<format>CompressAsync
 void batched_compress_async(compression_type compression,
                             void const* const* device_uncompressed_ptrs,
@@ -566,6 +552,19 @@ size_t batched_decompress_temp_size_ex(compression_type compression,
 }
 
 }  // namespace
+
+size_t batched_compress_temp_size(compression_type compression,
+                                  size_t num_chunks,
+                                  size_t max_uncomp_chunk_size,
+                                  size_t max_total_uncomp_size,
+                                  cuda::stream_ref stream)
+{
+  size_t temp_size                   = 0;
+  nvcompStatus_t const nvcomp_status = batched_compress_get_temp_size(
+    compression, num_chunks, max_uncomp_chunk_size, &temp_size, max_total_uncomp_size, stream);
+  CHECK_NVCOMP_STATUS(nvcomp_status);
+  return temp_size;
+}
 
 size_t batched_decompress_temp_size(compression_type compression,
                                     size_t num_chunks,
@@ -949,6 +948,142 @@ void load_nvcomp_library()
     // Perform compression - this will execute an nvCOMP kernel
     batched_compress(compression_type::SNAPPY, hd_inputs, hd_outputs, hd_results, stream, mr);
   });
+}
+
+namespace {
+
+nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(type_id value_type)
+{
+  auto options    = nvcompBatchedCascadedCompressDefaultOpts;
+  auto& data_type = options.common_opts.data_type;
+  switch (value_type) {
+    case type_id::INT8: data_type = NVCOMP_TYPE_CHAR; break;
+    case type_id::UINT8: data_type = NVCOMP_TYPE_UCHAR; break;
+    case type_id::INT16: data_type = NVCOMP_TYPE_SHORT; break;
+    case type_id::UINT16: data_type = NVCOMP_TYPE_USHORT; break;
+    case type_id::INT32: data_type = NVCOMP_TYPE_INT; break;
+    case type_id::UINT32: data_type = NVCOMP_TYPE_UINT; break;
+    case type_id::INT64: data_type = NVCOMP_TYPE_LONGLONG; break;
+    case type_id::UINT64: data_type = NVCOMP_TYPE_ULONGLONG; break;
+    default: CUDF_FAIL("Cascaded compression supports only integral value types");
+  }
+  return options;
+}
+
+}  // namespace
+
+std::optional<std::string> is_cascaded_disabled(feature_status_parameters params)
+{
+  static std::vector<std::pair<feature_status_parameters, std::optional<std::string>>> memo;
+  static std::mutex memo_mutex;
+
+  std::unique_lock memo_lock{memo_mutex};
+  if (auto const it = std::ranges::find(memo, params, &decltype(memo)::value_type::first);
+      it != memo.end()) {
+    return it->second;
+  }
+  auto const reason = params.are_stable_integrations_enabled
+                        ? std::nullopt
+                        : std::optional<std::string>{
+                            "nvCOMP use is disabled through the `LIBCUDF_NVCOMP_POLICY` "
+                            "environment variable."};
+  memo.emplace_back(params, reason);
+  memo_lock.unlock();
+
+  if (reason.has_value()) {
+    CUDF_LOG_INFO("nvCOMP is disabled for Cascaded compression; reason: %s", reason.value());
+  } else {
+    CUDF_LOG_INFO("nvCOMP is enabled for Cascaded compression");
+  }
+  return reason;
+}
+
+size_t cascaded_compress_max_allowed_chunk_size()
+{
+  return nvcompCascadedCompressionMaxAllowedChunkSize;
+}
+
+size_t cascaded_compress_required_alignment() { return nvcompCascadedRequiredCompressionAlignment; }
+
+size_t cascaded_compress_max_output_chunk_size(type_id value_type, size_t max_uncomp_chunk_size)
+{
+  size_t max_comp_chunk_size = 0;
+  auto const status          = nvcompBatchedCascadedCompressGetMaxOutputChunkSize(
+    max_uncomp_chunk_size, cascaded_compress_options(value_type), &max_comp_chunk_size);
+  CHECK_NVCOMP_STATUS(status);
+  return max_comp_chunk_size;
+}
+
+void batched_cascaded_compress(type_id value_type,
+                               device_span<device_span<uint8_t const> const> inputs,
+                               device_span<device_span<uint8_t> const> outputs,
+                               device_span<codec_exec_result> results,
+                               size_t max_uncomp_chunk_size,
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
+{
+  if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Compression error: " + *reason); }
+  auto const temp_mr = mr.get_temporary_mr();
+  auto args          = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
+  rmm::device_uvector<nvcompStatus_t> statuses(inputs.size(), stream, temp_mr);
+  auto const status = nvcompBatchedCascadedCompressAsync(args.input_data_ptrs.data(),
+                                                         args.input_data_sizes.data(),
+                                                         max_uncomp_chunk_size,
+                                                         inputs.size(),
+                                                         nullptr,
+                                                         0,
+                                                         args.output_data_ptrs.data(),
+                                                         args.output_data_sizes.data(),
+                                                         cascaded_compress_options(value_type),
+                                                         statuses.data(),
+                                                         stream.get());
+  CHECK_NVCOMP_STATUS(status);
+  update_compression_results(statuses, args.output_data_sizes, results, stream, {temp_mr, temp_mr});
+}
+
+void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> inputs,
+                                 device_span<device_span<uint8_t> const> outputs,
+                                 device_span<codec_exec_result> results,
+                                 std::span<size_t const> group_offsets,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(inputs.size() == outputs.size(), "inputs and outputs must have the same size");
+  CUDF_EXPECTS(inputs.size() == results.size(), "inputs and results must have the same size");
+  CUDF_EXPECTS(
+    !group_offsets.empty() && group_offsets.front() == 0 && group_offsets.back() == inputs.size(),
+    "group offsets must cover all chunks");
+  if (inputs.empty()) { return; }
+  if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Decompression error: " + *reason); }
+
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const args    = create_batched_nvcomp_args(inputs, outputs, stream, {temp_mr, temp_mr});
+  rmm::device_uvector<size_t> actual_sizes(inputs.size(), stream, temp_mr);
+  rmm::device_uvector<nvcompStatus_t> statuses(inputs.size(), stream, temp_mr);
+
+  // Nothing is allocated on the forked streams; freeing memory on several streams slows later
+  // allocations from a CUDA async memory pool.
+  auto const streams = cudf::detail::fork_streams(stream, group_offsets.size() - 1);
+  // Groups already launched must be joined before a failure throws and frees their arguments.
+  auto status = nvcompStatus_t::nvcompSuccess;
+  for (size_t i = 0; i < streams.size() && status == nvcompStatus_t::nvcompSuccess; ++i) {
+    auto const begin = group_offsets[i];
+    status           = nvcompBatchedCascadedDecompressAsync(args.input_data_ptrs.data() + begin,
+                                                  args.input_data_sizes.data() + begin,
+                                                  args.output_data_sizes.data() + begin,
+                                                  actual_sizes.data() + begin,
+                                                  group_offsets[i + 1] - begin,
+                                                  nullptr,
+                                                  0,
+                                                  args.output_data_ptrs.data() + begin,
+                                                  nvcompBatchedCascadedDecompressDefaultOpts,
+                                                  statuses.data() + begin,
+                                                  streams[i].get());
+  }
+  cudf::detail::join_streams(streams, stream);
+  CHECK_NVCOMP_STATUS(status);
+
+  update_compression_results(statuses, actual_sizes, results, stream, {temp_mr, temp_mr});
 }
 
 }  // namespace cudf::io::detail::nvcomp

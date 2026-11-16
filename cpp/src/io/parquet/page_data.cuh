@@ -115,8 +115,6 @@ inline __device__ void gpuStoreOutput(uint2* dst,
 template <typename state_buf>
 inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
-  using cuda::std::chrono::duration_cast;
-
   uint8_t const* src8;
   uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
 
@@ -142,7 +140,6 @@ inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos,
   }
 
   uint3 v;
-  int64_t nanos, days;
   v.x = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 0);
   v.y = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 4);
   v.z = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 8);
@@ -152,29 +149,8 @@ inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos,
     v.y           = __funnelshift_r(v.y, v.z, ofs);
     v.z           = __funnelshift_r(v.z, next, ofs);
   }
-  nanos = v.y;
-  nanos <<= 32;
-  nanos |= v.x;
-  // Convert from Julian day at noon to UTC seconds
-  days = static_cast<int32_t>(v.z);
-  // TBD: Should be noon instead of midnight, but this matches pyarrow
-  cudf::duration_D d_d{days - julian_day_unix_epoch};
-
-  *dst = [&]() {
-    switch (s->setup.col.ts_clock_rate) {
-      case 1:  // seconds
-        return duration_cast<duration_s>(d_d).count() +
-               duration_cast<duration_s>(duration_ns{nanos}).count();
-      case 1'000:  // milliseconds
-        return duration_cast<duration_ms>(d_d).count() +
-               duration_cast<duration_ms>(duration_ns{nanos}).count();
-      case 1'000'000:  // microseconds
-        return duration_cast<duration_us>(d_d).count() +
-               duration_cast<duration_us>(duration_ns{nanos}).count();
-      case 1'000'000'000:  // nanoseconds
-      default: return duration_cast<cudf::duration_ns>(d_d).count() + nanos;
-    }
-  }();
+  auto const nanos = static_cast<int64_t>((static_cast<uint64_t>(v.y) << 32) | v.x);
+  *dst = int96_to_timestamp(nanos, static_cast<int32_t>(v.z), s->setup.col.ts_clock_rate);
 }
 
 /**

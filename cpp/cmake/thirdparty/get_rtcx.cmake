@@ -28,5 +28,5 @@ function(find_and_configure_rtcx VERSION)
   endif()
 endfunction()
 
-set(RTCX_MIN_VERSION_cudf "0.1")
+set(RTCX_MIN_VERSION_cudf "0.2")
 find_and_configure_rtcx(${RTCX_MIN_VERSION_cudf})

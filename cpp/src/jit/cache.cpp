@@ -307,10 +307,6 @@ void append_cccl_options(std::vector<std::string>& options)
 
   // limit template unrolling in CCCL headers
   options.emplace_back("-D_CCCL_META_UNROLL_LIMIT=1");
-
-  // CCCL's FP16 and FP8 are unused and increase PCH size in CCCL's headers
-  options.emplace_back("-DCCCL_DISABLE_FP16_SUPPORT");
-  options.emplace_back("-DCCCL_DISABLE_NVFP8_SUPPORT");
 }
 
 std::tuple<rtcx::library, rtcx::blob> compile_library(

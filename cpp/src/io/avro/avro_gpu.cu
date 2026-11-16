@@ -5,6 +5,7 @@
 #include "avro_gpu.hpp"
 #include "io/utilities/block_utils.cuh"
 
+#include <cuda/ptx>
 #include <cuda/stream>
 
 using cudf::device_span;
@@ -330,7 +331,11 @@ CUDF_KERNEL void __launch_bounds__(num_warps * 32, 2)
   // Fetch schema into shared mem if possible
   if (schema_len <= max_shared_schema_len) {
     for (int i = threadIdx.y * 32 + threadIdx.x; i < schema_len; i += num_warps * 32) {
-      g_shared_schema[i] = schema_g[i];
+      // Other blocks may be adding to the null count, which a plain load must not race with.
+      g_shared_schema[i] = {schema_g[i].kind,
+                            schema_g[i].logical_kind,
+                            cuda::ptx::ld(cuda::ptx::space_global, &schema_g[i].count),
+                            schema_g[i].dataptr};
     }
     __syncthreads();
     schema = g_shared_schema;

@@ -25,6 +25,7 @@
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/orc.hpp>
 #include <cudf/io/orc_metadata.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
@@ -40,6 +41,7 @@
 #include <array>
 #include <numeric>
 #include <ranges>
+#include <tuple>
 #include <type_traits>
 
 template <typename T, typename SourceElementT = T>
@@ -1104,6 +1106,156 @@ TEST_F(OrcWriterTest, BoolColumnLongRLE)
   auto result = cudf::io::read_orc(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
+// Each column has a different non-null count modulo eight at the rowgroup boundary.
+struct OrcBooleanRowGroupTest
+  : public OrcWriterTest,
+    public ::testing::WithParamInterface<std::tuple<cudf::io::compression_type, bool>> {};
+
+TEST_P(OrcBooleanRowGroupTest, NullableBooleanRowGroups)
+{
+  auto const [compression, chunked] = GetParam();
+  constexpr cudf::size_type stride  = 512;
+  constexpr cudf::size_type rows    = 5 * stride + 9;
+  constexpr cudf::size_type offset  = 3;
+  auto values                       = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return (i * 13 + i / 7) % 11 < 5; });
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  for (int remainder = 0; remainder < 8; ++remainder) {
+    auto validity = cudf::detail::make_counting_transform_iterator(0, [remainder](auto i) {
+      return i < offset or (i - offset) % stride >= (8 - remainder) % 8;
+    });
+    bool_col col(values, values + rows + offset, validity);
+    columns.push_back(col.release());
+  }
+  auto const source = cudf::table(std::move(columns));
+  auto const input  = cudf::slice(source.view(), {offset, offset + rows}).front();
+  auto const path   = temp_env->get_temp_filepath("NullableBooleanRowGroups.orc");
+  if (chunked) {
+    cudf::io::chunked_orc_writer_options options =
+      cudf::io::chunked_orc_writer_options::builder(cudf::io::sink_info{path})
+        .compression(compression)
+        .row_index_stride(stride)
+        .stripe_size_rows(3 * stride);
+    cudf::io::orc_chunked_writer(options).write(input).write(input);
+  } else {
+    cudf::io::orc_writer_options options =
+      cudf::io::orc_writer_options::builder(cudf::io::sink_info{path}, input)
+        .compression(compression)
+        .row_index_stride(stride)
+        .stripe_size_rows(3 * stride);
+    cudf::io::write_orc(options);
+  }
+  auto const expected = chunked ? cudf::concatenate(std::vector<table_view>{input, input})
+                                : std::make_unique<table>(input);
+  // Concatenation can drop an all-valid mask. Preserve the source schema's nullable columns,
+  // as the chunked ORC writer does, without changing any values or null positions.
+  for (cudf::size_type i = 0; i < input.num_columns(); ++i) {
+    auto& col = expected->get_column(i);
+    if (input.column(i).nullable() and not col.nullable()) {
+      col.set_null_mask(cudf::create_null_mask(col.size(), cudf::mask_state::ALL_VALID), 0);
+    }
+  }
+  for (auto const use_index : {false, true}) {
+    cudf::io::orc_reader_options options =
+      cudf::io::orc_reader_options::builder(cudf::io::source_info{path}).use_index(use_index);
+    auto const result = cudf::io::read_orc(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+  }
+  // Also verify partial reads around rowgroup and stripe boundaries. The reader disables its
+  // index path when skip_rows is nonzero; the full indexed read above covers indexed decoding.
+  for (cudf::size_type boundary = stride; boundary < expected->num_rows(); boundary += stride) {
+    for (auto const delta : {-1, 0, 1}) {
+      auto const begin = boundary + delta;
+      auto const end   = std::min(begin + 17, expected->num_rows());
+      cudf::io::orc_reader_options options =
+        cudf::io::orc_reader_options::builder(cudf::io::source_info{path})
+          .use_index(true)
+          .skip_rows(begin)
+          .num_rows(end - begin);
+      auto const result = cudf::io::read_orc(options);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected->view(), {begin, end}).front(),
+                                    result.tbl->view());
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(OrcWriterTest,
+                         OrcBooleanRowGroupTest,
+                         ::testing::Combine(::testing::Values(cudf::io::compression_type::NONE,
+                                                              cudf::io::compression_type::SNAPPY),
+                                            ::testing::Bool()));
+
+TEST_F(OrcWriterTest, SparseBooleanRowGroups)
+{
+  constexpr cudf::size_type stride = 512;
+  constexpr cudf::size_type rows   = 6 * stride + 1;
+  auto values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3 == 1; });
+  auto validity = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return i < 3 or (i >= stride and i < stride + 2) or i >= 4 * stride; });
+  bool_col col(values, values + rows, validity);
+  table_view const input{{col}};
+  auto const path = temp_env->get_temp_filepath("SparseBooleanRowGroups.orc");
+  cudf::io::orc_writer_options write_options =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{path}, input)
+      .row_index_stride(stride);
+  cudf::io::write_orc(write_options);
+  for (auto const use_index : {false, true}) {
+    cudf::io::orc_reader_options options =
+      cudf::io::orc_reader_options::builder(cudf::io::source_info{path}).use_index(use_index);
+    auto const result = cudf::io::read_orc(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+  }
+  for (cudf::size_type begin = stride; begin < rows; begin += stride) {
+    auto const end = std::min(begin + 17, rows);
+    cudf::io::orc_reader_options options =
+      cudf::io::orc_reader_options::builder(cudf::io::source_info{path})
+        .use_index(true)
+        .skip_rows(begin)
+        .num_rows(end - begin);
+    auto const result = cudf::io::read_orc(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(input, {begin, end}).front(), result.tbl->view());
+  }
+}
+
+TEST_F(OrcWriterTest, NestedBooleanRowGroups)
+{
+  constexpr cudf::size_type stride = 512;
+  constexpr cudf::size_type rows   = 3 * stride + 1;
+  auto values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i / 3) % 5 == 1; });
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 1; });
+  bool_col child(values, values + rows);
+  struct_col structs{{child}, validity};
+  auto list_offsets =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i + i / 7; });
+  int32_col offsets(list_offsets, list_offsets + rows + 1);
+  auto element_validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 5 != 2; });
+  bool_col elements(values, values + list_offsets[rows], element_validity);
+  auto lists = cudf::make_lists_column(rows,
+                                       offsets.release(),
+                                       elements.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  table_view const source{{structs, lists->view()}};
+  auto const path = temp_env->get_temp_filepath("NestedBooleanRowGroups.orc");
+  for (auto const& input : {source, cudf::slice(source, {3, rows}).front()}) {
+    cudf::io::orc_writer_options write_options =
+      cudf::io::orc_writer_options::builder(cudf::io::sink_info{path}, input)
+        .row_index_stride(stride)
+        .compression(cudf::io::compression_type::SNAPPY);
+    cudf::io::write_orc(write_options);
+    for (auto const use_index : {false, true}) {
+      cudf::io::orc_reader_options options =
+        cudf::io::orc_reader_options::builder(cudf::io::source_info{path}).use_index(use_index);
+      auto const result = cudf::io::read_orc(options);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+    }
+  }
 }
 
 TEST_F(OrcChunkedWriterTest, SingleTable)

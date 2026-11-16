@@ -513,6 +513,8 @@ class protobuf_writer {
                            int32_t data2_blk,
                            int32_t data2_ofs,
                            TypeKind kind,
+                           uint8_t present_bit_offset,
+                           uint8_t data_bit_offset,
                            col_stats_blob const* stats);
 
   [[nodiscard]] std::size_t size() const { return m_buff.size(); }

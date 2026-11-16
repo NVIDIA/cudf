@@ -720,11 +720,6 @@ def _assert_orc_write_statistics(gdf, fname, stats_freq):
 @pytest.mark.parametrize("nrows", [1, 100, 100000])
 def test_orc_write_statistics(tmp_path, nrows):
     supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 100000:
-        supported_stat_types.remove("bool")
-
     gdf = cudf.DataFrame(
         {
             "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
@@ -741,11 +736,6 @@ def test_orc_write_statistics(tmp_path, nrows):
 @pytest.mark.parametrize("nrows", [2, 100, 1024])
 def test_orc_chunked_write_statistics(tmp_path, datadir, nrows, stats_freq):
     supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 1024:
-        supported_stat_types.remove("bool")
-
     gdf_fname = tmp_path / "chunked_stats.orc"
     with ORCWriter(
         gdf_fname, statistics=stats_freq, stripe_size_rows=512
@@ -904,29 +894,18 @@ def test_orc_reader_gmt_timestamps(datadir):
     assert_eq(pdf, gdf)
 
 
-def test_orc_bool_encode_fail():
+@pytest.mark.parametrize("null_row", [5000, 15000])
+def test_orc_bool_encode(null_row):
     buffer = BytesIO()
 
-    # Generate a boolean column longer than a single row group
-    fail_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
-    # Invalidate a row in the first row group
-    fail_df["col"][5000] = None
+    # Exercise a partial boolean byte in either the first or last row group.
+    expected = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
+    expected.loc[null_row, "col"] = None
+    expected.to_orc(buffer)
 
-    # Should throw instead of generating a file that is incompatible
-    # with other readers (see issue #6763)
-    with pytest.raises(RuntimeError):
-        fail_df.to_orc(buffer)
-
-    # Generate a boolean column longer than a single row group
-    okay_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
-    okay_df["col"][15000] = None
-    # Invalid row is in the last row group; encoding is assumed to be correct
-    okay_df.to_orc(buffer)
-
-    # Also validate data
-    pdf = pd.read_orc(buffer)
-
-    assert_eq(okay_df.to_pandas(nullable=True), pdf)
+    # Validate interoperability with the external PyArrow reader used by pandas.
+    got = pd.read_orc(buffer)
+    assert_eq(expected.to_pandas(nullable=True), got)
 
 
 def test_nanoseconds_overflow():

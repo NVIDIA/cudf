@@ -494,16 +494,19 @@ void orc_encode_statistics(uint8_t* blob_bfr,
                            cuda::stream_ref stream);
 
 /**
- * @brief Number of set bits in pushdown masks, per rowgroup.
+ * @brief Number of set bits in pushdown masks, per rowgroup; BOOLEAN columns count the effective
+ * valid values in their DATA stream instead.
  *
  * @param[in] orc_columns Pre-order flattened device array of ORC column views
  * @param[in] rowgroup_bounds Ranges of rows in each rowgroup [rowgroup][column]
  * @param[out] set_counts Per rowgroup number of set bits
+ * @param[out] boolean_present_counts Number of BOOLEAN PRESENT bits in the column's rowgroup range
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void reduce_pushdown_masks(device_span<orc_column_device_view const> orc_columns,
                            device_2dspan<rowgroup_rows const> rowgroup_bounds,
                            device_2dspan<cudf::size_type> set_counts,
+                           device_2dspan<cudf::size_type> boolean_present_counts,
                            cuda::stream_ref stream);
 
 }  // namespace cudf::io::orc::detail

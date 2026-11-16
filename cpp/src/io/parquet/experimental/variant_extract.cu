@@ -13,6 +13,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -744,7 +745,7 @@ CUDF_KERNEL __launch_bounds__(block_size) void locate_variant_fields_kernel(
   auto const stride   = cudf::detail::grid_1d::grid_stride<block_size>();
 
   for (auto row = tid; row < num_rows; row += stride) {
-    if (!cudf::bit_is_set(d_null_mask, row)) {
+    if (!cudf::detail::weak_bit_is_set(d_null_mask, row)) {
       d_sizes[row]       = 0;
       d_src_offsets[row] = 0;
       if (!d_status.empty()) { d_status[row] = op_status::ROW_NULL; }
@@ -939,7 +940,7 @@ __device__ cuda::std::pair<Rep, op_status> decode_decimal(device_span<uint8_t co
  */
 __device__ bool should_decode_row(size_type row, bitmask_type* d_null_mask, op_status* d_status)
 {
-  auto const is_valid = cudf::bit_is_set(d_null_mask, row);
+  auto const is_valid = cudf::detail::weak_bit_is_set(d_null_mask, row);
 
   if (d_status == nullptr) { return is_valid; }
 
@@ -1095,10 +1096,10 @@ struct cast_variant_string_fn {
       auto const s = d_status[row];
       if (s != op_status::SUCCESS) {
         if (is_sizing_pass) { d_sizes[row] = 0; }
-        if (cudf::bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
+        if (cudf::detail::weak_bit_is_set(d_null_mask, row)) { cudf::clear_bit(d_null_mask, row); }
         return;
       }
-      if (!cudf::bit_is_set(d_null_mask, row)) {
+      if (!cudf::detail::weak_bit_is_set(d_null_mask, row)) {
         if (is_sizing_pass) {
           d_sizes[row]  = 0;
           d_status[row] = op_status::ROW_NULL;
@@ -1106,7 +1107,7 @@ struct cast_variant_string_fn {
         return;
       }
     } else {
-      if (!cudf::bit_is_set(d_null_mask, row)) {
+      if (!cudf::detail::weak_bit_is_set(d_null_mask, row)) {
         if (is_sizing_pass) { d_sizes[row] = 0; }
         return;
       }
@@ -1554,7 +1555,7 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
     cuda::counting_iterator<size_type>(num_rows),
     static_cast<uint8_t*>(data.data()),
     [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> uint8_t {
-      if (!cudf::bit_is_set(d_null_mask, row)) { return 0; }
+      if (!cudf::detail::weak_bit_is_set(d_null_mask, row)) { return 0; }
       auto const ltype = logical_type_of(list_row_span(values, row));
       if (ltype.has_value()) { return static_cast<uint8_t>(ltype.value()); }
       cudf::clear_bit(d_null_mask, row);

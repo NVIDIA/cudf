@@ -90,9 +90,9 @@ ray.init(address="auto")  # attach to a running cluster
 with RayEngine() as engine:
     result = (
         pl.scan_parquet("s3://bucket/*.parquet")
-            .group_by("customer_id")
-            .agg(pl.col("amount").sum())
-            .collect(engine=engine)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -118,9 +118,9 @@ import polars as pl
 
 result = (
     pl.scan_parquet("/data/*.parquet")
-      .group_by("customer_id")
-      .agg(pl.col("amount").sum())
-      .collect(engine=engine)
+    .group_by("customer_id")
+    .agg(pl.col("amount").sum())
+    .collect(engine=engine)
 )
 result
 ```

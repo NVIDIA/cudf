@@ -300,7 +300,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
   bool prune_columns,
   std::optional<schema_element> schema,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto validity_size_check = [](device_json_column& json_col) {
@@ -351,7 +351,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
         auto [normalized_d_input, col_offsets, col_lengths] =
           cudf::io::json::detail::normalize_whitespace(
             d_input, json_col.string_offsets, json_col.string_lengths, stream, mr);
-        auto offset_length_it = cuda::make_zip_iterator(col_offsets.begin(), col_lengths.begin());
+        auto offset_length_it = cuda::make_zip_iterator(col_offsets.data(), col_lengths.data());
         target_type           = data_type{type_id::STRING};
         // Convert strings to the inferred data type
         col = parse_data(normalized_d_input.data(),
@@ -365,7 +365,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
                          mr);
       } else {
         auto offset_length_it =
-          cuda::make_zip_iterator(json_col.string_offsets.begin(), json_col.string_lengths.begin());
+          cuda::make_zip_iterator(json_col.string_offsets.data(), json_col.string_lengths.data());
         if (schema.has_value()) {
 #ifdef NJP_DEBUG_PRINT
           std::cout << "-> explicit type: "
@@ -527,7 +527,7 @@ table_with_metadata device_parse_nested_json_impl(
   device_span<SymbolT const> d_input,
   cudf::io::json_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
+  cudf::memory_resources mr,
   std::vector<std::string>* mismatched_columns_out,
   std::vector<schema_mismatch_rows>* mismatched_rows_out = nullptr)
 {
@@ -757,7 +757,7 @@ table_with_metadata device_parse_nested_json_impl(
 table_with_metadata device_parse_nested_json(device_span<SymbolT const> d_input,
                                              cudf::io::json_reader_options const& options,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return device_parse_nested_json_impl(
@@ -769,7 +769,7 @@ device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
   cudf::io::json_reader_options const& options,
   bool collect_schema_mismatch_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   std::vector<std::string> mismatched_columns;

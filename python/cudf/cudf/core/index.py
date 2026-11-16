@@ -1682,7 +1682,7 @@ class Index(SingleColumnFrame):
 
     def _new_index_for_reset_index(
         self, levels: tuple | None, name
-    ) -> None | Index:
+    ) -> Index | None:
         """Return the new index after .reset_index"""
         # None is caught later to return RangeIndex
         return None

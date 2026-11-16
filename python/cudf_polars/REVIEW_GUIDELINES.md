@@ -424,6 +424,7 @@ def do_evaluate(self, df, *, context):
     if self.children[1].value < 0:
         raise ValueError(...)
 
+
 # Good
 def __init__(self, dtype, name, options, *children):
     if not isinstance(children[1], Literal):
@@ -495,9 +496,13 @@ dtype or 64-bit integers.
 
 ```python
 # Bad: three kernels and two full-size intermediate columns for abs(a * b) + c
-ab = plc.binaryop.binary_operation(a, b, plc.binaryop.BinaryOperator.MUL, dtype, stream=stream)
+ab = plc.binaryop.binary_operation(
+    a, b, plc.binaryop.BinaryOperator.MUL, dtype, stream=stream
+)
 abs_ab = plc.unary.unary_operation(ab, plc.unary.UnaryOperator.ABS, stream=stream)
-out = plc.binaryop.binary_operation(abs_ab, c, plc.binaryop.BinaryOperator.ADD, dtype, stream=stream)
+out = plc.binaryop.binary_operation(
+    abs_ab, c, plc.binaryop.BinaryOperator.ADD, dtype, stream=stream
+)
 
 # Good: one AST, evaluated in one kernel
 Op, Col = plc.expressions.Operation, plc.expressions.ColumnReference
@@ -558,6 +563,7 @@ bad values fail at engine creation. Reject incompatible combinations in
 ```python
 # Bad: read during lowering, so bad values fail deep in a query
 threshold = int(os.environ.get("CUDF_POLARS_BROADCAST_THRESHOLD", 8))
+
 
 # Good
 @dataclasses.dataclass(frozen=True)
@@ -656,6 +662,7 @@ def test_join():
     finally:
         engine.shutdown()
 
+
 # Good
 def test_join(engine):
     assert_gpu_result_equal(q, engine=engine)
@@ -673,6 +680,7 @@ same check.
 # Bad: runs the same translation check once per engine
 def test_unsupported_dtype(streaming_engine):
     assert_ir_translation_raises(q, streaming_engine, NotImplementedError)
+
 
 # Good
 def test_unsupported_dtype(in_memory_engine):

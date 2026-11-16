@@ -24,6 +24,7 @@
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/scan.h>
+#include <thrust/scatter.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -91,7 +92,7 @@ std::unique_ptr<column> rank_generator(column_view const& grouped_values,
                                        scan_operator scan_op,
                                        bool has_nulls,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto const grouped_values_view = table_view{{grouped_values}};
   auto const temp_mr             = cudf::get_current_device_resource_ref();
@@ -148,7 +149,7 @@ std::unique_ptr<column> min_rank_scan(column_view const& grouped_values,
                                       device_span<size_type const> group_labels,
                                       device_span<size_type const> group_offsets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return rank_generator<true>(
     grouped_values,
@@ -169,7 +170,7 @@ std::unique_ptr<column> max_rank_scan(column_view const& grouped_values,
                                       device_span<size_type const> group_labels,
                                       device_span<size_type const> group_offsets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   return rank_generator<false>(
     grouped_values,
@@ -190,7 +191,7 @@ std::unique_ptr<column> first_rank_scan(column_view const& grouped_values,
                                         device_span<size_type const> group_labels,
                                         device_span<size_type const> group_offsets,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   auto ranks = make_fixed_width_column(
     data_type{type_to_id<size_type>()}, group_labels.size(), mask_state::UNALLOCATED, stream, mr);
@@ -212,7 +213,7 @@ std::unique_ptr<column> average_rank_scan(column_view const& grouped_values,
                                           device_span<size_type const> group_labels,
                                           device_span<size_type const> group_offsets,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   auto max_rank = max_rank_scan(grouped_values,
                                 value_order,
@@ -245,7 +246,7 @@ std::unique_ptr<column> dense_rank_scan(column_view const& grouped_values,
                                         device_span<size_type const> group_labels,
                                         device_span<size_type const> group_offsets,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   return rank_generator<true>(
     grouped_values,
@@ -266,7 +267,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
                                                  device_span<size_type const> group_labels,
                                                  device_span<size_type const> group_offsets,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(percentage != rank_percentage::NONE, "Percentage cannot be NONE");
   auto ranks = make_fixed_width_column(
@@ -319,6 +320,29 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
 
   ranks->set_null_count(0);
   return ranks;
+}
+
+std::unique_ptr<column> scatter_rank(column_view const& rank,
+                                     column_view const& scatter_map,
+                                     cuda::stream_ref stream,
+                                     rmm::device_async_resource_ref mr)
+{
+  // Every row is written, so the output needs no initialization.
+  auto result =
+    make_fixed_width_column(rank.type(), rank.size(), mask_state::UNALLOCATED, stream, mr);
+  auto const scatter = [&]<typename T>() {
+    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    rank.begin<T>(),
+                    rank.end<T>(),
+                    scatter_map.begin<size_type>(),
+                    result->mutable_view().begin<T>());
+  };
+  if (rank.type().id() == type_id::FLOAT64) {
+    scatter.template operator()<double>();
+  } else {
+    scatter.template operator()<size_type>();
+  }
+  return result;
 }
 
 }  // namespace detail

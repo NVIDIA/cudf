@@ -9,7 +9,7 @@ import math
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, assert_never, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -21,6 +21,8 @@ from cudf_polars.utils import dtypes, sorting
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers import DataFrame
 
@@ -159,6 +161,38 @@ class Len(Expr):
         return plc.aggregation.count(plc.types.NullPolicy.INCLUDE)
 
 
+def _polars_dtype_name(dtype: pl.DataType) -> str:
+    """Name a dtype the way Polars' error messages do (e.g. ``u32``)."""
+    if isinstance(dtype, pl.Datetime):
+        unit = {"ms": "ms", "us": "μs", "ns": "ns"}[dtype.time_unit]
+        if dtype.time_zone is not None:
+            return f"datetime[{unit}, {dtype.time_zone}]"
+        return f"datetime[{unit}]"
+    return {
+        pl.UInt8: "u8",
+        pl.UInt16: "u16",
+        pl.UInt32: "u32",
+        pl.UInt64: "u64",
+        pl.Boolean: "bool",
+        pl.Date: "date",
+        pl.String: "str",
+    }.get(type(dtype), str(dtype))
+
+
+def _check_negate_supported(dtype: DataType) -> None:
+    """Raise as Polars does for dtypes that libcudf cannot negate."""
+    plc_type = dtype.plc_type
+    if (
+        plc.traits.is_unsigned(plc_type)
+        or plc.traits.is_boolean(plc_type)
+        or plc.traits.is_timestamp(plc_type)
+        or plc_type.id() == plc.TypeId.STRING
+    ):
+        raise InvalidOperationError(
+            f"`neg` operation not supported for dtype `{_polars_dtype_name(dtype.polars_type)}`"
+        )
+
+
 class UnaryFunction(Expr):
     """Class representing unary functions of an expression."""
 
@@ -188,6 +222,8 @@ class UnaryFunction(Expr):
         "bit_invert": plc.unary.UnaryOperator.BIT_INVERT,
         "not": plc.unary.UnaryOperator.NOT,
         "negate": plc.unary.UnaryOperator.NEGATE,
+        # Not a polars function, only built by cudf-polars (round half to even)
+        "rint": plc.unary.UnaryOperator.RINT,
     }
     _supported_misc_fns = frozenset(
         {
@@ -451,6 +487,44 @@ class UnaryFunction(Expr):
         return UnaryFunction._validate_top_k(
             k_col.obj_scalar(stream=df.stream).to_py(stream=df.stream)
         )
+
+    @staticmethod
+    def _sorted_top_k(
+        values: plc.Column,
+        by: Column,
+        k: int,
+        order: plc.types.Order,
+        stream: Stream,
+    ) -> plc.Column:
+        """
+        Select the ``top_k`` rows of ``values`` ordered by the sorted column ``by``.
+
+        Parameters
+        ----------
+        values
+            Column to select rows from, with the same number of rows as ``by``.
+        by
+            Column with ``is_sorted == plc.types.Sorted.YES``.
+        k
+            Number of rows to select, at most the number of rows of ``by``.
+        order
+            ``DESCENDING`` to select the largest values, ``ASCENDING`` to select
+            the smallest values.
+        stream
+            CUDA stream on which ``values`` is valid.
+
+        Returns
+        -------
+        The selected rows in ``order`` of ``by``.
+        """
+        valid_begin = by.null_count if sorting.nulls_at_start(by) else 0
+        if by.order == order:
+            begin = min(valid_begin, by.size - k)
+            (result,) = plc.copying.slice(values, [begin, begin + k], stream=stream)
+            return result.copy(stream=stream)
+        begin = max(valid_begin + by.size - by.null_count, k) - k
+        (result,) = plc.copying.slice(values, [begin, begin + k], stream=stream)
+        return plc.copying.reverse(result, stream=stream)
 
     @staticmethod
     def _bound_clip_operand(
@@ -1458,8 +1532,19 @@ class UnaryFunction(Expr):
             )
         elif self.name == "drop_nulls":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
-            if column.null_count == 0:
+            if (null_count := column.null_count) == 0:
                 return column
+            if column.is_sorted == plc.types.Sorted.YES:
+                bounds = (
+                    [null_count, column.size]
+                    if sorting.nulls_at_start(column)
+                    else [0, column.size - null_count]
+                )
+                (sliced,) = plc.copying.slice(column.obj, bounds, stream=df.stream)
+                if sliced.null_count() == 0:
+                    return Column(
+                        sliced.copy(stream=df.stream), dtype=self.dtype
+                    ).sorted_like(column)
             return Column(
                 plc.stream_compaction.drop_nulls(
                     plc.Table([column.obj]), [0], 1, stream=df.stream
@@ -1746,15 +1831,19 @@ class UnaryFunction(Expr):
             column = self.children[0].evaluate(df, context=context)
             (reverse,) = self.options
             k = self._top_k_count(self.children[1], df, context)
+            order = plc.types.Order.ASCENDING if reverse else plc.types.Order.DESCENDING
+            if column.is_sorted == plc.types.Sorted.YES:
+                k = min(k, column.size)
+                return Column(
+                    self._sorted_top_k(column.obj, column, k, order, df.stream),
+                    dtype=self.dtype,
+                ).set_sorted(
+                    is_sorted=plc.types.Sorted.YES,
+                    order=order,
+                    null_order=column.null_order,
+                )
             return Column(
-                plc.sorting.top_k(
-                    column.obj,
-                    k,
-                    plc.types.Order.ASCENDING
-                    if reverse
-                    else plc.types.Order.DESCENDING,
-                    stream=df.stream,
-                ),
+                plc.sorting.top_k(column.obj, k, order, stream=df.stream),
                 dtype=self.dtype,
             )
         elif self.name == "top_k_by":
@@ -1765,14 +1854,18 @@ class UnaryFunction(Expr):
                 by = broadcast(by, target_length=col_value.size, stream=df.stream)[0]
             (descending,) = self.options
             k = self._top_k_count(self.children[1], df, context)
-            indices = plc.sorting.top_k_order(
-                by.obj,
-                k,
+            order = (
                 plc.types.Order.ASCENDING
                 if descending[0]
-                else plc.types.Order.DESCENDING,
-                stream=df.stream,
+                else plc.types.Order.DESCENDING
             )
+            if by.is_sorted == plc.types.Sorted.YES:
+                k = min(k, by.size)
+                return Column(
+                    self._sorted_top_k(col_value.obj, by, k, order, df.stream),
+                    dtype=self.dtype,
+                )
+            indices = plc.sorting.top_k_order(by.obj, k, order, stream=df.stream)
             return Column(
                 plc.copying.gather(
                     plc.Table([col_value.obj]),
@@ -1887,11 +1980,51 @@ class UnaryFunction(Expr):
         elif self.name in UnaryFunction._horizontal_fold_ops:
             op = UnaryFunction._horizontal_fold_ops[self.name]
             columns = self._horizontal_broadcast_columns(df, context=context)
+            originals = columns
+            is_float = plc.traits.is_floating_point(self.dtype.plc_type)
+            bool8 = plc.DataType(plc.TypeId.BOOL8)
+            if is_float:
+                # Polars skips NaN like a null in max/min_horizontal, while the
+                # binary NULL_MAX/NULL_MIN follow IEEE ordering.
+                null_scalar = plc.Scalar.from_py(
+                    None, self.dtype.plc_type, stream=df.stream
+                )
+                false = plc.Scalar.from_py(False, bool8, stream=df.stream)  # noqa: FBT003
+                columns = [
+                    plc.copying.copy_if_else(
+                        null_scalar,
+                        col,
+                        plc.replace.replace_nulls(
+                            plc.unary.is_nan(col, stream=df.stream),
+                            false,
+                            stream=df.stream,
+                        ),
+                        stream=df.stream,
+                    )
+                    for col in columns
+                ]
             result = columns[0]
             for other in columns[1:]:
                 result = plc.binaryop.binary_operation(
                     result, other, op, self.dtype.plc_type, stream=df.stream
                 )
+            if is_float:
+                # A row with no non-NaN value but at least one NaN is NaN.
+                for col in originals:
+                    use_nan = plc.binaryop.binary_operation(
+                        plc.replace.replace_nulls(
+                            plc.unary.is_nan(col, stream=df.stream),
+                            false,
+                            stream=df.stream,
+                        ),
+                        plc.unary.is_null(result, stream=df.stream),
+                        plc.binaryop.BinaryOperator.LOGICAL_AND,
+                        bool8,
+                        stream=df.stream,
+                    )
+                    result = plc.copying.copy_if_else(
+                        col, result, use_nan, stream=df.stream
+                    )
             return Column(result, dtype=self.dtype)
         elif self.name == "mean_horizontal":
             (ignore_nulls,) = self.options
@@ -2126,6 +2259,8 @@ class UnaryFunction(Expr):
                 return Column(signed, dtype=self.dtype)
         elif self.name in self._OP_MAPPING:
             column = self.children[0].evaluate(df, context=context)
+            if self.name == "negate":
+                _check_negate_supported(column.dtype)
             if column.dtype.plc_type.id() != self.dtype.id():
                 arg = plc.unary.cast(column.obj, self.dtype.plc_type, stream=df.stream)
             else:

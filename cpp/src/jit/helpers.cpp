@@ -116,5 +116,17 @@ rtcx::blob get_udf_kernel_fragment(std::string const& source_file,
   return get_kernel_fragment(source_file, source_file, include_names, include_headers, kernel_name);
 }
 
+rtcx::binary_type as_rtcx_binary_type(lto_binary_type type)
+{
+  switch (type) {
+    case lto_binary_type::LTO_IR: return rtcx::binary_type::LTO_IR;
+    case lto_binary_type::FATBIN: return rtcx::binary_type::FATBIN;
+    case lto_binary_type::PTX: return rtcx::binary_type::PTX;
+    default:
+      CUDF_FAIL(std::format("Unrecognized LTO binary type {}", static_cast<int>(type)),
+                std::invalid_argument);
+  }
+}
+
 }  // namespace jit
 }  // namespace cudf

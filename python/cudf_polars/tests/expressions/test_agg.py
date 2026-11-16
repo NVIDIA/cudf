@@ -749,6 +749,42 @@ def test_temporal_quantile_median_not_supported(engine: pl.GPUEngine, expr):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize("set_sorted", [False, True])
+@pytest.mark.parametrize("drop_nulls", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize(
+    "data,dtype",
+    [
+        ([3, 1, 2, 1, None, 3, None, 2, 2], pl.Int64),
+        ([1.0, float("nan"), 2.0, float("nan"), None, 1.0, -0.0, 0.0], pl.Float64),
+        (["b", "a", None, "b", "c"], pl.String),
+        ([None, None], pl.Int64),
+        ([7], pl.Int64),
+        ([], pl.Int64),
+    ],
+)
+def test_n_unique_sorted(
+    engine: pl.GPUEngine,
+    data,
+    dtype,
+    descending: bool,  # noqa: FBT001
+    nulls_last: bool,  # noqa: FBT001
+    drop_nulls: bool,  # noqa: FBT001
+    set_sorted: bool,  # noqa: FBT001
+) -> None:
+    values = pl.Series(data, dtype=dtype).sort(
+        descending=descending, nulls_last=nulls_last
+    )
+    col = pl.col("a")
+    if set_sorted:
+        col = col.set_sorted(descending=descending)
+    if drop_nulls:
+        col = col.drop_nulls()
+    q = pl.LazyFrame({"a": values}).select(col.n_unique())
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_n_unique_null_dtype_unsupported(engine: pl.GPUEngine) -> None:
     q = pl.LazyFrame({"x": [1, 2, 3]}).select(pl.lit(None).drop_nulls().n_unique())
     assert_ir_translation_raises(q, engine, NotImplementedError)

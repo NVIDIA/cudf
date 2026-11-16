@@ -22,6 +22,7 @@
 
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
@@ -396,6 +397,23 @@ __forceinline__ __device__ __int128_t atomic_add(__int128_t* address, __int128_t
   auto const old_val_unsigned = (static_cast<__uint128_t>(old_parts[1]) << 64) | old_parts[0];
   return static_cast<__int128_t>(old_val_unsigned);
 #endif
+}
+
+/**
+ * @brief Indicates whether a bit is set in a bitmask whose words other threads may be updating
+ * with `set_bit` or `clear_bit`.
+ *
+ * A plain load must not race with those atomic updates, so the word is read with a weak PTX load
+ * of the same width.
+ *
+ * @param bitmask The bitmask in global memory containing the bit to test
+ * @param bit_index Index of the bit to test
+ * @return Whether the specified bit is `1`
+ */
+__forceinline__ __device__ bool weak_bit_is_set(bitmask_type const* bitmask, size_type bit_index)
+{
+  return cuda::ptx::ld(cuda::ptx::space_global, bitmask + word_index(bit_index)) &
+         (bitmask_type{1} << intra_word_index(bit_index));
 }
 
 }  // namespace detail

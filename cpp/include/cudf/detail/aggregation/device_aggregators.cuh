@@ -428,7 +428,10 @@ struct element_aggregator {
 
     // The output for COUNT_VALID and COUNT_ALL is initialized to be all valid
     if constexpr (!(k == cudf::aggregation::COUNT_VALID or k == cudf::aggregation::COUNT_ALL)) {
-      if (target.is_null(target_index)) { target.set_valid(target_index); }
+      if (target.nullable() and
+          not weak_bit_is_set(target.null_mask(), target.offset() + target_index)) {
+        target.set_valid(target_index);
+      }
     }
 
     update_target_element<Source, k>{}(target, target_index, source, source_index);

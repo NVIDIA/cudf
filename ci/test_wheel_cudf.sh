@@ -16,14 +16,6 @@ RUN_CUDF_STREAMING_TESTS="${RUN_CUDF_STREAMING_TESTS:-true}"
 CUPY_NIGHTLY="${CUPY_NIGHTLY:-false}"
 CUPY_NIGHTLY_UV_ARGS=()
 CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
-CUDA_CORE_UV_ARGS=()
-if [[ "${CUDA_MAJOR}" == "12" ]]; then
-  # cuda-core is not a cuDF dependency, but it's currently required to
-  # in the install command to ensure we get a compatible version of
-  # cuda-bindings and cuda-core via numba-cuda-mlir.
-  # https://github.com/NVIDIA/numba-cuda-mlir/pull/457
-  CUDA_CORE_UV_ARGS=("cuda-core[cu12]")
-fi
 if [[ "${CUPY_NIGHTLY}" == "true" ]]; then
   # Keep the RAPIDS nightly index and any caller-provided indexes.
   export UV_EXTRA_INDEX_URL="${UV_EXTRA_INDEX_URL} ${NV_GHA_RUNNERS_PYPI_ANACONDA_CACHE_URL:-https://pypi.anaconda.org}/scientific-python-nightly-wheels/simple/"
@@ -91,7 +83,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
     #
     rapids-uv-pip install \
       --constraint "${PIP_CONSTRAINT}" \
-      "${CUDA_CORE_UV_ARGS[@]}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
       "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]"
@@ -121,7 +112,6 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
 
     rapids-uv-pip install \
       --constraint "${PIP_CONSTRAINT}" \
-      "${CUDA_CORE_UV_ARGS[@]}" \
       "${CUPY_NIGHTLY_UV_ARGS[@]}" \
       "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \
       "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \

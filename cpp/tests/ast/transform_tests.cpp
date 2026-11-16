@@ -973,6 +973,25 @@ TYPED_TEST(TransformTest, PyMod)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }
 
+TYPED_TEST(TransformTest, PyModFloatingEdgeCases)
+{
+  using Executor = TypeParam;
+
+  auto const inf = std::numeric_limits<double>::infinity();
+  auto c_0       = column_wrapper<double>{1.0, -1.0, 1.0, -1.0, -1e-20, 1e-20};
+  auto c_1       = column_wrapper<double>{inf, inf, -1e18, -1e18, 1.0, -1.0};
+  auto table     = cudf::table_view{{c_0, c_1}};
+
+  auto col_ref_0  = cudf::ast::column_reference(0);
+  auto col_ref_1  = cudf::ast::column_reference(1);
+  auto expression = cudf::ast::operation(cudf::ast::ast_operator::PYMOD, col_ref_0, col_ref_1);
+
+  auto result   = Executor::compute_column(table, expression);
+  auto expected = column_wrapper<double>{1.0, inf, -1e18, -1.0, 1.0, -1.0};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
 TYPED_TEST(TransformTest, BasicEqualityNullEqualNoNulls)
 {
   using Executor = TypeParam;

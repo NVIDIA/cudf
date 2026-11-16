@@ -327,10 +327,11 @@ struct column_sorted_order_fn {
 
     // The mapped values begin at offset 0 so the null mask of a sliced input must be copied
     // to align with them
-    auto const null_mask   = (input.offset() > 0 && input.nullable())
+    auto const copy_mask   = input.offset() > 0 && input.has_nulls();
+    auto const null_mask   = copy_mask
                                ? cudf::detail::copy_bitmask(input, stream, {temp_mr, temp_mr})
                                : cuda::device_buffer<bitmask_type>(stream, temp_mr, 0, cuda::no_init);
-    auto const d_null_mask = null_mask.size() > 0 ? null_mask.data() : input.null_mask();
+    auto const d_null_mask = copy_mask ? null_mask.data() : input.null_mask();
 
     // Finally, sort-order the dictionary indices using mapped values
     auto mapped_view = column_view(data_type{type_to_id<size_type>()},

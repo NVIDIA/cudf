@@ -178,7 +178,7 @@ std::unique_ptr<column> remove_unused_keys(dictionary_column_view const& diction
   if (dictionary_column.is_empty()) { return cudf::empty_like(dictionary_column.parent()); }
 
   // locate the keys to remove
-  auto const keys_size     = dictionary_column.keys_size();
+  auto const keys_size     = dictionary_column.keys().size();
   column_view indices_view = dictionary_column.get_indices_annotated();
 
   // search the indices values with key indices to look for any holes

@@ -16,11 +16,21 @@ namespace cudf {
 namespace detail {
 
 /**
- * @brief constants for buffer indexes of Arrow arrays
+ * @brief Indexes of the buffers of an Arrow array
  *
+ * - `validity_buffer_idx`: the validity bitmap
+ * - `fixed_width_data_buffer_idx`: the data of a fixed-width array, or the offsets of a string,
+ *   binary or list array
+ * - `chars_buffer_idx`: the characters of a string, large string, binary or large binary array
+ * - `stringview_vector_idx`: the views of a string or binary view array, whose characters are in
+ *   the variadic data buffers that follow
+ *
+ * Specification: https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
  */
 static constexpr int validity_buffer_idx         = 0;
 static constexpr int fixed_width_data_buffer_idx = 1;
+static constexpr int chars_buffer_idx            = 2;
+static constexpr int stringview_vector_idx       = 1;
 
 /**
  * @brief Map ArrowType id to cudf column type id

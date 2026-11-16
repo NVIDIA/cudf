@@ -1862,17 +1862,12 @@ def test_read_parquet_nested_decimal_width(
 _TIMESTAMP = datetime.datetime(2026, 10, 1, 1, 2, 3, 456000)
 
 
-def _write_timestamp(path, writer, unit, tz):
-    if writer == "pyarrow":
-        pq.write_table(
-            pa.table({"t": pa.array([_TIMESTAMP], pa.timestamp(unit, tz))}),
-            path,
-        )
-    else:
-        pl = pytest.importorskip("polars")
-        pl.DataFrame(
-            {"t": [_TIMESTAMP]}, schema={"t": pl.Datetime(unit, tz)}
-        ).write_parquet(path)
+def _write_timestamp(path, unit, tz):
+    # pyarrow writes the deprecated converted type only for UTC ms and us
+    # timestamps, so naive files carry just the logical type.
+    pq.write_table(
+        pa.table({"t": pa.array([_TIMESTAMP], pa.timestamp(unit, tz))}), path
+    )
 
 
 def _read_timestamp_sources(paths, *, mismatched):
@@ -1889,25 +1884,17 @@ def _read_timestamp_sources(paths, *, mismatched):
 
 @pytest.mark.parametrize("mismatched", [False, True])
 @pytest.mark.parametrize(
-    "writers",
-    [
-        ("pyarrow", "polars"),
-        ("polars", "pyarrow"),
-        ("polars", "polars"),
-        ("pyarrow", "pyarrow"),
-    ],
+    "tzs", [(None, None), (None, "UTC"), ("UTC", None), ("UTC", "UTC")]
 )
-@pytest.mark.parametrize("tzs", [(None, None), (None, "UTC"), ("UTC", None)])
-def test_read_parquet_timestamps_across_writers(
-    tmp_path, writers, tzs, mismatched
+def test_read_parquet_timestamps_with_different_time_zones(
+    tmp_path, tzs, mismatched
 ):
-    # pyarrow writes the deprecated TIMESTAMP_MICROS converted type next to the
-    # logical type for naive timestamps, polars writes only the logical type.
     # The reader ignores the time zone flag, so naive and UTC timestamps with
-    # the same unit are read together.
+    # the same unit are read together even though only the UTC file has a
+    # converted type.
     paths = [tmp_path / f"{i}.parquet" for i in range(2)]
-    for path, writer, tz in zip(paths, writers, tzs, strict=True):
-        _write_timestamp(path, writer, "us", tz)
+    for path, tz in zip(paths, tzs, strict=True):
+        _write_timestamp(path, "us", tz)
     assert_table_eq(
         pa.table({"t": pa.array([_TIMESTAMP] * 2, pa.timestamp("us"))}),
         _read_timestamp_sources(paths, mismatched=mismatched),
@@ -1920,11 +1907,11 @@ def test_read_parquet_timestamps_with_different_units(
     tmp_path, units, mismatched
 ):
     # The values are copied without conversion, so sources with different time
-    # units must not be read together. polars writes no converted type, so
-    # only the logical type tells the files apart.
+    # units must not be read together. Naive files have no converted type, so
+    # only the logical type tells them apart.
     paths = [tmp_path / f"{unit}.parquet" for unit in units]
     for path, unit in zip(paths, units, strict=True):
-        _write_timestamp(path, "polars", unit, None)
+        _write_timestamp(path, unit, None)
     error, match = (
         (ValueError, "mismatching data type or schema")
         if mismatched

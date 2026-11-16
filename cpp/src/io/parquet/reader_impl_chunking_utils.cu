@@ -965,11 +965,17 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
   cuda::device_buffer<size_t> string_offset_sizes(
     stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    pages.begin(),
-                    pages.end(),
-                    string_offset_sizes.begin(),
-                    compute_page_string_offset_size{chunks, skip_rows, num_rows});
+  // Summed per column, like the page sizes in `c_info` that `include_scratch_size` adds these to: a
+  // subpass ending at page i allocates offsets for every earlier page in its column too.
+  auto page_keys  = make_page_key_iterator(pages);
+  auto page_costs = cuda::transform_iterator(
+    pages.begin(), compute_page_string_offset_size{chunks, skip_rows, num_rows});
+  thrust::inclusive_scan_by_key(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    page_keys,
+    page_keys + pages.size(),
+    page_costs,
+    string_offset_sizes.begin());
 
   return string_offset_sizes;
 }
@@ -985,11 +991,16 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
   cuda::device_buffer<size_t> level_decode_sizes(
     stream, mr.get_output_mr(), pages.size(), cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    pages.begin(),
-                    pages.end(),
-                    level_decode_sizes.begin(),
-                    compute_page_level_decode_size{chunks, level_type_size, skip_rows, num_rows});
+  // Summed per column, as in `compute_string_offset_sizes`.
+  auto page_keys  = make_page_key_iterator(pages);
+  auto page_costs = cuda::transform_iterator(
+    pages.begin(), compute_page_level_decode_size{chunks, level_type_size, skip_rows, num_rows});
+  thrust::inclusive_scan_by_key(
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    page_keys,
+    page_keys + pages.size(),
+    page_costs,
+    level_decode_sizes.begin());
 
   return level_decode_sizes;
 }

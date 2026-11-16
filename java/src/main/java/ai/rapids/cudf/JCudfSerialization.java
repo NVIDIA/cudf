@@ -1044,21 +1044,26 @@ public class JCudfSerialization {
 
   /**
    * Calculate the new header for a concatenated set of columns.
+   * @param tableHeaders the headers of the tables being concatenated.
    * @param providersPerColumn first index is the column, second index is the table.
    * @return the new header.
    */
-  private static SerializedTableHeader calcConcatHeader(ColumnBufferProvider[][] providersPerColumn) {
+  private static SerializedTableHeader calcConcatHeader(SerializedTableHeader[] tableHeaders,
+                                                        ColumnBufferProvider[][] providersPerColumn) {
     int numColumns = providersPerColumn.length;
+    // Take the row count from the tables, so that tables with no columns keep it
     long rowCount = 0;
+    for (SerializedTableHeader tableHeader : tableHeaders) {
+      rowCount += tableHeader.getNumRows();
+    }
+    if (rowCount > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException("Cannot build a batch larger than " + Integer.MAX_VALUE + " rows");
+    }
     long totalDataSize = 0;
     ArrayList<SerializedColumnHeader> headers = new ArrayList<>(numColumns);
     for (int columnIdx = 0; columnIdx < numColumns; columnIdx++) {
       totalDataSize += calcConcatColumnHeaderAndSize(headers, providersPerColumn[columnIdx]);
-      if (columnIdx == 0) {
-        rowCount = headers.get(0).getRowCount();
-      } else {
-        assert rowCount == headers.get(columnIdx).getRowCount();
-      }
+      assert rowCount == headers.get(columnIdx).getRowCount();
     }
     SerializedColumnHeader[] columnHeaders = headers.toArray(new SerializedColumnHeader[0]);
     return new SerializedTableHeader(columnHeaders, (int)rowCount, totalDataSize);
@@ -1653,7 +1658,7 @@ public class JCudfSerialization {
                                          OutputStream out) throws IOException {
     ColumnBufferProvider[][] providersPerColumn = providersFrom(headers, dataBuffers);
     try {
-      SerializedTableHeader combined = calcConcatHeader(providersPerColumn);
+      SerializedTableHeader combined = calcConcatHeader(headers, providersPerColumn);
       DataWriter writer = writerFrom(out);
       combined.writeTo(writer);
       try (NvtxRange range = new NvtxRange("Concat Host Side", NvtxColor.GREEN)) {
@@ -1775,7 +1780,7 @@ public class JCudfSerialization {
           vectors[i] = ColumnVector.fromViewWithContiguousAllocation(columnView, combinedBuffer);
         }
         assert columnOffsets.isEmpty();
-        return new Table(vectors);
+        return new Table(header.getNumRows(), vectors);
       } finally {
         for (ColumnVector cv: vectors) {
           if (cv != null) {
@@ -1819,7 +1824,7 @@ public class JCudfSerialization {
                                                     ) throws IOException {
     ColumnBufferProvider[][] providersPerColumn = providersFrom(headers, dataBuffers);
     try {
-      SerializedTableHeader combined = calcConcatHeader(providersPerColumn);
+      SerializedTableHeader combined = calcConcatHeader(headers, providersPerColumn);
       HostMemoryBuffer hostBuffer = hostMemoryAllocator.allocate(combined.dataLen);
       try {
         try (NvtxRange range = new NvtxRange("Concat Host Side", NvtxColor.GREEN)) {

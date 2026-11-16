@@ -4921,6 +4921,63 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testSerializationConcatZeroColumns() throws IOException {
+    ByteArrayOutputStream bout = new ByteArrayOutputStream();
+    JCudfSerialization.writeRowsToStream(bout, 10);
+    JCudfSerialization.writeRowsToStream(bout, 5);
+    DataInputStream din = new DataInputStream(new ByteArrayInputStream(bout.toByteArray()));
+    JCudfSerialization.SerializedTableHeader[] headers = new JCudfSerialization.SerializedTableHeader[2];
+    HostMemoryBuffer[] buffers = new HostMemoryBuffer[2];
+    try {
+      for (int i = 0; i < 2; i++) {
+        headers[i] = new JCudfSerialization.SerializedTableHeader(din);
+        buffers[i] = HostMemoryBuffer.allocate(headers[i].getDataLen());
+        JCudfSerialization.readTableIntoBuffer(din, headers[i], buffers[i]);
+      }
+      try (ContiguousTable ct = JCudfSerialization.concatToContiguousTable(headers, buffers)) {
+        assertEquals(15, ct.getRowCount());
+        assertEquals(15, ct.getTable().getRowCount());
+        assertEquals(0, ct.getTable().getNumberOfColumns());
+      }
+      try (Table t = JCudfSerialization.readAndConcat(headers, buffers)) {
+        assertEquals(15, t.getRowCount());
+        assertEquals(0, t.getNumberOfColumns());
+      }
+    } finally {
+      for (HostMemoryBuffer buffer : buffers) {
+        if (buffer != null) {
+          buffer.close();
+        }
+      }
+    }
+  }
+
+  @Test
+  void testSerializationConcatZeroColumnsTooManyRows() throws IOException {
+    ByteArrayOutputStream bout = new ByteArrayOutputStream();
+    JCudfSerialization.writeRowsToStream(bout, Integer.MAX_VALUE);
+    JCudfSerialization.writeRowsToStream(bout, 1);
+    DataInputStream din = new DataInputStream(new ByteArrayInputStream(bout.toByteArray()));
+    JCudfSerialization.SerializedTableHeader[] headers = new JCudfSerialization.SerializedTableHeader[2];
+    HostMemoryBuffer[] buffers = new HostMemoryBuffer[2];
+    try {
+      for (int i = 0; i < 2; i++) {
+        headers[i] = new JCudfSerialization.SerializedTableHeader(din);
+        buffers[i] = HostMemoryBuffer.allocate(headers[i].getDataLen());
+        JCudfSerialization.readTableIntoBuffer(din, headers[i], buffers[i]);
+      }
+      assertThrows(IllegalArgumentException.class,
+          () -> JCudfSerialization.writeConcatedStream(headers, buffers, new ByteArrayOutputStream()));
+    } finally {
+      for (HostMemoryBuffer buffer : buffers) {
+        if (buffer != null) {
+          buffer.close();
+        }
+      }
+    }
+  }
+
+  @Test
   void testSerializationZeroColsZeroRows() throws IOException {
     ByteArrayOutputStream bout = new ByteArrayOutputStream();
     JCudfSerialization.writeRowsToStream(bout, 0);

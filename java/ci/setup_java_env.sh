@@ -28,7 +28,7 @@ dnf install -y maven java-1.8.0-openjdk-devel java-17-openjdk-devel
 # ci-wheel images do not ship ninja or a modern cmake. Install both from PyPI.
 source rapids-init-pip
 source rapids-init-uv
-rapids-uv-pip install cmake ninja
+rapids-uv-pip install "cmake<4.5" ninja
 
 # Refresh pyenv shims so the cmake/ninja we just installed are on PATH.
 if command -v pyenv >/dev/null 2>&1; then

@@ -33,7 +33,7 @@ jobs:
     continue-on-error: true
     runs-on: linux-amd64-cpu8
     container:
-      image: rapidsai/ci-spark-rapids-jni:rockylinux8-cuda12.9.1
+      image: ghcr.io/nvidia/cudf-spark-jni/jni-build:main-cuda12.9.1-rockylinux8
     permissions:
       contents: read
       id-token: write

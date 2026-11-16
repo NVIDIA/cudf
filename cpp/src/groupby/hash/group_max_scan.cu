@@ -13,18 +13,12 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 std::unique_ptr<column> max_scan(column_view const& values,
-                                 size_type num_groups,
                                  cudf::device_span<size_type const> group_labels,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  return type_dispatcher(values.type(),
-                         group_scan_dispatcher<aggregation::MAX>{},
-                         values,
-                         num_groups,
-                         group_labels,
-                         stream,
-                         mr);
+  return type_dispatcher(
+    values.type(), group_scan_dispatcher<aggregation::MAX>{}, values, group_labels, stream, mr);
 }
 
 }  // namespace detail

@@ -61,12 +61,11 @@ template <aggregation::Kind K>
 struct group_scan_dispatcher {
   template <typename T>
   std::unique_ptr<column> operator()(column_view const& values,
-                                     size_type num_groups,
                                      cudf::device_span<cudf::size_type const> group_labels,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr)
   {
-    return group_scan_functor<K, T>::invoke(values, num_groups, group_labels, stream, mr);
+    return group_scan_functor<K, T>::invoke(values, group_labels, stream, mr);
   }
 };
 
@@ -91,20 +90,17 @@ template <aggregation::Kind K, typename T>
   requires(is_group_scan_supported<K, T>())
 struct group_scan_functor<K, T> {
   static std::unique_ptr<column> invoke(column_view const& values,
-                                        size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
   {
-    return invoke_with<cudf::detail::corresponding_operator_t<K>>(
-      values, num_groups, group_labels, stream, mr);
+    return invoke_with<cudf::detail::corresponding_operator_t<K>>(values, group_labels, stream, mr);
   }
 
   /// Scans with the binary operator `OpType`, e.g. `DeviceMinTotallyOrdered` for a TOTALLY_ORDERED
   /// MIN
   template <typename OpType>
   static std::unique_ptr<column> invoke_with(column_view const& values,
-                                             size_type,
                                              cudf::device_span<cudf::size_type const> group_labels,
                                              cuda::stream_ref stream,
                                              cudf::memory_resources mr)
@@ -156,7 +152,6 @@ template <aggregation::Kind K>
   requires(is_group_scan_supported<K, cudf::string_view>())
 struct group_scan_functor<K, cudf::string_view> {
   static std::unique_ptr<column> invoke(column_view const& values,
-                                        size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)
@@ -203,7 +198,6 @@ template <aggregation::Kind K>
   requires(is_group_scan_supported<K, cudf::struct_view>())
 struct group_scan_functor<K, cudf::struct_view> {
   static std::unique_ptr<column> invoke(column_view const& values,
-                                        size_type num_groups,
                                         cudf::device_span<cudf::size_type const> group_labels,
                                         cuda::stream_ref stream,
                                         cudf::memory_resources mr)

@@ -1096,19 +1096,20 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releaseArenaMemoryResource(JNIEnv
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
   JNIEnv* env, jclass clazz, jlong init, jlong release, jint handle_type)
 {
-  JNI_ARG_CHECK(env, handle_type >= 0 && handle_type <= 2, "unsupported handle type", nullptr);
+  // handle_type is RmmCudaAsyncMemoryResource.HandleType.nativeId, which matches
+  // allocation_handle_type. Its values are the cudaMemAllocationHandleType values, except that RMM
+  // spells fabric as 0x8 because cudaMemHandleTypeFabric is not defined before CUDA 12.4.
+  using ht        = rmm::mr::cuda_async_memory_resource::allocation_handle_type;
+  auto const type = static_cast<ht>(handle_type);
+  JNI_ARG_CHECK(env,
+                type == ht::none || type == ht::posix_file_descriptor || type == ht::fabric,
+                "unsupported handle type",
+                nullptr);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
 
-    // Matches the HANDLE_TYPE_* constants in RmmCudaAsyncMemoryResource.java.
-    using ht = rmm::mr::cuda_async_memory_resource::allocation_handle_type;
-    std::optional<ht> export_type;
-    if (handle_type == 1) {
-      export_type = ht::fabric;
-    } else if (handle_type == 2) {
-      export_type = ht::posix_file_descriptor;
-    }
+    auto const export_type = type == ht::none ? std::nullopt : std::optional<ht>{type};
 
     // {resource handle, cudaMemPool_t}. The pool handle is read here because the resource is
     // type-erased once it is wrapped for Java.

@@ -292,7 +292,7 @@ public class Rmm {
       } else if (isAsyncPosixFd) {
         resource = new RmmLimitingResourceAdaptor<>(
             new RmmCudaAsyncMemoryResource(poolSize, poolSize,
-                RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR), poolSize, 512);
+                RmmCudaAsyncMemoryResource.HandleType.POSIX_FILE_DESCRIPTOR), poolSize, 512);
       } else if (isManaged) {
         resource = new RmmManagedMemoryResource();
       } else {
@@ -666,7 +666,10 @@ public class Rmm {
 
   static native void releaseArenaMemoryResource(long handle);
 
-  /** Returns {resource handle, cudaMemPool_t}. */
+  /**
+   * Returns {resource handle, cudaMemPool_t}. {@code handleType} is a
+   * {@link RmmCudaAsyncMemoryResource.HandleType} nativeId.
+   */
   static native long[] newCudaAsyncMemoryResource(long size, long release, int handleType)
       throws RmmException;
 

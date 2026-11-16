@@ -642,7 +642,7 @@ public class Cuda {
    * cudaMemPoolExportToShareableHandle, so another process on the same host can import it with
    * {@link #memPoolImportFromPosixFd(int)}. The pool must have been created with POSIX file
    * descriptor handles, for example by
-   * {@link RmmCudaAsyncMemoryResource#HANDLE_TYPE_POSIX_FILE_DESCRIPTOR}.
+   * {@link RmmCudaAsyncMemoryResource.HandleType#POSIX_FILE_DESCRIPTOR}.
    * <p><b>Ownership and order of release across processes.</b> The exporting process owns the
    * pool and every allocation in it. The importing process owns the pool and the pointers it
    * imports, and releases them before the exporting process releases the originals:

@@ -558,7 +558,7 @@ public class RmmTest {
     Rmm.initialize(RmmAllocationMode.CUDA_ASYNC_POSIX_FD, Rmm.logToStderr(), 1024);
     try {
       RmmCudaAsyncMemoryResource asyncResource = currentAsyncResource();
-      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR,
+      assertEquals(RmmCudaAsyncMemoryResource.HandleType.POSIX_FILE_DESCRIPTOR,
           asyncResource.getHandleType());
       assertNotEquals(0, asyncResource.getPoolHandle());
       try (DeviceMemoryBuffer ignored1 = Rmm.alloc(1024)) {
@@ -578,7 +578,7 @@ public class RmmTest {
     Rmm.initialize(RmmAllocationMode.CUDA_ASYNC, Rmm.logToStderr(), 1024);
     try {
       RmmCudaAsyncMemoryResource asyncResource = currentAsyncResource();
-      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE, asyncResource.getHandleType());
+      assertEquals(RmmCudaAsyncMemoryResource.HandleType.NONE, asyncResource.getHandleType());
       assertNotEquals(0, asyncResource.getPoolHandle());
     } finally {
       Rmm.shutdown();
@@ -599,11 +599,12 @@ public class RmmTest {
   @Test
   public void testCudaAsyncHandleTypeResource() {
     try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024, false)) {
-      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE, mr.getHandleType());
+      assertEquals(RmmCudaAsyncMemoryResource.HandleType.NONE, mr.getHandleType());
       assertNotEquals(0, mr.getPoolHandle());
     }
     assertThrows(IllegalArgumentException.class,
-        () -> new RmmCudaAsyncMemoryResource(1024, 1024, 3));
+        () -> new RmmCudaAsyncMemoryResource(1024, 1024,
+            (RmmCudaAsyncMemoryResource.HandleType) null));
   }
 
   // Skipped (JUnit assumption) when the device does not support CUDA memory pools exported as
@@ -612,8 +613,8 @@ public class RmmTest {
   public void testCudaAsyncPosixFdHandleTypeResource() {
     assumeTrue(Cuda.isMemPoolPosixFdSupported(), "POSIX file descriptor pools not supported");
     try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024,
-        RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR)) {
-      assertEquals(RmmCudaAsyncMemoryResource.HANDLE_TYPE_POSIX_FILE_DESCRIPTOR,
+        RmmCudaAsyncMemoryResource.HandleType.POSIX_FILE_DESCRIPTOR)) {
+      assertEquals(RmmCudaAsyncMemoryResource.HandleType.POSIX_FILE_DESCRIPTOR,
           mr.getHandleType());
       assertNotEquals(0, mr.getPoolHandle());
     }
@@ -681,7 +682,7 @@ public class RmmTest {
   @Test
   public void testMemPoolExportRequiresPosixFdPool() {
     try (RmmCudaAsyncMemoryResource mr = new RmmCudaAsyncMemoryResource(1024, 1024,
-        RmmCudaAsyncMemoryResource.HANDLE_TYPE_NONE)) {
+        RmmCudaAsyncMemoryResource.HandleType.NONE)) {
       CudaException e = assertThrows(CudaException.class,
           () -> Cuda.memPoolExportToPosixFd(mr.getPoolHandle()));
       assertFalse(e instanceof CudaFatalException, "export failure must not be fatal");

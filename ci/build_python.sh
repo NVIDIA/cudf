@@ -26,7 +26,7 @@ export RAPIDS_PACKAGE_VERSION
 
 # populates `RATTLER_CHANNELS` array and `RATTLER_ARGS` array
 # shellcheck disable=SC2034
-RAPIDS_PREPEND_CONDA_CHANNELS=(file:///opt/dfg-prototype)
+RAPIDS_PREPENDED_CONDA_CHANNELS=(file:///opt/dfg-prototype)
 source rapids-rattler-channel-string
 
 rapids-logger "Prepending channel ${CPP_CHANNEL} to RATTLER_CHANNELS"

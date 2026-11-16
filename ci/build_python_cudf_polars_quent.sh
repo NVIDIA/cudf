@@ -23,7 +23,7 @@ export RAPIDS_PACKAGE_VERSION
 
 # populates `RATTLER_CHANNELS` array and `RATTLER_ARGS` array
 # shellcheck disable=SC2034
-RAPIDS_PREPEND_CONDA_CHANNELS=(file:///opt/dfg-prototype)
+RAPIDS_PREPENDED_CONDA_CHANNELS=(file:///opt/dfg-prototype)
 source rapids-rattler-channel-string
 
 # The package is abi3 and has no CUDA dependency, so it is built once per architecture

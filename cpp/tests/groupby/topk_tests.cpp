@@ -22,7 +22,50 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <source_location>
+#include <string>
 #include <vector>
+
+namespace {
+/**
+ * @brief Checks the TOP_K result of each group, ignoring the order of the values in each group
+ *
+ * TOP_K returns a group's values in no particular order, so each list of both the expected and the
+ * result columns is sorted before comparing. This checks which values are selected, not their
+ * order. Groups are compared in key order.
+ */
+void test_topk_agg(cudf::column_view const& keys,
+                   cudf::column_view const& values,
+                   cudf::column_view const& expect_keys,
+                   cudf::column_view const& expect_vals,
+                   cudf::size_type k,
+                   cudf::order topk_order               = cudf::order::DESCENDING,
+                   std::source_location const& location = std::source_location::current())
+{
+  SCOPED_TRACE("Original failure location: " + std::string{location.file_name()} + ":" +
+               std::to_string(location.line()));
+
+  auto gb            = cudf::groupby::groupby(cudf::table_view({keys}));
+  auto requests      = std::vector<cudf::groupby::aggregation_request>(1);
+  requests[0].values = values;
+  requests[0].aggregations.push_back(
+    cudf::make_top_k_aggregation<cudf::groupby_aggregation>(k, topk_order));
+  auto const [result_keys, results] = gb.aggregate(requests);
+
+  auto const by_key = cudf::sorted_order(result_keys->view());
+  auto const result = cudf::gather(
+    cudf::table_view({result_keys->get_column(0).view(), results[0].results[0]->view()}), *by_key);
+  auto const expect_by_key = cudf::sorted_order(cudf::table_view({expect_keys}));
+  auto const expected = cudf::gather(cudf::table_view({expect_keys, expect_vals}), *expect_by_key);
+
+  auto constexpr asc   = cudf::order::ASCENDING;
+  auto constexpr after = cudf::null_order::AFTER;
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->get_column(0).view(), result->get_column(0).view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    cudf::lists::sort_lists(cudf::lists_column_view(expected->get_column(1)), asc, after)->view(),
+    cudf::lists::sort_lists(cudf::lists_column_view(result->get_column(1)), asc, after)->view());
+}
+}  // namespace
 
 template <typename V>
 struct groupby_topk_test_types : public cudf::test::BaseFixture {};
@@ -44,12 +87,10 @@ TYPED_TEST(groupby_topk_test_types, FixedWidth)
   auto expect_keys = cudf::test::fixed_width_column_wrapper<K, int32_t>{1, 2};
 
   auto expect_vals = cudf::test::lists_column_wrapper<V, int32_t>{{3, 2, 1}, {6, 5, 4}};
-  auto agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(3);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 3);
 
   expect_vals = cudf::test::lists_column_wrapper<V, int32_t>{{1, 2, 3}, {4, 5, 6}};
-  agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(4, cudf::order::ASCENDING);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 4, cudf::order::ASCENDING);
 }
 
 struct groupby_topk_test : public cudf::test::BaseFixture {};
@@ -65,12 +106,10 @@ TEST_F(groupby_topk_test, WithNulls)
   auto expect_keys = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3});
 
   auto expect_vals = cudf::test::lists_column_wrapper<int32_t>({{9, 3, 2}, {6, 5, 4}, {10, 8, 7}});
-  auto agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(3);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 3);
 
-  agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(2, cudf::order::ASCENDING);
   expect_vals = cudf::test::lists_column_wrapper<int32_t>({{1, 2}, {4, 5}, {7, 8}});
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 2, cudf::order::ASCENDING);
 }
 
 TEST_F(groupby_topk_test, KGreaterThanGroupSize)
@@ -81,14 +120,11 @@ TEST_F(groupby_topk_test, KGreaterThanGroupSize)
   auto expect_keys = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2});
 
   auto expect_vals = cudf::test::lists_column_wrapper<int32_t>({{9, 7, 3, 2, 1}, {8, 6, 5, 4}});
-  auto agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(6);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
-  agg = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(5);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 6);
+  test_topk_agg(keys, values, expect_keys, expect_vals, 5);
 
-  agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(5, cudf::order::ASCENDING);
   expect_vals = cudf::test::lists_column_wrapper<int32_t>({{1, 2, 3, 7, 9}, {4, 5, 6, 8}});
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 5, cudf::order::ASCENDING);
 }
 
 TEST_F(groupby_topk_test, Strings)
@@ -99,13 +135,11 @@ TEST_F(groupby_topk_test, Strings)
   auto expect_keys = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2});
 
   auto expect_vals = cudf::test::lists_column_wrapper<cudf::string_view>({{"i", "g"}, {"h", "f"}});
-  auto agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(2);
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 2);
 
-  agg         = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(5, cudf::order::ASCENDING);
   expect_vals = cudf::test::lists_column_wrapper<cudf::string_view>(
     {{"a", "b", "c", "g", "i"}, {"d", "e", "f", "h"}});
-  test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
+  test_topk_agg(keys, values, expect_keys, expect_vals, 5, cudf::order::ASCENDING);
 }
 
 TEST_F(groupby_topk_test, EmptyInput)
@@ -119,28 +153,6 @@ TEST_F(groupby_topk_test, EmptyInput)
   auto agg = cudf::make_top_k_aggregation<cudf::groupby_aggregation>(3);
   test_single_agg(keys, values, expect_keys, expect_vals, std::move(agg));
 }
-
-namespace {
-// Returns the TOP_K result of each group ordered by key, with each list sorted, since TOP_K
-// returns a group's values in no particular order
-std::unique_ptr<cudf::column> sorted_top_k(cudf::column_view const& keys,
-                                           cudf::column_view const& values,
-                                           cudf::size_type k,
-                                           cudf::order topk_order)
-{
-  auto gb            = cudf::groupby::groupby(cudf::table_view({keys}));
-  auto requests      = std::vector<cudf::groupby::aggregation_request>(1);
-  requests[0].values = values;
-  requests[0].aggregations.push_back(
-    cudf::make_top_k_aggregation<cudf::groupby_aggregation>(k, topk_order));
-  auto const [result_keys, results] = gb.aggregate(requests);
-  auto const by_key                 = cudf::sorted_order(result_keys->view());
-  auto const gathered = cudf::gather(cudf::table_view({results[0].results[0]->view()}), *by_key);
-  return cudf::lists::sort_lists(cudf::lists_column_view(gathered->get_column(0).view()),
-                                 cudf::order::ASCENDING,
-                                 cudf::null_order::AFTER);
-}
-}  // namespace
 
 template <typename V>
 struct groupby_topk_floating_point_test : public cudf::test::BaseFixture {};
@@ -164,14 +176,12 @@ TYPED_TEST(groupby_topk_floating_point_test, NaNs)
     {1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1});
   // clang-format on
 
-  // The lists are sorted ascending, which places NaN last
+  auto const expect_keys = cudf::test::fixed_width_column_wrapper<int32_t>({1, 2, 3});
   auto expected =
     cudf::test::lists_column_wrapper<T>{{T{2}, nan, nan}, {-inf, inf, nan}, {T{4}, nan, nan}};
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
-    expected, sorted_top_k(keys, values, 3, cudf::order::DESCENDING)->view());
+  test_topk_agg(keys, values, expect_keys, expected, 3, cudf::order::DESCENDING);
 
   expected =
     cudf::test::lists_column_wrapper<T>{{T{1}, T{2}, nan}, {-inf, inf, nan}, {T{4}, nan, nan}};
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
-    expected, sorted_top_k(keys, values, 3, cudf::order::ASCENDING)->view());
+  test_topk_agg(keys, values, expect_keys, expected, 3, cudf::order::ASCENDING);
 }

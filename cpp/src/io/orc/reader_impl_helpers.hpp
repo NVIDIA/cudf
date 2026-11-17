@@ -134,6 +134,6 @@ column_buffer assemble_buffer(size_type orc_col_id,
                               column_hierarchy const& selected_columns,
                               std::vector<std::vector<column_buffer>>& col_buffers,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 }  // namespace cudf::io::orc::detail

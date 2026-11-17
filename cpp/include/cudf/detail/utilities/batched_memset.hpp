@@ -7,7 +7,7 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -39,7 +39,7 @@ void batched_memset(cudf::host_span<cudf::device_span<T> const> host_buffers,
   CUDF_FUNC_RANGE();
 
   // Copy buffer spans into device memory and then get sizes
-  auto buffers = cudf::detail::make_device_uvector_async(
+  auto buffers = cudf::detail::make_device_buffer_async(
     host_buffers, stream, cudf::get_current_device_resource_ref());
 
   // Vector of sizes of all buffer spans

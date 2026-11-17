@@ -1371,7 +1371,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from unscaled values (int array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromInts(int scale, int... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromInts(scale, values)) {
@@ -1382,7 +1383,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from boxed unscaled values (Integer array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBoxedInts(int scale, Integer... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBoxedInts(scale, values)) {
@@ -1393,7 +1395,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from unscaled values (long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromLongs(int scale, long... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromLongs(scale, values)) {
@@ -1404,7 +1407,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from boxed unscaled values (Long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBoxedLongs(int scale, Long... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBoxedLongs(scale, values)) {
@@ -1417,7 +1421,8 @@ public final class ColumnVector extends ColumnView {
    * All doubles will be rescaled if necessary, according to scale of input DecimalType and RoundingMode.
    * If any overflow occurs in extracting integral part, an IllegalArgumentException will be thrown.
    * This API is inefficient because of slow double -> decimal conversion, so it is mainly for testing.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromDoubles(DType type, RoundingMode mode, double... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromDoubles(type, mode, values)) {
@@ -1428,7 +1433,8 @@ public final class ColumnVector extends ColumnView {
 
   /**
    * Create a new decimal vector from BigIntegers
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBigInt(int scale, BigInteger... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBigIntegers(scale, values)) {

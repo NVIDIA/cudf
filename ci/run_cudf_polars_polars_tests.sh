@@ -12,11 +12,14 @@ RUN_LIST_ARGS=()
 if [[ -n "${CUDF_POLARS_GPU_RUN_LIST:-}" ]]; then
     RUN_LIST_ARGS=(--inject-gpu-engine-run-list="$(realpath "${SCRIPT_DIR}/../${CUDF_POLARS_GPU_RUN_LIST}")")
 fi
+# Torch is intentionally absent from this test environment. Ignore the upstream
+# module that exercises Polars' optional Torch interoperability.
+OPTIONAL_DEPENDENCY_TEST_ARGS=(--ignore=py-polars/tests/unit/ml/test_torch.py)
 if [[ "${CI:-false}" == "true" ]]; then
     # GitHub exposes the job name but not its numeric ID to steps; the audit
     # matches each report to that ID to detect missing matrix jobs and shards.
-    producer_json=$(gh api --paginate \
-        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=100" \
+    producer_json=$(rapids-retry --quiet gh api --paginate \
+        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/jobs?filter=latest&per_page=50" \
         | jq -c --arg runner "${RUNNER_NAME}" \
             '.jobs[] | select(.runner_name == $runner and .status == "in_progress") | {id, configuration: (.name | split(" / ") | last)}')
     CUDF_POLARS_REPORT_PRODUCER=$(printf '%s' "${producer_json}" | jq -r .id)
@@ -145,7 +148,6 @@ done
 # tests. Polars fixed this in https://github.com/pola-rs/polars/pull/29533.
 SQLALCHEMY_SQLITE_URI_WARNING="ignore:Query string argument(s) 'cache', 'mode' are not accepted by the pysqlite driver and are being ignored; SQLite URI arguments require that 'uri=true' also be present in the URL.:sqlalchemy.exc.SAWarning"
 
-# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
     configure_fallback_report in-memory
     echo "Run polars tests with injected in-memory GPU engine"
@@ -153,7 +155,6 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
        python -m pytest \
            --import-mode=importlib \
            --cache-clear \
-           -x \
            -m "${PYTEST_MARK_EXPR}" \
            -p cudf_polars.testing.inject_gpu_engine \
            -n 4 \
@@ -162,6 +163,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
            --durations=50 --durations-min=1 \
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
+           "${OPTIONAL_DEPENDENCY_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
            "${RUN_LIST_ARGS[@]}" \
@@ -170,6 +172,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "in-memory" ]]; then
 fi
 
 # TODO(ResourceWarning): https://github.com/NVIDIA/cudf/issues/22181
+# Fail fast (-x) rather than trying to continue because failed tests pollute the state
 if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
     configure_fallback_report spmd
     echo "Run polars tests with injected SPMD GPU engine, ${BLOCKSIZE} blocksize"
@@ -189,6 +192,7 @@ if [[ "${ENGINE}" == "both" || "${ENGINE}" == "spmd" ]]; then
            --durations=50 --durations-min=1 \
            -W "${SQLALCHEMY_SQLITE_URI_WARNING}" \
            "${DESELECTED_TEST_ARGS[@]}" \
+           "${OPTIONAL_DEPENDENCY_TEST_ARGS[@]}" \
            "${PYTEST_ARGS[@]}" \
            "${FALLBACK_REPORT_ARGS[@]}" \
            "${RUN_LIST_ARGS[@]}" \

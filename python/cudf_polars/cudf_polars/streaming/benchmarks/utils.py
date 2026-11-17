@@ -902,7 +902,7 @@ def print_query_plan(
     q: pl.LazyFrame,
     run_options: RunOptions,
     run_config: RunConfig,
-    engine: None | pl.GPUEngine = None,
+    engine: pl.GPUEngine | None = None,
     *,
     print_plans: bool = True,
 ) -> tuple[str | None, str | None]:
@@ -946,12 +946,9 @@ def is_remote_path(path: os.PathLike | str) -> bool:
 
 
 def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
-    """Drop the Linux page cache for all files under `path`."""
+    """Drop the Linux page cache for all local files under `path`."""
     if is_remote_path(path):
-        raise ValueError(
-            f"--io-mode cold cannot drop the page cache for the remote dataset {path!r}; "
-            "use --io-mode lukewarm or point --path at a local copy."
-        )
+        return
     try:
         import kvikio
     except ImportError as err:
@@ -974,7 +971,7 @@ def execute_query(
     q: pl.LazyFrame,
     run_config: RunConfig,
     run_options: RunOptions,
-    engine: None | pl.GPUEngine = None,
+    engine: pl.GPUEngine | None = None,
 ) -> tuple[pl.DataFrame, float]:
     """Execute a query with NVTX annotation."""
     if run_config.io_mode == "cold":

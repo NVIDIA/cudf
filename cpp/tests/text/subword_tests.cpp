@@ -159,6 +159,21 @@ TEST(TextSubwordTest, WordPieceNoTokens)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
+TEST(TextSubwordTest, WordPieceNoWords)
+{
+  // no row contains any words
+  auto vocabulary = cudf::test::strings_column_wrapper({"x"});
+  auto vocab      = nvtext::load_wordpiece_vocabulary(cudf::strings_column_view(vocabulary));
+  auto input = cudf::test::strings_column_wrapper({"", "   ", "", " "}, {true, true, false, true});
+  auto sv    = cudf::strings_column_view(input);
+  using LCW  = cudf::test::lists_column_wrapper<cudf::size_type>;
+  auto expected = LCW({{}, {}, {}, {}}, cudf::test::iterators::null_at(2));
+  auto results  = nvtext::wordpiece_tokenize(sv, *vocab);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  results = nvtext::wordpiece_tokenize(sv, *vocab, 2);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
 TEST(TextSubwordTest, WordPieceErrors)
 {
   auto empty = cudf::test::strings_column_wrapper();

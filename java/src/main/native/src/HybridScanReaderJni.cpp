@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -45,8 +46,29 @@ Java_ai_rapids_cudf_HybridScanReader_createFromFooter(JNIEnv* env,
     (void)j_binary_as_str;
     auto opts              = build_options(env, j_column_names, time_unit_type_id);
     auto const* footer_ptr = reinterpret_cast<uint8_t const*>(footer_address);
-    cudf::host_span<uint8_t const> footer_bytes{footer_ptr, len};
+    std::span<uint8_t const> footer_bytes{footer_ptr, len};
     auto wrapper = std::make_unique<hybrid_scan_reader_wrapper>(footer_bytes, std::move(opts));
+    return reinterpret_cast<jlong>(wrapper.release());
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_HybridScanReader_createFromMetadata(JNIEnv* env,
+                                                        jclass,
+                                                        jlong metadata_handle,
+                                                        jobjectArray j_column_names,
+                                                        jbooleanArray j_binary_as_str,
+                                                        jint time_unit_type_id)
+{
+  JNI_NULL_CHECK(env, metadata_handle, "metadata handle is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    (void)j_binary_as_str;
+    auto opts            = build_options(env, j_column_names, time_unit_type_id);
+    auto const* metadata = reinterpret_cast<exp_pq::hybrid_scan_metadata const*>(metadata_handle);
+    auto wrapper         = std::make_unique<hybrid_scan_reader_wrapper>(*metadata, std::move(opts));
     return reinterpret_cast<jlong>(wrapper.release());
   }
   JNI_CATCH(env, 0);
@@ -125,7 +147,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_HybridScanReader_setupPageIndex(
     auto const len       = checked_size_t(env, buffer_length, "pageIndexBufferLength");
     auto* wrapper        = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto const* host_ptr = reinterpret_cast<uint8_t const*>(buffer_address);
-    cudf::host_span<uint8_t const> bytes{host_ptr, len};
+    std::span<uint8_t const> bytes{host_ptr, len};
     wrapper->reader->setup_page_index(bytes);
   }
   JNI_CATCH(env, );

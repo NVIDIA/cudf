@@ -737,4 +737,25 @@ TEST_F(RebindStreamColumnTest, RebindStreamPreservesNestedStructData)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(idempotent_expected->view(), idempotent_rebound->view());
 }
 
+struct StructsColumnCopyTest : public cudf::test::BaseFixture {};
+
+// Copying a STRUCT slices each child to the parent's rows. A child that is already a slice must
+// keep the null count of its own rows, not that of the rows at the start of its null mask.
+TEST_F(StructsColumnCopyTest, ChildWithOffset)
+{
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  // Nulls at rows 7, 9, 11, 13 and 15: four fall in rows [0, 14), five in rows [3, 17).
+  cudf::test::fixed_width_column_wrapper<int32_t> ints(
+    values, values + 20, cudf::test::iterators::nulls_at({7, 9, 11, 13, 15}));
+  auto const child = cudf::slice(ints, {3, 17}).front();
+  ASSERT_EQ(child.null_count(), 5);
+
+  auto const parent = cudf::column_view(
+    cudf::data_type{cudf::type_id::STRUCT}, child.size(), nullptr, nullptr, 0, 0, {child});
+  auto const copy = cudf::column(parent, cudf::get_default_stream());
+
+  EXPECT_EQ(copy.child(0).null_count(), 5);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(child, copy.child(0).view());
+}
+
 CUDF_TEST_PROGRAM_MAIN()

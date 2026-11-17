@@ -1,0 +1,29 @@
+{
+  "repository": "NVIDIA/cudf",
+  "project": {
+    "owner": "NVIDIA",
+    "number": 346,
+    "id": "PVT_kwDOABpemM4BsEtM",
+    "title": "cuDF work tracking",
+    "url": "https://github.com/orgs/NVIDIA/projects/346"
+  },
+  "scope": {
+    "component": "Python",
+    "labels": ["Python", "cudf.pandas", "cudf-polars", "pylibcudf"],
+    "team_slugs": ["cudf-python-codeowners", "cudf-polars-codeowners"]
+  },
+  "primary_contact": "vyasr",
+  "escalation_contact": "vyasr",
+  "slack": {
+    "channel": "swrapids-etl-scrum",
+    "channel_id": "CB7RE2H53",
+    "users": {"vyasr": "U01PXPJ5741"},
+    "delivery_enabled": false
+  },
+  "follow_up": {
+    "repeat_after_business_days": 3,
+    "escalate_after_calendar_days": 7,
+    "escalation_clock": "first_successful_slack_notification",
+    "response_source": "github"
+  }
+}

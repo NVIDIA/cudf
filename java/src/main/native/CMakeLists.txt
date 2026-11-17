@@ -171,6 +171,7 @@ add_library(
   src/DistinctHashJoinJni.cpp
   src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
+  src/JoinMatchContextJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
   src/HybridScanMetadataJni.cpp
   src/HybridScanReaderJni.cpp

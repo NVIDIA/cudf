@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,28 @@
 #include "jni_utils.hpp"
 
 #include <cudf/contiguous_split.hpp>
+#include <cudf/types.hpp>
+
+#include <rmm/device_uvector.hpp>
+
+#include <memory>
+#include <utility>
 
 namespace cudf::jni {
+
+/**
+ * Convert a cudf gather map pair into the form that Java expects
+ * The resulting Java long array contains the following at each index:
+ *   0: Size of each gather map in bytes
+ *   1: Device address of the gather map for the left table
+ *   2: Host address of the rmm::device_buffer instance that owns the left gather map data
+ *   3: Device address of the gather map for the right table
+ *   4: Host address of the rmm::device_buffer instance that owns the right gather map data
+ */
+jlongArray gather_maps_to_java(
+  JNIEnv* env,
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps);
 
 /**
  * @brief Detach all columns from the specified table, and pointers to them as an array.

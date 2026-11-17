@@ -93,7 +93,7 @@ Read `git diff $BASE` hunk by hunk, leaving code it only moves as it was.
 
 - Fetch the target branch and list its new commits on the touched files (`git log --oneline $BASE..upstream/main -- <touched files>`). If there are any, merge the target and repeat the search in step 2.
 - Run `/review-cudf` on the diff and fix the findings you can confirm. Leave its `.agents/reviews/` output out of the commit.
-- Run `pre-commit run --from-ref $BASE --to-ref HEAD` and commit its fixes.
+- Commit, then run `pre-commit run --from-ref $BASE --to-ref HEAD`, which checks committed files only, and commit its fixes.
 - Build and run the tests that exercise the changed functions, not only the suite you edited (see the `build-test-cudf` skill). For a widely included header, cover its nearest users and leave the rest to CI.
 
 ## 6. Write the PR

@@ -15,6 +15,7 @@
 #include <cudf/detail/scatter.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -785,43 +786,33 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition_table(
  * @param mr Memory resources for the operation
  * @return Host vector of `num_partitions + 1` boundaries, from zero to `partition_map.size()`
  */
+struct map_partition_offsets {
+  cuda::device_buffer<size_type> histogram;
+  std::vector<size_type> host_offsets;
+};
+
 template <typename MapType>
-std::vector<size_type> make_map_partition_offsets(column_view const& partition_map,
-                                                  size_type num_partitions,
-                                                  cuda::stream_ref stream,
-                                                  cudf::memory_resources mr)
+map_partition_offsets make_map_partition_offsets(column_view const& partition_map,
+                                                 size_type num_partitions,
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
 {
   auto const temp_mr = mr.get_temporary_mr();
-  rmm::device_uvector<size_type> offsets(
-    static_cast<std::size_t>(num_partitions) + 1, stream, temp_mr);
+  cuda::device_buffer<size_type> offsets(
+    stream, temp_mr, static_cast<std::size_t>(num_partitions) + 1, cuda::no_init);
   CUDF_CUDA_TRY(
     cudaMemsetAsync(offsets.data() + num_partitions, 0, sizeof(size_type), stream.get()));
-  std::size_t bytes = 0;
-  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(nullptr,
-                                                    bytes,
-                                                    partition_map.begin<MapType>(),
+  CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(partition_map.begin<MapType>(),
                                                     offsets.data(),
                                                     num_partitions + 1,
                                                     size_type{0},
                                                     num_partitions,
                                                     partition_map.size(),
-                                                    stream.get()));
-  {
-    rmm::device_buffer scratch(bytes, stream, temp_mr);
-    CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(scratch.data(),
-                                                      bytes,
-                                                      partition_map.begin<MapType>(),
-                                                      offsets.data(),
-                                                      num_partitions + 1,
-                                                      size_type{0},
-                                                      num_partitions,
-                                                      partition_map.size(),
-                                                      stream.get()));
-  }
+                                                    cudf::detail::make_env(stream, mr)));
   thrust::exclusive_scan(
     rmm::exec_policy_nosync(stream, temp_mr), offsets.begin(), offsets.end(), offsets.begin());
   auto const pinned_offsets = cudf::detail::make_pinned_vector(offsets, stream);
-  return {pinned_offsets.begin(), pinned_offsets.end()};
+  return {std::move(offsets), {pinned_offsets.begin(), pinned_offsets.end()}};
 }
 
 /**
@@ -876,7 +867,8 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
       offsets[p] = p > static_cast<std::size_t>(value) ? rows : 0;
     }
   } else {
-    offsets = make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr);
+    offsets =
+      make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr).host_offsets;
   }
   if (!uniform) {
     return std::pair{cudf::detail::partition_identity::copy(input, stream, mr.get_output_mr()),
@@ -926,43 +918,9 @@ struct dispatch_map_type {
       return std::move(*output);
     }
     auto const temp_mr = mr.get_temporary_mr();
-    // Build a histogram of the number of rows in each partition
-    cuda::device_buffer<size_type> histogram(stream, temp_mr, num_partitions + 1, cuda::no_init);
-    std::size_t temp_storage_bytes{};
-    std::size_t const num_levels = num_partitions + 1;
-    size_type const lower_level  = 0;
-    size_type const upper_level  = num_partitions;
-    cub::DeviceHistogram::HistogramEven(nullptr,
-                                        temp_storage_bytes,
-                                        partition_map.begin<MapType>(),
-                                        histogram.data(),
-                                        num_levels,
-                                        lower_level,
-                                        upper_level,
-                                        partition_map.size(),
-                                        stream.get());
-
-    cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
-
-    cub::DeviceHistogram::HistogramEven(temp_storage.data(),
-                                        temp_storage_bytes,
-                                        partition_map.begin<MapType>(),
-                                        histogram.data(),
-                                        num_levels,
-                                        lower_level,
-                                        upper_level,
-                                        partition_map.size(),
-                                        stream.get());
-
-    // `histogram` was created with an extra entry at the end such that an
-    // exclusive scan will put the total number of rows at the end
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
-                           histogram.begin(),
-                           histogram.end(),
-                           histogram.begin());
-
-    // Copy offsets to host before the transform below modifies the histogram
-    auto const partition_offsets = cudf::detail::make_std_vector(histogram, stream);
+    // Keep the device histogram for the atomic cursor after reading the offsets to host.
+    auto [histogram, partition_offsets] =
+      make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr);
 
     if (t.num_rows() >= MIN_BATCHED_STRING_ROWS &&
         num_partitions <= MAX_BATCHED_STRING_PARTITIONS &&

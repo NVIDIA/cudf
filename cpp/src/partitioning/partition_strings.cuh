@@ -13,6 +13,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/utilities.hpp>
@@ -89,16 +90,6 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
         return input_offsets[row + 1] - input_offsets[row];
       });
   };
-  std::size_t temp_bytes = 0;
-  if (max_chars > 0) {
-    CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveSum(nullptr,
-                                                temp_bytes,
-                                                sizes(nullptr),
-                                                static_cast<size_type*>(nullptr),
-                                                rows + 1,
-                                                stream.get()));
-  }
-  cuda::device_buffer<std::byte> scan_storage(stream, temp_mr, temp_bytes, cuda::no_init);
   std::vector<rmm::device_buffer> chars;
   std::vector<partition_string_column> copy_columns;
   chars.reserve(columns);
@@ -115,12 +106,10 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
                                     (static_cast<std::size_t>(rows) + 1) * sizeof(size_type),
                                     stream.get()));
     } else {
-      CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveSum(scan_storage.data(),
-                                                  temp_bytes,
-                                                  sizes(descriptors[i].input_offsets),
+      CUDF_CUDA_TRY(cub::DeviceScan::ExclusiveSum(sizes(descriptors[i].input_offsets),
                                                   descriptors[i].output_offsets,
                                                   rows + 1,
-                                                  stream.get()));
+                                                  cudf::detail::make_env(stream, mr)));
       copy_columns.push_back(descriptors[i]);
     }
   }

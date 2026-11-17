@@ -126,11 +126,7 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   output.reserve(columns);
   for (size_type i = 0; i < columns; ++i) {
     output.push_back(cudf::make_strings_column(
-      rows,
-      std::move(offsets[i]),
-      std::move(chars[i]),
-      0,
-      cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr)));
+      rows, std::move(offsets[i]), std::move(chars[i]), 0, cuda::device_buffer<bitmask_type>{}));
   }
   return std::make_unique<table>(std::move(output));
 }

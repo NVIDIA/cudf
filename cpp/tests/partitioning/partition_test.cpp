@@ -453,19 +453,28 @@ TEST_F(PartitionTestNotTyped, BatchedStringGatherPermutation)
         strings_column_wrapper expected_value(
           expected_values.begin(), expected_values.end(), expected_valid.begin());
         auto const sliced = cudf::slice(cudf::table_view{{id, value}}, {7, rows + 7})[0];
-        auto input        = cudf::table_view{{sliced.column(0), sliced.column(1), empty_column}};
         auto sliced_map   = cudf::slice(cudf::column_view{map}, {7, rows + 7})[0];
-        auto result       = cudf::partition(input, sliced_map, partitions);
-        EXPECT_EQ(result.second, offsets);
-        auto expected = cudf::table_view{{expected_id, expected_value, empty_column}};
-        for (int p = 0; p < partitions; ++p) {
-          auto actual_partition =
-            cudf::slice(result.first->view(), {offsets[p], offsets[p + 1]})[0];
-          auto expected_partition = cudf::slice(expected, {offsets[p], offsets[p + 1]})[0];
-          auto actual_sorted      = cudf::sort(actual_partition);
-          auto expected_sorted    = cudf::sort(expected_partition);
-          // An all-valid mask may be omitted by the materialization path.
-          CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+        for (auto const columns : {3, 4}) {
+          SCOPED_TRACE(::testing::Message() << columns << " columns");
+          auto input =
+            columns == 3
+              ? cudf::table_view{{sliced.column(0), sliced.column(1), empty_column}}
+              : cudf::table_view{{sliced.column(0), sliced.column(1), empty_column, empty_column}};
+          auto expected =
+            columns == 3
+              ? cudf::table_view{{expected_id, expected_value, empty_column}}
+              : cudf::table_view{{expected_id, expected_value, empty_column, empty_column}};
+          auto result = cudf::partition(input, sliced_map, partitions);
+          EXPECT_EQ(result.second, offsets);
+          for (int p = 0; p < partitions; ++p) {
+            auto actual_partition =
+              cudf::slice(result.first->view(), {offsets[p], offsets[p + 1]})[0];
+            auto expected_partition = cudf::slice(expected, {offsets[p], offsets[p + 1]})[0];
+            auto actual_sorted      = cudf::sort(actual_partition);
+            auto expected_sorted    = cudf::sort(expected_partition);
+            // An all-valid mask may be omitted by the materialization path.
+            CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_sorted->view(), actual_sorted->view());
+          }
         }
       }
     }

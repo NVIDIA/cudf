@@ -27,14 +27,6 @@
 
 namespace cudf::detail {
 
-CUDF_KERNEL void invert_partition_map(size_type const* gather_map,
-                                      size_type* scatter_map,
-                                      size_type num_rows)
-{
-  auto const row = static_cast<cuda::std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (row < num_rows) { scatter_map[gather_map[row]] = static_cast<size_type>(row); }
-}
-
 CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
                                         size_type num_columns,
                                         size_type num_rows,
@@ -135,14 +127,11 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
 
   if (!copy_columns.empty()) {
     // Complete this upload before releasing or reusing its pageable host source on every path.
-    device_columns = cudf::detail::make_device_buffer(copy_columns, stream, temp_mr);
-    cuda::device_buffer<size_type> scatter_map(stream, temp_mr, rows, cuda::no_init);
-    invert_partition_map<<<(static_cast<std::size_t>(rows) + 255) / 256, 256, 0, stream.get()>>>(
-      gather_map.data(), scatter_map.data(), rows);
+    device_columns    = cudf::detail::make_device_buffer(copy_columns, stream, temp_mr);
     auto const blocks = std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
     partition_strings_plan::copy_characters<true>
       <<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
-        device_columns.data(), scatter_map.data(), rows);
+        device_columns.data(), gather_map.data(), rows);
     CUDF_CUDA_TRY(cudaPeekAtLastError());
   }
 

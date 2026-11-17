@@ -96,14 +96,16 @@ __device__ inline void copy_group(partition_string_column col,
 
 template <bool RebalanceMedium = false>
 CUDF_KERNEL void copy_characters(partition_string_column const* columns,
-                                 size_type const* scatter_map,
+                                 size_type const* gather_map,
                                  size_type rows)
 {
   auto const col = columns[blockIdx.y];
   for (auto base = cuda::std::size_t{blockIdx.x} * 64; base < static_cast<cuda::std::size_t>(rows);
        base += cuda::std::size_t{gridDim.x} * 64) {
-    auto const source = base + threadIdx.x / 4;
-    auto const target = source < static_cast<cuda::std::size_t>(rows) ? scatter_map[source] : 0;
+    auto const output_row = base + threadIdx.x / 4;
+    auto const in_bounds  = output_row < static_cast<cuda::std::size_t>(rows);
+    auto const source     = in_bounds ? gather_map[output_row] : rows;
+    auto const target     = in_bounds ? static_cast<size_type>(output_row) : 0;
     copy_group<RebalanceMedium>(col, source, target, rows);
   }
 }

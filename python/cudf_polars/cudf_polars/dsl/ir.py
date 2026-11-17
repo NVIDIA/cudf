@@ -922,44 +922,6 @@ class Scan(IR):
             )
 
     @staticmethod
-    def _lake_partition_values(
-        lake_options: LakehouseScanOptions,
-        schema: Schema,
-        with_columns: list[str] | None,
-    ) -> PerPathValues | None:
-        """
-        Collect the partition fields of an Iceberg scan.
-
-        Parameters
-        ----------
-        lake_options
-            Options of the scan, holding one partition value per path for
-            each identity-partitioned field.
-        schema
-            Schema the scan must produce. Partition fields outside it are
-            skipped.
-        with_columns
-            Columns to project, or ``None`` for all of them. Partition fields
-            outside the projection are skipped.
-
-        Returns
-        -------
-        The value each path takes for each partition field in the schema and
-        projection, or ``None`` when there are no such fields.
-        """
-        assert lake_options.columns is not None
-        names = {column.physical_id: column.name for column in lake_options.columns}
-        frame = pl.DataFrame(
-            {
-                names[physical_id]: series
-                for physical_id, series in lake_options.partition_values.items()
-                if names[physical_id] in schema
-                and (with_columns is None or names[physical_id] in with_columns)
-            }
-        )
-        return None if frame.width == 0 else PerPathValues(frame)
-
-    @staticmethod
     def _validate_hive_parts_info(
         paths: list[str],
         hive_parts: PerPathValues | None,
@@ -1395,16 +1357,7 @@ class Scan(IR):
                 and n_rows == -1
                 and not lake_options.has_deletions
             )
-            per_path_parts = [
-                parts
-                for parts in (
-                    Scan._lake_partition_values(lake_options, file_schema, with_columns)
-                    if lake_options.partition_values
-                    else None,
-                    hive_parts,
-                )
-                if parts is not None
-            ]
+            per_path_parts = [hive_parts] if hive_parts is not None else []
             rows_per_path: list[int] | None
             df, rows_per_path, source_index, exact = read_lake_files(
                 paths,

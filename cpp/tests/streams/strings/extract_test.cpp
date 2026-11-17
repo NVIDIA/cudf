@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,4 +23,5 @@ TEST_F(StringsExtractTest, Extract)
   auto const prog    = cudf::strings::regex_program::create(pattern);
   cudf::strings::extract(view, *prog, cudf::test::get_default_stream());
   cudf::strings::extract_all_record(view, *prog, cudf::test::get_default_stream());
+  cudf::strings::extract_single(view, *prog, 0, cudf::test::get_default_stream());
 }

@@ -119,8 +119,8 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> semi_join(
     cudf::table_view const& right,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns left row indices that have no match in the right table.
@@ -132,8 +132,8 @@ class mark_join {
    */
   [[nodiscard]] std::unique_ptr<rmm::device_uvector<size_type>> anti_join(
     cudf::table_view const& right,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   std::unique_ptr<cudf::detail::mark_join> _impl;

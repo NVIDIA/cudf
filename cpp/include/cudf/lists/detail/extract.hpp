@@ -13,23 +13,23 @@ namespace lists::detail {
 
 /**
  * @copydoc cudf::lists::extract_list_element(lists_column_view, size_type,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              size_type const index,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::extract_list_element(lists_column_view, column_view const&,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 std::unique_ptr<column> extract_list_element(lists_column_view lists_column,
                                              column_view const& indices,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cudf::memory_resources mr);
 
 }  // namespace lists::detail
 }  // namespace cudf

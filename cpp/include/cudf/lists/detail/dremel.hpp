@@ -8,7 +8,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
 
 namespace cudf {
 namespace detail {
@@ -32,9 +32,9 @@ struct dremel_device_view {
  * @see get_dremel_data() for more info.
  */
 struct dremel_data {
-  rmm::device_uvector<size_type> dremel_offsets;
-  rmm::device_uvector<uint8_t> rep_level;
-  rmm::device_uvector<uint8_t> def_level;
+  cuda::device_buffer<size_type> dremel_offsets;
+  cuda::device_buffer<uint8_t> rep_level;
+  cuda::device_buffer<uint8_t> def_level;
 
   size_type leaf_data_size;
   uint8_t max_def_level;
@@ -110,6 +110,7 @@ struct dremel_data {
  * ```
  * rep_level.size() = size of leaf column + number of empty lists in level 0
  *                                        + number of empty lists in level 1 ...
+ * number of rep_level values = size of leaf column + number of empty lists in level 0
  * ```
  *
  * We start with finding the empty lists in the penultimate level and merging it with the indices

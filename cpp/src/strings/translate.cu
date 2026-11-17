@@ -80,7 +80,7 @@ std::unique_ptr<column> translate(
   strings_column_view const& strings,
   std::span<std::pair<char_utf8, char_utf8> const> const& chars_table,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (strings.is_empty()) return make_empty_column(type_id::STRING);
 
@@ -118,7 +118,7 @@ std::unique_ptr<column> translate(
 std::unique_ptr<column> translate(strings_column_view const& input,
                                   std::span<std::pair<uint32_t, uint32_t> const> chars_table,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::translate(input, chars_table, stream, mr);
@@ -127,7 +127,7 @@ std::unique_ptr<column> translate(strings_column_view const& input,
 std::unique_ptr<column> translate(strings_column_view const& input,
                                   std::vector<std::pair<uint32_t, uint32_t>> const& chars_table,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   return detail::translate(input, std::span{chars_table}, stream, mr);
 }

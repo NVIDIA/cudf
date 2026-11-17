@@ -33,7 +33,7 @@ struct replace_nans_functor {
                                      Replacement const& replacement,
                                      bool replacement_nullable,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(std::is_floating_point_v<T>)
   {
     CUDF_EXPECTS(input.type() == replacement.type(),
@@ -75,7 +75,7 @@ struct replace_nans_functor {
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      column_view const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_EXPECTS(input.size() == replacement.size(),
                "Input and replacement must be of the same size");
@@ -92,7 +92,7 @@ std::unique_ptr<column> replace_nans(column_view const& input,
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      scalar const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   return type_dispatcher(
     input.type(), replace_nans_functor{}, input, replacement, true, stream, mr);
@@ -103,7 +103,7 @@ std::unique_ptr<column> replace_nans(column_view const& input,
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      column_view const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_nans(input, replacement, stream, mr);
@@ -112,7 +112,7 @@ std::unique_ptr<column> replace_nans(column_view const& input,
 std::unique_ptr<column> replace_nans(column_view const& input,
                                      scalar const& replacement,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace_nans(input, replacement, stream, mr);
@@ -190,7 +190,7 @@ void normalize_nans_and_zeros(mutable_column_view in_out, cuda::stream_ref strea
 
 std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   // output. copies the input
   auto out = std::make_unique<column>(input, stream, mr);
@@ -217,7 +217,7 @@ std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
  */
 std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::normalize_nans_and_zeros(input, stream, mr);

@@ -14,6 +14,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -62,15 +63,16 @@ void validate_hash_join_probe(table_view const& right, table_view const& left, b
 VectorPair get_trivial_left_join_indices(table_view const& left,
                                          size_type left_offset,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
-  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
+  auto left_indices =
+    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    left_indices->begin(),
                    left_indices->end(),
                    left_offset);
   auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr);
+    std::make_unique<rmm::device_uvector<size_type>>(left.num_rows(), stream, mr.get_output_mr());
   thrust::uninitialized_fill(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     right_indices->begin(),
@@ -106,7 +108,7 @@ VectorPair finalize_full_join(VectorPair&& indices,
                               size_type right_table_num_rows,
                               std::optional<cudf::device_span<size_type const>> right_matches,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr,
+                              cudf::memory_resources mr,
                               std::optional<size_type> unmatched_right_count)
 {
   cudf::memory_resources mrs{mr};
@@ -192,7 +194,7 @@ VectorPair finalize_full_join(
   size_type left_table_num_rows,
   size_type right_table_num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(left_partials.size() == right_partials.size(),
                "left_partials and right_partials must have the same length",
@@ -209,8 +211,10 @@ VectorPair finalize_full_join(
   // Pre-allocate at the upper bound so the VectorPair overload's resize-up becomes a no-op
   // (capacity is already there).
   auto const upper = match_total + static_cast<std::size_t>(right_table_num_rows);
-  auto left_out    = std::make_unique<rmm::device_uvector<size_type>>(upper, stream, mr);
-  auto right_out   = std::make_unique<rmm::device_uvector<size_type>>(upper, stream, mr);
+  auto left_out =
+    std::make_unique<rmm::device_uvector<size_type>>(upper, stream, mr.get_output_mr());
+  auto right_out =
+    std::make_unique<rmm::device_uvector<size_type>>(upper, stream, mr.get_output_mr());
 
   // Concatenate every partial into the head of the output via one batched memcpy.
   if (match_total > 0) {

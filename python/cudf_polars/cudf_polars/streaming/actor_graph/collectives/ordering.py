@@ -20,6 +20,7 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
+    split_and_pack_cost,
     unpack_and_concat,
     unpack_and_concat_cost,
 )
@@ -823,6 +824,7 @@ class _OutputPartitionBuffer:
                         piece_pid,
                         _copy_to_owned_chunk(piece, stream, self.context.br()),
                     )
+            del chunk, table
         return self.pending.pop(pid, None)
 
     async def assert_input_drained(self) -> None:
@@ -836,11 +838,7 @@ class _OutputPartitionBuffer:
             if msg is None:
                 self.input_done = True
                 break
-            rows = (
-                TableChunk.from_message(msg, br=self.context.br())
-                .table_view()
-                .num_rows()
-            )
+            rows = TableChunk.from_message(msg, br=self.context.br()).shape[0]
             if rows == 0:
                 continue
             raise RuntimeError(
@@ -896,18 +894,25 @@ async def _send_remote_partition(
         ir_context,
         chunks,
     )
+    del chunks
+    # A single stored piece is returned as is and may be spilled.
+    chunk, _ = await make_table_chunks_available_or_wait(
+        context, chunk, reserve_extra=0, net_memory_delta=0
+    )
     stream = chunk.stream
+    table = chunk.table_view()
+    reservation = await reserve_memory(
+        context,
+        split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0,
+        # The packed copy replaces the chunk, which is freed below.
+        net_memory_delta=0,
+    )
+    with opaque_memory_usage(reservation):
+        packed = pack(table, stream, mr=context.br().device_mr)
+    del table, chunk
     exchange.insert(
         partition_owner(pid, comm.nranks, npartitions),
-        packed_data_from_cudf_packed_columns(
-            pack(
-                chunk.table_view(),
-                stream,
-                mr=context.br().device_mr,
-            ),
-            stream,
-            context.br(),
-        ),
+        packed_data_from_cudf_packed_columns(packed, stream, context.br()),
     )
 
 

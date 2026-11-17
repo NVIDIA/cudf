@@ -152,7 +152,7 @@ async def concatenate_node(
             if tracer is not None and output_duplicated:
                 tracer.set_duplicated()
 
-            stream = context.br().stream_pool.get_stream()
+            stream = ir_context.get_cuda_stream()
             seq_num = 0
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:

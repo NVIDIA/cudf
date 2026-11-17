@@ -603,6 +603,12 @@ async def concat_batch(
     -------
     The table chunk after concatenation.
     """
+    if len(batch) == 1:
+        (chunk,) = batch
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context, chunk, reserve_extra=0, net_memory_delta=0
+        )
+        return chunk
     batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
@@ -623,8 +629,7 @@ async def concat_batch(
             ],
             context=ir_context,
         )
-        if len(batch) > 1:
-            del batch
+        del batch
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )

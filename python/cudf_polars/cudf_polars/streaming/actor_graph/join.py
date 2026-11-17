@@ -426,6 +426,7 @@ async def _collect_small_side_for_broadcast(
                             context=ir_context,
                         )
                     )
+                del group
 
     return dfs, size
 

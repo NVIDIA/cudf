@@ -928,9 +928,10 @@ async def callback_sink_actor(
 
         try:
             while (msg := await ch_in.recv(context)) is not None:
-                if metadata.duplicated and comm.rank != 0:
-                    continue
-                if consumer is not None and consumer.stopped:
+                if (metadata.duplicated and comm.rank != 0) or (
+                    consumer is not None and consumer.stopped
+                ):
+                    del msg
                     continue
                 chunk = TableChunk.from_message(msg, br=context.br())
                 if consumer is not None:
@@ -944,6 +945,7 @@ async def callback_sink_actor(
                     )
                     assert exchange is not None
                     exchange.insert(0, chunk.into_packed_data(extra))
+                del chunk
         finally:
             if exchange is not None:
                 await exchange.insert_finished(context)
@@ -1087,6 +1089,7 @@ async def sink_node(
                         df,
                         context=ir_context,
                     )
+                    del chunk, df
                     i += 1
             else:
                 # Write chunks to a single file
@@ -1111,6 +1114,7 @@ async def sink_node(
                         writer_state=writer_state,
                         df=df,
                     )
+                    del chunk, df
 
                 # Finalize the writer after all chunks are processed
                 if writer_state and ir.sink.kind == "Parquet":

@@ -53,6 +53,7 @@ from cudf_streaming.table_chunk import (
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import Column, DataFrame, DataType
@@ -535,6 +536,8 @@ async def _distribute_by_group(
                         context.br(),
                     )
                 await inserter.insert_hash(stamped, key_indices)
+                del stamped
+            del chunk
             chunk_index += 1
     return sequence_numbers
 
@@ -561,14 +564,22 @@ async def _evaluate_and_route_to_origin(
             partition = TableChunk.from_pylibcudf_table(
                 extracted, stream, exclusive_view=True, br=context.br()
             )
-            evaluated = await ir_context.to_thread(
-                _evaluate_window_with_stamps,
-                partition,
-                ir,
-                ir_context,
-                stamps,
-                sort_by_input_order=sort_by_input_order,
+            # The window result is about the size of the partition, and the
+            # optional stable sort needs a second copy.
+            reservation = await reserve_memory(
+                context,
+                partition.data_alloc_size() * (2 if sort_by_input_order else 1),
+                net_memory_delta=0,
             )
+            with opaque_memory_usage(reservation):
+                evaluated = await ir_context.to_thread(
+                    _evaluate_window_with_stamps,
+                    partition,
+                    ir,
+                    ir_context,
+                    stamps,
+                    sort_by_input_order=sort_by_input_order,
+                )
             del partition, extracted
             routed = await ir_context.to_thread(
                 _split_off_origin_rank, evaluated, context.br()
@@ -626,13 +637,20 @@ async def _reassemble_input_chunks(
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
-            sorted_tbl = plc.sorting.stable_sort_by_key(
-                tbl,
-                plc.Table([tbl.columns()[n_exprs]]),
-                [plc.types.Order.ASCENDING],
-                [plc.types.NullOrder.AFTER],
-                stream=stream,
+            reservation = await reserve_memory(
+                context,
+                sum(col.device_buffer_size() for col in tbl.columns()),
+                # The sorted copy replaces the unsorted input.
+                net_memory_delta=0,
             )
+            with opaque_memory_usage(reservation):
+                sorted_tbl = plc.sorting.stable_sort_by_key(
+                    tbl,
+                    plc.Table([tbl.columns()[n_exprs]]),
+                    [plc.types.Order.ASCENDING],
+                    [plc.types.NullOrder.AFTER],
+                    stream=stream,
+                )
             chunk = TableChunk.from_pylibcudf_table(
                 plc.Table(sorted_tbl.columns()[:n_exprs]),
                 stream,

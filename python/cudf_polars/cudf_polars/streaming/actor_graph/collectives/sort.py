@@ -72,7 +72,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.sort import _has_simple_zlice
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -321,24 +321,27 @@ async def _insert_chunks_into_shuffle(
             )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
+            del tbl
 
-            stream = get_joined_cuda_stream(
+            with stream_ordered_after(
                 ir_context.get_cuda_stream,
                 upstreams=(available_chunk.stream, sort_boundaries_df.stream),
-            )
-
-            # TODO: Pre-sort chunks if they do not originate from the ChunkStore.
-            # (Not possible until we use _global_sort outside of sort_actor.)
-            splits = find_sort_splits(
-                sort_cols_tbl,
-                sort_boundaries_df.table,
-                seq_num,
-                column_order,
-                null_order,
-                stream=stream,
-                chunk_relative=True,
-            )
+            ) as stream:
+                # TODO: Pre-sort chunks if they do not originate from the
+                # ChunkStore. (Not possible until we use _global_sort outside
+                # of sort_actor.)
+                splits = find_sort_splits(
+                    sort_cols_tbl,
+                    sort_boundaries_df.table,
+                    seq_num,
+                    column_order,
+                    null_order,
+                    stream=stream,
+                    chunk_relative=True,
+                )
+            del sort_cols_tbl
             await inserter.insert_split(available_chunk, splits)
+            del available_chunk
 
     post_sort_ir = ir
     if ir.stable:

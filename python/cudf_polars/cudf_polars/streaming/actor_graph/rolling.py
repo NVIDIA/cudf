@@ -252,6 +252,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                     )
                     if retained is not None:
                         history.append(retained)
+                    del cursor, retained
                     await send_chunk(
                         self.context,
                         ch_out,
@@ -260,6 +261,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                         tracer=tracer,
                     )
                     output_sequence_number += 1
+                del staged, chunk
                 if future:
                     staged = future.popleft()
                 else:

@@ -6,13 +6,34 @@
 #pragma once
 
 #include <cudf/logger.hpp>
+#include <cudf/utilities/export.hpp>
 
+#include <cstdint>
 #include <cstdlib>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace cudf::detail {
+
+/**
+ * @brief Parses an unsigned decimal byte size with an optional SI or binary unit suffix.
+ *
+ * Bare integers and the suffix B mean bytes. Decimal suffixes kB (or KB), MB, GB, TB, PB, and EB
+ * use powers of 1000. Binary suffixes KiB, MiB, GiB, TiB, PiB, and EiB use powers of 1024.
+ * Suffixes are case-sensitive. Signs, whitespace, and fractional values are not accepted.
+ *
+ * @param input Size to parse
+ * @param identifier Name of the option or environment variable used in error messages
+ * @param non_zero Whether zero is rejected
+ * @return Size in bytes
+ * @throws std::invalid_argument if input is empty, malformed, has an unknown unit, overflows
+ * uint64_t, or is zero when non_zero is true
+ */
+CUDF_EXPORT std::uint64_t parse_size(std::string_view input,
+                                     std::string_view identifier,
+                                     bool non_zero);
 
 /**
  * @brief Returns the value of the environment variable, or a default value if the variable is not

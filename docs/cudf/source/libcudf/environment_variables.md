@@ -11,9 +11,7 @@ Other parsed values disable them; use `OFF` or `0` to disable a setting explicit
 | Variable | Default | Description |
 | --- | --- | --- |
 | `LIBCUDF_JIT_ENABLED` | `OFF` | Select JIT execution for APIs with a runtime-selectable JIT path, including AST column computation and Parquet filter evaluation. APIs explicitly requesting JIT execution do not require this setting. |
-| `LIBCUDF_JIT_PCH_HEAP_SIZE_MB` | `512` MiB | NVRTC precompiled-header heap size, expressed as a positive decimal integer in MiB. |
-
-`LIBCUDF_JIT_PCH_HEAP_SIZE_MB` must be non-zero, context initialization fails when the size is too large.
+| `LIBCUDF_JIT_PCH_HEAP_SIZE` | `512MiB` | NVRTC precompiled-header heap size. Set to `0` to disable PCH. Bare integers mean bytes; SI suffixes such as `MB` use powers of 1000 and binary suffixes such as `MiB` use powers of 1024. |
 
 ## Kernel cache
 

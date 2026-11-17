@@ -13,17 +13,13 @@
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <cuda/numeric>
-
 #include <unistd.h>
 
-#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <stdexcept>
-#include <string_view>
 #include <system_error>
 
 namespace cudf {
@@ -214,37 +210,14 @@ std::filesystem::path get_cudf_kernel_cache_dir()
 }
 
 /**
- * @brief Returns the PCH heap size in bytes, validating an optional override in MiB.
+ * @brief Returns the PCH heap size in bytes, validating an optional byte-size override.
  */
 std::size_t get_jit_pch_heap_size()
 {
-  auto const* value = std::getenv("LIBCUDF_JIT_PCH_HEAP_SIZE_MB");
-  if (value == nullptr) { return default_jit_pch_heap_size; }
-
-  constexpr std::size_t bytes_per_mib = 1024 * 1024;
-  auto const input                    = std::string_view{value};
-  std::size_t heap_mib{};
-  auto const [end, error] = std::from_chars(input.data(), input.data() + input.size(), heap_mib);
-  CUDF_EXPECTS(
-    error == std::errc{},
-    std::format("LIBCUDF_JIT_PCH_HEAP_SIZE_MB must be an integer in MiB representable as "
-                "std::size_t; received '{}'",
-                input),
-    std::invalid_argument);
-  CUDF_EXPECTS(end == input.data() + input.size(),
-               std::format("LIBCUDF_JIT_PCH_HEAP_SIZE_MB must not contain trailing characters; "
-                           "received '{}'",
-                           input),
-               std::invalid_argument);
-  CUDF_EXPECTS(
-    heap_mib != 0, "LIBCUDF_JIT_PCH_HEAP_SIZE_MB must be nonzero", std::invalid_argument);
-  auto const heap_bytes = cuda::mul_overflow(heap_mib, bytes_per_mib);
-  CUDF_EXPECTS(!heap_bytes.overflow,
-               std::format("LIBCUDF_JIT_PCH_HEAP_SIZE_MB overflows std::size_t when converted to "
-                           "bytes; received '{}'",
-                           input),
-               std::invalid_argument);
-  return heap_bytes.value;
+  constexpr auto identifier = "LIBCUDF_JIT_PCH_HEAP_SIZE";
+  auto const* value         = std::getenv(identifier);
+  return value == nullptr ? default_jit_pch_heap_size
+                          : detail::parse_size(value, identifier, false);
 }
 
 // Runtime environment variables are documented in

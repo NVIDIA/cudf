@@ -304,7 +304,7 @@ def _evaluate_window_with_stamps(
 ) -> DataFrame:
     """Evaluate *ir* on the un-stamped portion of *chunk*; reattach stamps after."""
     child_schema = ir.children[0].schema
-    stream = ir_context.get_cuda_stream()
+    stream = chunk.stream
     n_child = len(child_schema)
     table = chunk.table_view()
     if sort_by_input_order:
@@ -531,7 +531,7 @@ async def _distribute_by_group(
                         chunk,
                         chunk_index,
                         comm.rank,
-                        ir_context.get_cuda_stream(),
+                        chunk.stream,
                         context.br(),
                     )
                 await inserter.insert_hash(stamped, key_indices)

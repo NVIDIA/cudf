@@ -57,8 +57,11 @@ __device__ constexpr int rolling_idx(int index) { return rolling_index<buffer_si
 // Largest scratch type of the bit packer
 using max_scratch_type = uint64_t;
 
-// Block-scope atomic OR for the bit packer's shared scratch words. atomicOr_block has no uint64_t
-// overload, so pass 64-bit words as the same-size unsigned long long
+// Block-scope atomic OR for the bit packer's shared scratch words. The order is relaxed, the
+// __syncwarp() calls order the scratch accesses. atomicOr_block has no uint64_t overload, so pass
+// 64-bit words as the same-size unsigned long long
+static_assert(sizeof(unsigned long long) == sizeof(max_scratch_type),
+              "atomic_or_block passes max_scratch_type words as unsigned long long");
 template <cuda::std::unsigned_integral T>
 inline __device__ void atomic_or_block(T* address, T val)
 {

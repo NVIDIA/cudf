@@ -99,6 +99,8 @@ kernel get_lto_udf_kernel(std::string const& source_file,
                           lto_binary_type udf_type,
                           cudf::lto_fragments link_fragments)
 {
+  CUDF_FUNC_RANGE();
+
   // nvJitLink consumes PTX as a NUL-terminated string.
   std::string ptx;
   if (udf_type == lto_binary_type::PTX) {

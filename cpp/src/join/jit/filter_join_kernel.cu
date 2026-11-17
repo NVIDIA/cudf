@@ -39,15 +39,13 @@ extern "C" __device__ transform_type transform;
 #endif
 
 namespace cudf::join::jit {
+
 // Precompiled UDFs are linked against the physical type of the BOOL8 output.
 #ifdef CUDF_LTO_MODE
 using result_type = uint8_t;
 #else
 using result_type = bool;
 #endif
-}  // namespace cudf::join::jit
-
-namespace cudf::join::jit {
 
 // TODO: Create a JIT-compatible header for JoinNoMatch to avoid this duplication.
 // This must match the definition in cudf/join/join.hpp
@@ -119,10 +117,10 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
         continue;
       }
       result_type result = false;
-      auto inputs    = Accessors::map([&]<typename... A>() {
+      auto inputs        = Accessors::map([&]<typename... A>() {
         return cuda::std::tuple{A::element(columns, indices[A::table_index][i])...};
       });
-      auto row_error = execute_predicate_op<has_user_data>(
+      auto row_error     = execute_predicate_op<has_user_data>(
         user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
       thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result;

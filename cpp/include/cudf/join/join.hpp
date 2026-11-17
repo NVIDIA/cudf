@@ -527,8 +527,8 @@ filter_join_indices_output_size(
  * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors.
  * PTX modules functions must return `cudf::errc` as a 32-bit integer status.
  * If `user_data` is provided, the function receives it as an additional leading `void*` parameter,
- * followed by the row index, as in `cudf::transform`. If `is_null_aware` is `YES`, the output is an
- * `optional<bool>*` and the inputs are `optional` values.
+ * followed by the index of the pair in `left_indices`/`right_indices`. If `is_null_aware` is `YES`,
+ * the output is a `cuda::std::optional<bool>*` and the inputs are `cuda::std::optional` values.
  *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
@@ -568,9 +568,11 @@ filter_join_indices_jit(cudf::table_view const& left,
 /**
  * @brief Filters join indices using a precompiled LTO IR, FATBIN, or PTX predicate.
  *
- * Same join semantics and predicate ABI as the string overload of `filter_join_indices_jit`. The
- * predicate must be a function named `transform`; for PTX, the first function and references to it
- * are renamed to `transform` before linking, and the PTX must be null-terminated.
+ * Same join semantics as the string overload of `filter_join_indices_jit`. The predicate must be
+ * an `extern "C"` function named `transform` returning a 32-bit `cudf::errc` status. Inputs and the
+ * output use their physical storage types, e.g. the BOOL8 output is passed as `uint8_t*`
+ * (`cuda::std::optional<uint8_t>*` if null-aware). For PTX, the first function and references to
+ * it are renamed to `transform` before linking, and the PTX must be null-terminated.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw std::invalid_argument if left_indices and right_indices have different sizes.
@@ -581,10 +583,10 @@ filter_join_indices_jit(cudf::table_view const& left,
  * @param left_indices Device span of row indices in the left table.
  * @param right_indices Device span of row indices in the right table.
  * @param udf The LTO-IR, FATBIN, or PTX fragment containing the predicate.
+ * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @param binary_type The type of the binary provided in `udf`.
  * @param is_null_aware Whether the predicate receives row inputs as optional values.
  * @param user_data Caller-owned device data passed to the predicate.
- * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @param stream CUDA stream used for kernel launches and memory operations.
  * @param mr Device memory resource used to allocate output indices.
  *
@@ -597,11 +599,11 @@ filter_join_indices_jit_lto(cudf::table_view const& left,
                             cudf::device_span<size_type const> left_indices,
                             cudf::device_span<size_type const> right_indices,
                             std::span<uint8_t const> udf,
-                            lto_binary_type binary_type,
-                            null_aware is_null_aware,
-                            std::optional<void*> user_data,
                             cudf::join_kind join_kind,
-                            cuda::stream_ref stream   = cudf::get_default_stream(),
+                            lto_binary_type binary_type,
+                            null_aware is_null_aware       = null_aware::NO,
+                            std::optional<void*> user_data = std::nullopt,
+                            cuda::stream_ref stream        = cudf::get_default_stream(),
                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**

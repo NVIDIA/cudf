@@ -71,7 +71,7 @@ Ground rules:
 ## Resuming work on an open PR
 
 The PR branch on GitHub can change while you are away (squash, force-push, accepted suggestions, web edits). Before you edit,
-commit or push, and again before every push, fetch and compare with `origin/<branch>`. If history was rewritten, stop and ask the user.
+commit or push, and again before every push, fetch and compare with the PR branch on the remote that hosts the PR head (usually your fork). If history was rewritten, stop and ask the user.
 
 - Re-read the PR before changing it (`gh pr view <n> --json headRefOid,body,reviews,comments`, `gh pr checks <n>`). The user may have
   edited the description, so merge your change into the current body instead of overwriting it.

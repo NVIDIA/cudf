@@ -16,7 +16,9 @@ What the PR CI errors mean during an upgrade:
 - `Cannot select GPU tests for <version>|spmd|default`: the new Polars version (including a patch release) has no entry. Triage the
   failures below first, then generate it with the other skill.
 - `Stale GPU run-list nodes`: upstream renamed or removed tests. Update the list in the same PR.
-- `Selected GPU test passed without observed GPU execution`: a fix turned GPU execution into a CPU fallback. Remove that node from the list.
+- `Selected GPU test passed without observed GPU execution`: a fix turned GPU execution into a CPU fallback. If the
+  fallback is for an unsupported feature (triage step 2), remove that node from the list. If it is a regression, fix it (step 1)
+  and keep the node.
 
 Skipped and xfailed items are not checked for GPU execution.
 

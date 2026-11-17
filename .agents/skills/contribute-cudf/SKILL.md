@@ -60,12 +60,7 @@ gh pr list --repo NVIDIA/cudf --state open --limit 400 --json number,title,isDra
 
 ## 2. Write only what does not exist
 
-For each kernel, loop, functor, helper, type, fixture, or generator you are about to add, name the operation it performs and search for an existing one. [references/reuse-map.md](references/reuse-map.md) lists where to look in cudf, CUB, Thrust, libcu++, and cuco.
-
-```bash
-git grep -n '<operation or symbol>' $REMOTE/main -- <directory or package of the touched file>
-git grep -n '<operation or symbol>' $REMOTE/main -- cpp/src cpp/include cpp/benchmarks/common python
-```
+For each kernel, loop, functor, helper, type, fixture, or generator you are about to add, name the operation it performs and search for an existing one in the directories [references/reuse-map.md](references/reuse-map.md) lists for cudf, CCCL, and cuco. Do not skip the search: tell the user which directories you searched and what you found.
 
 - A copy or near-copy of existing logic stays only when the existing code cannot give the required semantics, or with a measured performance, build-time, or binary-size gain from an A/B of the branch with and without it (run it as the `perf-compare-cudf` skill does). A fast path added for speed needs the same measurement.
 - If the existing code is private to another file, share it when its responsibilities and dependencies fit both callers. Otherwise report the duplication to the author before widening the change.

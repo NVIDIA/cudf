@@ -385,37 +385,33 @@ type_id to_type_id(SchemaElement const& schema,
 
       case LogicalType::DECIMAL: {
         int32_t const decimal_precision = logical_type->precision();
-        // Natural cudf decimal type for the physical type, or EMPTY if not representable
-        auto const natural_type_id = [&] {
-          if (physical_type == Type::INT32) {
-            return type_id::DECIMAL32;
-          } else if (physical_type == Type::INT64) {
-            return type_id::DECIMAL64;
-          } else if (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-            if (std::cmp_less_equal(schema.type_length, sizeof(int32_t))) {
-              return type_id::DECIMAL32;
-            } else if (std::cmp_less_equal(schema.type_length, sizeof(int64_t))) {
-              return type_id::DECIMAL64;
-            } else if (std::cmp_less_equal(schema.type_length, sizeof(__int128_t))) {
-              return type_id::DECIMAL128;
-            }
-            return type_id::EMPTY;
-          } else if (physical_type == Type::BYTE_ARRAY) {
-            CUDF_EXPECTS(decimal_precision <= MAX_DECIMAL128_PRECISION,
-                         "Invalid decimal precision");
-            if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-              return type_id::DECIMAL32;
-            } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-              return type_id::DECIMAL64;
-            } else {
-              return type_id::DECIMAL128;
-            }
+        // Use the requested decimal type (`decimal_type_id`) if any, otherwise use the native type.
+        auto const decimal_type = [&](type_id native_type) {
+          return decimal_type_id != type_id::EMPTY ? decimal_type_id : native_type;
+        };
+        if (physical_type == Type::INT32) {
+          return decimal_type(type_id::DECIMAL32);
+        } else if (physical_type == Type::INT64) {
+          return decimal_type(type_id::DECIMAL64);
+        } else if (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
+          if (std::cmp_less_equal(schema.type_length, sizeof(int32_t))) {
+            return decimal_type(type_id::DECIMAL32);
+          } else if (std::cmp_less_equal(schema.type_length, sizeof(int64_t))) {
+            return decimal_type(type_id::DECIMAL64);
+          } else if (std::cmp_less_equal(schema.type_length, sizeof(__int128_t))) {
+            return decimal_type(type_id::DECIMAL128);
           }
+        } else if (physical_type == Type::BYTE_ARRAY) {
+          CUDF_EXPECTS(decimal_precision <= MAX_DECIMAL128_PRECISION, "Invalid decimal precision");
+          if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
+            return decimal_type(type_id::DECIMAL32);
+          } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
+            return decimal_type(type_id::DECIMAL64);
+          } else {
+            return decimal_type(type_id::DECIMAL128);
+          }
+        } else {
           CUDF_FAIL("Invalid representation of decimal type");
-        }();
-        // Decode directly into the requested decimal width, if any
-        if (natural_type_id != type_id::EMPTY) {
-          return decimal_type_id != type_id::EMPTY ? decimal_type_id : natural_type_id;
         }
       } break;
 

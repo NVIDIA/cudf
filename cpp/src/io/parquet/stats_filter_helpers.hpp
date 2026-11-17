@@ -75,8 +75,7 @@ class stats_caster_base {
   {
     // Decimal statistics with physical BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY are stored as
     // signed two's-complement values using big-endian byte order. Sign extend if the physical
-    // width is smaller than the cudf storage width, or keep the low bytes if it is larger (e.g. a
-    // narrower `decimal_width`)
+    // width is smaller than the cudf storage width, or keep the low bytes to narrow.
 
     CUDF_EXPECTS(cudf::is_signed<T>(),
                  "FLBA/BYTE_ARRAY decimals must have signed representation types");
@@ -90,8 +89,8 @@ class stats_caster_base {
    * decimal storage types) fits in `T` without truncation
    */
   template <typename T>
-  static inline bool fits_in_type(std::optional<std::vector<uint8_t>> const& binary_value,
-                                  Type const type)
+  [[nodiscard]] static inline bool fits_in_type(
+    std::optional<std::vector<uint8_t>> const& binary_value, Type const type)
   {
     if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
       if (binary_value.has_value()) {
@@ -286,50 +285,6 @@ class stats_caster_base {
     {
     }
 
-    void inline set_index(size_type index,
-                          std::optional<std::vector<uint8_t>> const& binary_value,
-                          Type const type,
-                          int32_t ts_scale = 0)
-    {
-      // Helper to set the stat value to null (ignore)
-      auto const set_to_null = [&] {
-        clear_bit_unsafe(null_mask.data(), index);
-        null_count++;
-      };
-
-      // Return early if the binary value isn't set
-      if (not binary_value.has_value()) {
-        set_to_null();
-        return;
-      }
-
-      // For strings, also insert the characters
-      if constexpr (std::is_same_v<T, string_view>) {
-        // Create a temporary string view from the binary value
-        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                     binary_value.value().size()};
-        // Current offset into the chars vector
-        auto const current_chars_offset = chars.size();
-        chars.insert(chars.end(), input_value.begin(), input_value.end());
-        // Convert to the target type
-        val[index] = stats_caster_base::convert<T>(
-          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-          binary_value.value().size(),
-          type);
-      } else {
-        val[index] = stats_caster_base::convert<T>(
-          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
-        if constexpr (cudf::is_floating_point<T>()) {
-          if (std::isnan(val[index])) {
-            val[index] = T{};  // No non-empty nulls
-            set_to_null();
-            return;
-          }
-        }
-      }
-    }
-
     /**
      * @brief Sets the min and max statistics, or nulls both if either does not fit in `T`
      *
@@ -435,6 +390,51 @@ class stats_caster_base {
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
+    }
+
+   private:
+    void inline set_index(size_type index,
+                          std::optional<std::vector<uint8_t>> const& binary_value,
+                          Type const type,
+                          int32_t ts_scale = 0)
+    {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
+        clear_bit_unsafe(null_mask.data(), index);
+        null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
+      }
     }
   };
 };

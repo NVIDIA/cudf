@@ -386,14 +386,14 @@ __device__ inline void read_byte_stream_split_decimal(auto* s,
                                                       void* dst)
 {
   auto const dtype_len = s->output_cvt.dtype_len;
-  auto const store_int = [&]<typename P>() {
+  auto const store_int_decimal = [&]<typename P>() {
     P value;
     gpuOutputByteStreamSplit<P>(reinterpret_cast<uint8_t*>(&value), src, stride);
     store_decimal(dst, dtype_len, [value]<typename T>() { return static_cast<T>(value); });
   };
   switch (s->setup.col.physical_type) {
-    case Type::INT32: store_int.template operator()<int32_t>(); break;
-    case Type::INT64: store_int.template operator()<int64_t>(); break;
+    case Type::INT32: store_int_decimal.template operator()<int32_t>(); break;
+    case Type::INT64: store_int_decimal.template operator()<int64_t>(); break;
     case Type::FIXED_LEN_BYTE_ARRAY:
       store_decimal(dst, dtype_len, [&]<typename T>() {
         return decode_big_endian_decimal<T>(src, s->output_cvt.dtype_len_in, stride);

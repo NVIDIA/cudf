@@ -352,7 +352,7 @@ class reader_impl {
                         cudf::memory_resources mr);
 
   /**
-   * @brief Checks if a decoded column buffer is copied again, by the dictionary encode, before it
+   * @brief Checks if a decoded column buffer is copied again by the dictionary encode before it
    * is returned
    *
    * @param buffer Column buffer

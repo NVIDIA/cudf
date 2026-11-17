@@ -56,10 +56,9 @@ template <typename T>
 /**
  * @brief Store a decimal unscaled value at the output decimal width
  *
- * Selects the integer storage type `T` (`int32_t`, `int64_t` or `__int128_t`) of the output decimal
- * column from `dtype_len` and stores `get_value.template operator()<T>()` to `dst`. `get_value`
- * produces the value at the output width, e.g. sign extending when widening and truncating when
- * narrowing.
+ * Computes the storage type `T` from `dtype_len` and stores
+ * `get_value.template operator()<T>()`, which sign extends or
+ * truncates the value to `T`, to `dst`.
  *
  * @param dst Pointer to the output value
  * @param dtype_len Size in bytes of the output decimal storage type

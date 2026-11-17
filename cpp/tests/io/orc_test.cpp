@@ -1258,6 +1258,41 @@ TEST_F(OrcWriterTest, NestedBooleanRowGroups)
   }
 }
 
+TEST_F(OrcWriterTest, NestedPresentBorrowAcrossRowGroups)
+{
+  constexpr cudf::size_type stride = 512;
+  constexpr cudf::size_type rows   = 3 * stride;
+  // The three parent rowgroups contain 5, 2, and 10 child rows. Aligning the first
+  // PRESENT chunk must consume all of the second group and one bit from the third.
+  auto list_offsets = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    if (i <= stride) return std::min(i, 5);
+    if (i <= 2 * stride) return 5 + std::min(i - stride, 2);
+    return 7 + std::min(i - 2 * stride, 10);
+  });
+  int32_col offsets(list_offsets, list_offsets + rows + 1);
+  auto values = cuda::counting_iterator<int32_t>{0};
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 5 != 1; });
+  int32_col elements(values, values + 17, validity);
+  auto lists = cudf::make_lists_column(rows,
+                                       offsets.release(),
+                                       elements.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  table_view const input{{lists->view()}};
+  auto const path = temp_env->get_temp_filepath("NestedPresentBorrowAcrossRowGroups.orc");
+  cudf::io::orc_writer_options write_options =
+    cudf::io::orc_writer_options::builder(cudf::io::sink_info{path}, input)
+      .row_index_stride(stride);
+  cudf::io::write_orc(write_options);
+  for (auto const use_index : {false, true}) {
+    cudf::io::orc_reader_options options =
+      cudf::io::orc_reader_options::builder(cudf::io::source_info{path}).use_index(use_index);
+    auto const result = cudf::io::read_orc(options);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(input, result.tbl->view());
+  }
+}
+
 TEST_F(OrcChunkedWriterTest, SingleTable)
 {
   srand(31337);

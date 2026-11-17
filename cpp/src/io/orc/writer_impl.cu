@@ -854,9 +854,10 @@ std::vector<std::vector<aligned_rowgroup>> calculate_aligned_rowgroup_bounds(
                    : out_rowgroups[curr][col_idx].present.size();
         };
         while (curr < stripe_end and curr_rg_size() <= bits_to_borrow) {
+          auto const curr_size = curr_rg_size();
           // All bits from rowgroup borrowed, make the rowgroup empty
           out_rowgroups[curr][col_idx].present.begin = out_rowgroups[curr][col_idx].present.end;
-          bits_to_borrow -= curr_rg_size();
+          bits_to_borrow -= curr_size;
           ++curr;
         }
         return curr;

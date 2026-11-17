@@ -55,15 +55,13 @@ struct is_host_span_supported_container<  //
   std::basic_string<T, std::char_traits<T>, Alloc>> : std::true_type {};
 
 namespace detail {
-// Supported containers whose elements, accessed through `C&`, are convertible to `T`
-// NOLINTBEGIN(modernize-avoid-c-arrays)
+// Supported containers whose data, accessed through `C&`, can be viewed as a span of `T`
 template <typename C, typename T>
 concept host_span_compatible_container_impl =
   is_host_span_supported_container<std::remove_cv_t<C>>::value and
-  std::is_convertible_v<
-    std::remove_pointer_t<decltype(thrust::raw_pointer_cast(std::declval<C&>().data()))> (*)[],
-    T (*)[]>;
-// NOLINTEND(modernize-avoid-c-arrays)
+  std::is_constructible_v<cuda::std::span<T>,
+                          decltype(thrust::raw_pointer_cast(std::declval<C&>().data())),
+                          std::size_t>;
 }  // namespace detail
 
 /**

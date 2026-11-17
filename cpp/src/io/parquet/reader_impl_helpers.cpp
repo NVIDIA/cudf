@@ -2323,6 +2323,15 @@ aggregate_reader_metadata::select_columns(
                     src_schema_elem.name),
         std::invalid_argument);
 
+      // Binary leaves of logical groups (FILE, VARIANT) are read as binary, so they must be
+      // binary leaves in all sources
+      CUDF_EXPECTS(
+        is_binary_leaf(src_schema_idx) == is_binary_leaf(dst_schema_idx, src_idx),
+        std::format("Encountered mismatching binary leaf of a logical group across the Parquet "
+                    "sources for column '{}'",
+                    src_schema_elem.name),
+        std::invalid_argument);
+
       // Get the schema_idx_map for this data source (pfm)
       auto& schema_idx_map = schema_idx_maps[src_idx - 1];
       // Map the schema index from 0th tree (src) to the one in the current (dst) tree.

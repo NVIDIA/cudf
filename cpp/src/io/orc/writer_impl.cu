@@ -9,10 +9,10 @@
  */
 
 #include "calendar.cuh"
-#include "decode_error.cuh"
 #include "io/comp/compression.hpp"
 #include "io/orc/orc_gpu.hpp"
 #include "io/statistics/column_statistics.cuh"
+#include "orc_error.cuh"
 #include "writer_impl.hpp"
 
 #include <cudf/column/column.hpp>
@@ -2218,7 +2218,7 @@ hostdevice_2dvector<rowgroup_rows> calculate_rowgroup_bounds(orc_table_view cons
 /**
  * @brief Rebase DATE leaves before encoding and statistics, preserving their null masks.
  *
- * Rowgroup bounds restrict validation to rows actually written from sliced nested columns.
+ * Sliced DATE inputs are compacted before this function is called.
  * Invalid dates share one device error flag, checked after processing all DATE leaves.
  */
 void rebase_date_columns(orc_table_view& orc_table,
@@ -2230,47 +2230,45 @@ void rebase_date_columns(orc_table_view& orc_table,
                  "Legacy ORC calendar does not support TIMESTAMP columns");
   }
   if (orc_table.num_rows() == 0) { return; }
-  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
+  kernel_error error_status(stream, cudf::get_current_device_resource_ref());
   for (auto const& col : orc_table.columns) {
     if (col.orc_kind() != DATE) { continue; }
     auto const& view = col.view();
     auto const begin = bounds[0][col.index()].begin;
     auto const end   = bounds[bounds.size().first - 1][col.index()].end;
     if (begin == end) { continue; }
-    auto& data = orc_table.rebased_dates.emplace_back(
-      static_cast<size_t>(view.offset()) + view.size(), stream);
+    auto& data         = orc_table.rebased_dates.emplace_back(view.size(), stream);
     auto const columns = device_span<orc_column_device_view>{orc_table.d_columns};
     auto const mask    = view.null_mask();
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                       cuda::counting_iterator<size_type>{begin},
-                       end - begin,
+                       cuda::counting_iterator<size_type>{0},
+                       view.size(),
                        [columns,
                         idx = col.index(),
                         mask,
                         out          = data.data(),
-                        error_status = error_code.data()] __device__(auto row) {
+                        error_status = error_status.data()] __device__(auto row) -> void {
                          auto const& column = columns[idx];
-                         if (not bit_value_or(mask, row + column.offset(), true)) {
-                           out[row + column.offset()] = 0;
+                         if (not bit_value_or(mask, row, true)) {
+                           out[row] = 0;
                            return;
                          }
-                         auto const original        = column.element<int32_t>(row);
-                         auto const rebased         = proleptic_to_hybrid_days(original);
-                         out[row + column.offset()] = static_cast<int32_t>(rebased);
+                         auto const original = column.element<int32_t>(row);
+                         auto const rebased  = proleptic_to_hybrid_days(original);
+                         out[row]            = static_cast<int32_t>(rebased);
                          if (not is_representable_as_hybrid_date(original, rebased)) {
                            set_error(error_status, error_code::UNREPRESENTABLE_DATE);
                          }
                        });
     auto const rebased_view = column_device_view::create(
-      column_view{view.type(), view.size(), data.data(), mask, view.null_count(), view.offset()},
-      stream);
+      column_view{view.type(), view.size(), data.data(), mask, view.null_count()}, stream);
     cudf::detail::device_single_thread(
       [columns, idx = col.index(), rebased = *rebased_view] __device__() {
         static_cast<column_device_view&>(columns[idx]) = rebased;
       },
       stream);
   }
-  CUDF_EXPECTS(error_code.value_sync(stream) == 0,
+  CUDF_EXPECTS(error_status.value_sync(stream) == 0,
                "DATE cannot be represented losslessly in the legacy ORC calendar");
 }
 

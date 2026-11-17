@@ -332,7 +332,7 @@ void decode_nulls_and_string_dictionaries(column_desc* chunks,
  * @param[in] num_rowgroups Number of row groups in row index data
  * @param[in] rowidx_stride Row index stride
  * @param[in] level Current nesting level being processed
- * @param[out] error_code Sticky bitmask of errors during decode
+ * @param[out] error_status Sticky bitmask of errors during decode
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void decode_column_data(column_desc* chunks,
@@ -346,7 +346,7 @@ void decode_column_data(column_desc* chunks,
                         int64_t num_rowgroups,
                         size_type rowidx_stride,
                         size_t level,
-                        kernel_error::pointer error_code,
+                        kernel_error::pointer error_status,
                         cuda::stream_ref stream);
 
 /**

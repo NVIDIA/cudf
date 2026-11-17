@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <cudf/types.hpp>
+#include <cudf/detail/integral_math.cuh>
 
 #include <cstdint>
 
@@ -13,11 +13,6 @@ namespace cudf::io::orc::detail {
 
 // Epoch days of 1582-10-15. Earlier hybrid dates use the Julian calendar.
 constexpr int32_t calendar_cutover = -141'427;
-
-CUDF_HOST_DEVICE constexpr int64_t floor_div(int64_t value, int64_t divisor)
-{
-  return value / divisor - (value % divisor < 0);
-}
 
 /**
  * @brief Convert epoch days while preserving the civil year, month, and day.
@@ -27,7 +22,7 @@ CUDF_HOST_DEVICE constexpr int64_t floor_div(int64_t value, int64_t divisor)
  * so that the complete int32 DATE domain can be checked before narrowing the result.
  */
 template <bool to_hybrid>
-CUDF_HOST_DEVICE constexpr int64_t rebase_days(int64_t days)
+__device__ constexpr int64_t rebase_days(int64_t days)
 {
   if (days >= calendar_cutover) { return days; }
 
@@ -39,7 +34,7 @@ CUDF_HOST_DEVICE constexpr int64_t rebase_days(int64_t days)
   constexpr int64_t five_month_days        = 153;
   constexpr auto source_era_days           = to_hybrid ? gregorian_era_days : julian_era_days;
   auto const z   = days + (to_hybrid ? gregorian_epoch_offset : julian_epoch_offset);
-  auto const era = floor_div(z, source_era_days);
+  auto const era = cudf::detail::integral_floor_div(z, source_era_days);
   auto const doe = z - era * source_era_days;
   // Discount leap days to recover the year within the source calendar's era.
   auto const yoe  = to_hybrid ? (doe - doe / (julian_era_days - 1) + doe / gregorian_century_days -
@@ -54,39 +49,40 @@ CUDF_HOST_DEVICE constexpr int64_t rebase_days(int64_t days)
   auto const day = doy - (five_month_days * mp + 2) / 5 + 1;
 
   if constexpr (to_hybrid) {
-    return 365 * year + floor_div(year, 4) + (five_month_days * mp + 2) / 5 + day - 1 -
-           julian_epoch_offset;
+    return 365 * year + cudf::detail::integral_floor_div(year, 4) + (five_month_days * mp + 2) / 5 +
+           day - 1 - julian_epoch_offset;
   } else {
-    return 365 * year + floor_div(year, 4) - floor_div(year, 100) + floor_div(year, 400) +
-           (five_month_days * mp + 2) / 5 + day - 1 - gregorian_epoch_offset;
+    return 365 * year + cudf::detail::integral_floor_div(year, 4) -
+           cudf::detail::integral_floor_div(year, 100) +
+           cudf::detail::integral_floor_div(year, 400) + (five_month_days * mp + 2) / 5 + day - 1 -
+           gregorian_epoch_offset;
   }
 }
 
 template <bool to_hybrid>
-CUDF_HOST_DEVICE constexpr bool is_representable_date(int64_t original, int64_t rebased)
+__device__ constexpr bool is_representable_date(int64_t original, int64_t rebased)
 {
   // The hybrid cutover gap and Julian-only leap days have no lossless counterpart.
   return rebased >= INT32_MIN and rebased <= INT32_MAX and
          rebase_days<!to_hybrid>(rebased) == original;
 }
 
-CUDF_HOST_DEVICE constexpr int64_t proleptic_to_hybrid_days(int64_t days)
+__device__ constexpr int64_t proleptic_to_hybrid_days(int64_t days)
 {
   return rebase_days<true>(days);
 }
 
-CUDF_HOST_DEVICE constexpr int64_t hybrid_to_proleptic_days(int64_t days)
+__device__ constexpr int64_t hybrid_to_proleptic_days(int64_t days)
 {
   return rebase_days<false>(days);
 }
 
-CUDF_HOST_DEVICE constexpr bool is_representable_as_hybrid_date(int64_t original, int64_t rebased)
+__device__ constexpr bool is_representable_as_hybrid_date(int64_t original, int64_t rebased)
 {
   return is_representable_date<true>(original, rebased);
 }
 
-CUDF_HOST_DEVICE constexpr bool is_representable_as_proleptic_date(int64_t original,
-                                                                   int64_t rebased)
+__device__ constexpr bool is_representable_as_proleptic_date(int64_t original, int64_t rebased)
 {
   return is_representable_date<false>(original, rebased);
 }

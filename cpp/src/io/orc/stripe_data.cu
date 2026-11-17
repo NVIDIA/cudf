@@ -4,9 +4,9 @@
  */
 
 #include "calendar.cuh"
-#include "decode_error.cuh"
 #include "io/utilities/block_utils.cuh"
 #include "io/utilities/column_buffer.hpp"
+#include "orc_error.cuh"
 #include "orc_gpu.hpp"
 
 #include <cudf/io/orc_types.hpp>
@@ -1629,7 +1629,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
                             int64_t first_row,
                             size_type rowidx_stride,
                             size_t level,
-                            kernel_error::pointer error_code)
+                            kernel_error::pointer error_status)
 {
   __shared__ __align__(16) orcdec_state_s state_g;
   using block_reduce = cub::BlockReduce<uint64_t, block_size>;
@@ -1669,8 +1669,12 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   if (t == 0 and is_valid) {
     // If we have an index, seek to the initial run and update row positions
     if (num_rowgroups > 0) {
-      if (s->top.data.index.strm_offset[0] > s->chunk.strm_len[CI_DATA]) { set_error(error_code); }
-      if (s->top.data.index.strm_offset[1] > s->chunk.strm_len[CI_DATA2]) { set_error(error_code); }
+      if (s->top.data.index.strm_offset[0] > s->chunk.strm_len[CI_DATA]) {
+        set_error(error_status);
+      }
+      if (s->top.data.index.strm_offset[1] > s->chunk.strm_len[CI_DATA2]) {
+        set_error(error_status);
+      }
       auto const ofs0       = min(s->top.data.index.strm_offset[0], s->chunk.strm_len[CI_DATA]);
       auto const ofs1       = min(s->top.data.index.strm_offset[1], s->chunk.strm_len[CI_DATA2]);
       uint32_t const rg_idx = blockIdx.x % num_rowgroups;
@@ -2004,7 +2008,7 @@ CUDF_KERNEL void __launch_bounds__(block_size)
                 s->chunk.convert_dates_to_proleptic ? hybrid_to_proleptic_days(original) : original;
               if (s->chunk.convert_dates_to_proleptic and
                   not is_representable_as_proleptic_date(original, rebased)) {
-                set_error(error_code, error_code::UNREPRESENTABLE_DATE);
+                set_error(error_status, error_code::UNREPRESENTABLE_DATE);
               }
               if (s->chunk.dtype_len == 8) {
                 cudf::duration_D days{static_cast<int32_t>(rebased)};
@@ -2189,7 +2193,7 @@ void __host__ decode_nulls_and_string_dictionaries(column_desc* chunks,
  * @param[in] num_rowgroups Number of row groups in row index data
  * @param[in] rowidx_stride Row index stride
  * @param[in] level nesting level being processed
- * @param[in] error_code Pointer to the shared decoding error bitmask
+ * @param[in] error_status Pointer to the shared decoding error bitmask
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void __host__ decode_column_data(column_desc* chunks,
@@ -2203,7 +2207,7 @@ void __host__ decode_column_data(column_desc* chunks,
                                  int64_t num_rowgroups,
                                  size_type rowidx_stride,
                                  size_t level,
-                                 kernel_error::pointer error_code,
+                                 kernel_error::pointer error_status,
                                  cuda::stream_ref stream)
 {
   auto const num_blocks = num_columns * (num_rowgroups > 0 ? num_rowgroups : num_stripes);
@@ -2216,7 +2220,7 @@ void __host__ decode_column_data(column_desc* chunks,
                                                   first_row,
                                                   rowidx_stride,
                                                   level,
-                                                  error_code);
+                                                  error_status);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

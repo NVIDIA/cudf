@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "decode_error.cuh"
 #include "io/comp/decompression.hpp"
 #include "io/comp/gpuinflate.hpp"
 #include "io/orc/reader_impl.hpp"
 #include "io/orc/reader_impl_chunking.hpp"
 #include "io/orc/reader_impl_helpers.hpp"
 #include "io/utilities/hostdevice_span.hpp"
+#include "orc_error.cuh"
 
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
@@ -431,7 +431,7 @@ void decode_stream_data(int64_t num_dicts,
     update_null_mask(chunks, out_buffers, stream, mr);
   }
 
-  kernel_error error_code(stream, mr.as_temporary());
+  kernel_error error_status(stream, mr.as_temporary());
   decode_column_data(chunks.base_device_ptr(),
                      global_dict.data(),
                      row_groups,
@@ -443,10 +443,10 @@ void decode_stream_data(int64_t num_dicts,
                      row_groups.size().first,
                      row_index_stride,
                      level,
-                     error_code.data(),
+                     error_status.data(),
                      stream);
   chunks.device_to_host_async(stream);
-  auto const errors = error_code.value_sync(stream);
+  auto const errors = error_status.value_sync(stream);
   CUDF_EXPECTS(
     (errors & static_cast<kernel_error::value_type>(error_code::UNREPRESENTABLE_DATE)) == 0,
     "ORC DATE cannot be represented in the proleptic Gregorian calendar");

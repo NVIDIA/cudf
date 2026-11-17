@@ -171,12 +171,12 @@ add_library(
   src/DistinctHashJoinJni.cpp
   src/FilteredJoinJni.cpp
   src/HashJoinJni.cpp
-  src/JoinMatchContextJni.cpp
   src/HostMemoryBufferNativeUtilsJni.cpp
   src/HybridScanMetadataJni.cpp
   src/HybridScanReaderJni.cpp
   src/HybridScanReaderJniInternal.cpp
   src/HybridScanReaderJniMaterialize.cpp
+  src/JoinMatchContextJni.cpp
   src/KeyRemappingJni.cpp
   src/HostUDFWrapperJni.cpp
   src/NvcompJni.cpp

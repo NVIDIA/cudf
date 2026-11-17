@@ -299,7 +299,6 @@ def _setup_root(
     bind_to_gpu(hardware_binding)
     memory_resource_config = memory_resource_config or MemoryResourceConfig.default()
     base_mr = memory_resource_config.create_memory_resource()
-
     statistics = Statistics.from_options(options)
     comm = new_communicator(
         nranks=nranks,

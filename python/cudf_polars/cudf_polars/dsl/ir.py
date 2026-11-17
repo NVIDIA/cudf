@@ -248,10 +248,47 @@ def concatenate_chunks(
 ) -> DataFrame:
     """Vertically concatenate ``dfs`` (which must share a schema) into one frame."""
     with context.stream_ordered_after(*dfs) as stream:
+        # Polars permits a Null-typed input to a union with a concrete output
+        # dtype. The Null input retains its logical dtype in the child IR and is
+        # physically stored as INT8, so normalize it before calling libcudf,
+        # which requires identical physical types.
+        dtypes = [
+            next(
+                (
+                    df.dtypes[i]
+                    for df in dfs
+                    if not isinstance(df.dtypes[i].polars_type, pl.Null)
+                ),
+                dfs[0].dtypes[i],
+            )
+            for i in range(dfs[0].num_columns)
+        ]
+        tables = [
+            plc.Table(
+                [
+                    (
+                        column.astype(dtype, stream=stream)
+                        if column.obj.type() != dtype.plc_type
+                        or isinstance(column.dtype.polars_type, pl.Null)
+                        else column
+                    ).obj
+                    for column, dtype in zip(df.columns, dtypes, strict=True)
+                ],
+                num_rows=df.num_rows,
+            )
+            for df in dfs
+        ]
+        if len(tables) == 1:
+            return DataFrame.from_table(
+                tables[0],
+                dfs[0].column_names,
+                dtypes,
+                stream=stream,
+            )
         return DataFrame.from_table(
-            plc.concatenate.concatenate([df.table for df in dfs], stream=stream),
+            plc.concatenate.concatenate(tables, stream=stream),
             dfs[0].column_names,
-            dfs[0].dtypes,
+            dtypes,
             stream=stream,
         )
 

@@ -30,6 +30,7 @@ from pylibcudf.libcudf.asof_join import (
     asof_join_exact_matches as AsofJoinExactMatches,  # no-cython-lint
     asof_join_strategy as AsofJoinStrategy,  # no-cython-lint
 )
+from pylibcudf.libcudf.join import nullable_join as NullableJoin  # no-cython-lint
 
 from rmm.librmm.memory_resource cimport any_resource, device_accessible
 from rmm.pylibrmm.stream cimport Stream
@@ -40,8 +41,6 @@ from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
-
-from pylibcudf.libcudf.join import nullable_join as NullableJoin  # no-cython-lint, isort:skip
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
@@ -1081,6 +1080,9 @@ cdef class FilteredJoin:
     left table should be reused with multiple right tables, use ``MarkJoin``
     instead.
 
+    The object retains the right table and construction memory resource until
+    it is destroyed.
+
     For details, see :cpp:class:`cudf::filtered_join`.
     """
 
@@ -1114,6 +1116,8 @@ cdef class FilteredJoin:
         cdef table_view c_right = right.view()
         mr = _get_memory_resource(mr)
         self.right = right  # keep filter table alive
+        # The native resource reference does not own the Python resource.
+        self._mr = mr
         with nogil:
             self.c_obj.reset(
                 new cpp_join.filtered_join(
@@ -1214,6 +1218,16 @@ cdef class FilteredJoin:
 
 
 cdef class HashJoin:
+    """
+    Hash join that builds a hash table from the right table and reuses it
+    across subsequent inner, left, or full joins with left tables.
+
+    The object retains the right table and construction memory resource until
+    it is destroyed.
+
+    For details, see :cpp:class:`cudf::hash_join`.
+    """
+
     def __cinit__(
         self,
         Table right,
@@ -1234,9 +1248,12 @@ cdef class HashJoin:
             The right table used to build the hash table.
         has_nulls : NullableJoin
             Flag indicating if there are any nulls in either the left or
-            right tables used in the join.
+            right tables used in any join with this object.
         compare_nulls : NullEquality
             Controls whether null join-key values should match or not.
+        load_factor : float, optional
+            The desired ratio of filled slots to total slots in the hash table,
+            must be in range (0,1]. Defaults to 0.5.
         stream : Stream, optional
             CUDA stream used for device memory operations and kernel launches.
         mr : DeviceMemoryResource, optional
@@ -1247,6 +1264,8 @@ cdef class HashJoin:
         cdef table_view c_right = right.view()
         self.right = right  # keep table alive
         mr = _get_memory_resource(mr)
+        # The native resource reference does not own the Python resource.
+        self._mr = mr
         with nogil:
             self.c_obj.reset(
                 new cpp_join.hash_join(

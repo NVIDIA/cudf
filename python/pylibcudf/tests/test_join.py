@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Callable
+import weakref
 
 import numpy as np
 import pyarrow as pa
 import pytest
 from utils import assert_table_eq
 
+from rmm.pylibrmm.memory_resource import CudaMemoryResource
 from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
@@ -138,73 +139,130 @@ def test_asof_join_empty_or_null(left_values, right_values, expected):
     assert result.to_arrow().to_pylist() == expected
 
 
-@pytest.mark.parametrize(
-    "join_type,expect_left,expect_right",
-    [
-        (plc.join.HashJoin.inner_join, [0, 1], [2, 3]),
-        (
-            plc.join.HashJoin.left_join,
-            [0, 1, 2, 3],
-            [sentinel, sentinel, 2, 3],
-        ),
-        (
-            plc.join.HashJoin.full_join,
-            [sentinel, sentinel, sentinel, 0, 1, 2, 3],
-            [sentinel, sentinel, 0, 1, 2, 3, 4],
-        ),
-    ],
-    ids=["inner", "left", "full"],
+@pytest.fixture(
+    params=[plc.types.NullEquality.EQUAL, plc.types.NullEquality.UNEQUAL]
 )
-def test_hash_join(
-    left: pa.Table,
-    right: pa.Table,
-    join_type: Callable[
-        [plc.join.HashJoin, plc.Table], tuple[plc.Column, plc.Column]
-    ],
-    expect_left: list[int | None],
-    expect_right: list[int | None],
-):
-    d_left = plc.Table.from_arrow(left)
-    d_right = plc.Table.from_arrow(right)
+def compare_nulls(request):
+    return request.param
 
-    joiner = plc.join.HashJoin(
-        plc.Table(d_right.columns()[:1]),
-        has_nulls=plc.join.NullableJoin.YES,
-        compare_nulls=plc.types.NullEquality.EQUAL,
+
+@pytest.fixture(
+    params=[
+        pytest.param(
+            ([0, 1, 2, 100], [-1, -2, 0, 1, -3], [(0, 2), (1, 3)], []),
+            id="no_nulls",
+        ),
+        pytest.param(
+            (
+                [0, None, 2, None],
+                [None, 2, 0, None],
+                [(0, 2), (2, 1)],
+                [(1, 0), (1, 3), (3, 0), (3, 3)],
+            ),
+            id="nulls_both_sides",
+        ),
+        pytest.param(
+            ([None, None], [None], [], [(0, 0), (1, 0)]),
+            id="all_nulls",
+        ),
+        pytest.param(
+            ([0, None], [0, 1], [(0, 0)], []),
+            id="probe_nulls",
+        ),
+        pytest.param(
+            ([0, 1], [0, None], [(0, 0)], []),
+            id="build_nulls",
+        ),
+    ]
+)
+def join_keys(request, compare_nulls):
+    left, right, matches, null_matches = request.param
+    if compare_nulls == plc.types.NullEquality.EQUAL:
+        matches = matches + null_matches
+    return (
+        plc.Table([plc.Column.from_arrow(pa.array(left, type=pa.int32()))]),
+        plc.Table([plc.Column.from_arrow(pa.array(right, type=pa.int32()))]),
+        matches,
     )
 
-    lg, rg = join_type(joiner, plc.Table(d_left.columns()[:1]))
-    got_left = sorted(lg.to_pylist())
-    got_right = sorted(rg.to_pylist())
-    assert got_left == expect_left
-    assert got_right == expect_right
+
+@pytest.mark.parametrize("join_type", ["inner", "left", "full"])
+def test_hash_join(join_keys, compare_nulls, join_type):
+    left, right, matches = join_keys
+    joiner = plc.join.HashJoin(right, compare_nulls=compare_nulls)
+    lg, rg = getattr(joiner, f"{join_type}_join")(left)
+
+    expected = matches.copy()
+    if join_type in {"left", "full"}:
+        matched_left = {i for i, _ in matches}
+        expected.extend(
+            (i, sentinel)
+            for i in range(left.num_rows())
+            if i not in matched_left
+        )
+    if join_type == "full":
+        matched_right = {j for _, j in matches}
+        expected.extend(
+            (sentinel, j)
+            for j in range(right.num_rows())
+            if j not in matched_right
+        )
+    assert sorted(zip(lg.to_pylist(), rg.to_pylist(), strict=True)) == sorted(
+        expected
+    )
+
+
+@pytest.mark.parametrize("join_type", ["semi", "anti"])
+def test_filtered_join(join_keys, compare_nulls, join_type):
+    left, right, matches = join_keys
+    joiner = plc.join.FilteredJoin(right, compare_nulls=compare_nulls)
+    result = getattr(joiner, f"{join_type}_join")(left)
+    matched_left = {i for i, _ in matches}
+    expected = (
+        matched_left
+        if join_type == "semi"
+        else set(range(left.num_rows())) - matched_left
+    )
+    assert sorted(result.to_pylist()) == sorted(expected)
+
+
+@pytest.mark.parametrize("join_type", ["inner", "left", "full"])
+def test_hash_join_non_nullable(left, right, join_type):
+    left = plc.Table.from_arrow(left.select(["a"]))
+    right = plc.Table.from_arrow(right.select(["c"]))
+    nullable = plc.join.HashJoin(right, has_nulls=plc.join.NullableJoin.YES)
+    non_nullable = plc.join.HashJoin(right, has_nulls=plc.join.NullableJoin.NO)
+    expected = getattr(nullable, f"{join_type}_join")(left)
+    result = getattr(non_nullable, f"{join_type}_join")(left)
+    assert sorted(
+        zip(*(col.to_pylist() for col in result), strict=True)
+    ) == sorted(zip(*(col.to_pylist() for col in expected), strict=True))
 
 
 @pytest.mark.parametrize(
-    "join_type,expect",
-    [
-        (plc.join.FilteredJoin.semi_join, [0, 1]),
-        (plc.join.FilteredJoin.anti_join, [2, 3]),
-    ],
-    ids=["semi", "anti"],
+    "join_class", [plc.join.HashJoin, plc.join.FilteredJoin]
 )
-def test_filtered_join(
-    left: pa.Table,
-    right: pa.Table,
-    join_type: Callable[[plc.join.FilteredJoin, plc.Table], plc.Column],
-    expect: list[int | None],
-):
-    d_left = plc.Table.from_arrow(left)
-    d_right = plc.Table.from_arrow(right)
+def test_join_owns_build_inputs(join_class):
+    class Resource(CudaMemoryResource):
+        pass
 
-    joiner = plc.join.FilteredJoin(
-        plc.Table(d_right.columns()[:1]),
-        compare_nulls=plc.types.NullEquality.EQUAL,
-    )
-
-    lg = join_type(joiner, plc.Table(d_left.columns()[:1]))
-    got = sorted(lg.to_pylist())
-    assert got == expect
+    right = plc.Table([plc.Column.from_arrow(pa.array([1, 2]))])
+    mr = Resource()
+    mr_ref = weakref.ref(mr)
+    joiner = join_class(right, mr=mr)
+    del right, mr
+    # Probing and destruction must remain safe after the caller drops its owners.
+    assert mr_ref() is not None
+    left = plc.Table([plc.Column.from_arrow(pa.array([2, 3]))])
+    if join_class is plc.join.HashJoin:
+        lg, rg = joiner.inner_join(left)
+        assert list(zip(lg.to_pylist(), rg.to_pylist(), strict=True)) == [
+            (0, 1)
+        ]
+    else:
+        assert joiner.semi_join(left).to_pylist() == [0]
+    del joiner
+    assert mr_ref() is None
 
 
 @pytest.mark.parametrize(

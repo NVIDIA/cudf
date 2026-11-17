@@ -477,7 +477,6 @@ TEST_F(ParquetReaderTest, NzMapDeltaMixedColumns)
   // with at least a quarter of their rows valid, in short gaps per lane and in long gaps across the
   // warp, so the null patterns below cover short gaps, long gaps, mostly-null and all-null pages.
   // Checks both page versions, slices that start and end mid-page, and chunked reads.
-  static constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
 
   constexpr cudf::size_type num_rows = 6'003;
   auto const values =

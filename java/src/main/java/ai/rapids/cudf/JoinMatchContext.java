@@ -15,6 +15,8 @@ import org.slf4j.LoggerFactory;
  * size, and used to retrieve a range of the left table with {@link #partitionGatherMaps(int, int)}.
  *
  * <p>The context must be closed, and the owning HashJoin must stay open for its lifetime.</p>
+ *
+ * <p>This class is not thread safe. A context should be created, used and closed on one thread.</p>
  */
 public class JoinMatchContext implements AutoCloseable {
   static {
@@ -61,6 +63,11 @@ public class JoinMatchContext implements AutoCloseable {
   private final JoinKind joinKind;
   private boolean isClosed = false;
 
+  /**
+   * Probes the left keys against the hash table. The probe runs asynchronously on the calling
+   * thread's stream and is not synchronized, so the context should be used and closed on the
+   * thread that created it.
+   */
   JoinMatchContext(Table leftKeys, HashJoin hashJoin, JoinKind joinKind) {
     this.hashJoin = hashJoin;
     this.joinKind = joinKind;
@@ -85,16 +92,20 @@ public class JoinMatchContext implements AutoCloseable {
     return joinKind;
   }
 
-  /** The number of row pairs a full retrieval of the left table would produce. */
-  public synchronized long getOutputSize() {
+  /**
+   * The number of row pairs a full retrieval of the left table would produce.
+   */
+  public long getOutputSize() {
     ensureOpen();
     return outputSize(cleaner.nativeHandle);
   }
 
   /**
    * The per-row match counts as an INT32 column. The caller owns the returned column.
+   * The column is copied asynchronously on the calling thread's stream, so the context must not
+   * be closed from another thread until that stream has been synchronized.
    */
-  public synchronized ColumnVector getMatchCounts() {
+  public ColumnVector getMatchCounts() {
     ensureOpen();
     return new ColumnVector(matchCountsColumn(cleaner.nativeHandle));
   }
@@ -103,14 +114,13 @@ public class JoinMatchContext implements AutoCloseable {
    * Gather maps for a contiguous range of left rows. For FULL joins the complement
    * of unmatched right rows is not included. Call
    * {@link #finalizePartitionedFullJoin(GatherMap[], GatherMap[], long, long)} once all
-   * partitions have been retrieved. Partition bounds are stored in the native context, so
-   * concurrent calls on one instance are serialized.
+   * partitions have been retrieved.
    *
    * @param leftStart inclusive start row in the left table
    * @param leftEnd exclusive end row in the left table
    * @return left and right gather maps for this partition
    */
-  public synchronized GatherMap[] partitionGatherMaps(int leftStart, int leftEnd) {
+  public GatherMap[] partitionGatherMaps(int leftStart, int leftEnd) {
     ensureOpen();
     long[] data = partitionGatherMaps(cleaner.nativeHandle, hashJoin.getNativeView(),
         joinKind.nativeId, leftStart, leftEnd);

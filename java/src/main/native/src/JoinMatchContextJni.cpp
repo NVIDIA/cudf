@@ -23,21 +23,16 @@
 
 namespace {
 
-// JoinKind enum values must match ai.rapids.cudf.JoinKind.nativeId.
-constexpr jint JOIN_KIND_INNER = 0;
-constexpr jint JOIN_KIND_LEFT  = 1;
-constexpr jint JOIN_KIND_FULL  = 2;
-
 std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
           std::unique_ptr<rmm::device_uvector<cudf::size_type>>>
 dispatch_partitioned(cudf::hash_join const& hash,
                      cudf::join_partition_context const& ctx,
                      jint kind)
 {
-  switch (kind) {
-    case JOIN_KIND_INNER: return hash.partitioned_inner_join(ctx);
-    case JOIN_KIND_LEFT: return hash.partitioned_left_join(ctx);
-    case JOIN_KIND_FULL: return hash.partitioned_full_join(ctx);
+  switch (static_cast<cudf::join_kind>(kind)) {
+    case cudf::join_kind::INNER_JOIN: return hash.partitioned_inner_join(ctx);
+    case cudf::join_kind::LEFT_JOIN: return hash.partitioned_left_join(ctx);
+    case cudf::join_kind::FULL_JOIN: return hash.partitioned_full_join(ctx);
     default: throw std::invalid_argument("Unsupported join kind for partitioned retrieval");
   }
 }
@@ -46,10 +41,10 @@ cudf::join_match_context build_match_context(cudf::hash_join const& hash,
                                              cudf::table_view const& left,
                                              jint kind)
 {
-  switch (kind) {
-    case JOIN_KIND_INNER: return hash.inner_join_match_context(left);
-    case JOIN_KIND_LEFT: return hash.left_join_match_context(left);
-    case JOIN_KIND_FULL: return hash.full_join_match_context(left);
+  switch (static_cast<cudf::join_kind>(kind)) {
+    case cudf::join_kind::INNER_JOIN: return hash.inner_join_match_context(left);
+    case cudf::join_kind::LEFT_JOIN: return hash.left_join_match_context(left);
+    case cudf::join_kind::FULL_JOIN: return hash.full_join_match_context(left);
     default: throw std::invalid_argument("Unsupported join kind for match context");
   }
 }
@@ -72,8 +67,6 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_JoinMatchContext_create(
 
     auto match_ctx =
       std::make_unique<cudf::join_match_context>(build_match_context(*hash, *left, j_kind));
-    // Finish the build so the context can be used from another thread's stream.
-    cudf::get_default_stream().sync();
     auto part_ctx                = std::make_unique<cudf::join_partition_context>();
     part_ctx->left_table_context = std::move(match_ctx);
     part_ctx->left_start_idx     = 0;

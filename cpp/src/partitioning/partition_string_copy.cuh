@@ -6,6 +6,8 @@
 #include <cuda/std/cstddef>
 #include <cuda/std/cstring>
 #include <cuda/std/memory>
+
+#include <cstddef>
 namespace cudf::detail {
 struct partition_string_column {
   size_type const* input_offsets;
@@ -14,6 +16,8 @@ struct partition_string_column {
   char* output_chars;
 };
 namespace partition_strings_plan {
+constexpr std::size_t rows_per_copy_block = 64;
+constexpr std::size_t max_copy_blocks     = 65'535;
 // All addresses loaded by load_uint4 stay within this string, including its
 // unaligned loads. Destination stores are aligned and the ends use byte copies.
 template <int Lanes>
@@ -100,8 +104,9 @@ CUDF_KERNEL void copy_characters(partition_string_column const* columns,
                                  size_type rows)
 {
   auto const col = columns[blockIdx.y];
-  for (auto base = cuda::std::size_t{blockIdx.x} * 64; base < static_cast<cuda::std::size_t>(rows);
-       base += cuda::std::size_t{gridDim.x} * 64) {
+  for (auto base = cuda::std::size_t{blockIdx.x} * rows_per_copy_block;
+       base < static_cast<cuda::std::size_t>(rows);
+       base += cuda::std::size_t{gridDim.x} * rows_per_copy_block) {
     auto const output_row = base + threadIdx.x / 4;
     auto const in_bounds  = output_row < static_cast<cuda::std::size_t>(rows);
     auto const source     = in_bounds ? gather_map[output_row] : rows;

@@ -14,6 +14,8 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/execution_env.hpp>
+#include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/utilities.hpp>
@@ -33,7 +35,7 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
                                         size_type num_rows,
                                         size_type* sizes)
 {
-  auto const column = static_cast<cuda::std::size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  auto const column = cudf::detail::grid_1d::global_thread_id();
   if (column < num_columns) {
     sizes[column] = columns[column].input_offsets[num_rows] - columns[column].input_offsets[0];
   }
@@ -67,7 +69,7 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   }
   auto device_columns = cudf::detail::make_device_buffer(descriptors, stream, temp_mr);
   cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
-  partition_string_sizes<<<(columns + 255) / 256, 256, 0, stream.get()>>>(
+  partition_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
     device_columns.data(), columns, rows, device_sizes.data());
   auto const char_sizes         = cudf::detail::make_pinned_vector(device_sizes, stream);
   auto const max_chars          = *std::max_element(char_sizes.begin(), char_sizes.end());
@@ -110,7 +112,10 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   if (!copy_columns.empty()) {
     // Complete this upload before releasing or reusing its pageable host source on every path.
     device_columns    = cudf::detail::make_device_buffer(copy_columns, stream, temp_mr);
-    auto const blocks = std::min<std::size_t>(65'535, (static_cast<std::size_t>(rows) + 63) / 64);
+    auto const blocks = std::min<std::size_t>(
+      partition_strings_plan::max_copy_blocks,
+      cudf::util::div_rounding_up_safe(static_cast<std::size_t>(rows),
+                                       partition_strings_plan::rows_per_copy_block));
     partition_strings_plan::copy_characters<true>
       <<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
         device_columns.data(), gather_map.data(), rows);

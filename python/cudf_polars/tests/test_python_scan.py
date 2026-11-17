@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,6 +14,9 @@ from polars.testing import assert_frame_equal, assert_series_equal
 from cudf_polars.streaming.rank_aware_source import SizedChunks
 from cudf_polars.testing.asserts import assert_ir_translation_raises
 from cudf_polars.testing.engine_utils import is_streaming_engine
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def test_python_scan_function(engine: pl.GPUEngine):
@@ -289,7 +293,12 @@ def test_python_scan_lines(engine: pl.GPUEngine):
     def scan_lines(f: io.BytesIO) -> pl.LazyFrame:
         schema = pl.Schema({"line": pl.String()})
 
-        def generator(with_columns, predicate, n_rows, batch_size):
+        def generator(
+            with_columns: list[str] | None,
+            predicate: pl.Expr | None,
+            n_rows: int | None,
+            batch_size: int | None,
+        ) -> Iterator[pl.DataFrame]:
             if batch_size is None:
                 batch_size = 100_000
             batch_lines: list[str] = []

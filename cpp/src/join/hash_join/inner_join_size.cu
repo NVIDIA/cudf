@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "size_impl.cuh"
+#include "common.cuh"
 
 namespace cudf::detail {
 

@@ -18,14 +18,16 @@ ARGS=$*
 # script, and that this script resides in the repo dir!
 REPODIR=$(cd "$(dirname "$0")"; pwd)
 
-VALIDARGS="clean libcudf pylibcudf cudf cudf_polars dask_cudf benchmarks tests libcudf_kafka cudf_kafka custreamz libcudf_streaming cudf_streaming -v -g -n --pydevelop -l --allgpuarch --disable_nvtx --opensource_nvcomp  --hide_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
-HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [dask_cudf] [benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [libcudf_streaming] [cudf_streaming] [-v] [-g] [-n] [-h] [--cmake-args=\\\"<args>\\\"]
+VALIDARGS="clean libcudf pylibcudf cudf cudf_polars cudf_polars_quent dask_cudf benchmarks tests libcudf_kafka cudf_kafka custreamz libcudf_streaming cudf_streaming -v -g -n --pydevelop --release -l --allgpuarch --disable_nvtx --opensource_nvcomp  --hide_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
+HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] [dask_cudf] [benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [libcudf_streaming] [cudf_streaming] [-v] [-g] [-n] [--release] [-h] [--cmake-args=\\\"<args>\\\"]
    clean                         - remove all existing build artifacts and configuration (start
                                    over)
    libcudf                       - build the cudf C++ code only
    pylibcudf                     - build the pylibcudf Python package
    cudf                          - build the cudf Python package
    cudf_polars                   - build the cudf_polars Python package
+   cudf_polars_quent             - build the cudf-polars Quent bridge (debug build with maturin develop
+                                   and update its stub, unless --release is given)
    dask_cudf                     - build the dask_cudf Python package
    benchmarks                    - build benchmarks
    tests                         - build tests
@@ -38,6 +40,8 @@ HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [dask_cudf] [benchma
    -g                            - build for debug
    -n                            - no install step (does not affect Python)
    --pydevelop                   - Install Python packages in editable mode
+   --release                     - cudf_polars_quent only: build an optimized (release) package and
+                                   install it with pip, instead of the default debug maturin develop
    --allgpuarch                  - build for all supported GPU architectures
    --disable_nvtx                - disable inserting NVTX profiling ranges
    --opensource_nvcomp           - disable use of proprietary nvcomp extensions
@@ -60,8 +64,9 @@ DASK_CUDF_BUILD_DIR=${REPODIR}/python/dask_cudf/build
 PYLIBCUDF_BUILD_DIR=${REPODIR}/python/pylibcudf/build
 CUSTREAMZ_BUILD_DIR=${REPODIR}/python/custreamz/build
 CUDF_JAR_JAVA_BUILD_DIR="$REPODIR/java/target"
+CUDF_POLARS_QUENT_BUILD_DIR=${REPODIR}/python/cudf_polars/quent/bridge/target
 
-BUILD_DIRS="${LIB_BUILD_DIR} ${CUDF_BUILD_DIR} ${DASK_CUDF_BUILD_DIR} ${KAFKA_LIB_BUILD_DIR} ${CUDF_KAFKA_BUILD_DIR} ${CUSTREAMZ_BUILD_DIR} ${CUDF_JAR_JAVA_BUILD_DIR} ${PYLIBCUDF_BUILD_DIR} ${STREAMING_LIB_BUILD_DIR}"
+BUILD_DIRS="${LIB_BUILD_DIR} ${CUDF_BUILD_DIR} ${DASK_CUDF_BUILD_DIR} ${KAFKA_LIB_BUILD_DIR} ${CUDF_KAFKA_BUILD_DIR} ${CUSTREAMZ_BUILD_DIR} ${CUDF_JAR_JAVA_BUILD_DIR} ${PYLIBCUDF_BUILD_DIR} ${STREAMING_LIB_BUILD_DIR} ${CUDF_POLARS_QUENT_BUILD_DIR}"
 
 CUDA_VERSION="${RAPIDS_CUDA_VERSION:-$(nvcc --version | sed -E -n 's/^.*release ([0-9]+\.[0-9]+).*$/\1/p')}"
 if [[ -z "$CUDA_VERSION" ]]; then
@@ -344,6 +349,48 @@ if buildAll || hasArg cudf_polars; then
 
     cd "${REPODIR}/python/cudf_polars"
     python -m pip install "${PYTHON_ARGS_FOR_INSTALL[@]}" .
+fi
+
+# Build and install the cudf-polars Quent bridge.
+#  - Default (local development): debug build installed with `maturin develop`, then the
+#    generated stub is copied back into the tree.
+#  - --release (packaging): optimized build installed with pip like the other Python packages.
+#    The version comes from Cargo.toml (see ci/utils/set_cargo_version.sh); the stub is left alone.
+if hasArg cudf_polars_quent; then
+    cd "${REPODIR}/python/cudf_polars/quent/bridge"
+
+    if hasArg --release; then
+        # maturin is the build backend, so the rapidsai config-settings in
+        # PYTHON_ARGS_FOR_INSTALL do not apply here.
+        QUENT_PIP_ARGS=(--no-build-isolation --no-deps)
+        if [[ -n "${VERBOSE_FLAG}" ]]; then
+            QUENT_PIP_ARGS+=(-vv)
+        fi
+        if hasArg --pydevelop; then
+            QUENT_PIP_ARGS+=(-e)
+        fi
+        python -m pip install "${QUENT_PIP_ARGS[@]}" .
+    else
+        cargo clean -p cudf-polars-quent
+        python -m maturin develop
+
+        shopt -s nullglob
+        generated_stubs=(target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
+        shopt -u nullglob
+        if ((${#generated_stubs[@]} == 0)); then
+            echo "No generated Quent stub found" >&2
+            exit 1
+        fi
+
+        generated_stub="${generated_stubs[0]}"
+        for candidate in "${generated_stubs[@]:1}"; do
+            if [[ "${candidate}" -nt "${generated_stub}" ]]; then
+                generated_stub="${candidate}"
+            fi
+        done
+
+        cp "${generated_stub}" "${REPODIR}/python/cudf_polars/quent/bridge/cudf_polars_quent.pyi"
+    fi
 fi
 
 # Build and install the dask_cudf Python package

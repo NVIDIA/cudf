@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,8 +21,9 @@ public class BatchedLZ4Compressor extends BatchedCompressor {
   }
 
   @Override
-  protected long batchedCompressGetTempSize(long batchSize, long maxChunkSize, long totalSize) {
-    return NvcompJni.batchedLZ4CompressGetTempSize(batchSize, maxChunkSize, totalSize);
+  protected long batchedCompressGetTempSize(long batchSize, long maxChunkSize, long totalSize,
+      long stream) {
+    return NvcompJni.batchedLZ4CompressGetTempSize(batchSize, maxChunkSize, totalSize, stream);
   }
 
   @Override

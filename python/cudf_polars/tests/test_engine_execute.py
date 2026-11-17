@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
 import types
 import uuid
@@ -99,14 +100,19 @@ def test_evaluate_and_persist_deduplicate_replicated(
 
     # The query output is duplicated (metadata[-1].duplicated is True).
     metadata = [types.SimpleNamespace(duplicated=True)]
-    monkeypatch.setattr(
-        persisted_result, "evaluate_on_rank", lambda *a, **k: (evaluated, metadata)
-    )
+    evaluate_kwargs = {}
+
+    def _fake_evaluate(*args, **kwargs):
+        evaluate_kwargs.update(kwargs)
+        return evaluated, metadata
+
+    monkeypatch.setattr(persisted_result, "evaluate_on_rank", _fake_evaluate)
     monkeypatch.setattr(persisted_result, "drop_if_replicated", _fake_drop)
     monkeypatch.setattr(rank_local_store, "open_store", lambda uid: _Store())
 
     # comm.rank != 0 is where drop_if_replicated would empty a duplicated output.
     comm = types.SimpleNamespace(rank=1)
+    quent_query_worker_state = object()
     persisted_result.evaluate_and_persist(
         "uid",
         None,
@@ -116,7 +122,9 @@ def test_evaluate_and_persist_deduplicate_replicated(
         None,
         uuid.uuid4(),
         deduplicate_replicated=deduplicate_replicated,
+        quent_query_worker_state=quent_query_worker_state,
     )
+    assert evaluate_kwargs["quent_query_worker_state"] is quent_query_worker_state
 
     if deduplicate_replicated:
         # Dask/Ray: duplicated output emptied on non-root, stored as a non-duplicate
@@ -200,6 +208,37 @@ def test_execute_unsupported_raises(streaming_engine):
     """execute() rejects a query with a translation error before dispatching it."""
     with pytest.raises(NotImplementedError, match="unsupported operations"):
         streaming_engine.execute(_unsupported_lf())
+
+
+def test_execute_time_output_raises(streaming_engine):
+    lf = pl.LazyFrame(
+        {
+            "a": [
+                datetime.datetime(2024, 1, 1, 12, 30, 15),
+                datetime.datetime(2024, 6, 2, 3, 4, 5),
+            ]
+        }
+    ).with_columns(t=pl.col("a").dt.time())
+    with pytest.raises(NotImplementedError, match="containing Time columns"):
+        streaming_engine.execute(lf)
+
+
+def test_execute_time_dropped_before_output_roundtrips(streaming_engine):
+    lf = (
+        pl.LazyFrame(
+            {
+                "a": [
+                    datetime.datetime(2024, 1, 1, 12, 30, 15),
+                    datetime.datetime(2024, 6, 2, 3, 4, 5),
+                ]
+            }
+        )
+        .with_columns(t=pl.col("a").dt.time())
+        .select("a")
+    )
+    result = streaming_engine.execute(lf)
+    collected = result.lazy().collect(engine=streaming_engine)
+    assert_frame_equal(collected, lf.collect())
 
 
 def test_spmd_execute_collect_consumes_result(spmd_engine):

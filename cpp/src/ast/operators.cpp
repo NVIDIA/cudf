@@ -2,14 +2,30 @@
  * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <cudf/ast/ast_operator.hpp>
+#include <cudf/ast/detail/operator_functor.cuh>
 #include <cudf/ast/detail/operators.cuh>
 #include <cudf/ast/detail/operators.hpp>
+#include <cudf/detail/operators/arithmetic.cuh>
+#include <cudf/detail/operators/bitwise.cuh>
+#include <cudf/detail/operators/casts.cuh>
+#include <cudf/detail/operators/comparison.cuh>
+#include <cudf/detail/operators/identity.cuh>
+#include <cudf/detail/operators/logic.cuh>
+#include <cudf/detail/operators/math.cuh>
+#include <cudf/detail/operators/null_handling.cuh>
+#include <cudf/detail/operators/trigonometric.cuh>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/std/type_traits>
 
-#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cudf {

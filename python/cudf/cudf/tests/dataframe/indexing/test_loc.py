@@ -9,6 +9,7 @@ import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
+from numba_cuda_mlir import cuda
 
 import cudf
 from cudf.testing import assert_eq
@@ -189,6 +190,40 @@ def expect_pandas_performance_warning(idx):
         yield
 
 
+@pytest.fixture(scope="module")
+def multiindex_loc_frames():
+    rng = np.random.default_rng(seed=0)
+    pdf = pd.DataFrame(rng.random(size=(7, 5)))
+    pdf.index = pd.MultiIndex(
+        [
+            ["a", "b", "c"],
+            ["house", "store", "forest"],
+            ["clouds", "clear", "storm"],
+            ["fire", "smoke", "clear"],
+            [
+                np.datetime64("2001-01-01", "ns"),
+                np.datetime64("2002-01-01", "ns"),
+                np.datetime64("2003-01-01", "ns"),
+            ],
+        ],
+        [
+            [0, 0, 0, 0, 1, 1, 2],
+            [1, 1, 1, 1, 0, 0, 2],
+            [0, 0, 2, 2, 2, 0, 1],
+            [0, 0, 0, 1, 2, 0, 1],
+            [1, 0, 1, 2, 0, 0, 1],
+        ],
+        names=["alpha", "location", "weather", "sign", "timestamp"],
+    )
+    gdf = cudf.from_pandas(pdf)
+    return pdf, gdf
+
+
+def test_multiindex_loc_fixture_indices(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
+    assert_eq(pdf.index, gdf.index)
+
+
 @pytest.mark.parametrize(
     "key_tuple",
     [
@@ -215,35 +250,8 @@ def expect_pandas_performance_warning(idx):
         (("c", "forest", "clear"), slice(None)),
     ],
 )
-def test_multiindex_loc(key_tuple):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    gdf = cudf.from_pandas(pdf)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc(multiindex_loc_frames, key_tuple):
+    pdf, gdf = multiindex_loc_frames
     # The index is unsorted, which makes things slow but is fine for testing.
     with expect_pandas_performance_warning(key_tuple):
         expected = pdf.loc[key_tuple]
@@ -277,65 +285,13 @@ def test_multiindex_compatible_ordering(second_val):
         slice(None),
     ],
 )
-def test_multiindex_loc_slice(arg):
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdf = cudf.from_pandas(pdf)
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    pdf = pdf.copy(deep=False)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc_slice(multiindex_loc_frames, arg):
+    pdf, gdf = multiindex_loc_frames
     assert_eq(pdf.loc[arg], gdf.loc[arg])
 
 
-def test_multiindex_loc_errors():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    gdf = cudf.from_pandas(pdf)
-    gdf.index = gdfIndex
+def test_multiindex_loc_errors(multiindex_loc_frames):
+    _, gdf = multiindex_loc_frames
 
     with pytest.raises(KeyError):
         gdf.loc[("a", "store", "clouds", "foo")]
@@ -347,35 +303,8 @@ def test_multiindex_loc_errors():
         gdf.loc[slice(None, ("a", "store", "clouds", "fire", "x", "y"))]
 
 
-def test_multiindex_loc_then_column():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdf = cudf.from_pandas(pdf)
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    assert_eq(pdfIndex, gdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc_then_column(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
     # The index is unsorted, which makes things slow but is fine for testing.
     with pytest.warns(pd.errors.PerformanceWarning):
         expected = pdf.loc[("a", "store", "clouds", "fire"), :][0]
@@ -383,34 +312,8 @@ def test_multiindex_loc_then_column():
     assert_eq(expected, got)
 
 
-def test_multiindex_loc_rows_0():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    gdf = cudf.from_pandas(pdf)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc_rows_0(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
 
     assert_exceptions_equal(
         lfunc=pdf.loc.__getitem__,
@@ -420,65 +323,13 @@ def test_multiindex_loc_rows_0():
     )
 
 
-def test_multiindex_loc_rows_1_2_key():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    gdf = cudf.from_pandas(pdf)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc_rows_1_2_key(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
     assert_eq(pdf.loc[("c", "forest"), :], gdf.loc[("c", "forest"), :])
 
 
-def test_multiindex_loc_rows_1_1_key():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    gdf = cudf.from_pandas(pdf)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_loc_rows_1_1_key(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
     assert_eq(pdf.loc[("c",), :], gdf.loc[("c",), :])
 
 
@@ -505,34 +356,8 @@ def test_multiindex_loc_scalar(idx_get, cols_get):
     assert_eq(actual, expected)
 
 
-def test_multiindex_rows_with_wildcard():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    gdf = cudf.from_pandas(pdf)
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
-    gdfIndex = cudf.from_pandas(pdfIndex)
-    pdf.index = pdfIndex
-    gdf.index = gdfIndex
+def test_multiindex_rows_with_wildcard(multiindex_loc_frames):
+    pdf, gdf = multiindex_loc_frames
     # The index is unsorted, which makes things slow but is fine for testing.
     with pytest.warns(pd.errors.PerformanceWarning):
         assert_eq(
@@ -568,32 +393,9 @@ def test_multiindex_rows_with_wildcard():
         )
 
 
-def test_multicolumn_loc():
-    rng = np.random.default_rng(seed=0)
-    pdf = pd.DataFrame(rng.random(size=(7, 5)))
-    pdfIndex = pd.MultiIndex(
-        [
-            ["a", "b", "c"],
-            ["house", "store", "forest"],
-            ["clouds", "clear", "storm"],
-            ["fire", "smoke", "clear"],
-            [
-                np.datetime64("2001-01-01", "ns"),
-                np.datetime64("2002-01-01", "ns"),
-                np.datetime64("2003-01-01", "ns"),
-            ],
-        ],
-        [
-            [0, 0, 0, 0, 1, 1, 2],
-            [1, 1, 1, 1, 0, 0, 2],
-            [0, 0, 2, 2, 2, 0, 1],
-            [0, 0, 0, 1, 2, 0, 1],
-            [1, 0, 1, 2, 0, 0, 1],
-        ],
-    )
-    pdfIndex.names = ["alpha", "location", "weather", "sign", "timestamp"]
+def test_multicolumn_loc(multiindex_loc_frames):
+    pdf, _ = multiindex_loc_frames
     pdf = pdf.T
-    pdf.columns = pdfIndex
     gdf = cudf.from_pandas(pdf)
     assert_eq(pdf.loc[:, "a"], gdf.loc[:, "a"])
     assert_eq(pdf.loc[:, ("a", "store")], gdf.loc[:, ("a", "store")])
@@ -665,6 +467,65 @@ def test_dataframe_loc_slice(step):
     assert_eq(
         df.loc[begin, "a":"a"], pdf.loc[begin, "a":"a"], check_dtype=False
     )
+
+
+@pytest.mark.parametrize(
+    "column_slice",
+    [
+        slice("missing", "a"),
+        slice("a", "missing"),
+        slice("missing", "missing"),
+    ],
+)
+def test_dataframe_loc_slice_missing_column_boundary(column_slice):
+    pdf = pd.DataFrame({"b": [1], "a": [2], "c": [3]})
+    gdf = cudf.from_pandas(pdf)
+
+    assert_exceptions_equal(
+        lambda: pdf.loc[:, column_slice],
+        lambda: gdf.loc[:, column_slice],
+    )
+
+
+@pytest.mark.parametrize(
+    ("columns", "column_slice"),
+    [
+        (["a", "b", "c"], slice("aa", "b")),
+        (["a", "b", "c"], slice("b", "bb")),
+        (["a", "b", "c"], slice("aa", "bb")),
+        (["a", "b", "c"], slice("a", "z")),
+        (["c", "b", "a"], slice("bb", "a")),
+        (["c", "b", "a"], slice("c", "aa")),
+        (["c", "b", "a"], slice("bb", "aa")),
+    ],
+)
+def test_dataframe_loc_slice_missing_sorted_column_boundary(
+    columns, column_slice
+):
+    pdf = pd.DataFrame({col: [idx] for idx, col in enumerate(columns)})
+    gdf = cudf.from_pandas(pdf)
+
+    assert_eq(gdf.loc[:, column_slice], pdf.loc[:, column_slice])
+
+
+@pytest.mark.parametrize(
+    "column_slice",
+    [
+        slice("aa", "b"),
+        slice(("a", 0), ("b", 1)),
+        slice(("a", 2), ("b", 3)),
+    ],
+)
+def test_dataframe_loc_slice_missing_sorted_multiindex_column_boundary(
+    column_slice,
+):
+    pdf = pd.DataFrame(
+        [[1, 2, 3]],
+        columns=pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)]),
+    )
+    gdf = cudf.from_pandas(pdf)
+
+    assert_eq(gdf.loc[:, column_slice], pdf.loc[:, column_slice])
 
 
 def test_dataframe_loc_arraylike():
@@ -754,6 +615,167 @@ def test_dataframe_setitem_loc(key, value):
 
 
 @pytest.mark.parametrize(
+    "make_iterator",
+    [
+        pytest.param(iter, id="iterator"),
+        pytest.param(
+            lambda values: (value for value in values), id="generator"
+        ),
+    ],
+)
+@pytest.mark.parametrize("row_labels", [[], [0], [0, 1]])
+@pytest.mark.parametrize("column_key", [None, "a", ["a", "b"], slice(None)])
+def test_dataframe_setitem_loc_iterator(make_iterator, row_labels, column_key):
+    pdf = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+    gdf = cudf.from_pandas(pdf)
+    value = 1.5 if not row_labels else 9
+
+    for frame in (pdf, gdf):
+        rows = make_iterator(row_labels)
+        key = rows if column_key is None else (rows, column_key)
+        frame.loc[key] = value
+
+    assert_eq(pdf, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize("mixed_dtypes", [False, True])
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param([], id="empty-list"),
+        pytest.param([False, False], id="false-mask"),
+        pytest.param(slice(0, -1), id="empty-slice"),
+        pytest.param(np.array([]), id="empty-array"),
+        pytest.param(([], "a"), id="empty-list-scalar-column"),
+        pytest.param((slice(0, -1), ["a"]), id="empty-slice-column-list"),
+        pytest.param(
+            (np.array([]), slice(None)), id="empty-array-all-columns"
+        ),
+    ],
+)
+def test_dataframe_setitem_loc_empty_selection(key, mixed_dtypes):
+    data = {"a": [1, 2]}
+    if mixed_dtypes:
+        data["b"] = ["x", "y"]
+    pdf = pd.DataFrame(data)
+    expected = pdf.copy()
+
+    gdf = cudf.from_pandas(pdf)
+    pdf.loc[key] = 1.5
+    gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf, check_dtype=True)
+    assert_eq(expected, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize(
+    "array_type", [np.asarray, cp.asarray, cuda.to_device]
+)
+@pytest.mark.parametrize("mixed_dtypes", [False, True])
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param(np.array([]), id="empty-array"),
+        pytest.param(np.array([False, False]), id="false-mask"),
+    ],
+)
+def test_dataframe_setitem_loc_empty_array_selection(
+    key, mixed_dtypes, array_type
+):
+    data = {"a": [1, 2]}
+    if mixed_dtypes:
+        data["b"] = ["x", "y"]
+    pdf = pd.DataFrame(data)
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+
+    pdf.loc[key] = 1.5
+    gdf.loc[array_type(key)] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize(
+    "array_type", [np.asarray, cp.asarray, cuda.to_device]
+)
+@pytest.mark.parametrize("column_key", [None, "a"])
+def test_dataframe_setitem_loc_empty_frame_boolean_mask(
+    array_type, column_key
+):
+    pdf = pd.DataFrame({"a": pd.Series([], dtype="int64")})
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    pkey = np.array([], dtype=bool)
+    gkey = array_type(pkey)
+    if column_key is not None:
+        pkey = (pkey, column_key)
+        gkey = (gkey, column_key)
+
+    pdf.loc[pkey] = 1.5
+    gdf.loc[gkey] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize("mask_values", [[False, False], [False, pd.NA]])
+def test_dataframe_setitem_loc_empty_boolean_series(mask_values):
+    pdf = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    expected = pdf.copy()
+    pmask = pd.Series(mask_values, index=[1, 0], dtype="boolean")
+
+    gdf = cudf.from_pandas(pdf)
+    gmask = cudf.from_pandas(pmask)
+    pdf.loc[pmask] = 1.5
+    gdf.loc[gmask] = 1.5
+
+    assert_eq(expected, pdf, check_dtype=True)
+    assert_eq(expected, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize(
+    "key, error",
+    [
+        pytest.param([False], IndexError, id="short-false-mask"),
+        pytest.param([False, False, False], IndexError, id="long-false-mask"),
+        pytest.param(np.array([], dtype=bool), IndexError, id="empty-bool"),
+        pytest.param([4], KeyError, id="missing-row"),
+    ],
+)
+def test_dataframe_setitem_loc_invalid_indexer(key, error):
+    pdf = pd.DataFrame({"a": [1, 2]})
+    gdf = cudf.from_pandas(pdf)
+    for frame in (pdf, gdf):
+        with pytest.raises(error):
+            frame.loc[key] = 1.5
+
+    assert_eq(pdf, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        pytest.param([0], id="nonempty-list"),
+        pytest.param([True, False], id="nonempty-mask"),
+        pytest.param(([False, False], "a"), id="false-mask-scalar-column"),
+        pytest.param(([False, False], ["a"]), id="false-mask-column-list"),
+        pytest.param(
+            ([False, False], slice(None)), id="false-mask-all-columns"
+        ),
+    ],
+)
+def test_dataframe_setitem_loc_incompatible_scalar(key):
+    pdf = pd.DataFrame({"a": [1, 2]})
+    gdf = cudf.from_pandas(pdf)
+    for frame in (pdf, gdf):
+        with pytest.raises(TypeError, match="Invalid value"):
+            frame.loc[key] = 1.5
+
+    assert_eq(pdf, gdf, check_dtype=True)
+
+
+@pytest.mark.parametrize(
     "key, value",
     [
         (("one", "a"), 5),
@@ -766,6 +788,58 @@ def test_dataframe_setitem_loc_empty_df(key, value):
     pdf.loc[key] = value
     gdf.loc[key] = value
     assert_eq(pdf, gdf, check_dtype=False)
+
+
+@pytest.mark.parametrize(
+    "selection", ["zero-column-frame", "all-zero-columns", "empty-columns"]
+)
+@pytest.mark.parametrize(
+    "mask", [[False], [False, False, False], np.array([], dtype=bool)]
+)
+def test_dataframe_setitem_loc_no_columns_invalid_mask(selection, mask):
+    pdf = (
+        pd.DataFrame({"a": [1, 2]})
+        if selection == "empty-columns"
+        else pd.DataFrame(index=range(2))
+    )
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    if selection == "zero-column-frame":
+        key = mask
+    else:
+        key = (mask, [] if selection == "empty-columns" else slice(None))
+
+    with pytest.raises(IndexError, match="Boolean index has wrong length"):
+        pdf.loc[key] = 1.5
+    with pytest.raises(IndexError, match="not suitable as a boolean mask"):
+        gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
+
+
+@pytest.mark.parametrize(
+    "selection", ["zero-column-frame", "all-zero-columns", "empty-columns"]
+)
+@pytest.mark.parametrize("mask", [[False, False], [True, False]])
+def test_dataframe_setitem_loc_no_columns_valid_mask(selection, mask):
+    pdf = (
+        pd.DataFrame({"a": [1, 2]})
+        if selection == "empty-columns"
+        else pd.DataFrame(index=range(2))
+    )
+    gdf = cudf.from_pandas(pdf)
+    expected = pdf.copy()
+    if selection == "zero-column-frame":
+        key = mask
+    else:
+        key = (mask, [] if selection == "empty-columns" else slice(None))
+
+    pdf.loc[key] = 1.5
+    gdf.loc[key] = 1.5
+
+    assert_eq(expected, pdf)
+    assert_eq(expected, gdf)
 
 
 def test_sliced_indexing():
@@ -1394,7 +1468,7 @@ def test_slice_empty_columns(indexer, column_slice):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def mi_df():
     # 2-level row MultiIndex, single-level columns.
     index = cudf.MultiIndex.from_product(

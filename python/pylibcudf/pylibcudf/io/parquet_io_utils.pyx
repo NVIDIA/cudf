@@ -6,6 +6,7 @@ from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uintptr_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from cython.operator cimport dereference
@@ -24,22 +25,32 @@ from pylibcudf.libcudf.io.parquet_io_utils cimport (
     const_uint8_t,
     cpp_fetch_byte_ranges_to_device,
     fetch_page_index_to_host as cpp_fetch_page_index_to_host,
+    io_submission_policy as cpp_io_submission_policy,
 )
 
 from pylibcudf.libcudf.io.text cimport byte_range_info
-from pylibcudf.libcudf.utilities.span cimport device_span, host_span
+from pylibcudf.libcudf.utilities.span cimport device_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
-__all__ = ["fetch_byte_ranges_to_device", "fetch_page_index_to_host"]
+import pylibcudf.libcudf.io.parquet_io_utils
+
+IOSubmissionPolicy = pylibcudf.libcudf.io.parquet_io_utils.io_submission_policy
+
+__all__ = [
+    "IOSubmissionPolicy",
+    "fetch_byte_ranges_to_device",
+    "fetch_page_index_to_host",
+]
 
 
 cpdef list fetch_byte_ranges_to_device(
     SourceInfo source_info,
     list byte_ranges,
+    cpp_io_submission_policy policy,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -55,6 +66,8 @@ cpdef list fetch_byte_ranges_to_device(
         :meth:`~pylibcudf.io.experimental.HybridScanReader.payload_column_chunks_byte_ranges`,
         or
         :meth:`~pylibcudf.io.experimental.HybridScanReader.all_column_chunks_byte_ranges`.
+    policy : IOSubmissionPolicy
+        Whether to serialize I/O submissions from callers.
     stream : Stream, optional
         CUDA stream.
     mr : DeviceMemoryResource, optional
@@ -90,8 +103,9 @@ cpdef list fetch_byte_ranges_to_device(
     with nogil:
         fetched = cpp_fetch_byte_ranges_to_device(
             dereference(sources[0]),
-            host_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
-            _stream.view().value(),
+            std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
+            policy,
+            _stream.view().get(),
             _mr.get_mr(),
         )
 

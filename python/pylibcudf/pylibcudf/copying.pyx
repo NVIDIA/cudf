@@ -101,7 +101,7 @@ cpdef Table gather(
     """
     cdef unique_ptr[table] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_source_table = source_table.view()
@@ -165,7 +165,7 @@ cpdef Table scatter(
     cdef unique_ptr[table] c_result
     cdef vector[reference_wrapper[const scalar]] source_scalars
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef table_view c_source_table
     cdef column_view c_scatter_map
     cdef table_view c_target_table
@@ -269,7 +269,7 @@ cpdef Column allocate_like(
     cdef unique_ptr[column] c_result
     cdef size_type c_size = size if size is not None else input_column.size()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input_column = input_column.view()
@@ -328,7 +328,7 @@ cpdef Column copy_range_in_place(
 
     cdef mutable_column_view target_view = target_column.mutable_view()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef column_view c_input_column = input_column.view()
     with nogil:
@@ -386,7 +386,7 @@ cpdef Column copy_range(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input_column = input_column.view()
@@ -441,7 +441,7 @@ cpdef Column shift(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -480,7 +480,7 @@ cpdef ColumnOrTable reverse(
     cdef unique_ptr[table] c_tbl_result
     cdef unique_ptr[column] c_col_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_input_column
     cdef table_view c_input_table
 
@@ -533,7 +533,7 @@ cpdef list[ColumnOrTable] slice(
     cdef vector[table_view] c_tbl_result
     cdef int i
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef column_view c_input_column
     cdef table_view c_input_table
@@ -586,7 +586,7 @@ cpdef list[ColumnOrTable] split(
     cdef vector[table_view] c_tbl_result
     cdef int i
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     cdef column_view c_input_column
     cdef table_view c_input_table
@@ -651,7 +651,7 @@ cpdef Column copy_if_else(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_lhs_column
     cdef column_view c_rhs_column
     cdef column_view c_boolean_mask
@@ -749,7 +749,7 @@ cpdef Table boolean_mask_scatter(
     cdef unique_ptr[table] result
     cdef vector[reference_wrapper[const scalar]] source_scalars
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef table_view c_input_table
     cdef table_view c_target
     cdef column_view c_boolean_mask
@@ -815,7 +815,7 @@ cpdef Scalar get_element(
     """
     cdef unique_ptr[scalar] c_output
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input_column = input_column.view()

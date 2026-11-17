@@ -27,7 +27,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
-#include <cuda/stream_ref>
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <sys/mman.h>
@@ -840,7 +840,7 @@ class pinned_fallback_host_memory_resource {
         // If the pool is exhausted, fall back to the upstream memory resource
       }
     }
-    return prior_cudf_pinned_mr().allocate(stream, bytes);
+    return prior_cudf_pinned_mr().allocate(stream, bytes, alignment);
   }
 
   void deallocate(cuda::stream_ref stream,
@@ -851,7 +851,7 @@ class pinned_fallback_host_memory_resource {
     if (bytes <= pool.pool_size() && ptr >= pool_begin && ptr < pool_end) {
       pool.deallocate(stream, ptr, bytes, alignment);
     } else {
-      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes);
+      prior_cudf_pinned_mr().deallocate(stream, ptr, bytes, alignment);
     }
   }
 
@@ -938,7 +938,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocInternal(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
     auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
-    void* ret                         = mr.allocate(c_stream, size);
+    void* ret                         = mr.allocate(c_stream, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -953,7 +953,7 @@ Java_ai_rapids_cudf_Rmm_free(JNIEnv* env, jclass clazz, jlong ptr, jlong size, j
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref();
     void* cptr                        = reinterpret_cast<void*>(ptr);
     auto c_stream                     = cuda::stream_ref(reinterpret_cast<cudaStream_t>(stream));
-    mr.deallocate(c_stream, cptr, size);
+    mr.deallocate(c_stream, cptr, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
   }
   JNI_CATCH(env, );
 }
@@ -965,8 +965,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_freeDeviceBuffer(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    rmm::device_buffer* cptr = reinterpret_cast<rmm::device_buffer*>(ptr);
-    delete cptr;
+    cudf::jni::safe_delete<rmm::device_buffer>(ptr);
   }
   JNI_CATCH(env, );
 }
@@ -1094,20 +1093,36 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releaseArenaMemoryResource(JNIEnv
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
-  JNIEnv* env, jclass clazz, jlong init, jlong release, jboolean fabric)
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
+  JNIEnv* env, jclass clazz, jlong init, jlong release, jint handle_type)
 {
+  // handle_type is RmmCudaAsyncMemoryResource.HandleType.nativeId, which matches
+  // allocation_handle_type. Its values are the cudaMemAllocationHandleType values, except that RMM
+  // spells fabric as 0x8 because cudaMemHandleTypeFabric is not defined before CUDA 12.4.
+  using ht        = rmm::mr::cuda_async_memory_resource::allocation_handle_type;
+  auto const type = static_cast<ht>(handle_type);
+  JNI_ARG_CHECK(env,
+                type == ht::none || type == ht::posix_file_descriptor || type == ht::fabric,
+                "unsupported handle type",
+                nullptr);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
 
-    auto handle_type =
-      fabric ? std::optional{rmm::mr::cuda_async_memory_resource::allocation_handle_type::fabric}
-             : std::nullopt;
+    auto const export_type = type == ht::none ? std::nullopt : std::optional<ht>{type};
 
-    return make_jni_resource(rmm::mr::cuda_async_memory_resource{init, release, handle_type});
+    // {resource handle, cudaMemPool_t}. The pool handle is read here because the resource is
+    // type-erased once it is wrapped for Java.
+    cudf::jni::native_jlongArray result(env, 2);
+    rmm::mr::cuda_async_memory_resource res{init, release, export_type};
+    cudaMemPool_t pool = res.pool_handle();
+    // The first element access can throw. Do it while res is still owned here, so a failure
+    // cannot leak the resource that make_jni_resource hands off as a raw handle.
+    result[1] = reinterpret_cast<jlong>(pool);
+    result[0] = make_jni_resource(std::move(res));
+    return result.get_jArray();
   }
-  JNI_CATCH(env, 0);
+  JNI_CATCH(env, nullptr);
 }
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releaseCudaAsyncMemoryResource(JNIEnv* env,
@@ -1404,7 +1419,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releasePinnedPoolMemoryResource(J
     // if we didn't overwrite it with setCudfPinnedPoolMemoryResource
     cudf::set_pinned_memory_resource(prior_cudf_pinned_mr());
     pinned_fallback_mr.reset();
-    delete reinterpret_cast<rmm::mr::pool_memory_resource*>(pool_ptr);
+    cudf::jni::safe_delete<rmm::mr::pool_memory_resource>(pool_ptr);
   }
   JNI_CATCH(env, );
 }
@@ -1449,7 +1464,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_allocFromFallbackPinnedPool(JNIE
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    void* ret = cudf::get_pinned_memory_resource().allocate(cudf::get_default_stream(), size);
+    void* ret = cudf::get_pinned_memory_resource().allocate(
+      cudf::get_default_stream(), size, rmm::CUDA_ALLOCATION_ALIGNMENT);
     return reinterpret_cast<jlong>(ret);
   }
   JNI_CATCH(env, 0);
@@ -1465,7 +1481,8 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_freeFromFallbackPinnedPool(JNIEnv
   {
     cudf::jni::auto_set_device(env);
     void* cptr = reinterpret_cast<void*>(ptr);
-    cudf::get_pinned_memory_resource().deallocate(cudf::get_default_stream(), cptr, size);
+    cudf::get_pinned_memory_resource().deallocate(
+      cudf::get_default_stream(), cptr, size, rmm::CUDA_ALLOCATION_ALIGNMENT);
   }
   JNI_CATCH(env, );
 }

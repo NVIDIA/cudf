@@ -29,7 +29,8 @@ reviews:
   review_status: false
 
   # Path-specific review instructions
-  # Note: Detailed C++/CUDA and Python review guidelines are in cpp/REVIEW_GUIDELINES.md and python/REVIEW_GUIDELINES.md
+  # Note: Detailed C++/CUDA and Python review guidelines are in cpp/REVIEW_GUIDELINES.md and python/REVIEW_GUIDELINES.md,
+  # with package-specific additions in python/pylibcudf/REVIEW_GUIDELINES.md and python/cudf_polars/REVIEW_GUIDELINES.md
   path_instructions:
     - path: "docs/**/*"
       instructions: |
@@ -67,6 +68,9 @@ knowledge_base:
     filePatterns:
       - "cpp/REVIEW_GUIDELINES.md"
       - "python/REVIEW_GUIDELINES.md"
+      # Package-specific guidelines; each applies to its own directory tree
+      - "python/pylibcudf/REVIEW_GUIDELINES.md"
+      - "python/cudf_polars/REVIEW_GUIDELINES.md"
       - "cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md"
       - "cpp/doxygen/developer_guide/TESTING.md"
       - "CONTRIBUTING.md"

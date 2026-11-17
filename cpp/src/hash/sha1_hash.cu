@@ -10,8 +10,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/stream>
 
 #include <memory>
@@ -52,7 +50,7 @@ struct SHA1Hash : HashBase<SHA1Hash> {
 
 std::unique_ptr<column> sha1(table_view const& input,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   return sha_hash<SHA1Hash>(input, stream, mr);
 }
@@ -61,7 +59,7 @@ std::unique_ptr<column> sha1(table_view const& input,
 
 std::unique_ptr<column> sha1(table_view const& input,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sha1(input, stream, mr);

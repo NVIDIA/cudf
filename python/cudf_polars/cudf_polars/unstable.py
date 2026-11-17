@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -14,16 +14,12 @@ import os
 import warnings
 from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 import polars.exceptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from typing import ParamSpec
-
-    P = ParamSpec("P")
-    T = TypeVar("T")
 
 __all__: list[str] = ["UnstableWarning", "issue_unstable_warning", "unstable"]
 
@@ -86,7 +82,7 @@ def issue_unstable_warning(message: str | None = None) -> None:
     warnings.warn(message, UnstableWarning, stacklevel=_find_stacklevel())
 
 
-def unstable() -> Callable[[Callable[P, T]], Callable[P, T]]:
+def unstable[**P, T]() -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Decorator to mark a function or method as unstable."""
 
     def decorate(function: Callable[P, T]) -> Callable[P, T]:

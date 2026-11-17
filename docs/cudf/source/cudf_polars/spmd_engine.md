@@ -12,6 +12,24 @@ Under `rrun` this binding is delegated to the launcher; outside `rrun` (single-p
 {class}`~cudf_polars.engine.hardware_binding.HardwareBindingPolicy`
 to override this behaviour.
 
+## Selecting a GPU
+
+`SPMDEngine` runs on CUDA device ordinal 0, so the GPU it should use has to come first in
+`CUDA_VISIBLE_DEVICES`. Selecting a GPU by ordinal instead, by leaving the list alone and
+calling `cudaSetDevice`, is not supported, and constructing an engine that way raises. Other
+GPUs may stay visible: `CUDA_VISIBLE_DEVICES=1,0` runs the engine on GPU 1 while both remain
+available to the process.
+
+`rrun` assigns a GPU to each rank, as do the Dask and Ray frontends for their workers, so
+this is usually taken care of. A launcher that does not, `torchrun` being the common case,
+leaves it to the script, which can call {func}`~cudf_polars.engine.spmd.use_gpu` before its
+first CUDA call. {doc}`pytorch` covers that setup.
+
+The requirement exists because the engine runs its actors on threads created by rapidsmpf,
+and the current CUDA device is per-thread: a new thread always starts on ordinal 0 whatever
+the thread that created it had selected. Putting the engine's GPU first makes that safe,
+because ordinal 0 is then the device every thread already uses.
+
 ## Single-GPU setup
 
 To use {class}`~cudf_polars.engine.spmd.SPMDEngine` on a single GPU, create the engine and
@@ -26,10 +44,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -58,10 +76,10 @@ from cudf_polars.engine.spmd import SPMDEngine
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -112,9 +130,9 @@ In practice:
 with SPMDEngine() as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -122,7 +140,7 @@ with SPMDEngine() as engine:
 # DEADLOCKS: rank 0 issues a group_by collective the other ranks never see.
 with SPMDEngine() as engine:
     df = pl.scan_parquet("/data/*.parquet")
-    if engine.rank == 0:        # don't do this
+    if engine.rank == 0:  # don't do this
         df = df.group_by("customer_id").agg(pl.col("amount").sum())
     result = df.collect(engine=engine)
 ```
@@ -195,15 +213,17 @@ with SPMDEngine(comm=comm) as engine:
 ## Cluster diagnostics
 
 {meth}`~cudf_polars.engine.spmd.SPMDEngine.gather_cluster_info` returns
-placement information for every rank:
+placement information for every rank. It is a collective operation, so every rank must
+call it:
 
 ```python
 with SPMDEngine() as engine:
+    cluster_info = engine.gather_cluster_info()
     if engine.rank == 0:
-        for i, info in enumerate(engine.gather_cluster_info()):
+        for i, info in enumerate(cluster_info):
             print(
-                f"rank {i}: hostname={info['hostname']}, pid={info['pid']}, "
-                f"CUDA_VISIBLE_DEVICES={info['cuda_visible_devices']}"
+                f"rank {i}: hostname={info.hostname}, pid={info.pid}, "
+                f"CUDA_VISIBLE_DEVICES={info.cuda_visible_devices}"
             )
 ```
 

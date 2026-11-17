@@ -362,7 +362,7 @@ void build_shift_masks(gkprog& gp)
   // Sort candidate spans by population (descending) to pick the best slots.
   // Break ties by smaller span so the selection is deterministic regardless of
   // std::sort's (unspecified) ordering of equal elements.
-  std::sort(span_list.begin(), span_list.end(), [](auto const& a, auto const& b) {
+  std::ranges::sort(span_list, [](auto const& a, auto const& b) {
     auto const pa = std::popcount(a.second);
     auto const pb = std::popcount(b.second);
     return (pa != pb) ? (pa > pb) : (a.first < b.first);

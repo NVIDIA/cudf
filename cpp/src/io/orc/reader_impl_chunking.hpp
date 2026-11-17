@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,8 +10,9 @@
 
 #include <cudf/types.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/buffer>
 
 #include <unordered_map>
 
@@ -151,7 +152,7 @@ struct file_intermediate_data {
   // The buffers to store raw data read from disk, initialized for each reading stripe chunks.
   // After decoding, such buffers can be released.
   // This can only be implemented after chunked output is ready.
-  std::vector<std::vector<rmm::device_buffer>> lvl_stripe_data;
+  std::vector<std::vector<cuda::device_buffer<std::uint8_t>>> lvl_stripe_data;
 
   // Store the size of each stripe at each nested level.
   // This is used to initialize the stripe_data buffers.
@@ -165,6 +166,9 @@ struct file_intermediate_data {
 
   // Table for converting timestamp columns from local to UTC time.
   std::unique_ptr<cudf::table> tz_table;
+
+  // The ORC epoch as it occurs in the writer's timezone, the frame the data stream is stored in.
+  duration_s orc_base_epoch{orc_utc_epoch};
 
   bool global_preprocessed{false};
 };

@@ -8,8 +8,10 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/extract.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -169,6 +171,28 @@ TEST_F(StringsExtractTests, MultiLine)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
+TEST_F(StringsExtractTests, InlineFlags)
+{
+  auto input = cudf::test::strings_column_wrapper({"ABC-123", "abc-456", "xyz\nAbc-789", "abc"});
+  auto view  = cudf::strings_column_view(input);
+
+  auto prog    = cudf::strings::regex_program::create("(?im)^([a-c]+)-(\\d+)");
+  auto results = cudf::strings::extract(view, *prog);
+  cudf::test::strings_column_wrapper expected1({"ABC", "abc", "Abc", ""},
+                                               {true, true, true, false});
+  cudf::test::strings_column_wrapper expected2({"123", "456", "789", ""},
+                                               {true, true, true, false});
+  auto expected = cudf::table_view{{expected1, expected2}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+
+  prog    = cudf::strings::regex_program::create("((?i:a)bc)-(\\d+)");
+  results = cudf::strings::extract(view, *prog);
+  cudf::test::strings_column_wrapper expected3({"", "abc", "Abc", ""}, {false, true, true, false});
+  cudf::test::strings_column_wrapper expected4({"", "456", "789", ""}, {false, true, true, false});
+  expected = cudf::table_view{{expected3, expected4}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+}
+
 TEST_F(StringsExtractTests, DotAll)
 {
   auto input = cudf::test::strings_column_wrapper({"abc\nfa\nef", "fff\nabbc\nfff", "abcdef", ""});
@@ -306,13 +330,13 @@ TEST_F(StringsExtractTests, ExtractAllTest)
 
   std::array valids{true, true, true, false, false, false, true};
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW expected({LCW{"123", "banana", "7", "eleven"},
-                LCW{"41", "apple"},
-                LCW{"6", "péar", "0", "pair"},
-                LCW{},
-                LCW{},
-                LCW{},
-                LCW{"4", "paré"}},
+  LCW expected({{"123", "banana", "7", "eleven"},
+                {"41", "apple"},
+                {"6", "péar", "0", "pair"},
+                {},
+                {},
+                {},
+                {"4", "paré"}},
                valids.data());
   auto prog    = cudf::strings::regex_program::create(pattern);
   auto results = cudf::strings::extract_all_record(sv, *prog);
@@ -474,4 +498,33 @@ TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
     h_expected.end(),
     cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
+}
+
+TEST_F(StringsExtractTests, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+
+  auto const prog = cudf::strings::regex_program::create("([a-z])(\\d+)");
+
+  // input nulls and rows with no match produce nulls
+  auto const no_match  = cudf::test::iterators::nulls_at({0, 2, 3, 5});
+  auto expected_letter = cudf::test::strings_column_wrapper({"", "b", "", "", "d", ""}, no_match);
+  auto expected_digits = cudf::test::strings_column_wrapper({"", "22", "", "", "4", ""}, no_match);
+
+  auto results        = cudf::strings::extract(sv, *prog);
+  auto expected_table = cudf::table_view({expected_letter, expected_digits});
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected_table);
+
+  auto result = cudf::strings::extract_single(sv, *prog, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_digits);
+
+  result    = cudf::strings::extract_all_record(sv, *prog);
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW expected_all({{}, {"b", "22", "c", "333"}, {}, {}, {"d", "4"}, {}}, no_match);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_all);
 }

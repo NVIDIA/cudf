@@ -13,19 +13,25 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-TESTS_TO_SKIP: Mapping[str, str] = {}
+TESTS_TO_SKIP: Mapping[str, str] = {
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-False-Int32-2147483647]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-False-UInt32-4294967295]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-True-Int32-2147483647]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+    "tests/expr_and_series/cum_sum_test.py::test_cum_sum_does_not_overflow[polars[lazy]-True-UInt32-4294967295]": "Passes under this constructor but Narwhals marks it xfail(strict).",
+}
 
 
 EXPECTED_FAILURES: Mapping[str, str] = {
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value0-dtype0]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value1-dtype1]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value3-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value4-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value6-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/lit_test.py::test_nested_structures[polars[lazy]-value7-None]": "cudf-polars mishandles list/tuple literals without nested lists.",
-    "tests/expr_and_series/dt/replace_time_zone_test.py::test_replace_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
     "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
     "tests/expr_and_series/dt/convert_time_zone_test.py::test_convert_time_zone_from_none[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/dt/replace_time_zone_test.py::test_replace_time_zone[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/23935",
+    "tests/expr_and_series/fill_null_test.py::test_fill_null_scalar_receiver[polars[lazy]]": "https://github.com/NVIDIA/cudf/issues/24864",
+    "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii]": "cudf-polars zfill only supports ascii strings.",
+    "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w3]": "cudf-polars zfill only supports ascii strings.",
+    "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_plus_w4]": "cudf-polars zfill only supports ascii strings.",
+    "tests/expr_and_series/str/zfill_test.py::test_str_zfill[polars[lazy]-non_ascii_sign_w5]": "cudf-polars zfill only supports ascii strings.",
+    "tests/expr_and_series/first_last_test.py::test_first_expr_in_group_by[polars[lazy]]": "Polars 2.1 panics converting the BinaryOffset dtype of a row-encoded multi-key sort_by to Python, and the panic poisons the visitor so there is no CPU fallback: https://github.com/NVIDIA/cudf/issues/24843",
+    "tests/expr_and_series/first_last_test.py::test_first_expr_broadcasting[polars[lazy]]": "Polars 2.1 panics converting the BinaryOffset dtype of a row-encoded multi-key sort_by to Python, and the panic poisons the visitor so there is no CPU fallback: https://github.com/NVIDIA/cudf/issues/24843",
 }
 
 

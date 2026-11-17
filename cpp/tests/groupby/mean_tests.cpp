@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,14 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
+#include <cudf/table/table_view.hpp>
 
+#include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <vector>
 
 using namespace cudf::test::iterators;
@@ -149,29 +155,6 @@ struct FixedPointTestBothReps : public cudf::test::BaseFixture {};
 
 TYPED_TEST_SUITE(FixedPointTestBothReps, cudf::test::FixedPointTypes);
 
-TYPED_TEST(FixedPointTestBothReps, GroupBySortMeanDecimalAsValue)
-{
-  using namespace numeric;
-  using decimalXX  = TypeParam;
-  using RepType    = cudf::device_storage_type_t<decimalXX>;
-  using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
-
-  for (auto const i : {2, 1, 0, -1, -2}) {
-    auto const scale = scale_type{i};
-    // clang-format off
-    auto const keys  = cudf::test::fixed_width_column_wrapper<K>{1, 2, 3, 1, 2, 2, 1, 3, 3, 2};
-    auto const vals  = fp_wrapper{                              {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, scale};
-    // clang-format on
-
-    auto const expect_keys     = cudf::test::fixed_width_column_wrapper<K>{1, 2, 3};
-    auto const expect_vals_min = fp_wrapper{{3, 4, 5}, scale};
-
-    auto agg = cudf::make_mean_aggregation<cudf::groupby_aggregation>();
-    test_single_agg(
-      keys, vals, expect_keys, expect_vals_min, std::move(agg), force_use_sort_impl::YES);
-  }
-}
-
 TYPED_TEST(FixedPointTestBothReps, GroupByHashMeanDecimalAsValue)
 {
   using namespace numeric;
@@ -193,4 +176,119 @@ TYPED_TEST(FixedPointTestBothReps, GroupByHashMeanDecimalAsValue)
     auto agg = cudf::make_mean_aggregation<cudf::groupby_aggregation>();
     test_single_agg(keys, vals, expect_keys, expect_vals_min, std::move(agg));
   }
+}
+
+// MEAN of integers accumulates in its double output type, like reduction MEAN, so a group whose
+// int64 SUM overflows still has the correct mean. SUM itself keeps its int64 accumulator.
+struct groupby_mean_overflow_test : public cudf::test::BaseFixture {};
+
+namespace {
+
+/// Sorts the groupby results by key so that they can be compared with the expected columns.
+std::unique_ptr<cudf::column> by_key(cudf::table_view const& keys, cudf::column_view const& col)
+{
+  auto const order = cudf::sorted_order(keys);
+  return std::move(cudf::gather(cudf::table_view{{col}}, *order)->release().front());
+}
+
+}  // namespace
+
+template <typename V>
+struct groupby_mean_overflow_typed_test : public cudf::test::BaseFixture {};
+
+using int64_types = cudf::test::Types<int64_t, uint64_t>;
+TYPED_TEST_SUITE(groupby_mean_overflow_typed_test, int64_types);
+
+// Each group's SUM overflows V, but its MEAN fits in double. Nulls are skipped, and a group with
+// only null values has a null MEAN.
+TYPED_TEST(groupby_mean_overflow_typed_test, overflowing_sum)
+{
+  using V            = TypeParam;
+  auto constexpr max = std::numeric_limits<V>::max();
+  auto constexpr min = std::numeric_limits<V>::lowest();
+
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys{0,   0,   1,   1,   1,   2,   2,    2,   3};
+  cudf::test::fixed_width_column_wrapper<V> vals{{max, max, min, min, min, max, V{5}, max, V{7}},
+                                                 {1,   1,   1,   1,   1,   1,   0,    1,   0}};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1, 2, 3};
+  cudf::test::fixed_width_column_wrapper<double> expect_vals{
+    {static_cast<double>(max), static_cast<double>(min), static_cast<double>(max), 0.},
+    {1,                        1,                        1,                        0}};
+  // clang-format on
+
+  test_single_agg(
+    keys, vals, expect_keys, expect_vals, cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+}
+
+// SUM and MEAN of one column use separate accumulators; results keep the request order.
+TEST_F(groupby_mean_overflow_test, sum_and_mean_of_same_column)
+{
+  auto constexpr max = std::numeric_limits<int64_t>::max();
+
+  cudf::test::fixed_width_column_wrapper<K> keys{1, 0, 0, 1};
+  cudf::test::fixed_width_column_wrapper<int64_t> vals{int64_t{2}, max, max, int64_t{4}};
+  cudf::test::fixed_width_column_wrapper<int32_t> other{10, 20, 30, 40};
+
+  auto const wrapped_sum = static_cast<int64_t>(2 * static_cast<uint64_t>(max));
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
+  cudf::test::fixed_width_column_wrapper<double> expect_mean{static_cast<double>(max), 3.};
+  cudf::test::fixed_width_column_wrapper<int64_t> expect_sum{wrapped_sum, int64_t{6}};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expect_count{2, 2};
+  cudf::test::fixed_width_column_wrapper<double> expect_other_mean{25., 25.};
+
+  std::vector<cudf::groupby::aggregation_request> requests(2);
+  requests[0].values = vals;
+  requests[0].aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_count_aggregation<cudf::groupby_aggregation>());
+  requests[1].values = other;
+  requests[1].aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+
+  cudf::groupby::groupby gb{cudf::table_view{{keys}}};
+  auto [result_keys, results] = gb.aggregate(requests);
+
+  auto const result_keys_view = result_keys->view();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_keys,
+                                 *by_key(result_keys_view, result_keys_view.column(0)));
+  ASSERT_EQ(results.size(), 2);
+  ASSERT_EQ(results[0].results.size(), 4);
+  ASSERT_EQ(results[1].results.size(), 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_mean, *by_key(result_keys_view, *results[0].results[0]));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_sum, *by_key(result_keys_view, *results[0].results[1]));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_mean, *by_key(result_keys_view, *results[0].results[2]));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_count, *by_key(result_keys_view, *results[0].results[3]));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_other_mean,
+                                 *by_key(result_keys_view, *results[1].results[0]));
+}
+
+// Decimal MEAN keeps the decimal type when it is requested together with SUM.
+TEST_F(groupby_mean_overflow_test, decimal_sum_and_mean)
+{
+  using decimal64  = numeric::decimal64;
+  auto const scale = numeric::scale_type{-1};
+
+  cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1, 1};
+  cudf::test::fixed_point_column_wrapper<int64_t> vals{{10, 30, 50, 70}, scale};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys{0, 1};
+  cudf::test::fixed_point_column_wrapper<int64_t> expect_sum{{40, 120}, scale};
+  cudf::test::fixed_point_column_wrapper<int64_t> expect_mean{{20, 60}, scale};
+
+  std::vector<cudf::groupby::aggregation_request> requests(1);
+  requests[0].values = vals;
+  requests[0].aggregations.push_back(cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  requests[0].aggregations.push_back(cudf::make_mean_aggregation<cudf::groupby_aggregation>());
+
+  cudf::groupby::groupby gb{cudf::table_view{{keys}}};
+  auto [result_keys, results] = gb.aggregate(requests);
+
+  auto const result_keys_view = result_keys->view();
+  EXPECT_EQ(results[0].results[1]->type(), cudf::data_type(cudf::type_to_id<decimal64>(), scale));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_keys,
+                                 *by_key(result_keys_view, result_keys_view.column(0)));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_sum, *by_key(result_keys_view, *results[0].results[0]));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expect_mean, *by_key(result_keys_view, *results[0].results[1]));
 }

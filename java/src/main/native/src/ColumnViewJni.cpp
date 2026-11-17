@@ -1548,8 +1548,13 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_containsVector(JNIEnv* en
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
-  JNIEnv* env, jobject j_object, jlong handle, jstring j_udf, jboolean j_is_ptx)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
+                                                                 jobject j_object,
+                                                                 jlong handle,
+                                                                 jstring j_udf,
+                                                                 jboolean j_is_ptx,
+                                                                 jint j_dtype,
+                                                                 jint j_scale)
 {
   JNI_TRY
   {
@@ -1564,7 +1569,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
                       cudf::null_aware::NO,
                       std::nullopt,
                       inputs,
-                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                      std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                         cudf::output_nullability::PRESERVE}},
                       {},
                       std::nullopt)
@@ -1737,7 +1742,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_binaryOpVV(
       auto out = make_fixed_width_column(n_data_type, lhs->size(), cudf::mask_state::UNALLOCATED);
 
       if (op == cudf::binary_operator::NULL_EQUALS) {
-        out->set_null_mask(rmm::device_buffer{}, 0);
+        out->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
       } else {
         auto [new_mask, null_count] = cudf::bitmask_and(cudf::table_view{{*lhs, *rhs}});
         out->set_null_mask(std::move(new_mask), null_count);
@@ -1783,7 +1788,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_binaryOpVS(
       auto out = make_fixed_width_column(n_data_type, lhs->size(), cudf::mask_state::UNALLOCATED);
 
       if (op == cudf::binary_operator::NULL_EQUALS) {
-        out->set_null_mask(rmm::device_buffer{}, 0);
+        out->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
       } else {
         auto [new_mask, new_null_count] = cudf::binops::scalar_col_valid_mask_and(*lhs, *rhs);
         out->set_null_mask(std::move(new_mask), new_null_count);
@@ -2248,7 +2253,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_bitwiseMergeAndSetValidit
     // descendants for STRUCTs so that child masks stay consistent ,
     // and fix offsets for LIST/STRINGs by purging non-empty nulls.
     auto result = cudf::structs::detail::superimpose_and_sanitize_nulls(
-      static_cast<cudf::bitmask_type const*>(merge_mask.data()),
+      merge_mask.data(),
       merge_null_count,
       std::move(copy),
       cudf::get_default_stream(),
@@ -2410,8 +2415,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_ColumnView_deleteColumnView(JNIEnv* e
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    cudf::column_view* view = reinterpret_cast<cudf::column_view*>(handle);
-    delete view;
+    cudf::jni::safe_delete<cudf::column_view>(handle);
   }
   JNI_CATCH(env, );
 }

@@ -8,6 +8,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -46,7 +47,7 @@ filter_join_indices(table_view const& left,
                     join_kind join_kind,
                     std::optional<std::size_t> output_size,
                     cuda::stream_ref stream,
-                    rmm::device_async_resource_ref mr);
+                    cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

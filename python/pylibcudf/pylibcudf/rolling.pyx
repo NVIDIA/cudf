@@ -172,7 +172,7 @@ cpdef Table grouped_range_rolling_window(
         crequests.push_back(move((<RollingRequest?>req).view()))
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_group_keys = group_keys.view()
@@ -235,7 +235,7 @@ cpdef Column rolling_window(
     cdef const rolling_aggregation *c_agg = agg.view_underlying_as_rolling()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source = source.view()
@@ -325,7 +325,7 @@ cpdef tuple[Column, Column] make_range_windows(
     cdef pair[unique_ptr[column], unique_ptr[column]] result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_group_keys = group_keys.view()

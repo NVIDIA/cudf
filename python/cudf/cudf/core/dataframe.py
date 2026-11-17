@@ -27,10 +27,10 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Self, assert_never
 
 import cupy
-import numba
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from numba_cuda_mlir import cuda
 from nvtx import annotate
 from pandas.io.formats import console
 from pandas.io.formats.printing import pprint_thing
@@ -42,6 +42,7 @@ from cudf.api.extensions import no_default
 from cudf.api.types import (
     _is_categorical_dtype,
     _is_scalar_or_zero_d_array,
+    is_bool_dtype,
     is_decimal32_dtype,
     is_decimal64_dtype,
     is_decimal128_dtype,
@@ -102,7 +103,7 @@ from cudf.core.mixins import GetAttrGetItemMixin
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import DataFrameResampler
 from cudf.core.series import Series
-from cudf.core.udf.row_function import DataFrameApplyKernel
+from cudf.core.udf.mlir_backend.row_function import DataFrameApplyKernel
 from cudf.errors import MixedTypeError
 from cudf.options import get_option
 from cudf.utils import docutils, ioutils, queryutils
@@ -334,7 +335,12 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
             )
 
     @_performance_tracking
-    def _setitem_tuple_arg(self, key, value):
+    def __setitem__(self, key, value):
+        indexing_utils.check_dict_or_set_indexers(key)
+        row_only = not isinstance(key, tuple)
+        if row_only:
+            key = (key, slice(None))
+
         if (
             isinstance(self._frame.index, MultiIndex)
             or self._frame._data.multiindex
@@ -343,6 +349,10 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 "Setting values using df.loc[] not supported on "
                 "DataFrames with a MultiIndex"
             )
+
+        if isinstance(key[0], Iterator):
+            # Validation and per-column assignment must reuse the same labels.
+            key = (list(key[0]), key[1])
 
         try:
             columns_df = self._frame._get_columns_by_label(key[1])
@@ -387,15 +397,50 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
         else:
             if is_scalar(value):
                 try:
-                    if columns_df._num_columns:
-                        self._frame[
-                            columns_df._column_names[0]
-                        ].loc._loc_to_iloc(key[0])
+                    # Row indexers must be validated even when no columns
+                    # are selected. Use the index as a Series in that case.
+                    row_series = (
+                        self._frame[columns_df._column_names[0]]
+                        if columns_df._num_columns
+                        else self._frame.index.to_series()
+                    )
+                    row_key = row_series.loc._loc_to_iloc(key[0])
+                    # Empty positional selections are no-ops before
+                    # validating the scalar's dtype. A full-column
+                    # assignment can still change an empty frame's dtype.
+                    if isinstance(row_key, slice):
+                        if (
+                            key[0] != slice(None)
+                            and not range(len(self._frame))[row_key]
+                        ):
+                            return
+                    elif not is_scalar(row_key):
+                        if row_key.dtype.kind == "b":
+                            mask = BooleanMask(
+                                row_key, len(self._frame)
+                            ).column
+                            # pandas converts a bare .loc mask to
+                            # positions, but retains masks in tuples.
+                            # Nulls require an explicitly boolean dtype;
+                            # untyped/object indexers still need validation.
+                            if len(mask) == 0 or (
+                                row_only
+                                and (
+                                    not mask.has_nulls()
+                                    or is_bool_dtype(key[0])
+                                )
+                                and not mask.any()
+                            ):
+                                return
+                        elif len(row_key) == 0:
+                            return
                     for col in columns_df._column_names:
                         self._frame[col].loc[key[0]] = value
                 except KeyError:
                     if not is_scalar(key[0]):
                         raise
+                    if not columns_df._num_columns:
+                        return
                     # TODO: There is a potential bug here if the inplace modifications
                     # done above fail half-way we are left with a partially modified
                     # frame. Need to handle this case better.
@@ -570,7 +615,7 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
 
         else:
             # TODO: consolidate code path with identical counterpart
-            # in `_DataFrameLocIndexer._setitem_tuple_arg`
+            # in `_DataFrameLocIndexer.__setitem__`
             if not is_column_like(value):
                 value = cupy.asarray(value)
             if getattr(value, "ndim", 1) == 2:
@@ -630,8 +675,8 @@ def _pd_index_level_dtypes(idx) -> tuple | None:
 @_performance_tracking
 def _listlike_to_column_accessor(
     data: Sequence,
-    columns: None | pd.Index,
-    index: None | Index,
+    columns: pd.Index | None,
+    index: Index | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -825,7 +870,7 @@ def _listlike_to_column_accessor(
 @_performance_tracking
 def _array_to_column_accessor(
     data: np.ndarray | cupy.ndarray,
-    columns: None | pd.Index,
+    columns: pd.Index | None,
     nan_as_null: bool,
 ) -> ColumnAccessor:
     """Convert a 1D or 2D numpy or cupy array to a ColumnAccessor for DataFrame.__init__"""
@@ -866,8 +911,8 @@ def _array_to_column_accessor(
 @_performance_tracking
 def _mapping_to_column_accessor(
     data: Mapping,
-    index: None | Index,
-    dtype: None | Dtype,
+    index: Index | None,
+    dtype: Dtype | None,
     nan_as_null: bool,
 ) -> tuple[dict[Any, ColumnBase], Index, pd.Index]:
     """
@@ -1749,6 +1794,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                     if not is_scalar(value) and len(self) == 0:
                         value = as_column(value)
                         length = len(value)
+                        if length == 0:
+                            # No rows to add to the other columns: replace
+                            # only this column instead of rebuilding them.
+                            self._data[arg] = value
+                            return
                         new_columns = (
                             value
                             if key == arg
@@ -5360,8 +5410,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
     def query(
         self,
         expr: str,
-        local_dict: None | dict[str, Any] = None,
-        global_dict: None | dict[str, Any] = None,
+        local_dict: dict[str, Any] | None = None,
+        global_dict: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
         """
@@ -5500,8 +5550,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         Thus the allowed operations within ``func`` are limited to `those
         supported by the CUDA Python Numba target
         <https://numba.readthedocs.io/en/stable/cuda/cudapysupported.html>`__.
-        For more information, see the `cuDF guide to user defined functions
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>`__.
+        For more information, see the :doc:`cuDF guide to user defined functions
+        </cudf/guide-to-udfs>`.
 
         Some string functions and methods are supported. Refer to the guide
         to UDFs for details.
@@ -5684,8 +5734,8 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         >>> df.apply(f, axis=1)  # doctest: +SKIP
 
         For a complete list of supported functions and methods that may be
-        used to manipulate string data, see the UDF guide,
-        <https://docs.rapids.ai/api/cudf/stable/cudf/guide-to-udfs/>
+        used to manipulate string data, see the :doc:`UDF guide
+        </cudf/guide-to-udfs>`
         """
         if axis != 1:
             raise NotImplementedError(
@@ -5738,7 +5788,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if na_action == "ignore":
-            devfunc = numba.cuda.jit(device=True)(func)
+            devfunc = cuda.jit(device=True)(func)
 
             # promote to a null-ignoring function
             # this code is never run in python, it only
@@ -7835,6 +7885,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         column_type_length=None,
         output_as_binary=None,
         *args,
+        filesystem=None,
         **kwargs,
     ):
         """{docstring}"""
@@ -7857,6 +7908,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             max_page_size_bytes=max_page_size_bytes,
             max_page_size_rows=max_page_size_rows,
             storage_options=storage_options,
+            filesystem=filesystem,
             return_metadata=return_metadata,
             use_dictionary=use_dictionary,
             header_version=header_version,
@@ -7890,6 +7942,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         lineterminator=None,
         chunksize=None,
         storage_options=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import csv
@@ -7909,6 +7962,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             encoding=encoding,
             compression=compression,
             storage_options=storage_options,
+            filesystem=filesystem,
             quoting=quoting,
         )
 
@@ -7924,6 +7978,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
         cols_as_map_type=None,
         storage_options=None,
         index=None,
+        filesystem=None,
     ):
         """{docstring}"""
         from cudf.io import orc
@@ -7938,6 +7993,7 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             row_index_stride=row_index_stride,
             cols_as_map_type=cols_as_map_type,
             storage_options=storage_options,
+            filesystem=filesystem,
             index=index,
         )
 

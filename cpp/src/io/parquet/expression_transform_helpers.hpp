@@ -18,6 +18,7 @@
 
 #include <list>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -110,6 +111,19 @@ template <operator_transform mode>
  * @return Whether the expression yields `BOOL8`
  */
 [[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
+
+/**
+ * @brief Whether a bloom filter or a dictionary page can be queried for an equality predicate
+ * between a column and a literal
+ *
+ * @throws cudf::logic_error if the literal's type differs from the column's
+ *
+ * @param column_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the predicate can be queried
+ */
+[[nodiscard]] bool is_membership_queryable(cudf::data_type column_type,
+                                           ast::literal const& literal);
 
 /**
  * @brief Collects column names from the expression ignoring the `skip_names`
@@ -236,56 +250,6 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Collects lists of equality predicate literals in the AST expression, one list per input
- * table column. This is used in row group filtering based on bloom filters.
- */
-class equality_literals_collector : public ast::detail::expression_transformer {
- public:
-  equality_literals_collector() = default;
-
-  equality_literals_collector(ast::expression const& expr,
-                              cudf::host_span<cudf::data_type const> output_dtypes,
-                              cudf::host_span<cudf::size_type const> output_column_schemas = {},
-                              cudf::host_span<SchemaElement const> schema_tree             = {});
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::literal const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::column_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::column_name_reference const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(
-    ast::column_name_reference const& expr) override;
-
-  /**
-   * @copydoc ast::detail::expression_transformer::visit(ast::operation const& )
-   */
-  std::reference_wrapper<ast::expression const> visit(ast::operation const& expr) override;
-
-  /**
-   * @brief Vectors of equality literals in the AST expression, one per input table column
-   *
-   * @return Vectors of equality literals, one per input table column
-   */
-  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_literals() &&;
-
- protected:
-  cudf::host_span<cudf::data_type const> _output_dtypes;
-  std::vector<std::vector<ast::literal*>> _literals;
-
- private:
-  cudf::host_span<cudf::size_type const> _output_column_schemas;
-  cudf::host_span<SchemaElement const> _schema_tree;
-};
-
-/**
  * @brief Offsets every column referencein an expression by the specified value
  *
  */
@@ -327,6 +291,195 @@ class offset_column_references : public ast::detail::expression_transformer {
   ast::tree _tree;
   std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
   size_type _offset{0};
+};
+
+/**
+ * @brief Simplified normalized Parquet filter expression. std::nullopt means no such expression was
+ * derived
+ */
+using simplified_expression_opt = std::optional<std::reference_wrapper<ast::expression const>>;
+
+/**
+ * @brief Simplifies a normalized Parquet filter expression for row-group or page pruning
+ *
+ * This base class handles expression traversal and combination. Derived classes implement supported
+ * leaf operations and return std::nullopt for unsupported ones.
+ *
+ * The result indicates whether a row group or page might contain matching rows. Conjunction and
+ * disjunction combine partial results. Unsupported operators return std::nullopt (relax).
+ *
+ * | node                | rule                                                             |
+ * | ------------------- | ---------------------------------------------------------------- |
+ * | `col op lit`        | `simplify_comparison`                                            |
+ * | `op(col)`           | `simplify_unary_op`                                              |
+ * | `NOT(op(col))`      | `simplify_negated_unary_op`                                      |
+ * | `NOT(col op lit)`   | `simplify_negated_comparison`                                    |
+ * | `a AND b`           | both present => `AND`; one present => that one; neither => relax |
+ * | `a OR b`            | both present => `OR`; otherwise relax                            |
+ * | anything else       | std::nullopt                                                     |
+ *
+ */
+class parquet_expression_simplifier {
+ public:
+  parquet_expression_simplifier(parquet_expression_simplifier const&)            = delete;
+  parquet_expression_simplifier& operator=(parquet_expression_simplifier const&) = delete;
+
+ protected:
+  explicit parquet_expression_simplifier(std::span<cudf::data_type const> output_dtypes);
+
+  ~parquet_expression_simplifier() = default;
+
+  /**
+   * @brief Simplifies a `col op lit` comparison
+   *
+   * @param op Comparison operator, normalized so that the column is the left operand
+   * @param col_ref Column being compared
+   * @param literal Literal being compared against
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_comparison(
+    ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal) = 0;
+
+  /**
+   * @brief Simplifies a `NOT(col op lit)` comparison
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_negated_comparison(
+    ast::ast_operator op, ast::column_reference const& col_ref, ast::literal const& literal);
+
+  /**
+   * @brief Simplifies an `op(col)` unary operation
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref);
+
+  /**
+   * @brief Simplifies a `NOT(op(col))` unary operation
+   *
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] virtual simplified_expression_opt simplify_negated_unary_op(
+    ast::ast_operator op, ast::column_reference const& col_ref);
+
+  /**
+   * @brief Simplifies `expr` for filtering row groups or pages
+   *
+   * @param expr Filter expression, already normalized into negation normal form
+   * @return Simplified expression, or std::nullopt if the input expression filters nothing
+   */
+  [[nodiscard]] simplified_expression_opt simplify_expr(ast::expression const& expr);
+
+  /**
+   * @brief Validates a column reference
+   */
+  void validate_column_reference(ast::column_reference const& col_ref) const;
+
+  std::span<cudf::data_type const> _output_dtypes;
+  ast::tree _tree;
+
+ private:
+  /**
+   * @brief Simplifies a `NOT` operation
+   *
+   * @param operand Operand of the `NOT` operation
+   * @return Simplified expression, or std::nullopt if the negated operand filters nothing
+   */
+  [[nodiscard]] simplified_expression_opt simplify_negation(ast::expression const& operand);
+
+  /**
+   * @brief Implementation of recursive simplification of `expr` for filtering row groups or pages
+   */
+  [[nodiscard]] simplified_expression_opt simplify_expr_impl(ast::expression const& expr);
+
+  /**
+   * @brief Combines the simplified expressions of a binary operation's operands
+   */
+  [[nodiscard]] simplified_expression_opt combine_logical_operands(ast::ast_operator op,
+                                                                   simplified_expression_opt lhs,
+                                                                   simplified_expression_opt rhs);
+
+  /**
+   * @brief Validates operands in `expr`
+   */
+  void validate_operands(ast::expression const& expr) const;
+};
+
+/**
+ * @brief Collects lists of equality predicate literals in the AST expression, one list per input
+ * table column. This is used in row group filtering based on bloom filters.
+ */
+class equality_literals_collector : public parquet_expression_simplifier {
+ public:
+  /**
+   * @brief Collects the equality literals in `expr` that bloom filters can be queried for
+   *
+   * @param expr Filter expression to collect from
+   * @param output_dtypes Output data types of the table columns
+   * @param mismatched_timestamp_mask Boolean span indicating if output columns are timestamps
+   * with mismatched precision in any source, or empty to skip the check
+   */
+  equality_literals_collector(ast::expression const& expr,
+                              std::span<cudf::data_type const> output_dtypes,
+                              std::span<bool const> mismatched_timestamp_mask = {});
+
+  /**
+   * @brief Returns vectors of collected literals and their comparison operators in the AST
+   * expression, one per input table column
+   *
+   * @return A pair of vectors of collected literals and their comparison operators, one per input
+   * table column
+   */
+  [[nodiscard]] std::pair<std::vector<std::vector<ast::literal*>>,
+                          std::vector<std::vector<ast::ast_operator>>>
+  get_literals_and_operators() &&;
+
+  /**
+   * @brief Whether the membership filter built from the collected literals can prune anything
+   *
+   * @return Whether any row groups can be pruned by the filter
+   */
+  [[nodiscard]] bool can_filter() const;
+
+ protected:
+  /**
+   * @brief Constructs a collector without walking for derived classes
+   */
+  equality_literals_collector(std::span<cudf::data_type const> output_dtypes,
+                              std::span<bool const> mismatched_timestamp_mask);
+
+  /**
+   * @brief Simplifies `expr` and collects literals and operators from it
+   *
+   * @param expr Filter expression to simplify and collect from
+   */
+  void collect(ast::expression const& expr);
+
+  /**
+   * @copydoc parquet_expression_simplifier::simplify_comparison
+   *
+   * A bloom filter only evaluates if a row group may be present, so we can only evaluate equality
+   * comparisons against literals.
+   */
+  [[nodiscard]] simplified_expression_opt simplify_comparison(ast::ast_operator op,
+                                                              ast::column_reference const& col_ref,
+                                                              ast::literal const& literal) override;
+
+  std::vector<std::vector<ast::literal*>> _literals;
+  std::vector<std::vector<ast::ast_operator>> _operators;
+
+ private:
+  /**
+   * @brief Collects literals and operators from the simplified expression
+   *
+   * @param simplified_expr Simplified expression whose leaves are `col op lit` comparisons
+   */
+  void collect_surviving_predicates(ast::expression const& simplified_expr);
+
+  std::span<bool const> _mismatched_timestamp_mask;
+  bool _can_filter{false};
 };
 
 /**
@@ -372,7 +525,7 @@ class offset_column_references : public ast::detail::expression_transformer {
 [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_indices(
   cudf::table_view ast_table,
   std::reference_wrapper<ast::expression const> ast_expr,
-  host_span<std::vector<size_type> const> input_row_group_indices,
+  std::span<std::vector<size_type> const> input_row_group_indices,
   cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

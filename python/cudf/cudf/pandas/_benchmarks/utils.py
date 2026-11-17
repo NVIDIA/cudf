@@ -11,6 +11,7 @@ import importlib
 import json
 import os
 import pprint
+import shlex
 import statistics
 import sys
 import textwrap
@@ -32,6 +33,11 @@ cudf.pandas.install()
 import pandas as pd  # noqa: E402
 
 try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
     import pynvml
 except ImportError:
     pynvml = None
@@ -47,7 +53,20 @@ except ImportError as e:
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-ExecutorType = Literal["in-memory", "cpu"]
+    import pyarrow as pa
+
+__all__: list[str] = [
+    "RunConfig",
+    "build_parser",
+    "cast_dataset_for_pandas",
+    "get_data",
+    "parse_args",
+    "run_pandas",
+]
+
+FrontendType = Literal["in-memory", "pandas-cpu"]
+
+_CPU_ENGINES = frozenset({"pandas-cpu"})
 
 PANDAS_VALIDATION_OPTIONS: dict[str, Any] = {
     "check_dtype": False,
@@ -65,6 +84,38 @@ PDSH_TABLE_NAMES: list[str] = [
     "supplier",
 ]
 
+EXIT_SUCCESS = 0
+EXIT_QUERY_FAILURE = 3
+EXIT_VALIDATION_FAILURE = 4
+
+
+def benchmark_exit_code(
+    query_failures: list[tuple[int, int]],
+    validation_failures: list[int],
+) -> int:
+    """
+    Map a run's failures to the process exit code.
+
+    Parameters
+    ----------
+    query_failures
+        ``(query, iteration)`` pairs for queries that raised while running.
+    validation_failures
+        Queries whose results did not match the expected answer.
+
+    Returns
+    -------
+    int
+        0: Success
+        3: Query failure
+        4: Validation failure
+    """
+    if query_failures:
+        return EXIT_QUERY_FAILURE
+    if validation_failures:
+        return EXIT_VALIDATION_FAILURE
+    return EXIT_SUCCESS
+
 
 def get_validation_options(args: Any) -> dict[str, Any]:
     """Get validation options dict from parsed arguments."""
@@ -72,6 +123,26 @@ def get_validation_options(args: Any) -> dict[str, Any]:
         **PANDAS_VALIDATION_OPTIONS,
         "atol": args.validation_abs_tol,
     }
+
+
+@dataclasses.dataclass
+class NightlyRole:
+    """Role indicating a nightly benchmark run."""
+
+    type: Literal["nightly"] = dataclasses.field(default="nightly", init=False)
+    date: str = dataclasses.field(
+        default_factory=lambda: datetime.now(timezone.utc).date().isoformat()
+    )
+
+
+@dataclasses.dataclass
+class NsysRole:
+    """Role indicating a benchmark run with nsys profiling enabled."""
+
+    type: Literal["nsys"] = dataclasses.field(default="nsys", init=False)
+
+
+Role = NightlyRole | NsysRole
 
 
 @dataclasses.dataclass
@@ -168,9 +239,24 @@ class SuccessRecord:
     """Results for a single run of a single PDS-H query."""
 
     query: int
+    iteration: int
     duration: float
     validation_result: ValidationResult | None = None
     status: Literal["success"] = "success"
+
+    @classmethod
+    def new(
+        cls,
+        query: int,
+        iteration: int,
+        duration: float,
+    ) -> SuccessRecord:
+        """Create a Record from plain data."""
+        return cls(
+            query=query,
+            iteration=iteration,
+            duration=duration,
+        )
 
 
 @dataclasses.dataclass
@@ -197,12 +283,14 @@ class PackageVersions:
     cudf: str | VersionInfo
     pandas: str
     python: str
+    duckdb: str | None
 
     @classmethod
     def collect(cls) -> PackageVersions:
         """Collect the versions of the software used to run the query."""
         packages = [
             "cudf",
+            "duckdb",
             "pandas",
         ]
         versions: dict[str, str | VersionInfo | None] = {}
@@ -263,25 +351,70 @@ class GPUInfo:
 
 
 @dataclasses.dataclass
+class CPUInfo:
+    """Information about the host CPU."""
+
+    model: str | None
+    physical_cores: int | None
+    logical_cores: int | None
+
+    @classmethod
+    def collect(cls) -> CPUInfo:
+        """Collect CPU information."""
+        model: str | None = None
+        try:
+            with Path("/proc/cpuinfo").open() as f:
+                for line in f:
+                    if line.startswith("model name"):
+                        model = line.split(":", 1)[1].strip()
+                        break
+        except OSError:
+            pass
+        physical_cores: int | None = None
+        logical_cores: int | None = None
+        if psutil is not None:
+            physical_cores = psutil.cpu_count(logical=False)
+            logical_cores = psutil.cpu_count(logical=True)
+        return cls(
+            model=model,
+            physical_cores=physical_cores,
+            logical_cores=logical_cores,
+        )
+
+
+@dataclasses.dataclass
 class HardwareInfo:
     """Information about the hardware used to run the query."""
 
     gpus: list[GPUInfo]
+    cpu: CPUInfo
     # TODO: ucx
 
     @classmethod
-    def collect(cls) -> HardwareInfo:
-        """Collect the hardware information."""
-        if pynvml is not None:
+    def collect(cls, *, collect_gpus: bool = True) -> HardwareInfo:
+        """
+        Collect the hardware information.
+
+        Parameters
+        ----------
+        collect_gpus : bool, optional
+            Whether to collect GPU information.
+
+        Returns
+        -------
+        HardwareInfo
+            The hardware information.
+        """
+        if collect_gpus and pynvml is not None:
             pynvml.nvmlInit()
             gpus = [
                 GPUInfo.from_index(i)
                 for i in range(pynvml.nvmlDeviceGetCount())
             ]
         else:
-            # No GPUs -- probably running in CPU mode
+            # No GPUs -- CPU-only frontend or NVML unavailable
             gpus = []
-        return cls(gpus=gpus)
+        return cls(gpus=gpus, cpu=CPUInfo.collect())
 
 
 def _infer_scale_factor(
@@ -303,39 +436,117 @@ def _infer_scale_factor(
         raise ValueError(f"Invalid benchmark script name: '{name}'.")
 
 
+def record_from_dict(data: dict[str, Any]) -> SuccessRecord | FailedRecord:
+    """
+    Read one iteration record back from its serialized form.
+
+    Parameters
+    ----------
+    data
+        One entry of a run's ``records``.
+
+    Returns
+    -------
+    The record, typed by its ``status``.
+
+    Raises
+    ------
+    ValueError
+        If the status is unrecognized.
+    """
+    status = data["status"]
+    if status == "success":
+        validation = data.get("validation_result")
+        return SuccessRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            duration=data["duration"],
+            validation_result=(
+                ValidationResult(**validation)
+                if validation is not None
+                else None
+            ),
+        )
+    if status == "error":
+        return FailedRecord(
+            query=data["query"],
+            iteration=data["iteration"],
+            traceback=data["traceback"],
+        )
+    raise ValueError(f"Unrecognized iteration status: {status!r}")
+
+
 @dataclasses.dataclass(kw_only=True)
 class RunConfig:
     """Results for a PDS-H or PDS-DS query run."""
 
+    engine_name: Literal["cudf-pandas", "pandas"]
+    # Query selection & dataset
     queries: list[int]
+    query_set: str
+    dataset_path: Path
+    original_dataset_path: Path | None = None
+    scale_factor: int | float
     suffix: str
-    executor: ExecutorType
+
+    # Execution mode
+    frontend: FrontendType
+
+    # Run parameters
+    iterations: int
+    io_mode: Literal["cold", "lukewarm", "hot"] = "lukewarm"
+
+    # Validation
+    validation_method: ValidationMethod | None = None
+
+    # DuckDB configuration
+    duckdb_threads: int | None = None
+    duckdb_memory_limit: str | None = None
+    duckdb_temp_dir: str | None = None
+
+    # Metadata / output (populated at runtime)
+    n_workers: int = 1
+    extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
     versions: PackageVersions = dataclasses.field(
         default_factory=PackageVersions.collect
     )
     records: dict[int, list[SuccessRecord | FailedRecord]] = dataclasses.field(
         default_factory=dict
     )
-    dataset_path: Path
-    scale_factor: int | float
-    iterations: int
-    timestamp: str = dataclasses.field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
     hardware: HardwareInfo = dataclasses.field(
         default_factory=HardwareInfo.collect
     )
     run_id: uuid.UUID = dataclasses.field(default_factory=uuid.uuid4)
-    query_set: str
-    validation_method: ValidationMethod | None = None
-    duckdb_threads: int | None = None
-    duckdb_memory_limit: str | None = None
-    duckdb_temp_dir: str | None = None
+    timestamp: str = dataclasses.field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    command_line: str
+    capture_env_vars: str
+    roles: list[Role] = dataclasses.field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.original_dataset_path is None:
+            self.original_dataset_path = self.dataset_path
+
+        if self.io_mode == "hot" and self.iterations < 2:
+            raise ValueError(
+                "--io-mode hot requires at least 2 iterations: "
+                "iteration 0 warms the cache, iterations 1+ are the hot measurements."
+            )
+
+        # Update `extra_info.environment` with the captured environment variables.
+        self.extra_info.setdefault("environment", {})
+        for var in self.capture_env_vars.split(","):
+            var_ = var.strip()
+            self.extra_info["environment"][var_] = os.environ.get(var_)
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> RunConfig:
         """Create a RunConfig from command line arguments."""
-        executor: ExecutorType = args.executor
+        frontend: FrontendType = args.frontend
+        engine_name: Literal["cudf-pandas", "pandas"] = (
+            "pandas" if frontend == "pandas-cpu" else "cudf-pandas"
+        )
 
         path = args.path
         name = args.query_set
@@ -364,7 +575,15 @@ class RunConfig:
             if scale_factor_int == scale_factor:
                 scale_factor = scale_factor_int
 
-        if "pdsh" in name and args.scale is not None:
+        skip_scale_factor_inference = (
+            "LIBCUDF_IO_REROUTE_LOCAL_DIR_PATTERN" in os.environ
+        ) and ("LIBCUDF_IO_REROUTE_REMOTE_DIR_PATTERN" in os.environ)
+
+        if (
+            "pdsh" in name
+            and args.scale is not None
+            and skip_scale_factor_inference is False
+        ):
             # Validate the user-supplied scale factor
             sf_inf = _infer_scale_factor(name, path, args.suffix)
             rel_error = abs((scale_factor - sf_inf) / sf_inf)
@@ -391,24 +610,63 @@ class RunConfig:
         else:
             validation_method = None
 
+        roles: list[Role] = []
+        if args.role_nightly:
+            roles.append(NightlyRole())
+        if args.role_nsys:
+            roles.append(NsysRole())
+
         return cls(
+            engine_name=engine_name,
             queries=args.query,
-            executor=executor,
+            frontend=frontend,
             dataset_path=path,
             scale_factor=scale_factor,
             iterations=args.iterations,
+            io_mode=args.io_mode,
             suffix=args.suffix,
             query_set=args.query_set,
             validation_method=validation_method,
+            extra_info=args.extra_info,
             duckdb_threads=args.duckdb_threads,
             duckdb_memory_limit=args.duckdb_memory_limit,
             duckdb_temp_dir=args.duckdb_temp_dir,
+            command_line=shlex.join(sys.argv),
+            capture_env_vars=args.capture_env_vars,
+            hardware=HardwareInfo.collect(
+                collect_gpus=frontend not in _CPU_ENGINES
+            ),
+            roles=roles,
         )
 
     def serialize(self) -> dict:
         """Serialize the run config to a dictionary."""
-        result = dataclasses.asdict(self)
-        result["run_id"] = str(self.run_id)
+        result: dict[str, Any] = {
+            "engine_name": self.engine_name,
+            "queries": self.queries,
+            "query_set": self.query_set,
+            "dataset_path": str(self.original_dataset_path),
+            "scale_factor": self.scale_factor,
+            "suffix": self.suffix,
+            "frontend": self.frontend,
+            "iterations": self.iterations,
+            "io_mode": self.io_mode,
+            "n_workers": self.n_workers,
+            "extra_info": dict(self.extra_info),
+            "run_id": str(self.run_id),
+            "timestamp": self.timestamp,
+            "command_line": self.command_line,
+            "records": {
+                k: [dataclasses.asdict(r) for r in v]
+                for k, v in self.records.items()
+            },
+            "versions": dataclasses.asdict(self.versions),
+            "hardware": dataclasses.asdict(self.hardware),
+            "validation_method": dataclasses.asdict(self.validation_method)
+            if self.validation_method
+            else None,
+            "roles": [dataclasses.asdict(r) for r in self.roles],
+        }
         return result
 
     def summarize(self) -> None:
@@ -416,44 +674,33 @@ class RunConfig:
         print("Iteration Summary")  # noqa: T201
         print("=======================================")  # noqa: T201
 
+        total_mean_time = 0.0
         for query, records in self.records.items():
             print(f"query: {query}")  # noqa: T201
-            print(f"path: {self.dataset_path}")  # noqa: T201
+            print(f"path: {self.original_dataset_path}")  # noqa: T201
             print(f"scale_factor: {self.scale_factor}")  # noqa: T201
-            print(f"executor: {self.executor}")  # noqa: T201
-            if len(records) > 0:
-                valid_durations = [
-                    record.duration
-                    for record in records
-                    if record.status == "success"
-                ]
-                print(f"iterations: {self.iterations}")  # noqa: T201
-                print("---------------------------------------")  # noqa: T201
-                if valid_durations:
-                    print(  # noqa: T201
-                        f"min time : {min(valid_durations):0.4f}"
-                    )
-                    print(  # noqa: T201
-                        f"max time : {max(valid_durations):0.4f}"
-                    )
-                    print(  # noqa: T201
-                        f"mean time: {statistics.mean(valid_durations):0.4f}"
-                    )
-                else:
-                    print("no successful iterations")  # noqa: T201
-                print("=======================================")  # noqa: T201
-        total_mean_time = sum(
-            statistics.mean(
+            print(f"frontend: {self.frontend}")  # noqa: T201
+            valid_durations = [
                 record.duration
                 for record in records
                 if record.status == "success"
+            ]
+            if len(valid_durations) > 0:
+                mean_time = statistics.mean(valid_durations)
+                total_mean_time += mean_time
+                print(f"iterations: {self.iterations}")  # noqa: T201
+                print("---------------------------------------")  # noqa: T201
+                print(f"min time : {min(valid_durations):0.4f}")  # noqa: T201
+                print(f"max time : {max(valid_durations):0.4f}")  # noqa: T201
+                print(f"mean time: {mean_time:0.4f}")  # noqa: T201
+                print("=======================================")  # noqa: T201
+
+        if total_mean_time > 0:
+            print(  # noqa: T201
+                f"Total mean time across all queries: {total_mean_time:.4f} seconds"
             )
-            for records in self.records.values()
-            if any(r.status == "success" for r in records)
-        )
-        print(  # noqa: T201
-            f"Total mean time across all queries: {total_mean_time:.4f} seconds"
-        )
+        else:
+            print("No successful queries")  # noqa: T201
 
 
 def get_data(
@@ -464,6 +711,110 @@ def get_data(
 ) -> pd.DataFrame:
     """Get table from dataset."""
     return pd.read_parquet(f"{path}/{table_name}{suffix}", columns=columns)
+
+
+def _pandas_cast_schema(schema: pa.Schema) -> pa.Schema:
+    import pyarrow as pa
+
+    fields: list[pa.Field] = []
+    for field in schema:
+        if pa.types.is_decimal(field.type):
+            fields.append(
+                pa.field(field.name, pa.float64(), nullable=field.nullable)
+            )
+        elif pa.types.is_date(field.type):
+            fields.append(
+                pa.field(
+                    field.name, pa.timestamp("ms"), nullable=field.nullable
+                )
+            )
+        else:
+            fields.append(field)
+    return pa.schema(fields)
+
+
+def _dataset_tables(dataset_path: Path, suffix: str) -> list[Path]:
+    if suffix:
+        return sorted(dataset_path.glob(f"*{suffix}"))
+    return sorted(
+        path
+        for path in dataset_path.iterdir()
+        if not path.name.startswith(".")
+    )
+
+
+def cast_dataset_for_pandas(
+    dataset_path: Path,
+    destination: Path,
+    suffix: str = ".parquet",
+) -> Path:
+    """Copy a dataset, casting decimal columns to float64 and dates to timestamps.
+
+    pandas reads Arrow decimal and date columns as object dtype columns of
+    `decimal.Decimal` and `datetime.date` values, which pandas cannot compute
+    on efficiently. Tables already present in `destination` are left alone, so
+    repeated runs reuse the copy.
+
+    Parameters
+    ----------
+    dataset_path
+        Directory holding the input tables.
+    destination
+        Directory to write the cast tables to.
+    suffix
+        File suffix of the input tables.
+
+    Returns
+    -------
+    `destination`, holding one cast table per input table.
+    """
+    import pyarrow.dataset as pa_dataset
+    import pyarrow.parquet as pq
+
+    destination.mkdir(parents=True, exist_ok=True)
+    for source in _dataset_tables(dataset_path, suffix):
+        target = destination / source.name
+        if target.exists():
+            continue
+        table = pa_dataset.dataset(source)
+        schema = _pandas_cast_schema(table.schema)
+        partial = target.with_name(f"{target.name}.partial")
+        with pq.ParquetWriter(partial, schema) as writer:
+            for batch in table.to_batches():
+                writer.write_batch(batch.cast(schema))
+        partial.replace(target)
+    return destination
+
+
+def prepare_pandas_cpu_dataset(
+    run_config: RunConfig,
+) -> RunConfig:
+    """Point a pandas-cpu run at a dataset copy with pandas-compatible dtypes.
+
+    Parameters
+    ----------
+    run_config
+        Configuration of the run, read for its dataset path and suffix.
+
+    Returns
+    -------
+    `run_config`, unchanged when no column needs casting, otherwise pointed at
+    a `-pandas-cast` sibling of the input dataset holding the cast copy.
+    """
+    import pyarrow.dataset as pa_dataset
+
+    dataset_path = Path(run_config.dataset_path)
+    tables = _dataset_tables(dataset_path, run_config.suffix)
+    if not tables:
+        raise ValueError(
+            f"No tables with suffix '{run_config.suffix}' found in {dataset_path}"
+        )
+    schema = pa_dataset.dataset(tables[0]).schema
+    if schema == _pandas_cast_schema(schema):
+        return run_config
+    destination = dataset_path.parent / f"{dataset_path.name}-pandas-cast"
+    cast_dataset_for_pandas(dataset_path, destination, run_config.suffix)
+    return dataclasses.replace(run_config, dataset_path=destination)
 
 
 def check_input_numeric_type(
@@ -559,6 +910,24 @@ def execute_duckdb_query(
             return conn.execute(query).df()
 
 
+def drop_file_page_cache_recursively(path: os.PathLike | str) -> None:
+    """Drop the Linux page cache for all files under `path`."""
+    try:
+        import kvikio
+    except ImportError as err:
+        raise RuntimeError(
+            "kvikio is required for cold-run page cache dropping. "
+            "Install it or switch to --io-mode lukewarm."
+        ) from err
+    p = Path(path).expanduser()
+    if p.is_file():
+        kvikio.drop_file_page_cache(p)
+        return
+    for f in p.rglob("*"):
+        if f.is_file():
+            kvikio.drop_file_page_cache(f)
+
+
 def execute_query(
     q_id: int,
     i: int,
@@ -566,12 +935,15 @@ def execute_query(
     run_config: RunConfig,
 ) -> tuple[pd.DataFrame, float]:
     """Execute a query with NVTX annotation."""
+    if run_config.io_mode == "cold":
+        drop_file_page_cache_recursively(run_config.dataset_path)
+
     with nvtx.annotate(
         message=f"Query {q_id} - Iteration {i}",
         domain="cudf.pandas",
         color="green",
     ):
-        if run_config.executor == "cpu":
+        if run_config.frontend == "pandas-cpu":
             with disable_module_accelerator():
                 start_time = time.monotonic()
                 result = q(run_config)
@@ -614,13 +986,20 @@ def list_validation_files(
     return validation_files
 
 
-def parse_args(
-    args: Sequence[str] | None = None, num_queries: int = 22
-) -> argparse.Namespace:
-    """Parse command line arguments."""
+def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
+    """Build the argument parser for PDS-H benchmarks."""
     parser = argparse.ArgumentParser(
         prog="cudf.pandas PDS-H Benchmarks",
-        description="cudf.pandas benchmark runner.",
+        description=textwrap.dedent(f"""\
+            cudf.pandas benchmark runner.
+
+            Exit code description:
+            - {EXIT_SUCCESS} : Success
+            - 1 : Unhandled exception during query run
+            - 2 : Invalid command line arguments
+            - {EXIT_QUERY_FAILURE} : Query failure (setup or execution)
+            - {EXIT_VALIDATION_FAILURE} : Validation failure
+            """),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -662,21 +1041,39 @@ def parse_args(
             Default: .parquet"""),
     )
     parser.add_argument(
-        "-e",
-        "--executor",
+        "--frontend",
         default="in-memory",
         type=str,
-        choices=["in-memory", "cpu"],
+        choices=["in-memory", "pandas-cpu"],
         help=textwrap.dedent("""\
-            Query executor backend:
-                - in-memory : Use cudf.pandas
-                - cpu       : Use pandas"""),
+            Execution frontend:
+                - in-memory : Single-process GPU evaluation via cudf.pandas
+                - pandas-cpu : pandas CPU execution (no GPU)"""),
     )
     parser.add_argument(
         "--iterations",
         default=1,
         type=int,
         help="Number of times to run the same query.",
+    )
+    parser.add_argument(
+        "--sleep-between-iterations",
+        default=0,
+        type=float,
+        dest="sleep_between_iterations",
+        metavar="SECONDS",
+        help="Sleep this many seconds between iterations (default: 0).",
+    )
+    parser.add_argument(
+        "--io-mode",
+        dest="io_mode",
+        default="lukewarm",
+        choices=["cold", "lukewarm", "hot"],
+        help=textwrap.dedent("""\
+            Cache state control for each timed iteration:
+                - cold     : Drop Linux page cache before each iteration (requires kvikio)
+                - lukewarm : No cache manipulation; OS cache state unchanged (default)
+                - hot      : One untimed warmup iteration to populate cache before measured runs"""),
     )
     parser.add_argument(
         "-o",
@@ -721,10 +1118,28 @@ def parse_args(
         ),
     )
     parser.add_argument(
+        "--results-directory",
+        type=Path,
+        default=None,
+        help="Optional directory to write query results as parquet files.",
+    )
+    parser.add_argument(
+        "--output-expected-directory",
+        type=Path,
+        default=None,
+        help="Optional directory to write expected results as parquet files.",
+    )
+    parser.add_argument(
         "--validation-abs-tol",
         type=float,
-        default=0.02,
-        help="Absolute tolerance for assert_frame_equal validation. Default: 0.02",
+        default=0.01,
+        help="Absolute tolerance for assert_frame_equal validation. Default: 0.01",
+    )
+    parser.add_argument(
+        "--extra-info",
+        type=json.loads,
+        default={},
+        help="Extra information to add to the output file (must be JSON-serializable).",
     )
     parser.add_argument(
         "--duckdb-threads",
@@ -744,7 +1159,45 @@ def parse_args(
         default=None,
         help="Directory for DuckDB to spill temporary data to disk.",
     )
+    parser.add_argument(
+        "--capture-env-vars",
+        type=str,
+        default="CUDF_PANDAS_FAIL_ON_FALLBACK,CUDF_PANDAS_FALLBACK_MODE,CUDF_PANDAS_RMM_MODE,CUDF_SPILL,CUDF_SPILL_DEVICE_LIMIT,KVIKIO_COMPAT_MODE,KVIKIO_NTHREADS,LIBCUDF_HOST_DECOMPRESSION,LIBCUDF_NUM_HOST_WORKERS,OMP_NUM_THREADS",
+        help="Comma-separated list of environment variables to capture. Written to ``extra_info.environment``.",
+    )
+    parser.add_argument(
+        "--role-nightly",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add the 'nightly' role to the benchmark run output.",
+    )
+    parser.add_argument(
+        "--role-nsys",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Add the 'nsys' role to the benchmark run output.",
+    )
+
+    return parser
+
+
+def parse_args(
+    args: Sequence[str] | None = None,
+    num_queries: int = 22,
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.Namespace:
+    """Parse command line arguments."""
+    if parser is None:
+        parser = build_parser(num_queries)
     parsed_args = parser.parse_args(args)
+
+    if (
+        parsed_args.suffix
+        and not parsed_args.suffix.startswith(".")
+        and not parsed_args.suffix.startswith("/")
+    ):
+        parsed_args.suffix = f".{parsed_args.suffix}"
+
     if (
         parsed_args.validate_directory is not None
         and not parsed_args.validate_directory.exists()
@@ -805,8 +1258,17 @@ def run_pandas_query_iteration(
     if args.print_results:
         print(result)  # noqa: T201
 
+    if args.results_directory is not None and iteration == 0:
+        results_dir = Path(args.results_directory)
+        results_dir.mkdir(parents=True, exist_ok=True)
+        output_path = results_dir / f"q_{q_id:02d}.parquet"
+        result.to_parquet(output_path)
+
     return SuccessRecord(
-        query=q_id, duration=duration, validation_result=validation_result
+        query=q_id,
+        iteration=iteration,
+        duration=duration,
+        validation_result=validation_result,
     )
 
 
@@ -830,7 +1292,7 @@ def run_pandas_query(
         match validation_method.expected_source:
             case "pandas":
                 cpu_run_config = dataclasses.replace(
-                    run_config, executor="cpu"
+                    run_config, frontend="pandas-cpu"
                 )
                 expected, _ = execute_query(q_id, 0, q, cpu_run_config)
             case "duckdb":
@@ -870,12 +1332,28 @@ def run_pandas_query(
             )
         result_casts = casts or None
 
+    if args.output_expected_directory is not None:
+        assert expected is not None, (
+            "Expected result must be computed before writing to disk."
+        )
+        expected_dir = Path(args.output_expected_directory)
+        expected_dir.mkdir(parents=True, exist_ok=True)
+        expected.to_parquet(expected_dir / f"q_{q_id:02d}.parquet")
+
     query_records: list[SuccessRecord | FailedRecord] = []
     iteration_failures: list[tuple[int, int]] = []
     validation_failed = False
     record: SuccessRecord | FailedRecord
 
     for i in range(args.iterations):
+        if i > 0 and args.sleep_between_iterations > 0:
+            print(  # noqa: T201
+                f"==> Sleeping {args.sleep_between_iterations} seconds "
+                "between iterations",
+                flush=True,
+            )
+            time.sleep(args.sleep_between_iterations)
+
         try:
             record = run_pandas_query_iteration(
                 q_id, i, q, run_config, args, expected, result_casts
@@ -900,11 +1378,12 @@ def run_pandas_query(
                 )
                 if record.validation_result.details:
                     pprint.pprint(record.validation_result.details)  # noqa: T203
-                else:
-                    print(  # noqa: T201
-                        f"Query {q_id} - Iteration {i} finished in {record.duration:0.4f}s",
-                        flush=True,
-                    )
+            else:
+                prefix = "✅ " if record.validation_result else ""
+                print(  # noqa: T201
+                    f"{prefix}Query {q_id} - Iteration {i} finished in {record.duration:0.4f}s",
+                    flush=True,
+                )
         query_records.append(record)
     return QueryRunResult(
         query_records=query_records,
@@ -913,15 +1392,12 @@ def run_pandas_query(
     )
 
 
-def run_pandas(
-    benchmark: Any,
-    options: Sequence[str] | None = None,
-    num_queries: int = 22,
-) -> None:
-    """Run the queries using the given benchmark and executor options."""
-    args = parse_args(options, num_queries=num_queries)
+def run_pandas(benchmark: Any, args: argparse.Namespace) -> None:
+    """Run the queries using the given benchmark and frontend."""
     vars(args).update({"query_set": benchmark.name})
     run_config = RunConfig.from_args(args)
+    if run_config.frontend == "pandas-cpu":
+        run_config = prepare_pandas_cpu_dataset(run_config)
     validation_failures: list[int] = []
     query_failures: list[tuple[int, int]] = []
 
@@ -964,7 +1440,7 @@ def run_pandas(
 
     if (
         run_config.validation_method is not None
-        and run_config.executor != "cpu"
+        and run_config.frontend not in _CPU_ENGINES
     ):
         print("\nValidation Summary")  # noqa: T201
         print("==================")  # noqa: T201
@@ -983,5 +1459,4 @@ def run_pandas(
     args.output.write(json.dumps(run_config.serialize()))
     args.output.write("\n")
 
-    exit_code = 1 if (query_failures or validation_failures) else 0
-    sys.exit(exit_code)
+    sys.exit(benchmark_exit_code(query_failures, validation_failures))

@@ -38,5 +38,6 @@ fetch_byte_ranges_async(cudf::io::datasource& datasource,
                         rmm::device_async_resource_ref mr)
 {
   // Using libcudf utility but may have custom implementation in the future
-  return cudf::io::parquet::fetch_byte_ranges_to_device_async(datasource, byte_ranges, stream, mr);
+  return cudf::io::parquet::fetch_byte_ranges_to_device_async(
+    datasource, byte_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
 }

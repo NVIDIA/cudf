@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,9 +16,9 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/cuda_device.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 
@@ -42,16 +42,17 @@
 /**
  * @brief Create memory resource for libcudf functions
  *
- * @param pool Whether to use a pool memory resource.
+ * @param name Memory resource name: "async", "pool", or "cuda"
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool pool)
+cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(std::string const& name)
 {
-  rmm::mr::cuda_memory_resource cuda_mr{};
-  if (pool) {
-    return rmm::mr::pool_memory_resource{cuda_mr, rmm::percent_of_free_device_memory(50)};
+  if (name == "pool") {
+    return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                         rmm::percent_of_free_device_memory(50)};
   }
-  return cuda_mr;
+  if (name == "cuda") { return rmm::mr::cuda_memory_resource{}; }
+  return rmm::mr::cuda_async_memory_resource{};
 }
 
 /**
@@ -154,10 +155,10 @@ std::unique_ptr<cudf::table> sort_keys(cudf::table_view input)
  * Command line parameters:
  * 1. JSON input file name/path (default: "example.json")
  * 2. JSON output file name/path (default: "output.json")
- * 3. Memory resource (optional): "pool" or "cuda" (default: "pool")
+ * 3. Memory resource (optional): "async", "pool", or "cuda" (default: "async")
  *
  * Example invocation from directory `cudf/cpp/examples/nested_types`:
- * ./build/deduplication example.json output.json pool
+ * ./build/deduplication example.json output.json async
  *
  */
 int main(int argc, char const** argv)
@@ -172,15 +173,14 @@ int main(int argc, char const** argv)
   if (argc == 1) {
     input_filepath  = "example.json";
     output_filepath = "output.json";
-    mr_name         = "pool";
+    mr_name         = "async";
   } else {
     input_filepath  = argv[1];
     output_filepath = argv[2];
     mr_name         = argv[3];
   }
 
-  auto pool     = mr_name == "pool";
-  auto resource = create_memory_resource(pool);
+  auto resource = create_memory_resource(mr_name);
   cudf::set_current_device_resource(resource);
 
   std::cout << "Reading " << input_filepath << "..." << std::endl;

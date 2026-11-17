@@ -28,7 +28,7 @@ namespace detail {
 /**
  * @copydoc cudf::label_bins(column_view const& input, column_view const& left_edges, inclusive
  * left_inclusive, column_view const& right_edges, inclusive right_inclusive, cuda::stream_ref,
- * rmm::device_async_resource_ref mr)
+ * cudf::memory_resources mr)
  *
  * @param stream Stream view on which to allocate resources and queue execution.
  */
@@ -38,7 +38,7 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cudf::memory_resources mr);
 
 /** @} */  // end of group
 }  // namespace detail

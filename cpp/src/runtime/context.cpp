@@ -76,7 +76,6 @@ void context::initialize_jit()
   // make sure the required directories exist
   std::filesystem::create_directories(_config.rtcx_cache_dir);
   std::filesystem::create_directories(_config.jit_bundle_dir);
-  std::filesystem::create_directories(_config.jit_pch_dir);
   std::filesystem::create_directories(_config.jit_tmp_dir);
 
   _nvrtc_version     = rtcx::nvrtc_version();
@@ -116,8 +115,6 @@ bool context::dump_codegen() const { return _config.dump_codegen; }
 bool context::use_jit() const { return _config.use_jit; }
 
 context_config const& context::config() const { return _config; }
-
-std::string const& context::get_jit_pch_dir() const { return _config.jit_pch_dir; }
 
 context::device_properties const& context::get_device_properties() const
 {
@@ -229,7 +226,6 @@ context make_context(detail::init_flags flags)
   auto const cache_dir      = get_cudf_kernel_cache_dir();
   auto const jit_bundle_dir = cache_dir / "bundle";
   auto const rtcx_cache_dir = cache_dir / "rtcx_cache";
-  auto const jit_pch_dir    = cache_dir / "pch";
   auto const jit_tmp_dir    = cache_dir / "tmp";
 
   flags = flags | (preload_nvcomp ? detail::init_flags::LOAD_NVCOMP : detail::init_flags::NONE);
@@ -245,7 +241,6 @@ context make_context(detail::init_flags flags)
                      .dump_jit_time_profile      = dump_jit_time_profile,
                      .rtcx_cache_dir             = rtcx_cache_dir,
                      .jit_bundle_dir             = jit_bundle_dir,
-                     .jit_pch_dir                = jit_pch_dir,
                      .jit_tmp_dir                = jit_tmp_dir,
                      .kernel_cache_limit_process = kernel_cache_limit_process};
 

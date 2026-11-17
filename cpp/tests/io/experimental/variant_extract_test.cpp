@@ -8,6 +8,8 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/testing_main.hpp>
+#include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -23,8 +25,12 @@
 #include <cstdio>
 #include <cstring>
 #include <format>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace avf = cudf::test::apache_variant_fixtures;
@@ -167,8 +173,10 @@ static std::unique_ptr<cudf::column> make_status_buffer(cudf::size_type num_rows
   auto col = cudf::make_numeric_column(
     cudf::data_type{cudf::type_id::UINT8}, num_rows, cudf::mask_state::UNALLOCATED);
   if (num_rows > 0) {
-    CUDF_CUDA_TRY(
-      cudaMemset(col->mutable_view().data<uint8_t>(), 0, static_cast<std::size_t>(num_rows)));
+    CUDF_CUDA_TRY(cudaMemsetAsync(col->mutable_view().data<uint8_t>(),
+                                  0,
+                                  static_cast<std::size_t>(num_rows),
+                                  cudf::test::get_default_stream().get()));
   }
   return col;
 }
@@ -179,6 +187,7 @@ constexpr uint8_t ST_MISSING   = static_cast<uint8_t>(op_status::MISSING_PATH);
 constexpr uint8_t ST_VNULL     = static_cast<uint8_t>(op_status::VARIANT_NULL);
 constexpr uint8_t ST_MISMATCH  = static_cast<uint8_t>(op_status::TYPE_MISMATCH);
 constexpr uint8_t ST_MALFORMED = static_cast<uint8_t>(op_status::MALFORMED_VARIANT);
+constexpr uint8_t ST_OVERFLOW  = static_cast<uint8_t>(op_status::OVERFLOW);
 
 struct ExtractVariantFieldTest : public cudf::test::BaseFixture {};
 
@@ -531,6 +540,30 @@ inline std::vector<uint8_t> enc_float64(double v)
   return out;
 }
 
+// Decimal primitive blobs: header + 1-byte scale + little-endian two's-complement unscaled integer.
+inline std::vector<uint8_t> enc_decimal4(int32_t unscaled, uint8_t scale)
+{
+  std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::DECIMAL4), scale};
+  append_le(out, static_cast<uint32_t>(unscaled), 4);
+  return out;
+}
+
+inline std::vector<uint8_t> enc_decimal8(int64_t unscaled, uint8_t scale)
+{
+  std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::DECIMAL8), scale};
+  append_le(out, static_cast<uint64_t>(unscaled), 8);
+  return out;
+}
+
+inline std::vector<uint8_t> enc_decimal16(__int128_t unscaled, uint8_t scale)
+{
+  std::vector<uint8_t> out{make_variant_primitive(variant_primitive_type::DECIMAL16), scale};
+  auto const bits = static_cast<__uint128_t>(unscaled);
+  append_le(out, static_cast<uint64_t>(bits), 8);
+  append_le(out, static_cast<uint64_t>(bits >> 64), 8);
+  return out;
+}
+
 // Long-string primitive blob: header + 4-byte LE length + payload.
 inline std::vector<uint8_t> enc_long_string(std::string_view s)
 {
@@ -593,7 +626,8 @@ inline std::vector<std::string> make_numeric_keys(int n)
 // self-contained within this test file for dynamic row counts.
 inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
   std::vector<std::vector<uint8_t>> const& meta_rows,
-  std::vector<std::vector<uint8_t>> const& val_rows)
+  std::vector<std::vector<uint8_t>> const& val_rows,
+  std::vector<bool> const& validity = {})
 {
   auto build_list = [](std::vector<std::vector<uint8_t>> const& rows) {
     auto const n = static_cast<cudf::size_type>(rows.size());
@@ -606,12 +640,16 @@ inline cudf::test::structs_column_wrapper wrap_multi_row_variant(
     auto offs =
       cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
     auto data = cudf::test::fixed_width_column_wrapper<uint8_t>(flat.begin(), flat.end()).release();
-    return cudf::make_lists_column(n, std::move(offs), std::move(data), 0, {});
+    return cudf::make_lists_column(n,
+                                   std::move(offs),
+                                   std::move(data),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   };
   std::vector<std::unique_ptr<cudf::column>> children;
   children.emplace_back(build_list(meta_rows));
   children.emplace_back(build_list(val_rows));
-  return cudf::test::structs_column_wrapper{std::move(children)};
+  return cudf::test::structs_column_wrapper{std::move(children), validity};
 }
 
 // Build a V1 VARIANT metadata blob for the given ordered string dictionary.
@@ -692,6 +730,33 @@ TEST_F(ExtractVariantFieldTest, NestedPathMultiRowMixedNulls)
                                                            cudf::test::get_default_stream());
 
   cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 0, 0}, {true, false, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+}
+
+TEST_F(ExtractVariantFieldTest, NestedDecimalField)
+{
+  constexpr auto expected_scale = numeric::scale_type{-2};
+  // Row 0: { price: DECIMAL8(123456, scale 3) } -> 123.456 -> 123.45 at scale -2 (truncated)
+  auto const m0 = build_metadata({"price"});
+  auto const v0 = build_single_field_object(/*fid=price*/ 0, enc_decimal8(123456, 3));
+  // Row 1: { price: DECIMAL4(-5, scale 1) } -> -0.5
+  auto const m1 = build_metadata({"price"});
+  auto const v1 = build_single_field_object(/*fid=price*/ 0, enc_decimal4(-5, 1));
+  // Row 2: { other: DECIMAL4(1, scale 0) } -> key "price" missing from dict -> null
+  auto const m2 = build_metadata({"other"});
+  auto const v2 = build_single_field_object(/*fid=other*/ 0, enc_decimal4(1, 0));
+
+  auto col = wrap_multi_row_variant({m0, m1, m2}, {v0, v1, v2});
+
+  auto got = cudf::io::parquet::experimental::extract_variant_field(
+    col,
+    "price",
+    cudf::data_type{cudf::type_id::DECIMAL64, expected_scale},
+    std::nullopt,
+    cudf::test::get_default_stream());
+
+  cudf::test::fixed_point_column_wrapper<int64_t> expected{
+    {12345, -50, 0}, {true, true, false}, expected_scale};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
 }
 
@@ -1270,6 +1335,314 @@ TEST_F(GetVariantFieldTest, EmptyInput)
   EXPECT_EQ(cudf::lists_column_view{got->view()}.child().type().id(), cudf::type_id::UINT8);
 }
 
+namespace {
+
+// One status buffer per path, kept alongside the views handed to the batched APIs
+struct status_buffers {
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  std::vector<cudf::mutable_column_view> views;
+
+  status_buffers(std::size_t num_paths, cudf::size_type num_rows)
+  {
+    columns.reserve(num_paths);
+    views.reserve(num_paths);
+    for (std::size_t path_idx = 0; path_idx < num_paths; ++path_idx) {
+      columns.push_back(make_status_buffer(num_rows));
+      views.push_back(columns.back()->mutable_view());
+    }
+  }
+};
+
+// Checks each path's status column against its expected values, naming the path on a mismatch
+void expect_path_statuses(std::span<std::string_view const> paths,
+                          status_buffers const& status,
+                          std::vector<std::vector<uint8_t>> const& expected)
+{
+  ASSERT_EQ(status.columns.size(), expected.size());
+  for (std::size_t path_idx = 0; path_idx < expected.size(); ++path_idx) {
+    SCOPED_TRACE("path: " + std::string{paths[path_idx]});
+    expect_status_values(*status.columns[path_idx], expected[path_idx]);
+  }
+}
+
+// The batched APIs must agree with the single-path API applied to each path in turn, which is what
+// most of the tests below check: the single-path behavior is the specification. Both the values and
+// the per-row statuses are compared, since the batched walk derives a status for a whole subtree
+// from its prefix rather than resolving each path on its own
+void expect_matches_looped_get(cudf::column_view const& variant,
+                               std::vector<std::string> const& paths)
+{
+  auto const stream = cudf::test::get_default_stream();
+  std::vector<std::string_view> const path_views(paths.begin(), paths.end());
+
+  status_buffers status{paths.size(), variant.size()};
+  auto const got =
+    cudf::io::parquet::experimental::get_variant_fields(variant, path_views, status.views, stream);
+  ASSERT_EQ(got->num_columns(), static_cast<cudf::size_type>(paths.size()));
+
+  for (std::size_t path_idx = 0; path_idx < paths.size(); ++path_idx) {
+    SCOPED_TRACE(std::string{"path: "} + paths[path_idx]);
+    auto const expected_status = make_status_buffer(variant.size());
+    auto const expected        = cudf::io::parquet::experimental::get_variant_field(
+      variant, paths[path_idx], expected_status->mutable_view(), stream);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(static_cast<cudf::size_type>(path_idx)),
+                                   *expected);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*status.columns[path_idx], *expected_status);
+  }
+}
+
+}  // namespace
+
+struct GetVariantFieldsTest : public cudf::test::BaseFixture {};
+
+TEST_F(GetVariantFieldsTest, DuplicateAndPrefixPaths)
+{
+  // "$.observation" is both a requested output and the prefix of another path, and appears twice
+  auto const col = make_apache_variant(avf::object_nested);
+  expect_matches_looped_get(
+    col, {"$.observation", "$.observation.time", "$.observation", "$.observation.value"});
+}
+
+TEST_F(GetVariantFieldsTest, TrieTooLargeForSharedMemory)
+{
+  // Enough paths that the trie arrays no longer fit the shared memory the walk stages them in, so
+  // they are read from global memory instead. The fields that resolve sit at both ends, so the
+  // output mapping is checked across the whole of the larger arrays
+  auto paths = std::vector<std::string>{"x", "y", "z"};
+  for (int i = 0; i < 4000; ++i) {
+    paths.push_back(std::format("$.field_{}", i));
+  }
+  paths.push_back("$.y");
+  expect_matches_looped_get(make_xyz_three_row_variant(), paths);
+}
+
+TEST_F(GetVariantFieldsTest, WideAndDeepTrieUsesGlobalScratch)
+{
+  // Global scratch over a trie whose slots mostly resolve: a 20-level nest of
+  // single-field objects, where each level is both a requested output and the parent of a sibling
+  // path that misses. Several slots therefore share a depth and each has to find its own parent,
+  // which the chain in LargeMixedInputUsesGlobalScratch cannot check because none of it resolves
+  constexpr int depth = 20;
+  auto const keys     = make_numeric_keys(depth + 1);
+  auto value          = enc_int32(7);
+  for (int level = depth - 1; level >= 0; --level) {
+    value = build_single_field_object(/*fid=*/static_cast<uint8_t>(level), value);
+  }
+  auto const col = wrap_single_variant(build_metadata(keys, /*sorted=*/true), value);
+
+  // The last key is in the dictionary but in no object, so the sibling paths fail at their own
+  // step rather than inheriting a failed prefix
+  auto const missing_key = std::format(".k{:02}", depth);
+  std::vector<std::string> paths;
+  std::string prefix = "$";
+  for (int level = 0; level < depth; ++level) {
+    prefix += std::format(".k{:02}", level);
+    paths.push_back(prefix);
+    paths.push_back(prefix + missing_key);
+  }
+  expect_matches_looped_get(col, paths);
+}
+
+namespace {
+
+// Kinds of rows in the large mixed input: a null row, an empty value blob, `{k00: row}`, and
+// `{k00: row, k01: {k02: -row}}`
+enum class row_kind { NULL_ROW, EMPTY_ROW, ONE_KEY, TWO_KEYS };
+
+[[nodiscard]] row_kind kind_of(cudf::size_type row)
+{
+  constexpr std::array kinds{row_kind::NULL_ROW,
+                             row_kind::EMPTY_ROW,
+                             row_kind::ONE_KEY,
+                             row_kind::TWO_KEYS,
+                             row_kind::TWO_KEYS};
+  return kinds[row % kinds.size()];
+}
+
+// Checks the batched outputs against values derived on the host, over enough rows that the walk,
+// the valid-row count and the fused copy all span many blocks and bitmask words. The row count is
+// not a multiple of 32, and it exceeds both one counting block's share of a mask and the thread
+// count of the capped global-scratch grid. Every path in `chain` extends `$.k01.k02`, which holds
+// an INT32, so none of them resolves. The paths are listed out of trie order, so outputs are not
+// in slot order
+void expect_large_mixed_input(std::vector<std::string> const& chain)
+{
+  constexpr cudf::size_type num_rows = 100'003;
+  auto const stream                  = cudf::test::get_default_stream();
+
+  auto const meta = build_metadata(make_numeric_keys(4), /*sorted=*/true);
+  std::vector<std::vector<uint8_t>> val_rows(num_rows);
+  std::vector<bool> row_valid(num_rows, true);
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    auto const k00 = enc_int32(row);
+    switch (kind_of(row)) {
+      case row_kind::NULL_ROW: row_valid[row] = false; break;
+      case row_kind::EMPTY_ROW: break;
+      case row_kind::ONE_KEY: val_rows[row] = build_single_field_object(/*fid=*/0, k00); break;
+      case row_kind::TWO_KEYS: {
+        auto const k01 = build_single_field_object(/*fid=*/2, enc_int32(-row));
+        auto& out      = val_rows[row];
+        out            = {make_variant_object_header(),
+                          0x02,
+                          0x00,
+                          0x01,
+                          0x00,
+                          static_cast<uint8_t>(k00.size()),
+                          static_cast<uint8_t>(k00.size() + k01.size())};
+        out.insert(out.end(), k00.begin(), k00.end());
+        out.insert(out.end(), k01.begin(), k01.end());
+      }
+    }
+  }
+  auto const col =
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(num_rows, meta), val_rows, row_valid);
+
+  constexpr std::size_t k02_path = 1;
+  constexpr std::size_t k00_path = 2;
+  std::vector<std::string> paths{"$.k01.k03", "$.k01.k02", "k00"};
+  paths.insert(paths.end(), chain.begin(), chain.end());
+
+  // The value `path_idx` locates in a row of `kind`, if any
+  auto const expected_value =
+    [](std::size_t path_idx, row_kind kind, cudf::size_type row) -> std::optional<int32_t> {
+    if (path_idx == k00_path && (kind == row_kind::ONE_KEY || kind == row_kind::TWO_KEYS)) {
+      return row;
+    }
+    if (path_idx == k02_path && kind == row_kind::TWO_KEYS) { return -row; }
+    return std::nullopt;
+  };
+  std::vector<std::string_view> const path_views(paths.begin(), paths.end());
+  status_buffers status{paths.size(), num_rows};
+  auto const got =
+    cudf::io::parquet::experimental::get_variant_fields(col, path_views, status.views, stream);
+
+  for (std::size_t path_idx = 0; path_idx < paths.size(); ++path_idx) {
+    SCOPED_TRACE(std::string{"path: "} + paths[path_idx]);
+    std::vector<int32_t> values(num_rows);
+    std::vector<bool> valid(num_rows);
+    std::vector<uint8_t> statuses(num_rows);
+    for (cudf::size_type row = 0; row < num_rows; ++row) {
+      auto const kind  = kind_of(row);
+      auto const value = expected_value(path_idx, kind, row);
+      values[row]      = value.value_or(0);
+      valid[row]       = value.has_value();
+      switch (kind) {
+        case row_kind::NULL_ROW: statuses[row] = ST_ROW_NULL; break;
+        case row_kind::EMPTY_ROW: statuses[row] = ST_MALFORMED; break;
+        default: statuses[row] = value.has_value() ? ST_SUCCESS : ST_MISSING;
+      }
+    }
+    auto const got_column = got->get_column(static_cast<cudf::size_type>(path_idx)).view();
+    EXPECT_EQ(got_column.null_count(), std::count(valid.begin(), valid.end(), false));
+    auto const casted = cudf::io::parquet::experimental::cast_variant(
+      got_column, cudf::data_type{cudf::type_id::INT32}, std::nullopt, stream);
+    cudf::test::fixed_width_column_wrapper<int32_t> const expected(
+      values.begin(), values.end(), valid.begin());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*casted, expected);
+    expect_status_values(*status.columns[path_idx], statuses);
+  }
+}
+
+}  // namespace
+
+TEST_F(GetVariantFieldsTest, LargeMixedInput) { expect_large_mixed_input({}); }
+
+TEST_F(GetVariantFieldsTest, LargeMixedInputUsesGlobalScratch)
+{
+  // A chain deeper than the per-thread stack, so the walk runs on the capped global-scratch grid
+  std::vector<std::string> chain{"$.k01.k02.s0"};
+  for (int i = 1; i < 20; ++i) {
+    chain.push_back(std::format("{}.s{}", chain.back(), i));
+  }
+  expect_large_mixed_input(chain);
+}
+
+TEST_F(GetVariantFieldsTest, NoPathsYieldsNoColumns)
+{
+  auto const col = make_xyz_three_row_variant();
+  auto const got = cudf::io::parquet::experimental::get_variant_fields(
+    col, std::vector<std::string_view>{}, {}, cudf::test::get_default_stream());
+  EXPECT_EQ(got->num_columns(), 0);
+}
+
+TEST_F(GetVariantFieldsTest, EmptyInput)
+{
+  auto const stream  = cudf::test::get_default_stream();
+  auto const variant = cudf::empty_like(make_xyz_three_row_variant());
+
+  std::vector<std::string_view> const paths{"x", "$.y.z"};
+  auto const got = cudf::io::parquet::experimental::get_variant_fields(*variant, paths, {}, stream);
+
+  ASSERT_EQ(got->num_columns(), 2);
+  for (auto const& column : got->view()) {
+    EXPECT_EQ(column.type().id(), cudf::type_id::LIST);
+    EXPECT_EQ(column.size(), 0);
+    EXPECT_EQ(cudf::lists_column_view{column}.child().type().id(), cudf::type_id::UINT8);
+  }
+
+  status_buffers status{paths.size(), variant->size()};
+  auto const with_status =
+    cudf::io::parquet::experimental::get_variant_fields(*variant, paths, status.views, stream);
+  ASSERT_EQ(with_status->num_columns(), 2);
+  for (auto const& column : status.columns) {
+    EXPECT_EQ(column->size(), 0);
+  }
+}
+
+TEST_F(GetVariantFieldsTest, MalformedPathThrows)
+{
+  auto const col = make_xyz_three_row_variant();
+  auto const bad = std::vector<std::string_view>{"x", "$.a[", "y"};
+  EXPECT_THROW(static_cast<void>(cudf::io::parquet::experimental::get_variant_fields(
+                 col, bad, {}, cudf::test::get_default_stream())),
+               std::invalid_argument);
+}
+
+struct ExtractVariantFieldsTest : public cudf::test::BaseFixture {};
+
+TEST_F(ExtractVariantFieldsTest, SharedPrefixesTypedValues)
+{
+  auto const col = make_apache_variant(avf::object_nested);
+  std::vector<std::string_view> const paths{"$.observation.location",
+                                            "$.observation.value.temperature",
+                                            "$.species.population",
+                                            "$.species.nope"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::STRING},
+                                           cudf::data_type{cudf::type_id::INT8},
+                                           cudf::data_type{cudf::type_id::INT16},
+                                           cudf::data_type{cudf::type_id::STRING}};
+
+  auto const got = cudf::io::parquet::experimental::extract_variant_fields(
+    col, paths, types, {}, cudf::test::get_default_stream());
+
+  ASSERT_EQ(got->num_columns(), 4);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(0),
+                                 cudf::test::strings_column_wrapper({"In the Volcano"}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(1),
+                                 cudf::test::fixed_width_column_wrapper<int8_t>{int8_t{123}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(2),
+                                 cudf::test::fixed_width_column_wrapper<int16_t>{int16_t{6789}});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got->get_column(3),
+                                 cudf::test::strings_column_wrapper({"donotread"}, {false}));
+}
+
+TEST_F(ExtractVariantFieldsTest, InvalidDesiredTypesThrow)
+{
+  auto const col = make_xyz_three_row_variant();
+  std::vector<std::string_view> const paths{"x", "y"};
+  auto const extract = [&](std::vector<cudf::data_type> const& types) {
+    return cudf::io::parquet::experimental::extract_variant_fields(
+      col, paths, types, {}, cudf::test::get_default_stream());
+  };
+
+  EXPECT_THROW(static_cast<void>(extract({cudf::data_type{cudf::type_id::INT32}})),
+               std::invalid_argument);
+  // Only the last path's type is unsupported
+  EXPECT_THROW(static_cast<void>(extract({cudf::data_type{cudf::type_id::INT32},
+                                          cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}})),
+               std::invalid_argument);
+}
+
 template <typename T, std::size_t M, std::size_t V>
 std::unique_ptr<cudf::column> cast_apache_primitive(avf::fixture<M, V> const& fixture)
 {
@@ -1323,6 +1696,38 @@ TEST_F(CastVariantTest, ApachePrimitiveFloats)
   cast(avf::primitive_double, double{1234567890.1234});
 }
 
+TEST_F(CastVariantTest, ApachePrimitiveTimestamps)
+{
+  using us          = cudf::timestamp_us;
+  using ns          = cudf::timestamp_ns;
+  auto const expect = [](auto got, auto expected) {
+    cudf::test::fixed_width_column_wrapper<decltype(expected)> col{expected};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, col);
+  };
+  // The timezone-adjusted and NTZ encodings both decode into the timestamp of the same unit.
+  expect(cast_apache_primitive<us>(avf::primitive_timestamp), us{us::duration{0x000632E7DD9752E0}});
+  expect(cast_apache_primitive<us>(avf::primitive_timestampntz),
+         us{us::duration{0x000632E48348C2E0}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestamp_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  expect(cast_apache_primitive<ns>(avf::primitive_timestampntz_nanos),
+         ns{ns::duration{0x1805AFB76C3A4115}});
+  // No unit conversion: a mismatched unit or a plain int64 yields null with TYPE_MISMATCH.
+  auto const expect_mismatch = [](cudf::type_id target, auto const& fixture) {
+    auto const stream = cudf::test::get_default_stream();
+    auto col          = make_apache_variant(fixture);
+    auto const value  = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    auto status       = make_status_buffer(value.size());
+    auto got          = cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{target}, status->mutable_view(), stream);
+    EXPECT_EQ(got->null_count(), 1);
+    expect_status_values(*status, {ST_MISMATCH});
+  };
+  expect_mismatch(cudf::type_id::TIMESTAMP_NANOSECONDS, avf::primitive_timestamp);
+  expect_mismatch(cudf::type_id::TIMESTAMP_MICROSECONDS, avf::primitive_timestamp_nanos);
+  expect_mismatch(cudf::type_id::TIMESTAMP_MICROSECONDS, avf::primitive_int64);
+}
+
 TEST_F(CastVariantTest, ApachePrimitiveBooleans)
 {
   auto stream     = cudf::test::get_default_stream();
@@ -1348,9 +1753,9 @@ TEST_F(CastVariantTest, ApachePrimitiveBooleans)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
   }
 
-  // Sliced multi-row column exercises grid-stride paths with a non-zero slice offset.
-  // num_rows / slice range is chosen so the sliced window (slice_end - slice_beg = 512)
-  // spans more than one cast_variant_bool_kernel block (block_size = 256).
+  // A 512-row sliced window at a non-zero offset, covering the row-to-blob mapping the bool path
+  // shares with the cast kernels. The bool path itself is a thrust::for_each, so it has no
+  // grid-stride loop of its own.
   {
     constexpr int num_rows  = 516;
     constexpr int slice_beg = 3;
@@ -1397,6 +1802,211 @@ TEST_F(CastVariantTest, ApachePrimitiveBooleans)
       exp_vals.begin() + slice_beg, exp_vals.begin() + slice_end, exp_valid.begin() + slice_beg);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
   }
+}
+
+TEST_F(CastVariantTest, ApachePrimitiveDecimals)
+{
+  // The Apache fixtures all encode a scale of 2, so they decode exactly into this column scale.
+  constexpr auto expected_scale = numeric::scale_type{-2};
+  auto const stream             = cudf::test::get_default_stream();
+  auto const cast               = [&](auto const& fixture, cudf::type_id id) {
+    auto col         = make_apache_variant(fixture);
+    auto const value = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    return cudf::io::parquet::experimental::cast_variant(
+      value, cudf::data_type{id, expected_scale}, std::nullopt, stream);
+  };
+
+  {
+    auto got = cast(avf::primitive_decimal4, cudf::type_id::DECIMAL32);
+    cudf::test::fixed_point_column_wrapper<int32_t> expected{{1234}, expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+  {
+    auto got = cast(avf::primitive_decimal8, cudf::type_id::DECIMAL64);
+    cudf::test::fixed_point_column_wrapper<int64_t> expected{{1234567890}, expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+  {
+    auto got = cast(avf::primitive_decimal16, cudf::type_id::DECIMAL128);
+    cudf::test::fixed_point_column_wrapper<__int128_t> expected{{1234567891234567890},
+                                                                expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+}
+
+template <typename T>
+struct CastVariantDecimalTest : public cudf::test::BaseFixture {};
+TYPED_TEST_SUITE(CastVariantDecimalTest, cudf::test::FixedPointTypes);
+
+// Writers pick the narrowest width per value, so one column can mix all three, and every encoded
+// width decodes into whichever decimal target was asked for.
+TYPED_TEST(CastVariantDecimalTest, WidthsAreInterchangeable)
+{
+  using Rep                     = typename TypeParam::rep;
+  constexpr auto expected_scale = numeric::scale_type{-2};
+  auto const stream             = cudf::test::get_default_stream();
+  std::vector<std::vector<uint8_t>> const val_rows{
+    enc_decimal4(1234, 2), enc_decimal8(1234, 2), enc_decimal16(1234, 2)};
+  auto col =
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(3, build_metadata({})), val_rows);
+  auto const values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+
+  auto got = cudf::io::parquet::experimental::cast_variant(
+    values, cudf::data_type{cudf::type_to_id<TypeParam>(), expected_scale}, std::nullopt, stream);
+
+  cudf::test::fixed_point_column_wrapper<Rep> expected{{1234, 1234, 1234}, expected_scale};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+}
+
+TEST_F(CastVariantTest, Decimal16FullRange)
+{
+  // Exercises the high half of a 16-byte payload, which every other decimal case here leaves
+  // zeroed.
+  auto const stream = cudf::test::get_default_stream();
+  constexpr auto int128_max =
+    static_cast<__int128_t>((~static_cast<__uint128_t>(0)) >> 1);  // 2^127 - 1
+  constexpr __int128_t int128_min = -int128_max - 1;
+
+  std::vector<std::vector<uint8_t>> const val_rows{enc_decimal16(int128_max, 0),
+                                                   enc_decimal16(int128_min, 0),
+                                                   enc_decimal16(int128_max, 38),
+                                                   enc_decimal16(int128_min, 38)};
+  auto col =
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(4, build_metadata({})), val_rows);
+  auto const values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+
+  // The scale-38 rows lose every fractional digit; |int128_max| is just over 1.7e38.
+  {
+    constexpr auto expected_scale = numeric::scale_type{0};
+    auto got                      = cudf::io::parquet::experimental::cast_variant(
+      values, cudf::data_type{cudf::type_id::DECIMAL128, expected_scale}, std::nullopt, stream);
+    cudf::test::fixed_point_column_wrapper<__int128_t> expected{{int128_max, int128_min, 1, -1},
+                                                                expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+
+  // The scale-0 rows would need 10^38 more digits than the representation holds.
+  {
+    constexpr auto expected_scale = numeric::scale_type{-38};
+    auto got                      = cudf::io::parquet::experimental::cast_variant(
+      values, cudf::data_type{cudf::type_id::DECIMAL128, expected_scale}, std::nullopt, stream);
+    cudf::test::fixed_point_column_wrapper<__int128_t> expected{
+      {0, 0, int128_max, int128_min}, {false, false, true, true}, expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+}
+
+TEST_F(CastVariantTest, DecimalRescaledToRequestedScale)
+{
+  // Digits below the requested scale are truncated toward zero, never rounded.
+  constexpr auto expected_scale = numeric::scale_type{-1};
+  auto const stream             = cudf::test::get_default_stream();
+  std::vector<std::vector<uint8_t>> const val_rows{
+    enc_decimal4(125, 2),   // 1.25 -> 1.2 at scale -1 (truncated, not rounded to 1.3)
+    enc_decimal4(-125, 2),  // -1.25 -> -1.2, truncation is toward zero for negatives too
+    enc_decimal4(199, 2),   // 1.99 -> 1.9
+    enc_decimal4(-199, 2),  // -1.99 -> -1.9
+    enc_decimal4(7, 0),     // 7 -> 7.0
+    enc_decimal8(30, 3),    // 0.030 -> 0.0
+    enc_decimal16(1, 38)};  // 1e-38 -> 0.0
+  auto col =
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(7, build_metadata({})), val_rows);
+  auto const values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+
+  auto got = cudf::io::parquet::experimental::cast_variant(
+    values, cudf::data_type{cudf::type_id::DECIMAL32, expected_scale}, std::nullopt, stream);
+
+  cudf::test::fixed_point_column_wrapper<int32_t> expected{{12, -12, 19, -19, 70, 0, 0},
+                                                           expected_scale};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+}
+
+TEST_F(CastVariantTest, DecimalOverflowYieldsNull)
+{
+  // A value that does not fit the target representation after rescaling becomes a null row.
+  auto const stream = cudf::test::get_default_stream();
+  auto const cast   = [&](std::vector<std::vector<uint8_t>> const& rows, cudf::data_type target) {
+    auto col = wrap_multi_row_variant(
+      std::vector<std::vector<uint8_t>>(rows.size(), build_metadata({})), rows);
+    auto const values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+    return cudf::io::parquet::experimental::cast_variant(values, target, std::nullopt, stream);
+  };
+
+  {
+    constexpr auto expected_scale = numeric::scale_type{-3};
+    constexpr auto int32_max      = std::numeric_limits<int32_t>::max();
+    auto got =
+      cast({enc_decimal8(int64_t{int32_max} + 1, 2),  // past the int32 representation as encoded
+            enc_decimal4(int32_max / 1000 + 1, 0),    // fits as encoded, but not after the 10^3
+                                                      // scale-up
+            enc_decimal4(1234, 2)},                   // fits, to show the overflow is per row
+           cudf::data_type{cudf::type_id::DECIMAL32, expected_scale});
+    cudf::test::fixed_point_column_wrapper<int32_t> expected{
+      {0, 0, 12340}, {false, false, true}, expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+
+  // The int64 representation has its own bound, reachable only from a 16-byte encoded value.
+  {
+    constexpr auto expected_scale = numeric::scale_type{0};
+    // 2^64 rather than 2^63, so that the negated row is out of range too: -2^63 is int64_min.
+    constexpr auto out_of_int64_range = static_cast<__int128_t>(1) << 64;
+    auto got                          = cast({enc_decimal16(out_of_int64_range, 0),
+                                              enc_decimal16(-out_of_int64_range, 0),
+                                              enc_decimal8(1234, 2)},
+                    cudf::data_type{cudf::type_id::DECIMAL64, expected_scale});
+    cudf::test::fixed_point_column_wrapper<int64_t> expected{
+      {0, 0, 12}, {false, false, true}, expected_scale};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+  }
+}
+
+TEST_F(CastVariantTest, DecimalSlicedMultiBlock)
+{
+  // The 512-row sliced window spans several kernel blocks (block_size = 256) at a non-zero offset.
+  // Values and encoded widths differ per row, so a row-indexing mistake cannot pass by coincidence.
+  constexpr auto expected_scale = numeric::scale_type{-2};
+  auto const stream             = cudf::test::get_default_stream();
+  constexpr int num_rows        = 516;
+  constexpr int slice_beg       = 3;
+  constexpr int slice_end       = 515;
+
+  std::vector<std::vector<uint8_t>> val_rows(num_rows);
+  std::vector<int32_t> exp_reps(num_rows);
+  std::vector<bool> exp_valid(num_rows);
+  for (int i = 0; i < num_rows; ++i) {
+    switch (i % 3) {
+      case 0:
+        val_rows[i]  = enc_decimal4(i, 2);
+        exp_reps[i]  = i;
+        exp_valid[i] = true;
+        break;
+      case 1:
+        val_rows[i]  = enc_decimal8(i, 2);
+        exp_reps[i]  = i;
+        exp_valid[i] = true;
+        break;
+      default:
+        val_rows[i]  = enc_int32(i);  // not a decimal encoding, so the row casts to null
+        exp_reps[i]  = 0;
+        exp_valid[i] = false;
+        break;
+    }
+  }
+
+  auto col = wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(num_rows, build_metadata({})),
+                                    val_rows);
+  auto const sliced = cudf::slice(col, {slice_beg, slice_end}).front();
+  auto const values = cudf::structs_column_view{sliced}.get_sliced_child(1, stream);
+
+  auto got = cudf::io::parquet::experimental::cast_variant(
+    values, cudf::data_type{cudf::type_id::DECIMAL32, expected_scale}, std::nullopt, stream);
+
+  cudf::test::fixed_point_column_wrapper<int32_t> expected(exp_reps.begin() + slice_beg,
+                                                           exp_reps.begin() + slice_end,
+                                                           exp_valid.begin() + slice_beg,
+                                                           expected_scale);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
 }
 
 TEST_F(CastVariantTest, ApacheShortString)
@@ -1450,14 +2060,18 @@ TEST_F(CastVariantTest, EmptyInput)
   auto const values =
     cudf::empty_like(cudf::structs_column_view{make_xyz_three_row_variant()}.child(1));
 
-  for (auto const id : {cudf::type_id::INT32,
-                        cudf::type_id::STRING,
-                        cudf::type_id::FLOAT32,
-                        cudf::type_id::FLOAT64,
-                        cudf::type_id::BOOL8}) {
-    auto got = cudf::io::parquet::experimental::cast_variant(
-      *values, cudf::data_type{id}, std::nullopt, stream);
-    EXPECT_EQ(got->type().id(), id);
+  for (auto const target : {cudf::data_type{cudf::type_id::INT32},
+                            cudf::data_type{cudf::type_id::STRING},
+                            cudf::data_type{cudf::type_id::FLOAT32},
+                            cudf::data_type{cudf::type_id::FLOAT64},
+                            cudf::data_type{cudf::type_id::BOOL8},
+                            cudf::data_type{cudf::type_id::DECIMAL32, -2},
+                            cudf::data_type{cudf::type_id::DECIMAL64, -2},
+                            cudf::data_type{cudf::type_id::DECIMAL128, -2}}) {
+    SCOPED_TRACE(static_cast<int32_t>(target.id()));
+    auto got = cudf::io::parquet::experimental::cast_variant(*values, target, std::nullopt, stream);
+    EXPECT_EQ(got->type().id(), target.id());
+    EXPECT_EQ(got->type().scale(), target.scale());
     EXPECT_EQ(got->size(), 0);
     EXPECT_EQ(got->null_count(), 0);
   }
@@ -1474,11 +2088,8 @@ TEST_F(CastVariantTest, UnsupportedTypeThrows)
                                        cudf::type_id::UINT64,
                                        cudf::type_id::TIMESTAMP_DAYS,
                                        cudf::type_id::TIMESTAMP_SECONDS,
-                                       cudf::type_id::TIMESTAMP_MICROSECONDS,
-                                       cudf::type_id::DURATION_SECONDS,
-                                       cudf::type_id::DECIMAL32,
-                                       cudf::type_id::DECIMAL64,
-                                       cudf::type_id::DECIMAL128};
+                                       cudf::type_id::TIMESTAMP_MILLISECONDS,
+                                       cudf::type_id::DURATION_SECONDS};
 
   // Empty input: the early-return path must still validate the type.
   auto const empty_values =
@@ -1503,12 +2114,12 @@ TEST_F(CastVariantTest, UnsupportedTypeThrows)
 
 TEST_F(CastVariantTest, CastSourceTargetMatrix)
 {
-  // Exhaustively covers (source physical type) x (supported target) casts. The supported targets
-  // are INT8/16/32/64 and STRING. Expected behaviour:
+  // Exhaustively covers (source physical type) x (supported target) casts. Expected behaviour:
   //   - integer targets: only a source whose physical type has the *exact* same width decodes;
   //   every
-  //     other source (including narrower/wider ints) yields null — cast_variant does not widen.
+  //     other source (including narrower/wider ints and the decimals) yields null.
   //   - STRING target: short_string and long_string sources decode; every other source yields null.
+  //   - decimal target: every decimal width decodes; every other source yields null.
   auto const stream = cudf::test::get_default_stream();
 
   struct source_blob {
@@ -1526,6 +2137,10 @@ TEST_F(CastVariantTest, CastSourceTargetMatrix)
     {"float64", enc_float64(2.5)},
     {"short_string", enc_short_string("hi")},
     {"long_string", enc_long_string(std::string(70, 'a'))},
+    {"decimal4", enc_decimal4(1234, 2)},
+    {"decimal8", enc_decimal8(1234, 2)},
+    {"decimal16", enc_decimal16(1234, 2)},
+    {"object", build_single_field_object(0, enc_int32(1234))},
   };
 
   auto values_of = [](std::vector<uint8_t> const& b) {
@@ -1565,6 +2180,23 @@ TEST_F(CastVariantTest, CastSourceTargetMatrix)
     if (label == "short_string" || label == "long_string") {
       std::string const expected_str = (label == "short_string") ? "hi" : std::string(70, 'a');
       cudf::test::strings_column_wrapper const expected({expected_str});
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+    } else {
+      ASSERT_EQ(got->size(), 1);
+      EXPECT_EQ(got->null_count(), 1);
+    }
+  }
+
+  auto const decimal_type = cudf::data_type{cudf::type_id::DECIMAL32, -2};
+  for (auto const& src : sources) {
+    SCOPED_TRACE(std::string{"decimal target, source "} + src.label);
+    auto values = values_of(src.bytes);
+    auto got =
+      cudf::io::parquet::experimental::cast_variant(values, decimal_type, std::nullopt, stream);
+    // Decimal target: all three encoded widths decode, since the sources share the encoded scale.
+    if (src.label.starts_with("decimal")) {
+      cudf::test::fixed_point_column_wrapper<int32_t> const expected{
+        {1234}, numeric::scale_type{decimal_type.scale()}};
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
     } else {
       ASSERT_EQ(got->size(), 1);
@@ -1675,7 +2307,8 @@ inline std::unique_ptr<cudf::column> scalar_i32()
 // A single-row STRUCT column adopting `children`.
 inline std::unique_ptr<cudf::column> struct_of(std::vector<std::unique_ptr<cudf::column>> children)
 {
-  return cudf::make_structs_column(1, std::move(children), 0, rmm::device_buffer{});
+  return cudf::make_structs_column(
+    1, std::move(children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 inline std::vector<std::unique_ptr<cudf::column>> two_children(std::unique_ptr<cudf::column> a,
@@ -2193,10 +2826,6 @@ TEST_F(GetVariantTypeIdTest, MultiWordNullMask)
             static_cast<cudf::size_type>(list_null_rows.size() + unknown_header_rows.size()));
 }
 
-// ---------------------------------------------------------------------------
-// GetVariantField status tests
-// ---------------------------------------------------------------------------
-
 struct GetVariantFieldStatusTest : public cudf::test::BaseFixture {};
 
 TEST_F(GetVariantFieldStatusTest, SqlNullInputProducesRowNullStatus)
@@ -2374,10 +3003,6 @@ TEST_F(GetVariantFieldStatusTest, EmptyInput)
   EXPECT_EQ(got->size(), 0);
 }
 
-// ---------------------------------------------------------------------------
-// CastVariant status tests
-// ---------------------------------------------------------------------------
-
 struct CastVariantStatusTest : public cudf::test::BaseFixture {};
 
 namespace {
@@ -2447,10 +3072,15 @@ TEST_F(CastVariantStatusTest, SqlNullInputProducesRowNullStatus)
     cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end()).release();
   auto data_col =
     cudf::test::fixed_width_column_wrapper<uint8_t>(flat.begin(), flat.end()).release();
-  auto values_col = cudf::make_lists_column(2, std::move(offs_col), std::move(data_col), 0, {});
+  auto values_col =
+    cudf::make_lists_column(2,
+                            std::move(offs_col),
+                            std::move(data_col),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   // Mask row 1 SQL null
   auto null_mask = cudf::create_null_mask(2, cudf::mask_state::ALL_VALID, stream, cmr());
-  cudf::set_null_mask(static_cast<cudf::bitmask_type*>(null_mask.data()), 1, 2, false);
+  cudf::set_null_mask(null_mask.data(), 1, 2, false);
   stream.sync();
   values_col->set_null_mask(std::move(null_mask), 1);
 
@@ -2540,6 +3170,41 @@ TEST_F(CastVariantStatusTest, BoolStatusTracking)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
 }
 
+TEST_F(CastVariantStatusTest, DecimalStatusTracking)
+{
+  // A decode, a variant null, a non-decimal primitive, an overflow, and the two malformed forms.
+  constexpr auto expected_scale = numeric::scale_type{-2};
+  auto stream                   = cudf::test::get_default_stream();
+
+  auto truncated_payload = enc_decimal8(1234, 2);
+  truncated_payload.pop_back();
+
+  std::vector<std::vector<uint8_t>> const val_rows{
+    enc_decimal4(1234, 2),           // success
+    enc_null(),                      // variant_null
+    enc_int32(1234),                 // type_mismatch (recognized non-decimal primitive)
+    enc_decimal8(1234567890123, 2),  // overflow (does not fit an int32 representation)
+    enc_decimal4(1234, 39),          // malformed (scale above the spec maximum)
+    truncated_payload};              // malformed (unscaled payload shorter than the width implies)
+  auto col =
+    wrap_multi_row_variant(std::vector<std::vector<uint8_t>>(6, build_metadata({})), val_rows);
+  auto values = cudf::structs_column_view{col}.get_sliced_child(1, stream);
+
+  auto status = make_status_buffer(values.size());
+  auto got    = cudf::io::parquet::experimental::cast_variant(
+    values,
+    cudf::data_type{cudf::type_id::DECIMAL32, expected_scale},
+    status->mutable_view(),
+    stream,
+    cmr());
+
+  expect_status_values(
+    *status, {ST_SUCCESS, ST_VNULL, ST_MISMATCH, ST_OVERFLOW, ST_MALFORMED, ST_MALFORMED});
+  cudf::test::fixed_point_column_wrapper<int32_t> expected{
+    {1234, 0, 0, 0, 0, 0}, {true, false, false, false, false, false}, expected_scale};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*got, expected);
+}
+
 TEST_F(CastVariantStatusTest, StringStatusTracking)
 {
   // Status for string target: short_string, variant_null, type_mismatch, malformed long_string,
@@ -2595,10 +3260,6 @@ TEST_F(CastVariantStatusTest, EmptyInput)
   EXPECT_EQ(status->size(), 0);
   EXPECT_EQ(got->size(), 0);
 }
-
-// ---------------------------------------------------------------------------
-// ExtractVariantField status tests (end-to-end: extraction + decode)
-// ---------------------------------------------------------------------------
 
 struct ExtractVariantFieldStatusTest : public cudf::test::BaseFixture {};
 
@@ -2684,3 +3345,62 @@ TEST_F(ExtractVariantFieldStatusTest, MissingNestedPathStatus)
   expect_status_values(*status, {ST_MISSING});
   EXPECT_EQ(got->null_count(), 1);
 }
+
+// The batched status columns are checked against the single-path ones for every path of every case
+// in expect_matches_looped_get; the cases here pin down the values that agreement rests on
+
+struct GetVariantFieldsStatusTest : public cudf::test::BaseFixture {};
+
+TEST_F(GetVariantFieldsStatusTest, FailedPrefixReasonReachesItsWholeSubtree)
+{
+  // "$.a" is a VARIANT null, so the paths below it are missing_path rather than the malformed
+  // status that probing the empty value they inherit would give
+  auto const m      = build_metadata({"a"});
+  auto const v      = build_single_field_object(/*fid=*/0, enc_null());
+  auto const col    = wrap_single_variant(m, v);
+  auto const stream = cudf::test::get_default_stream();
+
+  std::vector<std::string_view> const paths{"$.a", "$.a.b", "$.a.b.c", "$.a[0]"};
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::get_variant_fields(col, paths, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 4);
+  expect_path_statuses(paths, status, {{ST_VNULL}, {ST_MISSING}, {ST_MISSING}, {ST_MISSING}});
+}
+
+TEST_F(GetVariantFieldsStatusTest, StatusColumnCountMismatchThrows)
+{
+  auto const col = make_xyz_three_row_variant();
+  std::vector<std::string_view> const paths{"x", "y"};
+  status_buffers too_few{1, cudf::column_view{col}.size()};
+  EXPECT_THROW(static_cast<void>(expns::get_variant_fields(
+                 col, paths, too_few.views, cudf::test::get_default_stream(), cmr())),
+               std::invalid_argument);
+}
+
+struct ExtractVariantFieldsStatusTest : public cudf::test::BaseFixture {};
+
+TEST_F(ExtractVariantFieldsStatusTest, CastStatusReachesBatchedOutput)
+{
+  auto const col    = make_xyz_three_row_variant();
+  auto const stream = cudf::test::get_default_stream();
+
+  // "y" as INT32 is a type mismatch where it resolves, so the cast's own status has to reach the
+  // batched output too
+  std::vector<std::string_view> const paths{"x", "y", "nope"};
+  std::vector<cudf::data_type> const types{cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::INT32},
+                                           cudf::data_type{cudf::type_id::STRING}};
+
+  status_buffers status{paths.size(), cudf::column_view{col}.size()};
+  auto const got = expns::extract_variant_fields(col, paths, types, status.views, stream, cmr());
+
+  ASSERT_EQ(got->num_columns(), 3);
+  expect_path_statuses(paths,
+                       status,
+                       {{ST_SUCCESS, ST_SUCCESS, ST_MISSING},
+                        {ST_MISMATCH, ST_MISSING, ST_MISMATCH},
+                        {ST_MISSING, ST_MISSING, ST_MISSING}});
+}
+
+CUDF_TEST_PROGRAM_MAIN()

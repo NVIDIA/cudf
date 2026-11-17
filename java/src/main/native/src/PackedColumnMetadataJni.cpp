@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,11 +24,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_PackedColumnMetadata_closeMetadata(JN
                                                                               jlong j_metadata_ptr)
 {
   JNI_NULL_CHECK(env, j_metadata_ptr, "metadata is null", );
-  JNI_TRY
-  {
-    auto metadata = reinterpret_cast<std::vector<uint8_t>*>(j_metadata_ptr);
-    delete metadata;
-  }
+  JNI_TRY { cudf::jni::safe_delete<std::vector<uint8_t>>(j_metadata_ptr); }
   JNI_CATCH(env, );
 }
 

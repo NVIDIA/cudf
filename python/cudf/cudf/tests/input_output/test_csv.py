@@ -20,7 +20,7 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import assert_exceptions_equal
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def pd_mixed_dataframe():
     return pd.DataFrame(
         {
@@ -35,12 +35,12 @@ def pd_mixed_dataframe():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def cudf_mixed_dataframe(pd_mixed_dataframe):
     return cudf.from_pandas(pd_mixed_dataframe)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf_np_dtypes():
     gdf_dtypes = [
         "float",
@@ -80,7 +80,7 @@ def gdf_np_dtypes():
     return dict(zip(gdf_dtypes, np_dtypes, strict=True))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def numeric_extremes_dataframe(gdf_np_dtypes):
     data = {}
     for typ, np_type in gdf_np_dtypes.items():
@@ -965,6 +965,30 @@ def test_csv_reader_dtype_inference_whitespace():
 
     assert cu_df.shape == pd_df.shape
     assert list(cu_df.columns.values) == list(pd_df.columns.values)
+
+
+@pytest.mark.parametrize(
+    "buffer",
+    [
+        'c0\n"-1"\n',
+        'c0\n"1.5"\n',
+        'c0\n"true"\n"false"\n',
+        'c0\n"inf"\n"-inf"\n',
+        'c0\n1\n"2"\n',
+        'c0\n"1"\n2.5\n',
+        'c0\n"1" \n',
+        'c0\n"1"\nabc\n',
+        'c0,c1,c2\n"1","2.5","x"\n',
+        'c0\n5"\n12"\n',
+        'c0\n "1"\n',
+    ],
+)
+@pytest.mark.parametrize("quoting", [csv.QUOTE_MINIMAL, csv.QUOTE_NONE])
+def test_csv_reader_dtype_inference_quotes(buffer, quoting):
+    cu_df = read_csv(StringIO(buffer), quoting=quoting)
+    pd_df = pd.read_csv(StringIO(buffer), quoting=quoting)
+
+    assert_eq(cu_df, pd_df)
 
 
 def test_csv_reader_empty_dataframe():

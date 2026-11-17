@@ -30,7 +30,19 @@ __all__ = ["BPEMergePairs", "byte_pair_encoding"]
 cdef class BPEMergePairs:
     """The table of merge pairs for the BPE encoder.
 
-    For details, see :cpp:class:`cudf::nvtext::bpe_merge_pairs`.
+    For details, see :cpp:func:`nvtext::load_merge_pairs`.
+
+    Parameters
+    ----------
+    merge_pairs : Column
+        Strings column of merge pairs. Each row contains the two halves
+        of a pair separated by a single space. Pairs are ranked by their row
+        position; earlier rows have higher priority. A duplicate pair keeps
+        its earliest (highest priority) rank.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the merge pairs table.
     """
     def __cinit__(
         self,
@@ -40,7 +52,7 @@ cdef class BPEMergePairs:
     ):
         cdef column_view c_pairs = merge_pairs.view()
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
@@ -59,18 +71,21 @@ cpdef Column byte_pair_encoding(
     """
     Byte pair encode the input strings.
 
-    For details, see cpp:func:`cudf::nvtext::byte_pair_encoding`
+    For details, see :cpp:func:`nvtext::byte_pair_encoding`.
 
     Parameters
     ----------
     input : Column
         Strings to encode.
     merge_pairs : BPEMergePairs
-       Substrings to rebuild each string on.
-    separator : Scalar
-        String used to build the output after encoding. Default is a space.
+        The ranked merge pairs used to encode the strings.
+    separator : Scalar | None
+        Single-byte string inserted between the encoded tokens.
+        Default is a space.
     stream : Stream | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
@@ -79,12 +94,12 @@ cpdef Column byte_pair_encoding(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), _stream.view().value(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
         )
 
     cdef column_view c_input = input.view()

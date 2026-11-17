@@ -7,22 +7,22 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <thrust/count.h>
 #include <thrust/fill.h>
 #include <thrust/scatter.h>
 #include <thrust/sequence.h>
-#include <thrust/transform.h>
 
 #include <algorithm>
 #include <functional>
@@ -65,22 +65,23 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   std::optional<size_t> start_row,
   size_type num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_row_groups = static_cast<size_type>(row_group_num_rows.size());
 
   if (row_group_offsets.empty()) {
-    auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr);
+    auto row_indices = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
     auto row_indices_iter = static_cast<size_t*>(row_indices.data());
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      row_indices_iter,
                      row_indices_iter + num_rows,
                      start_row.value_or(size_t{0}));
-    return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
-                                          num_rows,
-                                          std::move(row_indices),
-                                          rmm::device_buffer{0, stream, mr},
-                                          0);
+    return std::make_unique<cudf::column>(
+      cudf::data_type{cudf::type_id::UINT64},
+      num_rows,
+      std::move(row_indices),
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+      0);
   }
 
   auto row_group_span_offsets =
@@ -93,22 +94,23 @@ std::unique_ptr<cudf::column> compute_row_index_column(
                "Encountered a mismatch in the number of rows in the row index column and the "
                "number of rows in the row group(s)");
 
-  auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr);
+  auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
   auto row_indices_iter = static_cast<size_t*>(row_indices.data());
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                row_indices_iter,
                row_indices_iter + num_rows,
                1);
 
-  auto row_group_keys = rmm::device_uvector<size_type>(num_rows, stream);
+  auto row_group_keys = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                row_group_keys.begin(),
                row_group_keys.end(),
                0);
 
-  auto d_row_group_offsets = cudf::detail::make_device_uvector_async(
+  auto d_row_group_offsets = cudf::detail::make_device_buffer_async(
     row_group_offsets, stream, cudf::get_current_device_resource_ref());
-  auto d_row_group_span_offsets = cudf::detail::make_device_uvector_async(
+  auto d_row_group_span_offsets = cudf::detail::make_device_buffer_async(
     row_group_span_offsets, stream, cudf::get_current_device_resource_ref());
   auto in_iter =
     cuda::make_zip_iterator(d_row_group_offsets.begin(), cuda::counting_iterator<size_type>(0));
@@ -133,11 +135,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
     row_indices_iter);
 
   stream.sync();
-  return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::UINT64},
-                                        num_rows,
-                                        std::move(row_indices),
-                                        rmm::device_buffer{0, stream, mr},
-                                        0);
+  return std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::UINT64},
+    num_rows,
+    std::move(row_indices),
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
+    0);
 }
 
 std::unique_ptr<cudf::column> compute_partial_row_index_column(
@@ -147,7 +150,7 @@ std::unique_ptr<cudf::column> compute_partial_row_index_column(
   size_type num_rows,
   bool is_unspecified_row_group_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (is_unspecified_row_group_data) {
     return compute_row_index_column({}, {}, start_row, num_rows, stream, mr);
@@ -254,7 +257,7 @@ std::unique_ptr<cudf::column> compute_row_mask_column(
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_rows  = row_index_column.size();
   auto row_mask_column = cudf::make_fixed_width_column(
@@ -357,7 +360,7 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto [_, dv_refs, dv_row_counts] =
     consume_deletion_vectors(row_index_column.size(), deletion_vectors, deletion_vector_row_counts);

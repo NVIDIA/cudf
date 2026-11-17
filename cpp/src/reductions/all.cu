@@ -13,6 +13,7 @@
 
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/ptx>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -33,7 +34,9 @@ struct all_fn {
   struct all_true_fn {
     __device__ void operator()(size_type idx)
     {
-      if (*d_result && (iter[idx] != *d_result)) {
+      // Other threads may be clearing the result, which a plain load must not race with.
+      auto const result = cuda::ptx::ld(cuda::ptx::space_global, d_result);
+      if (result && (iter[idx] != result)) {
         cuda::atomic_ref<int32_t, cuda::thread_scope_device> ref{*d_result};
         ref.fetch_and(0, cuda::std::memory_order_relaxed);
       }

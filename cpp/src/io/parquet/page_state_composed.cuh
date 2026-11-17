@@ -17,6 +17,11 @@ namespace cudf::io::parquet::detail {
     cuda::atomic_ref<kernel_error::value_type, cuda::thread_scope_block> ref{setup.error};     \
     ref.fetch_or(static_cast<kernel_error::value_type>(err), cuda::std::memory_order_relaxed); \
   }                                                                                            \
+  inline __device__ kernel_error::value_type error_code()                                      \
+  {                                                                                            \
+    cuda::atomic_ref<kernel_error::value_type, cuda::thread_scope_block> ref{setup.error};     \
+    return ref.load(cuda::std::memory_order_relaxed);                                          \
+  }                                                                                            \
   inline __device__ void reset_error_code()                                                    \
   {                                                                                            \
     cuda::atomic_ref<kernel_error::value_type, cuda::thread_scope_block> ref{setup.error};     \

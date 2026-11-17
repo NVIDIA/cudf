@@ -11,6 +11,8 @@
 #include "parquet_gpu.hpp"
 #include "rle_stream.cuh"
 
+#include <cudf/detail/utilities/device_atomics.cuh>
+
 #include <cooperative_groups.h>
 #include <cuda/atomic>
 #include <cuda/std/algorithm.min.h>
@@ -944,7 +946,8 @@ __device__ void gpuDecodeLevels(
   cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block> const& warp)
 {
   auto cur_leaf_count = target_leaf_count;
-  while (s->setup.error == 0 && s->progress.nz_count < target_leaf_count &&
+  // Other warps may be setting the error code, which a plain load must not race with.
+  while (s->error_code() == 0 && s->progress.nz_count < target_leaf_count &&
          s->progress.input_value_count < s->setup.num_input_values) {
     // because the rep and def streams are encoded separately, we cannot request an exact
     // # of values to be decoded at once. we can only process the lowest # of decoded rep/def
@@ -1533,7 +1536,7 @@ __device__ void zero_fill_null_positions_shared(
   // Cast to int64 because a large page can push num_values * dtype_len past INT32_MAX.
   if (static_cast<int64_t>(ni.null_count) * dtype_len * 2 > static_cast<int64_t>(num_values)) {
     for (int i = t; i < num_values; i += block_size) {
-      if (not cudf::bit_is_set(ni.valid_map, start_bit_idx + i)) {
+      if (not cudf::detail::weak_bit_is_set(ni.valid_map, start_bit_idx + i)) {
         cuda::std::memset(data_out + (static_cast<size_t>(i) * dtype_len), 0, dtype_len);
       }
     }
@@ -1545,8 +1548,9 @@ __device__ void zero_fill_null_positions_shared(
   // being per block of validity words, and the inner loop being one iteration per null value within
   // the validity word. A word with no nulls costs a load and nothing else in the inner loop.
   for (int block_idx = start_block + t; block_idx < end_block; block_idx += block_size) {
-    cudf::bitmask_type null_positions = ~ni.valid_map[block_idx];
-    int const block_start_bit         = block_idx * bits_per_mask;
+    cudf::bitmask_type null_positions =
+      ~cuda::ptx::ld(cuda::ptx::space_global, ni.valid_map + block_idx);
+    int const block_start_bit = block_idx * bits_per_mask;
 
     // The first and last words need masking because those can hold bits outside `[start_bit_idx,
     // end_bit_idx)`, and inverting turns every such bit into a phantom null: a trailing partial

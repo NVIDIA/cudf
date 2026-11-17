@@ -1147,9 +1147,10 @@ def _(node: plrs._ir_nodes.Union, translator: Translator, schema: Schema) -> ir.
     for child in children:
         exprs: list[expr.NamedExpr] = []
         needs_normalization = False
-        for name, dtype in schema.items():
-            child_dtype = child.schema[name]
-            value: expr.Expr = expr.Col(child_dtype, name)
+        for (name, dtype), (child_name, child_dtype) in zip(
+            schema.items(), child.schema.items(), strict=True
+        ):
+            value: expr.Expr = expr.Col(child_dtype, child_name)
             if isinstance(child_dtype.polars_type, pl.Null) and not isinstance(
                 dtype.polars_type, pl.Null
             ):

@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
     TableChunk,
@@ -33,12 +34,49 @@ from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
+    from cudf_polars.containers import DataType
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
+
+
+def _all_null_column_allocation_size(dtype: DataType, size: int) -> int:
+    """Return the device allocation size of a supported all-null column."""
+    mask_size = plc.null_mask.bitmask_allocation_size_bytes(size)
+    if plc.traits.is_fixed_width(dtype.plc_type):
+        return size * plc.types.size_of(dtype.plc_type) + mask_size
+    if dtype.id() == plc.TypeId.STRING:
+        # An all-null string column has no character data, only int32 offsets.
+        return (size + 1) * plc.types.size_of(
+            plc.DataType(plc.TypeId.INT32)
+        ) + mask_size
+    # Column.astype does not support converting the physical INT8 storage used
+    # for Null columns to other variable-width types.
+    return 0
+
+
+def _concatenation_reservation(
+    chunks: Sequence[TableChunk], dtypes: Sequence[DataType]
+) -> int:
+    """Conservatively reserve concatenation and possible Null-promotion outputs."""
+    input_size = sum(chunk.data_alloc_size() for chunk in chunks)
+    # Before chunks are made available, TableChunk exposes their shape but not
+    # per-column physical types. Assume every supported column may need
+    # normalization. Unchanged variable-width payload is already covered by
+    # input_size.
+    normalized_size = sum(
+        _all_null_column_allocation_size(dtype, chunk.shape[0])
+        for chunk in chunks
+        for dtype in dtypes
+    )
+    # A normalization result coexists with the input. For multiple chunks, it
+    # also coexists with the final concatenated output.
+    return input_size + normalized_size * (2 if len(chunks) > 1 else 1)
 
 
 @define_actor()
@@ -205,10 +243,11 @@ async def concatenate_node(
                     chunks.append(TableChunk.from_message(msg, br=context.br()))
 
                 if chunks:
+                    dtypes = list(ir.schema.values())
                     chunks, extra = await make_table_chunks_available_or_wait(
                         context,
                         chunks,
-                        reserve_extra=sum(chunk.data_alloc_size() for chunk in chunks),
+                        reserve_extra=_concatenation_reservation(chunks, dtypes),
                         net_memory_delta=0,
                     )
                     with opaque_memory_usage(extra):
@@ -217,7 +256,7 @@ async def concatenate_node(
                                 DataFrame.from_table(
                                     chunk.table_view(),
                                     list(ir.schema.keys()),
-                                    list(ir.schema.values()),
+                                    dtypes,
                                     chunk.stream,
                                 )
                                 for chunk in chunks
@@ -225,7 +264,7 @@ async def concatenate_node(
                             context=ir_context,
                         )
                         if len(chunks) > 1:
-                            # _concat reuses chunks[0] if len(chunks) == 1
+                            # A single-chunk result may still share input buffers.
                             del chunks
                     output_chunk = TableChunk.from_pylibcudf_table(
                         df.table,

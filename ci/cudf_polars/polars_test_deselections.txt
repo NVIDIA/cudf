@@ -54,3 +54,7 @@ tests/unit/io/test_write.py::test_write_async[<lambda>-<lambda>2]
 # See https://github.com/pola-rs/polars/issues/28954.
 tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[schema0]
 tests/unit/io/test_scan.py::test_scan_ndjson_streaming_decompression[None]
+
+# These assert on the verbose log that Polars writes while it reads the Delta table itself.
+# cudf-polars reads the table, so Polars never writes that log.
+tests/unit/io/test_delta_deletion_vector.py::test_scan_delta_dv_single

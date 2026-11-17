@@ -8,6 +8,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -22,6 +23,7 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -135,7 +137,7 @@ void gather_helper(InputItr source_itr,
 }
 
 // Error case when no other overload or specialization is available
-template <typename Element, typename Enable = void>
+template <typename Element>
 struct column_gatherer_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -187,8 +189,8 @@ struct column_gatherer {
  * @tparam Element Dispatched type for the column being gathered
  * @tparam MapIterator Iterator type for the gather map
  */
-template <typename Element>
-struct column_gatherer_impl<Element, std::enable_if_t<is_rep_layout_compatible<Element>()>> {
+template <cudf::concepts::rep_layout_compatible Element>
+struct column_gatherer_impl<Element> {
   /**
    * @brief Type-dispatched function to gather from one column to another based
    * on a `gather_map`.
@@ -408,7 +410,7 @@ struct column_gatherer_impl<dictionary32> {
 
     dictionary_column_view dictionary(source_column);
     auto output_count = std::distance(gather_map_begin, gather_map_end);
-    if (output_count == 0) return make_empty_column(type_id::DICTIONARY32);
+    if (output_count == 0) { return empty_like(source_column); }
     // The gather could cause some keys to be abandoned -- no indices point to them.
     // In this case, we could do further work to remove the abandoned keys and
     // reshuffle the indices values.
@@ -583,10 +585,10 @@ void gather_bitmask(table_view const& source,
   std::transform(target.begin(), target.end(), target_masks.begin(), [](auto const& col) {
     return col->mutable_view().null_mask();
   });
-  auto d_target_masks = make_device_uvector_async(target_masks, stream, temp_mr);
+  auto d_target_masks = make_device_buffer_async(target_masks, stream, temp_mr);
 
   auto const device_source = table_device_view::create(source, stream, temp_mr);
-  auto d_valid_counts = make_zeroed_device_uvector_async<size_type>(target.size(), stream, temp_mr);
+  auto d_valid_counts = make_zeroed_device_buffer_async<size_type>(target.size(), stream, temp_mr);
 
   // Dispatch operation enum to get implementation
   auto const impl = [op]() {

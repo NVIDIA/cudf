@@ -15,6 +15,8 @@ from cudf_streaming.channel_metadata import (
     OrderScheme,
     Ordering,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
@@ -33,6 +35,7 @@ from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
+from cudf_polars.streaming.actor_graph.partitioning import add_row_ordering
 from cudf_polars.streaming.actor_graph.utils import (
     ChunkStore,
     concat_batch,
@@ -95,7 +98,7 @@ def _extract_boundaries_from_endpoint_rows(
     -------
     The boundaries table and whether they are strict.
     """
-    # Boundaries are the first endpoint of all partitions except the first.
+    # Boundaries are the last endpoint of all partitions except the last.
     # Strictness compares each partition end with the following partition start.
     previous_partition_ends = plc.concatenate.concatenate(
         plc.copying.slice(
@@ -137,7 +140,7 @@ def _extract_boundaries_from_endpoint_rows(
         plc.DataType(plc.TypeId.BOOL8),
         stream=stream,
     ).to_py(stream=stream)
-    return next_partition_starts, strict
+    return previous_partition_ends, strict
 
 
 def _metadata_has_ordering(metadata: ChannelMetadata, keys: Sequence[OrderKey]) -> bool:
@@ -165,11 +168,11 @@ def _with_extracted_ordering(
     if partitioning is None:
         return metadata
 
+    existing = metadata.partitioning
+    assert existing is not None
     orderings: list[Ordering] = []
-    if metadata.partitioning is not None and isinstance(
-        metadata.partitioning.inter_rank, OrderScheme
-    ):
-        orderings.extend(metadata.partitioning.inter_rank.orderings)
+    if isinstance(existing.inter_rank, OrderScheme):
+        orderings.extend(existing.inter_rank.orderings)
 
     scheme = partitioning.inter_rank
     if isinstance(scheme, OrderScheme):
@@ -177,7 +180,11 @@ def _with_extracted_ordering(
 
     return ChannelMetadata(
         local_count=metadata.local_count,
-        partitioning=Partitioning(OrderScheme(orderings), partitioning.local),
+        partitioning=Partitioning(
+            OrderScheme(orderings),
+            partitioning.local,
+            row_orderings=existing.row_orderings,
+        ),
         duplicated=metadata.duplicated,
     )
 
@@ -194,8 +201,9 @@ def _trivial_ordering_metadata(
         return None
 
     partitioning = metadata.partitioning
+    assert partitioning is not None
     existing_orderings: list[Ordering] = []
-    if partitioning is not None and isinstance(partitioning.inter_rank, OrderScheme):
+    if isinstance(partitioning.inter_rank, OrderScheme):
         existing_orderings = list(partitioning.inter_rank.orderings)
 
     dtypes = tuple(schema_ir.schema.values())
@@ -214,6 +222,7 @@ def _trivial_ordering_metadata(
         partitioning=Partitioning(
             OrderScheme([*existing_orderings, ordering]),
             "inherit",
+            row_orderings=partitioning.row_orderings,
         ),
         duplicated=metadata.duplicated,
     )
@@ -368,11 +377,27 @@ async def ensure_ordering_metadata(
     order_keys: Sequence[OrderKey],
     collective_id: int,
 ) -> None:
-    """Forward a channel, extracting ordering boundaries when metadata lacks them."""
+    """Forward a channel, extracting single-rank boundaries when needed."""
     metadata = await recv_metadata(ch_in, context)
+    if order_keys:
+        partitioning = metadata.partitioning or Partitioning()
+        metadata = ChannelMetadata(
+            local_count=metadata.local_count,
+            partitioning=add_row_ordering(
+                partitioning,
+                RowOrdering(order_keys, RowOrderingScope.GLOBAL),
+            ),
+            duplicated=metadata.duplicated,
+        )
     buffered_chunks: ChunkStore | None = None
 
-    if order_keys and not _metadata_has_ordering(metadata, order_keys):
+    # A sorted hint does not prove the rank ownership required by a flat
+    # Ordering. Preserve row ordering without extracting new boundaries.
+    if (
+        order_keys
+        and comm.nranks == 1
+        and not _metadata_has_ordering(metadata, order_keys)
+    ):
         if (
             extracted_metadata := _trivial_ordering_metadata(
                 context, comm, schema_ir, metadata, order_keys
@@ -516,7 +541,7 @@ def _split_points(
     if boundary_table.num_rows() == 0:
         return []
     key_table = plc.Table([table.columns()[key.column_index] for key in ordering.keys])
-    split_col = plc.search.lower_bound(
+    split_col = plc.search.upper_bound(
         key_table,
         boundary_table,
         [key.order for key in ordering.keys],
@@ -607,20 +632,26 @@ def _source_output_range(
     input_npartitions = input_ordering.num_boundaries + 1
     output_npartitions = output_ordering.num_boundaries + 1
     output_prefix_only = len(output_ordering.keys) < len(input_ordering.keys)
-    # Prefix/non-strict boundaries can overlap the equal-boundary run above them.
-    include_upper_boundary = output_prefix_only or not input_ordering.strict_boundaries
+    # Prefix/non-strict boundaries may have equal keys on the following rank.
+    include_boundary = output_prefix_only or not input_ordering.strict_boundaries
     input_start, input_stop = partition_range(source_rank, nranks, input_npartitions)
     if input_start == input_stop:
         return 0, 0
-    output_start = 0 if input_start == 0 else upper_positions[input_start - 1]
+    output_start = (
+        0
+        if input_start == 0
+        else (
+            lower_positions[input_start - 1]
+            if include_boundary
+            else upper_positions[input_start - 1]
+        )
+    )
+    # The input boundary is an upper bound even when it is non-strict or
+    # projected onto a prefix. Equal values belong to the lower output partition.
     output_stop = (
         output_npartitions
         if input_stop == input_npartitions
-        else (
-            upper_positions[input_stop - 1] + 1
-            if include_upper_boundary
-            else lower_positions[input_stop - 1] + 1
-        )
+        else lower_positions[input_stop - 1] + 1
     )
     return output_start, output_stop
 
@@ -711,12 +742,15 @@ class _OutputPartitionBuffer:
         boundary_chunk: TableChunk,
         input_ordering: Ordering,
         output_ordering: Ordering,
+        *,
+        input_rows_ordered: bool,
     ) -> None:
         self.context = context
         self.ch_in = ch_in
         self.boundary_chunk = boundary_chunk
         self.input_ordering = input_ordering
         self.output_ordering = output_ordering
+        self.input_rows_ordered = input_rows_ordered
         self.pending: dict[int, ChunkStore] = {}
         self.input_done = False
 
@@ -744,7 +778,7 @@ class _OutputPartitionBuffer:
             if chunk.shape[0] == 0:
                 # Nothing to split, so skip the unspill and its reservation.
                 continue
-            needs_sort = not self.input_ordering.locally_ordered
+            needs_sort = not self.input_rows_ordered
             copy_bytes = chunk.data_alloc_size()
             sort_bytes = copy_bytes if needs_sort else 0
             # The pieces copied out below hold the same rows as the chunk, so
@@ -909,6 +943,8 @@ async def _adjust_ordering_impl(
     ch_in: Channel[TableChunk],
     input_ordering: Ordering,
     output_ordering: Ordering,
+    *,
+    input_rows_ordered: bool,
     collective_id: int,
 ) -> None:
     """Adjust ordering while using exchange only for remote dependencies."""
@@ -917,7 +953,12 @@ async def _adjust_ordering_impl(
         context, comm, input_ordering, output_ordering, output_boundaries
     )
     buffer = _OutputPartitionBuffer(
-        context, ch_in, output_boundaries, input_ordering, output_ordering
+        context,
+        ch_in,
+        output_boundaries,
+        input_ordering,
+        output_ordering,
+        input_rows_ordered=input_rows_ordered,
     )
     exchange = None
     if plan.remote_sources or plan.remote_destinations:
@@ -1035,6 +1076,7 @@ async def adjust_ordering(
     input_ordering: Ordering,
     output_ordering: Ordering,
     *,
+    input_rows_ordered: bool,
     collective_id: int,
 ) -> None:
     """
@@ -1058,6 +1100,8 @@ async def adjust_ordering(
         The input Ordering.
     output_ordering
         The output Ordering.
+    input_rows_ordered
+        Whether input rows are already ordered by ``input_ordering.keys``.
     collective_id
         The collective ID to use for SparseAlltoall.
 
@@ -1085,5 +1129,6 @@ async def adjust_ordering(
             ch_in,
             input_ordering,
             output_ordering,
-            collective_id,
+            input_rows_ordered=input_rows_ordered,
+            collective_id=collective_id,
         )

@@ -72,8 +72,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
   table_view const& t,
   column_view const& partition_map,
   size_type num_partitions,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Partitions rows from the input table into multiple output tables.
@@ -104,10 +104,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   std::vector<size_type> const& columns_to_hash,
   int num_partitions,
-  hash_id hash_function             = hash_id::HASH_MURMUR3,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  hash_id hash_function     = hash_id::HASH_MURMUR3,
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Partitions rows from the input table into multiple output tables.
@@ -139,10 +139,10 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   table_view const& keys,
   int num_partitions,
-  hash_id hash_function             = hash_id::HASH_MURMUR3,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  hash_id hash_function     = hash_id::HASH_MURMUR3,
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Round-robin partition.
@@ -286,9 +286,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
 std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robin_partition(
   table_view const& input,
   cudf::size_type num_partitions,
-  cudf::size_type start_partition   = 0,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::size_type start_partition = 0,
+  cuda::stream_ref stream         = cudf::get_default_stream(),
+  cudf::memory_resources mr       = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

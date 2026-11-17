@@ -22,6 +22,7 @@ from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
     extract_orderscheme_partitioning,
 )
+from cudf_polars.streaming.actor_graph.collectives.sort_utils import find_sort_splits
 from cudf_polars.streaming.actor_graph.utils import gather_in_task_group
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 
@@ -131,6 +132,46 @@ def large_sort_cases():
 def test_sort(df, engine):
     q = df.sort(by=["y", "z"])
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "values,boundaries,null_order,expected",
+    [
+        ([1, 3, 3, 4], [3, 3], plc.types.NullOrder.BEFORE, [3, 3]),
+        ([None, None, 1], [None], plc.types.NullOrder.BEFORE, [2]),
+        ([1, None, None], [None], plc.types.NullOrder.AFTER, [3]),
+    ],
+)
+def test_find_sort_splits_keeps_boundary_values_below(
+    spmd_engine, values, boundaries, null_order, expected
+) -> None:
+    stream = spmd_engine.context.br().stream_pool.get_stream()
+    keys = DataFrame.from_polars(
+        pl.DataFrame({"key": pl.Series(values, dtype=pl.Int32())}), stream
+    ).table
+    candidates = DataFrame.from_polars(
+        pl.DataFrame(
+            {
+                "key": pl.Series(boundaries, dtype=pl.Int32()),
+                "part_id": pl.Series(range(len(boundaries)), dtype=pl.UInt32()),
+                "local_row": pl.Series(range(len(boundaries)), dtype=pl.UInt32()),
+            }
+        ),
+        stream,
+    ).table
+
+    assert (
+        find_sort_splits(
+            keys,
+            candidates,
+            0,
+            [plc.types.Order.ASCENDING],
+            [null_order],
+            stream,
+            chunk_relative=True,
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -298,8 +339,8 @@ def test_extract_orderscheme_partitioning(spmd_engine, n_chunks) -> None:
     assert ordering.strict_boundaries  # all keys are distinct integers
     assert ordering.num_boundaries == comm.nranks * n_chunks - 1
 
-    # Verify actual boundary values: start of each partition except the first
-    expected_keys = [i * n_rows for i in range(1, comm.nranks * n_chunks)]
+    # Verify actual boundary values: end of each partition except the last
+    expected_keys = [i * n_rows - 1 for i in range(1, comm.nranks * n_chunks)]
     assert _boundary_values(context, ordering) == expected_keys
     assert _chunk_data(context, result, {"key": DataType(pl.Int32())}) == [
         {"key": list(range(key_start + i * n_rows, key_start + (i + 1) * n_rows))}
@@ -341,7 +382,7 @@ def test_extract_orderscheme_partitioning_projects_order_keys(spmd_engine) -> No
     assert ordering.num_boundaries == comm.nranks * n_chunks - 1
     chunk = ordering.get_boundaries(context.br())
     assert chunk.table_view().num_columns() == 1
-    expected_keys = [i * n_rows for i in range(1, comm.nranks * n_chunks)]
+    expected_keys = [i * n_rows - 1 for i in range(1, comm.nranks * n_chunks)]
     assert _boundary_values(context, ordering) == expected_keys
     assert _chunk_data(
         context,
@@ -466,7 +507,7 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
         pytest.skip("descending boundary value check is clearest on single rank")
 
     # Two chunks sorted descending: [7,6,5,4] then [3,2,1,0]
-    # Expected: 1 boundary at the first row of the second chunk.
+    # Expected: 1 boundary at the last row of the first chunk.
     order_keys = [OrderKey(0, plc.types.Order.DESCENDING, plc.types.NullOrder.AFTER)]
     schema_ir = Empty({"key": DataType(pl.Int32())})
 
@@ -482,7 +523,7 @@ def test_extract_orderscheme_partitioning_descending(spmd_engine) -> None:
     assert ordering.strict_boundaries
     assert ordering.num_boundaries == 1
 
-    assert _boundary_values(context, ordering) == [3]
+    assert _boundary_values(context, ordering) == [4]
     assert _chunk_data(context, result, {"key": DataType(pl.Int32())}) == [
         {"key": [7, 6, 5, 4]},
         {"key": [3, 2, 1, 0]},

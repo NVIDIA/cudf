@@ -11,6 +11,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <nvbench/nvbench.cuh>
@@ -22,8 +23,7 @@ struct representation_type {
   using type = T;
 };
 
-template <typename T>
-  requires(cudf::is_chrono<T>())
+template <cudf::concepts::chrono T>
 struct representation_type<T> {
   using type = typename T::rep;
 };

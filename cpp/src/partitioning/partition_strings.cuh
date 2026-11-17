@@ -51,7 +51,7 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   table_view const& input,
   device_span<size_type const> gather_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (input.num_columns() < 2 || input.num_columns() > 65'535 ||
       !std::all_of(input.begin(), input.end(), [](auto const& column) {
@@ -61,9 +61,10 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
     return nullptr;
   }
 
-  auto const rows    = input.num_rows();
-  auto const columns = input.num_columns();
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const rows      = input.num_rows();
+  auto const columns   = input.num_columns();
+  auto const temp_mr   = mr.get_temporary_mr();
+  auto const output_mr = mr.get_output_mr();
   std::vector<partition_string_column> descriptors;
   std::vector<std::unique_ptr<column>> offsets;
   descriptors.reserve(columns);
@@ -112,8 +113,8 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   copy_columns.reserve(columns);
   for (size_type i = 0; i < columns; ++i) {
     offsets.push_back(cudf::make_numeric_column(
-      data_type{type_id::INT32}, rows + 1, mask_state::UNALLOCATED, stream, mr));
-    chars.emplace_back(char_sizes[i], stream, mr);
+      data_type{type_id::INT32}, rows + 1, mask_state::UNALLOCATED, stream, output_mr));
+    chars.emplace_back(char_sizes[i], stream, output_mr);
     descriptors[i].output_offsets = offsets.back()->mutable_view().data<size_type>();
     descriptors[i].output_chars   = static_cast<char*>(chars.back().data());
     if (char_sizes[i] == 0) {
@@ -148,12 +149,12 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   std::vector<std::unique_ptr<column>> output;
   output.reserve(columns);
   for (size_type i = 0; i < columns; ++i) {
-    output.push_back(
-      cudf::make_strings_column(rows,
-                                std::move(offsets[i]),
-                                std::move(chars[i]),
-                                0,
-                                cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, mr)));
+    output.push_back(cudf::make_strings_column(
+      rows,
+      std::move(offsets[i]),
+      std::move(chars[i]),
+      0,
+      cudf::create_null_mask(0, mask_state::UNALLOCATED, stream, output_mr)));
   }
   return std::make_unique<table>(std::move(output));
 }

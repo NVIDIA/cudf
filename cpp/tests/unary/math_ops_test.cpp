@@ -9,10 +9,10 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/unary.hpp>
 
+#include <cuda/std/cmath>
 #include <cuda/std/type_traits>
 
 #include <bitset>
@@ -227,7 +227,11 @@ TYPED_TEST(UnaryMathOpsTest, ABS)
             cuda::std::is_unsigned_v<T> ? colSize : -1 * colSize);
 
   std::transform(std::cbegin(h_input_v), std::cend(h_input_v), std::begin(h_expect_v), [](auto e) {
-    return cudf::util::absolute_value(e);
+    if constexpr (cuda::std::is_unsigned_v<T>) {
+      return e;
+    } else {
+      return cuda::std::abs(e);
+    }
   });
 
   cudf::test::fixed_width_column_wrapper<T> const input(std::cbegin(h_input_v),

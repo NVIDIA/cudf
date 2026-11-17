@@ -11,6 +11,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
 
@@ -42,7 +43,7 @@ using vcol_views  = std::vector<cudf::column_view>;
 
 /**
  * @brief Compute `COUNT_VALID`, `MEAN`, `M2` aggregations for the given values columns.
- * @return A pair of unique keys column and a structs column containing the computed values of
+ * @return A pair of distinct keys column and a structs column containing the computed values of
  *         (`COUNT_VALID`, `MEAN`, `M2`).
  */
 auto compute_partial_results(cudf::column_view const& keys, cudf::column_view const& values)
@@ -73,7 +74,7 @@ auto compute_partial_results(cudf::column_view const& keys, cudf::column_view co
 /**
  * @brief Perform merging for partial results of M2 aggregations.
  *
- * @return A pair of unique keys column and a structs column containing the merged values of
+ * @return A pair of distinct keys column and a structs column containing the merged values of
  *         (`COUNT_VALID`, `MEAN`, `M2`).
  */
 auto merge_M2(vcol_views const& keys_cols, vcol_views const& values_cols)
@@ -90,7 +91,12 @@ auto merge_M2(vcol_views const& keys_cols, vcol_views const& values_cols)
 
   auto gb_obj = cudf::groupby::groupby(cudf::table_view({*keys}));
   auto result = gb_obj.aggregate(requests);
-  return std::pair(std::move(result.first->release()[0]), std::move(result.second[0].results[0]));
+  auto ordered =
+    cudf::sort_by_key(
+      cudf::table_view{{result.first->view().column(0), result.second[0].results[0]->view()}},
+      result.first->view())
+      ->release();
+  return std::pair(std::move(ordered[0]), std::move(ordered[1]));
 }
 
 template <typename CountType>

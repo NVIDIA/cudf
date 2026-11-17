@@ -2100,3 +2100,31 @@ TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
           {expected_sum, expected_min, expected_max, expected_count});
   }
 }
+
+TEST_F(StreamingGroupbyTest, SharedM2DependenciesPreserveRequestOrder)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> input_keys{0, 0, 1, 1};
+  cudf::test::fixed_width_column_wrapper<float> values{{1, 3, 2, 4}, {true, true, false, false}};
+  cudf::table_view const batch{{input_keys, values}};
+  for (bool m2_first : {false, true}) {
+    std::vector<cudf::groupby::streaming_aggregation_request> requests;
+    requests.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+    requests.push_back(make_req(1, cudf::make_m2_aggregation<cudf::groupby_aggregation>()));
+    requests.push_back(make_req(1, cudf::make_variance_aggregation<cudf::groupby_aggregation>(0)));
+    requests.push_back(make_req(1, cudf::make_std_aggregation<cudf::groupby_aggregation>(0)));
+    requests.push_back(make_req(1, cudf::make_m2_aggregation<cudf::groupby_aggregation>()));
+    if (!m2_first) { std::swap(requests[1], requests[2]); }
+    cudf::groupby::streaming_groupby gb(KEY_COL, requests, DEFAULT_MAX_DISTINCT_KEYS);
+    gb.aggregate(batch);
+    // A snapshot followed by destructive finalization exercises both finalization paths.
+    auto [keys, results] = gb.finalize();
+    cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{0, 1}, counts{2, 0};
+    cudf::test::fixed_width_column_wrapper<double> m2{2, 0};
+    cudf::test::fixed_width_column_wrapper<double> variance{{1, 0}, {true, false}};
+    std::vector<cudf::column_view> expected{counts, m2, variance, variance, m2};
+    if (!m2_first) { std::swap(expected[1], expected[2]); }
+    check(keys, results, cudf::table_view{{expected_keys}}, expected);
+    auto [released_keys, released_results] = std::move(gb).finalize_and_release();
+    check(released_keys, released_results, cudf::table_view{{expected_keys}}, expected);
+  }
+}

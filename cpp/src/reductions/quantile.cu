@@ -22,7 +22,7 @@ std::unique_ptr<cudf::scalar> quantile(column_view const& col,
                                        cudf::interpolation interpolation,
                                        cudf::data_type const output_type,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto current_mr = cudf::get_current_device_resource_ref();
   auto sorted_indices =

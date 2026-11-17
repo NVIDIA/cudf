@@ -7,6 +7,7 @@
 
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
@@ -69,10 +70,7 @@ CUDF_HOST_DEVICE inline auto max(T lhs, T rhs)
 template <typename BaseType>
 CUDF_HOST_DEVICE constexpr auto exp10(int32_t exponent)
 {
-  BaseType value = 1;
-  while (exponent > 0)
-    value *= 10, --exponent;
-  return value;
+  return cuda::ipow(BaseType{10}, exponent);
 }
 
 }  // namespace detail

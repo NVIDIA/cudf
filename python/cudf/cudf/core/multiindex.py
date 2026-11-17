@@ -2394,7 +2394,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def _new_index_for_reset_index(
         self, levels: tuple | None, name
-    ) -> None | Index:
+    ) -> Index | None:
         """Return the new index after .reset_index"""
         if levels is None:
             return None

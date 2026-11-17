@@ -51,13 +51,13 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   /**
    * @brief Read an entire set or a subset of data and returns a set of columns
@@ -98,7 +98,7 @@ class reader_impl {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options Settings for controlling reading behavior
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
@@ -106,7 +106,7 @@ class reader_impl {
                        std::vector<FileMetaData>&& parquet_metadatas,
                        parquet_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
@@ -330,11 +330,13 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param out_metadata The output table metadata
    * @param out_columns The columns for building the output table
+   * @param mr Memory resources for the decoded columns
    * @return The output table along with columns' metadata
    */
   table_with_metadata finalize_output(read_mode mode,
                                       table_metadata& out_metadata,
-                                      std::vector<std::unique_ptr<column>>& out_columns);
+                                      std::vector<std::unique_ptr<column>>& out_columns,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Allocate data buffers for the output columns.
@@ -342,8 +344,31 @@ class reader_impl {
    * @param mode Value indicating if the data sources are read all at once or chunk by chunk
    * @param skip_rows Crop all rows below skip_rows
    * @param num_rows Number of rows to read
+   * @param mr Memory resources for the decoded columns
    */
-  void allocate_columns(read_mode mode, size_t skip_rows, size_t num_rows);
+  void allocate_columns(read_mode mode,
+                        size_t skip_rows,
+                        size_t num_rows,
+                        cudf::memory_resources mr);
+
+  /**
+   * @brief Checks if a decoded column buffer is copied again, by the decimal cast or by the
+   * dictionary encode, before it is returned
+   *
+   * @param buffer Column buffer
+   * @param top_level_index Index of the top-level output column, or `std::nullopt` if nested
+   * @return True if the column buffer belongs on the temporary resource
+   */
+  [[nodiscard]] bool is_intermediate_column(cudf::io::detail::inline_column_buffer const& buffer,
+                                            std::optional<size_t> top_level_index) const;
+
+  /**
+   * @brief Schema used to build the top-level output column from its buffer.
+   *
+   * @param index Index of the top-level output column
+   * @return Reader column schema, if any
+   */
+  [[nodiscard]] std::optional<reader_column_schema> output_column_schema(size_t index) const;
 
   /**
    * @brief Calculate per-page offsets for string data
@@ -509,11 +534,13 @@ class reader_impl {
    * @brief Cast any fixed-point output columns to the decimal width specified in options.
    *
    * @param out_columns Output columns to cast
+   * @param mr Memory resources for the decoded columns
    */
-  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns);
+  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
+                                cudf::memory_resources mr);
 
   cuda::stream_ref _stream;
-  rmm::device_async_resource_ref _mr{cudf::get_current_device_resource_ref()};
+  cudf::memory_resources _mr;
 
   // Reader configs.
   struct {

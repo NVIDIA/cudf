@@ -1,7 +1,7 @@
 /*
  * SPDX-FileCopyrightText: Copyright 2018-2019 BlazingDB, Inc.
  * SPDX-FileCopyrightText: Copyright 2018 Christian Noboa Mardini <christian@blazingdb.com>
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 /*
@@ -29,8 +29,9 @@
 
 #include <cudf/detail/iterator.cuh>
 
+#include <cuda/std/concepts>
+
 #include <string>
-#include <type_traits>
 
 struct BinaryOperationTest : public cudf::test::BaseFixture {
   BinaryOperationTest() {}
@@ -65,15 +66,13 @@ struct BinaryOperationTest : public cudf::test::BaseFixture {
 
   template <typename T>
   auto make_random_wrapped_scalar()
-    requires(!std::is_same_v<T, std::string>)
   {
     cudf::test::UniformRandomGenerator<T> rand_gen(r_min, r_max);
     return cudf::scalar_type_t<T>(rand_gen.generate());
   }
 
-  template <typename T>
+  template <cuda::std::same_as<std::string> T>
   auto make_random_wrapped_scalar()
-    requires(std::is_same_v<T, std::string>)
   {
     cudf::test::UniformRandomGenerator<uint8_t> rand_gen(r_min, r_max);
     uint8_t size = rand_gen.generate();

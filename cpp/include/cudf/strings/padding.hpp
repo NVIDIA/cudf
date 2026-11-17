@@ -47,13 +47,12 @@ namespace strings {
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New column with padded strings
  */
-std::unique_ptr<column> pad(
-  strings_column_view const& input,
-  size_type width,
-  side_type side                    = side_type::RIGHT,
-  std::string_view fill_char        = " ",
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> pad(strings_column_view const& input,
+                            size_type width,
+                            side_type side             = side_type::RIGHT,
+                            std::string_view fill_char = " ",
+                            cuda::stream_ref stream    = cudf::get_default_stream(),
+                            cudf::memory_resources mr  = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Add '0' as padding to the left of each string.
@@ -79,11 +78,10 @@ std::unique_ptr<column> pad(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New column of strings
  */
-std::unique_ptr<column> zfill(
-  strings_column_view const& input,
-  size_type width,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> zfill(strings_column_view const& input,
+                              size_type width,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Add '0' as padding to the left of each string.
@@ -115,8 +113,8 @@ std::unique_ptr<column> zfill(
 std::unique_ptr<column> zfill_by_widths(
   strings_column_view const& input,
   column_view const& widths,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

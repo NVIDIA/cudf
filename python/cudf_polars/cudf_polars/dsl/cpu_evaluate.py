@@ -15,7 +15,7 @@ from __future__ import annotations
 import functools
 import operator
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 import polars.selectors as cs
@@ -176,7 +176,7 @@ def _(e: expr.BooleanFunction) -> pl.Expr:
 # sum is null for an all-null group and a later expression fills in zero.
 
 
-def _agg_min_max(name: str, value: pl.Expr, e: expr.Agg) -> pl.Expr:
+def _agg_min_max(name: Literal["min", "max"], value: pl.Expr, e: expr.Agg) -> pl.Expr:
     """
     Convert a ``min`` or ``max`` aggregation, as given by ``name``.
 
@@ -433,7 +433,10 @@ def evaluate_ir(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataF
     Evaluate an IR node given its evaluated children.
 
     Calls ``node.do_evaluate``, or :func:`cpu_evaluate` when the execution
-    context requests CPU fallback and ``node`` is CPU capable.
+    context requests CPU fallback and ``node`` is CPU capable. A node is not
+    CPU capable when it, or one of its expressions, has no Polars conversion.
+    Such a node is evaluated on the GPU, and the fallback still applies to
+    the other nodes.
 
     Parameters
     ----------

@@ -28,7 +28,6 @@ from cudf_polars.dsl.ir import IRExecutionContext, Select, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils.config import ConfigOptions, RankLocalCPUComputeMode
 
 # The tests count CPU evaluations in this process, so use the in-process
 # engines only.
@@ -116,31 +115,6 @@ def left():
 @pytest.fixture(scope="module")
 def right():
     return pl.LazyFrame({"a": [1, 2, 3, 7], "c": [10, 20, 30, 70]})
-
-
-def test_config_default_never(monkeypatch):
-    monkeypatch.delenv("CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE", raising=False)
-    options = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
-    assert options.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.NEVER
-
-
-def test_config_always():
-    options = ConfigOptions.from_polars_engine(
-        pl.GPUEngine(
-            executor="streaming", executor_options={"rank_local_cpu_compute": "always"}
-        )
-    )
-    assert options.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.ALWAYS
-
-
-def test_config_invalid():
-    with pytest.raises(ValueError, match="RankLocalCPUComputeMode"):
-        ConfigOptions.from_polars_engine(
-            pl.GPUEngine(
-                executor="streaming",
-                executor_options={"rank_local_cpu_compute": "sometimes"},
-            )
-        )
 
 
 def test_filter_hstack_select(left, engine, cpu_calls):

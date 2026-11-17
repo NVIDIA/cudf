@@ -41,6 +41,7 @@ from cudf_polars.utils.config import (
     MaxConcurrentIOTasks,
     MemoryResourceConfig,
     ParquetOptions,
+    RankLocalCPUComputeMode,
     StreamingExecutor,
     configure_kvikio,
     resolve_kvikio_bounce_buffer_bytes,
@@ -310,6 +311,29 @@ def test_validate_fallback_mode() -> None:
             pl.GPUEngine(
                 executor="streaming",
                 executor_options={"fallback_mode": "foo"},
+            )
+        )
+
+
+def test_validate_rank_local_cpu_compute() -> None:
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+    assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.NEVER
+
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"rank_local_cpu_compute": "always"},
+        )
+    )
+    assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.ALWAYS
+
+    with pytest.raises(
+        ValueError, match="'foo' is not a valid RankLocalCPUComputeMode"
+    ):
+        ConfigOptions.from_polars_engine(
+            pl.GPUEngine(
+                executor="streaming",
+                executor_options={"rank_local_cpu_compute": "foo"},
             )
         )
 

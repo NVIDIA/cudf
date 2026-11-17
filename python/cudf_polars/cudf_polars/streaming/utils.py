@@ -16,7 +16,7 @@ from cudf_polars.dsl.expr import (
     GroupedWindow,
     UnaryFunction,
 )
-from cudf_polars.dsl.ir import Union
+from cudf_polars.dsl.ir import Union, _normalize_concatenated_dataframe
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
 
@@ -47,6 +47,9 @@ def partition_owner(partition: int, nranks: int, npartitions: int) -> int:
 
 def _concat(*dfs: DataFrame, context: IRExecutionContext) -> DataFrame:
     # Concatenate a sequence of DataFrames vertically
+    if len(dfs) == 1:
+        df = dfs[0]
+        return _normalize_concatenated_dataframe(df, df.dtypes, df.stream)
     return Union.do_evaluate(None, *dfs, context=context)
 
 

@@ -270,6 +270,29 @@ def _is_null_dtype_mismatch(column: Column, dtype: DataType) -> bool:
     )
 
 
+def _normalize_concatenated_dataframe(
+    df: DataFrame, dtypes: Sequence[DataType], stream: Stream
+) -> DataFrame:
+    """Normalize all-null columns while preserving unchanged column metadata."""
+    columns = [
+        (
+            column.astype(dtype, stream=stream)
+            if _is_null_dtype_mismatch(column, dtype)
+            else column
+        )
+        for column, dtype in zip(df.columns, dtypes, strict=True)
+    ]
+    if all(
+        result is original for result, original in zip(columns, df.columns, strict=True)
+    ):
+        return df
+    return DataFrame(
+        columns,
+        stream=stream,
+        num_rows=df.num_rows,
+    )
+
+
 def concatenate_chunks(
     dfs: Sequence[DataFrame], *, context: IRExecutionContext
 ) -> DataFrame:

@@ -243,101 +243,15 @@ def apply_predicate(df: DataFrame, predicate: expr.NamedExpr | None) -> DataFram
     return df.filter(mask)
 
 
-def _is_null_dtype_mismatch(column: Column, dtype: DataType) -> bool:
-    """
-    Return whether an all-null column needs normalization for concatenation.
-
-    Polars allows concatenating an all-null column (with a ``Null`` dtype) to
-    the dtype dtype from the other tables.
-
-    Parameters
-    ----------
-    column
-        The column to check for all-nullness. This uses the (host-side)
-        null_count and size attributes, so checking is cheap.
-    dtype
-        The dtype to check against. If the types already match then
-        there's no need to normalize.
-
-    Returns
-    -------
-    Whether the column is all-null and the types do not match, and
-    so normalization is needed.
-    """
-    return column.null_count == column.size and (
-        column.obj.type() != dtype.plc_type
-        or isinstance(column.dtype.polars_type, pl.Null)
-    )
-
-
-def _normalize_concatenated_dataframe(
-    df: DataFrame, dtypes: Sequence[DataType], stream: Stream
-) -> DataFrame:
-    """Normalize all-null columns while preserving unchanged column metadata."""
-    columns = [
-        (
-            column.astype(dtype, stream=stream)
-            if _is_null_dtype_mismatch(column, dtype)
-            else column
-        )
-        for column, dtype in zip(df.columns, dtypes, strict=True)
-    ]
-    if all(
-        result is original for result, original in zip(columns, df.columns, strict=True)
-    ):
-        return df
-    return DataFrame(
-        columns,
-        stream=stream,
-        num_rows=df.num_rows,
-    )
-
-
 def concatenate_chunks(
     dfs: Sequence[DataFrame], *, context: IRExecutionContext
 ) -> DataFrame:
     """Vertically concatenate ``dfs`` (which must share a schema) into one frame."""
     with context.stream_ordered_after(*dfs) as stream:
-        # Polars permits a Null-typed input to a union with a concrete output
-        # dtype. The Null input retains its logical dtype in the child IR and is
-        # physically stored as INT8, so normalize it before calling libcudf,
-        # which requires identical physical types.
-        dtypes = [
-            next(
-                (
-                    df.dtypes[i]
-                    for df in dfs
-                    if not isinstance(df.dtypes[i].polars_type, pl.Null)
-                ),
-                dfs[0].dtypes[i],
-            )
-            for i in range(dfs[0].num_columns)
-        ]
-        tables = [
-            plc.Table(
-                [
-                    (
-                        column.astype(dtype, stream=stream)
-                        if _is_null_dtype_mismatch(column, dtype)
-                        else column
-                    ).obj
-                    for column, dtype in zip(df.columns, dtypes, strict=True)
-                ],
-                num_rows=df.num_rows,
-            )
-            for df in dfs
-        ]
-        if len(tables) == 1:
-            return DataFrame.from_table(
-                tables[0],
-                dfs[0].column_names,
-                dtypes,
-                stream=stream,
-            )
         return DataFrame.from_table(
-            plc.concatenate.concatenate(tables, stream=stream),
+            plc.concatenate.concatenate([df.table for df in dfs], stream=stream),
             dfs[0].column_names,
-            dtypes,
+            dfs[0].dtypes,
             stream=stream,
         )
 

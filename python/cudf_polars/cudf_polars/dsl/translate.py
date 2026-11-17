@@ -1140,25 +1140,36 @@ def _(
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Union, translator: Translator, schema: Schema) -> ir.IR:
     children = tuple(translator.translate_ir(n=n) for n in node.inputs)
-    if any(
-        plc.traits.is_nested(dtype.plc_type)
-        and any(
-            isinstance(child.schema[name].polars_type, pl.Null) for child in children
-        )
-        for name, dtype in schema.items()
-    ):
-        # polars supports concatenating a Null-dtype column with non-null dtype columns.
-        # We implement that by casting the Null column to the non-null dtype. But
-        # plc.unary.cast doesn't currently support casting to a variable-width type
-        # like List[T] so we fall back during translation.
-        raise NotImplementedError(
-            "Concatenating a Null column with a nested dtype is not supported"
+    # polars supports pl.concat(tables) with mixed dtypes when one of the dtypes is
+    # Null. We support that by inserting a Cast node to cast the Null column to
+    # the non-null, output dtype.
+    normalized_children: list[ir.IR] = []
+    for child in children:
+        exprs: list[expr.NamedExpr] = []
+        needs_normalization = False
+        for name, dtype in schema.items():
+            child_dtype = child.schema[name]
+            value: expr.Expr = expr.Col(child_dtype, name)
+            if isinstance(child_dtype.polars_type, pl.Null) and not isinstance(
+                dtype.polars_type, pl.Null
+            ):
+                if plc.traits.is_nested(dtype.plc_type):
+                    raise NotImplementedError(
+                        "Concatenating a Null column with a nested dtype is not supported"
+                    )
+                value = expr.Cast(dtype, True, value)  # noqa: FBT003
+                needs_normalization = True
+            exprs.append(expr.NamedExpr(name, value))
+        normalized_children.append(
+            ir.Select(schema, exprs, False, child)  # noqa: FBT003
+            if needs_normalization
+            else child
         )
     return ir.Union(
         schema,
         node.slice,
         node.maintain_order,
-        *children,
+        *normalized_children,
     )
 
 

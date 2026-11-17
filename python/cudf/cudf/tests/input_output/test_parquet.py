@@ -774,6 +774,47 @@ def test_parquet_reader_file_logical_type(datadir):
     assert_eq(cudf.DataFrame.from_arrow(expect), got)
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "file_logical_type.parquet",
+        "variant_multirow.parquet",
+        "duckdb_variant_sample.parquet",
+    ],
+)
+def test_parquet_reader_logical_group_binary_not_categorized(datadir, filename):
+    # Binary children of FILE (`inline`) and VARIANT (`metadata`, `value`)
+    # groups stay `list<uint8>` when strings are converted to categories, while
+    # all other strings are read as INT32 hashes
+    import pylibcudf as plc
+
+    def read_types(convert_strings_to_categories):
+        source = plc.io.SourceInfo([str(datadir / filename)])
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(source)
+            .convert_strings_to_categories(convert_strings_to_categories)
+            .build()
+        )
+        return plc.io.parquet.read_parquet(options).tbl.to_arrow().schema.types
+
+    def categorized(typ):
+        if pa.types.is_string(typ) or pa.types.is_large_string(typ):
+            return pa.int32()
+        if pa.types.is_struct(typ):
+            return pa.struct([f.with_type(categorized(f.type)) for f in typ])
+        if pa.types.is_list(typ):
+            return pa.list_(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        if pa.types.is_large_list(typ):
+            return pa.large_list(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        return typ
+
+    assert read_types(True) == [categorized(t) for t in read_types(False)]
+
+
 @pytest.mark.parametrize("columns", [["a"], ["b", "a"], None])
 def test_parquet_reader_decimal128(datadir, columns):
     fname = datadir / "nested_decimal128_file.parquet"

@@ -1442,7 +1442,18 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIncludedForEveryPage)
                     });
   int32s_col const ints(values, values + num_rows, valids.begin());
   strings_col const strings(strs.begin(), strs.begin() + num_rows, valids.begin());
-  auto const expected = cudf::table_view{{ints, strings}};
+  // Two strings per row; the repetition levels add level scratch on top of the definition levels.
+  strings_col list_child(strs.begin(), strs.begin() + 2 * num_rows);
+  auto const list_offsets =
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) { return 2 * i; });
+  int32s_col list_offsets_col(list_offsets.begin(), list_offsets.begin() + num_rows + 1);
+  auto const string_lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets_col.release(),
+                            list_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected = cudf::table_view{{ints, strings, string_lists->view()}};
   auto const filepath = temp_env->get_temp_filepath("ScratchIncludedForEveryPage.parquet");
   cudf::io::write_parquet(
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
@@ -1451,13 +1462,13 @@ TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIncludedForEveryPage)
       .max_page_size_rows(page_rows)
       .build());
 
-  // Reading the file allocates about 400 KB of string offsets (4 B per value) plus the definition
-  // level buffers of both columns, 20 pages each. Summed per column, that scratch pushes the read
-  // past a 1 MiB input limit; counted one page at a time, the read fits in one chunk.
-  constexpr std::size_t input_limit = 1024 * 1024;
+  // Reading the file allocates about 1.2 MB of string offsets (4 B per string) plus the level
+  // buffers of all three columns. Summed per column, that scratch splits the read into three
+  // chunks under a 2 MiB input limit; counted one page at a time, it splits into two.
+  constexpr std::size_t input_limit = 2 * 1024 * 1024;
   auto const [result, num_chunks]   = chunked_read(filepath, 0, input_limit);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
-  EXPECT_GT(num_chunks, 1);
+  EXPECT_GT(num_chunks, 2);
 }
 
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)

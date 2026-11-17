@@ -1792,6 +1792,81 @@ TEST_F(ParquetReaderTest, DecimalRead)
   }
 }
 
+template <typename T>
+struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
+
+TYPED_TEST_SUITE(ParquetReaderByteArrayDecimalTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
+{
+  using T                  = TypeParam;
+  auto constexpr num_rows  = 1000;
+  auto constexpr scale     = 2;
+  auto constexpr precision = cuda::std::is_same_v<T, numeric::decimal32>   ? 9
+                             : cuda::std::is_same_v<T, numeric::decimal64> ? 18
+                                                                           : 38;
+
+  // Few distinct values so the dictionary is used, each as 8 big-endian bytes
+  auto const values = cudf::detail::make_counting_transform_iterator(
+    0, [](int64_t i) { return (i % 10 - 5) * int64_t{70'001}; });
+  auto const bytes = cudf::detail::make_counting_transform_iterator(0, [&](int i) {
+    std::string out(8, '\0');
+    for (auto b = 0; b < 8; ++b) {
+      out[7 - b] = static_cast<char>(values[i] >> (8 * b));
+    }
+    return out;
+  });
+  auto const col   = cudf::test::strings_column_wrapper(bytes, bytes + num_rows);
+  auto const table = cudf::table_view{{col}};
+
+  // No writer produces BYTE_ARRAY decimals, so write a binary column and annotate it as decimal
+  std::vector<char> buffer;
+  auto metadata = cudf::io::table_input_metadata{table};
+  metadata.column_metadata[0].set_output_as_binary(true);
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .metadata(std::move(metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .build());
+
+  auto footer =
+    cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
+                                     cudf::host_span<char const>{buffer.data(), buffer.size()}}))
+      .front();
+  auto const& encodings = footer.row_groups[0].columns[0].meta_data.encodings;
+  ASSERT_TRUE(std::ranges::any_of(encodings, [](auto enc) {
+    return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+           enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+  }));
+
+  auto& schema             = footer.schema[1];
+  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+  schema.decimal_scale     = scale;
+  schema.decimal_precision = precision;
+  schema.logical_type      = cudf::io::parquet::LogicalType{
+    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+
+  // Swap the trailing footer for the annotated one, keeping the data pages
+  uint32_t footer_len{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const new_footer = parquet_delta_test::serialize_footer(footer);
+  buffer.resize(buffer.size() - 8 - footer_len);
+  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
+  footer_len = new_footer.size();
+  buffer.insert(buffer.end(),
+                reinterpret_cast<char const*>(&footer_len),
+                reinterpret_cast<char const*>(&footer_len + 1));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+      .build());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0),
+                                 cudf::test::fixed_point_column_wrapper<typename T::rep>(
+                                   values, values + num_rows, numeric::scale_type{-scale}));
+}
+
 // Reading Parquet DELTA-encoded pages whose mini-blocks hold more than 64 values. No stock
 // writer emits over 64 values/mini-block (cudf and parquet-mr write 32, pyarrow and arrow-rs at
 // most 64), so the files are built in-memory by the parquet_delta_test_utils.hpp helpers.

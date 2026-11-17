@@ -2,9 +2,7 @@
 
 ## Run the unit tests on the oldest supported polars too
 
-The supported range spans two minors, and CI tests both ends. Without this check, a PR that is green on the newest polars can fail the
-wheel job on the oldest, as the Polars 2.1 upgrade did (4 failures in CI, 71 in a full local run). Overlay the old polars on the same
-environment so nothing else changes (no `ray`/`dask` extras are lost, and the environment stays intact):
+CI tests both ends of the supported range. Overlay the old polars on the same environment so nothing else changes:
 
 ```bash
 pip install --no-deps --target <tmp>/polars-old "polars==X.Y.Z" "polars-runtime-32==X.Y.Z"
@@ -27,10 +25,10 @@ What usually breaks, and the fix:
 
 ## Coverage
 
-- `cudf_polars` must stay at 100%, except the files in `[tool.coverage.report] omit` of `python/cudf_polars/pyproject.toml`.
-- Code that is dead on the newest polars (kept only for older supported versions) gets `# pragma: no cover` with a short reason,
-  placed on the `if` line so the whole block is excluded. Code that is now live loses its pragma.
+CI measures coverage on the newest polars only.
+
+- Code reachable only on an older supported version gets `# pragma: no cover; polars X.Y only` on its `if`/`raise` line, so the whole
+  block is excluded. Code that is now live loses its pragma.
 - Defensive raises that polars validates first use `# pragma: no cover; polars validates this ahead of time`.
 - New behaviour gets a real test. Fallbacks get `assert_ir_translation_raises`; parity gets `assert_gpu_result_equal`;
   error parity gets `assert_collect_raises`.
-- Read the `term-missing` output and cover every reported line; do not lower the threshold.

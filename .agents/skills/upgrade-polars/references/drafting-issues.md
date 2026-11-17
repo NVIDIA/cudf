@@ -3,7 +3,7 @@
 Every xfail/skip/fallback that stands for a real gap needs an issue the maintainers can act on without asking questions. Draft each as
 a markdown file for the user to review; open an issue only when asked, and open issues in other repositories (for example
 `pola-rs/polars`) only with an explicit go-ahead. Title format `[BUG] ...` or `[FEA] ...`; labels `bug` or
-`feature request` plus `cudf-polars`. Use this structure (modelled on a well-received issue about hanging upstream tests):
+`feature request` plus `cudf-polars`. Use this structure:
 
 1. **Description.** Plain-language symptom first: what happens (wrong result, exception, hang), how it shows up in CI, and what still works
    (other engine, default blocksize, plain Polars CPU), which narrows the cause to cudf-polars. No jargon the reader must decode.
@@ -11,8 +11,7 @@ a markdown file for the user to review; open an issue only when asked, and open 
 3. **How to reproduce.** One copy-pasteable command with every environment variable and flag, run from a stated checkout (for example
    `pola-rs/polars` at tag `py-X.Y.Z`, in `py-polars`), plus the observed result (exit code, error text, the contrast with the passing
    configuration). Prefer a minimal Polars snippet when the failure is not about the test harness.
-4. **What I saw in CI** (only if CI has actually run it; for a local pre-merge upgrade write "not yet run in CI" or omit). Workflow run
-   id, job names, commit, how many jobs hit it, and where it stopped. State plainly what you did **not** verify (for example "the other hangs may not share one cause"). Do not speculate beyond the evidence.
+4. **What I saw in CI** (omit if CI has not run it). Run id, job names, commit, and where it stopped. State what you did **not** verify.
 5. **Root cause / suspected location.** File and function when known (for example a stack dump pointing at a specific actor).
 6. **Workaround.** Where the skip/xfail/fallback lives in the repo (file and dict name) and that it should be removed when the issue is fixed.
 7. **Caveats.** Anything the workaround may be hiding (for example a skipped hang hides every test behind it).

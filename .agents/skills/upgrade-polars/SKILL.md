@@ -36,7 +36,7 @@ Ground rules:
 - Small root-caused fixes go in the upgrade PR. Larger work gets a drafted issue, linked from the
   xfail/skip reason or a `TODO`. Draft issues for the user to review before opening them.
 - Record which tests were run and their outcome as you go; the PR description needs it.
-- On an existing PR branch, sync with GitHub first (see `references/pr-sync.md`). Never force-push.
+- On an existing PR branch, sync with GitHub first (see "Resuming work on an open PR"). Never force-push.
 - Install the target version into the dev environment first, then confirm with
   `python -c "import polars; print(polars.__version__)"`. If a test environment variable or
   plugin is missing, say so instead of silently skipping.
@@ -71,7 +71,12 @@ Ground rules:
 ## Resuming work on an open PR
 
 The PR branch on GitHub can change while you are away (squash, force-push, accepted suggestions, web edits). Before you edit,
-commit or push on an existing PR, and again right before every push, follow `references/pr-sync.md`. Never force-push.
+commit or push, and again before every push, fetch and compare with `origin/<branch>`. If history was rewritten, stop and ask the user.
+
+- Re-read the PR before changing it (`gh pr view <n> --json headRefOid,body,reviews,comments`, `gh pr checks <n>`). The user may have
+  edited the description, so merge your change into the current body instead of overwriting it.
+- CI does not start on its own for a draft PR: the user has to comment `/ok to test <sha>` for the new head.
+- State in the PR which commit the last full test run was on, so later edits can be judged against it.
 
 ## Step 1. Survey what changed upstream
 
@@ -258,7 +263,7 @@ cudf and cudf.pandas variants test cudf and pandas, not polars. If Narwhals itse
 - `pre-commit run --all-files` (mypy, ruff, the dependency-file generator, `ci/check_cudf_polars_ir.py`). The mypy hook installs
   its own polars from `.pre-commit-config.yaml`, so confirm that pin was updated.
 - `git diff --stat` after any merge (an earlier PR accidentally pulled in unrelated Java changes).
-- Run the sync check from `references/pr-sync.md` before every push.
+- Run the sync check from "Resuming work on an open PR" before every push.
 - Run the cudf-polars unit tests on the oldest supported polars (`references/unit-tests-oldest-and-coverage.md`) and confirm the upstream suites ran on the newest.
 - Confirm `ci/cudf_polars/gpu_test_run_list.json` has an entry for the new Polars version, has no stale or fallback-only nodes, and that
   the PR configuration command in `references/upstream-tests.md` passes locally.

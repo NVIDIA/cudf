@@ -2,33 +2,28 @@
 
 ## GPU test selection in PR CI
 
-PR CI does not run the whole upstream suite. It runs only the tests listed in `ci/cudf_polars/gpu_test_run_list.json`, under the key
-`<exact polars version>|spmd|default` (`CUDF_POLARS_GPU_RUN_LIST` in `.github/workflows/pr.yaml`). A selected test that passes must have
-executed a query on the GPU in its test body. Nightlies run the full suites and audit the list. To run the PR configuration locally:
+PR CI runs only the upstream tests listed in `ci/cudf_polars/gpu_test_run_list.json` under `<exact polars version>|spmd|default`,
+and a selected test that passes must have executed a query on the GPU. The `update-cudf-polars-polars-tests-selection` skill owns
+generating and pruning the list. To run the PR configuration locally:
 
 ```bash
 CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json POLARS_DIR=<dir>/polars \
     ./ci/run_cudf_polars_polars_tests.sh --engine spmd --inject-gpu-engine-blocksize default
 ```
 
-What this means for an upgrade:
+What the PR CI errors mean during an upgrade:
 
-- **The new Polars version needs its own entry, including a patch release.** Without one, PR CI stops with
-  `Cannot select GPU tests for 2.2.0|spmd|default`. Generate it with the `update-cudf-polars-polars-tests-selection` skill. Use complete
-  nightly telemetry for the target revision when it exists. Only when none exists, bootstrap the entry with a full default-blocksize SPMD
-  run with `--run-slow` on every shard, all exiting zero. In that case, triage the failures below first and regenerate the list last.
-- **Renamed or removed upstream tests** fail PR CI with `Stale GPU run-list nodes`. Update the list in the same PR.
-- **Turning a GPU execution into a CPU fallback fails the selected test** with `Selected GPU test passed without observed GPU
-  execution`. When a fallback is the right fix (triage step 2 below), also remove that node from the run list.
-- Skipped or xfailed items are not checked for GPU execution, so the xfail and skip dicts keep working as before.
-- When the PR raises the minimum supported Polars version, prune the entries for dropped versions in the same PR (see "Remove run-list
-  entries for dropped versions" in Step 2 of `SKILL.md`).
+- `Cannot select GPU tests for <version>|spmd|default`: the new Polars version (including a patch release) has no entry. Triage the
+  failures below first, then generate it with the other skill.
+- `Stale GPU run-list nodes`: upstream renamed or removed tests. Update the list in the same PR.
+- `Selected GPU test passed without observed GPU execution`: a fix turned GPU execution into a CPU fallback. Remove that node from the list.
+
+Skipped and xfailed items are not checked for GPU execution.
 
 ## Triage each failure
 
 1. Real, small bug: fix it in cudf-polars and add a unit test.
-2. Unsupported feature: make the translator fall back to CPU (the test then passes). Preferred over xfail. If the test is in the GPU run
-   list, remove its node from the list as well.
+2. Unsupported feature: CPU fallback (see the ground rules in `SKILL.md`), and remove the node from the GPU run list if present.
 3. Larger fix needed: add the test to `EXPECTED_FAILURES` (or the streaming variants) in
    `python/cudf_polars/cudf_polars/testing/inject_gpu_engine.py` with a reason **and an issue link**.
 4. Flaky, non-deterministic, hangs, only checks CPU logs, or would XPASS on one engine and fail on another: `TESTS_TO_SKIP`
@@ -42,7 +37,6 @@ Conventions for the dicts (`EXPECTED_FAILURES`, `TESTS_TO_SKIP`, `STREAMING_ENGI
   "Casting that raises not supported on GPU", ...). Streaming engines wrap errors in an `ExceptionGroup`, which has its own phrase.
 - Conditional entries use plain Python guards after the dict (not tuples).
 - **Audit the existing entries.** xfails are strict: remove entries whose test now passes (XPASS fails the run) or no longer exists.
-  The Polars 2.0 audit removed 76 and added about 30.
 - Wrong-result failures should become fallbacks, not xfails. In the 2.1 upgrade several "failures" were real wrong results
   (integer-to-`Date` casts relabelled an `INT64` buffer as `INT32`; mixed-scale `Decimal` comparisons wrapped in libcudf; non-strict
   narrowing casts wrapped instead of returning null). Compare the GPU result with the CPU result before assuming a test is flaky.
@@ -52,7 +46,7 @@ Conventions for the dicts (`EXPECTED_FAILURES`, `TESTS_TO_SKIP`, `STREAMING_ENGI
   `STREAMING_ENGINE_EXPECTED_FAILURES` with the established phrase ("Correct polars.exceptions.X raised but it's in an ExceptionGroup").
 
 If the new polars adds an optional dependency that its tests need, install it too: read the `[project.optional-dependencies]` of the cloned
-`py-polars/pyproject.toml` (2.1 needs `polars-iceberg`, without which ~110 Iceberg/catalog tests fail with a `PerformanceWarning`). Add it to
+`py-polars/pyproject.toml` (for example `polars-iceberg`). Add it to
 `ci/test_cudf_polars_polars_tests.sh` unconditionally: CI only runs the upstream tests against the installed Polars version.
 
 If an upstream test requirement breaks (a new dependency release or a warning under `-W error`), patch the requirement with `sed -i`

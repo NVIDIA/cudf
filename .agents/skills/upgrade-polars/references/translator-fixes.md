@@ -14,33 +14,27 @@ Run the code against the new polars and fix in this order.
 3. **Changed IR/option payloads.** When a node gains or reshapes a field (for example `MergeSorted.key`
    becoming a list, a new `HConcat` slot, `Sort.slice` becoming a 3-tuple), update the translate function and
    the IR class. When an IR class signature changes, grep every constructor call (translator, `streaming/`,
-   tests). `ci/check_cudf_polars_ir.py` validates `do_evaluate` signatures.
+   tests). `ci/check_cudf_polars_ir.py` validates `do_evaluate` signatures. Payload shapes can also vary by kind (a join type whose
+   `options[0]` is a 2-tuple where others are 3-tuples): check the kind before unpacking, and raise `NotImplementedError` for kinds you
+   do not support.
 4. **New fallbacks.** If a new option cannot be honoured on GPU, raise `NotImplementedError` from the translator
    (or the node constructor) with a clear message. Add `assert_ir_translation_raises(q, engine, NotImplementedError)`
    tests; where the *upstream* test cannot pass on GPU, this is the preferred fix.
 5. **Semantic changes.** Fix when small (with a unit test). If it needs libcudf work or a redesign, fall back to CPU
    and draft an issue.
-6. **Pass the stream.** Pass `stream=df.stream` to every pylibcudf call you add or touch (reviewers sweep for it).
-   Prefer `Column.astype` over hand-rolled cast checks, and drop `hasattr` guards for APIs that now always exist.
+6. **Pass the stream.** Pass `stream=df.stream` to every pylibcudf call you add or touch, and prefer `Column.astype` over hand-rolled casts.
 7. **Imports.** Use `from polars import _plr as plrs` for the private Rust bindings. mypy needs the overrides already in
    the root `pyproject.toml` for `polars._plr`.
-
-8. **Polars constant-folds literals into scans.** In 2.1 `select(pl.lit(<struct/enum>))` becomes a `DataFrameScan`, so the translator
-   never sees a `Literal` and a test that expects `NotImplementedError` from that query stops raising. Keep the raise test but build
-   the query with `with_columns` (or `when/then`), which still reaches the `Literal`, and add a small `assert_gpu_result_equal` test for
-   the folded `select` form. Check what a changed test now exercises (print `translator.errors`), not just that it passes.
-9. **Option payloads can change shape.** 2.1 added a join type whose `options[0]` is a 2-tuple (`("Left", "cross_and_filter")`) where
-   code unpacked a 3-tuple. Look at the kind of the payload before unpacking, and raise `NotImplementedError` for kinds you do not support.
-10. **A polars panic cannot be caught.** If a visitor call panics (for example `get_schema()` on a `BinaryOffset` column, which polars
-    maps to `unimplemented!()`), the exception is a `BaseException` and the visitor's arena lock is poisoned, so neither a catch nor the CPU
-    fallback works. Do not add a try/except. Xfail the affected tests with a reason and draft an issue for `pola-rs/polars`.
-11. **Optimizer rewrites that hide behind a visitor limit.** 2.1 lowers `x.sort_by(k).first()` in `group_by` to `min_by` with a "total
-    order" that the Python visitor refuses to expose, so such queries fall back to CPU. Where the rewrite is skipped (for example
-    `maintain_order=True`) keep the GPU path covered by passing that option in tests, and add a canary test that the default form raises.
-12. **Version-specific code.** The supported range spans two polars minors, but CI measures coverage on the newest. Code reachable
-    only on the older version gets `# pragma: no cover; polars 2.0 only` on its `if`/`raise` line; code now unreachable on the newer
-    version one gets a note naming that version. Re-run the coverage check after every polars-induced plan change.
-13. **mypy.** `DataType.polars_type` is the generic `pl.DataType`; narrow it with `assert isinstance(t, pl.Decimal)` before reading
+8. **Optimizer changes can hide a code path.** Polars may constant-fold a query (`select(pl.lit(...))` becoming a `DataFrameScan`) or
+   rewrite it into a node the visitor does not expose (`sort_by(k).first()` in `group_by` becoming `min_by`). A test that expected a
+   raise, or GPU execution, then silently tests something else. Rebuild the query so it still reaches the path (`with_columns`,
+   `maintain_order=True`), add a test for the new form, and print `translator.errors` to check what a changed test exercises.
+9. **A polars panic cannot be caught.** A panicking visitor call (for example `unimplemented!()`) raises a `BaseException` and poisons
+   the visitor's arena lock, so neither a catch nor the CPU fallback works. Do not add a try/except. Xfail the affected tests with a
+   reason and draft an issue for `pola-rs/polars`.
+10. **Version-specific code.** See "Coverage" in `unit-tests-oldest-and-coverage.md` for the pragma rules, and re-run the coverage
+    check after every polars-induced plan change.
+11. **mypy.** `DataType.polars_type` is the generic `pl.DataType`; narrow it with `assert isinstance(t, pl.Decimal)` before reading
     `.precision`/`.scale`. Run `mypy --config-file=pyproject.toml cudf_polars tests` from `python/cudf_polars` and ignore the
     `import-untyped`/`_expr_nodes` noise that comes from not having the hook's isolated environment.
 

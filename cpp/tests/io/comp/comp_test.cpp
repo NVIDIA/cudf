@@ -461,17 +461,32 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
                               : cudf::io::detail::get_decompression_scratch_size(infos[i], stream);
       EXPECT_EQ(sizes[i], expected) << "element " << i;
     }
+    // Elements without pages or compression never need scratch space
+    for (size_t i = 0; i < infos.size(); ++i) {
+      if (infos[i].num_pages == 0 or infos[i].type == compression_type::NONE) {
+        EXPECT_EQ(sizes[i], 0) << "element " << i;
+      }
+    }
+    return sizes;
   };
 
-  // nvCOMP (default policy)
-  check();
+  // nvCOMP (default policy): nvCOMP needs scratch space at least for some codecs
+  auto const nvcomp_sizes = check();
+  EXPECT_TRUE(std::any_of(nvcomp_sizes.begin(), nvcomp_sizes.end(), [](auto s) { return s > 0; }));
   // Host decompression forced on where supported
   setenv("LIBCUDF_HOST_DECOMPRESSION", "ON", 1);
   check();
   unsetenv("LIBCUDF_HOST_DECOMPRESSION");
-  // nvCOMP disabled: libcudf kernels, Brotli needs scratch
+  // nvCOMP disabled: libcudf kernels, only Brotli needs scratch space
   setenv("LIBCUDF_NVCOMP_POLICY", "OFF", 1);
-  check();
+  auto const kernel_sizes = check();
+  for (size_t i = 0; i < infos.size(); ++i) {
+    if (infos[i].type == compression_type::BROTLI and infos[i].num_pages > 0) {
+      EXPECT_GT(kernel_sizes[i], 0) << "element " << i;
+    } else {
+      EXPECT_EQ(kernel_sizes[i], 0) << "element " << i;
+    }
+  }
 }
 
 TEST_F(DecompressionScratchSizesTest, EmptyAndMismatched)

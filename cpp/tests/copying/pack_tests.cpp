@@ -32,6 +32,7 @@
 #include <map>
 #include <numeric>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -639,27 +640,47 @@ TEST_F(ExperimentalPackUnpackTest, CascadedUsesNativeTypedRegions)
                                        decimal64s,
                                        decimal128s}};
 
-  auto const plan   = cx::prepare_pack(input, make_options(cx::pack_compression::cascaded));
-  auto const packed = pack_to_device(plan);
-  ASSERT_EQ(packed.result.metadata.size(), plan.sizes().metadata_bytes);
-  auto const entries = read_region_entries(packed.result.metadata);
-  ASSERT_GE(entries.size(), 6);
-  for (auto const type : {cudf::type_id::INT16,
-                          cudf::type_id::INT64,
-                          cudf::type_id::FLOAT32,
-                          cudf::type_id::STRING}) {
-    EXPECT_TRUE(std::any_of(entries.begin(),
-                            entries.end(),
-                            [type](auto const& entry) {
-                              return entry.is_validity == 0 &&
-                                     static_cast<cudf::type_id>(entry.type) == type;
-                            }))
-      << static_cast<int>(type);
-  }
-  EXPECT_TRUE(std::any_of(
-    entries.begin(), entries.end(), [](auto const& entry) { return entry.is_validity != 0; }));
+  // Asymmetric mode encodes every region; symmetric mode only those of 32- and 64-bit values.
+  std::set<cudf::type_id> const narrow{cudf::type_id::INT16,
+                                       cudf::type_id::STRING,
+                                       cudf::type_id::BOOL8,
+                                       cudf::type_id::UINT8,
+                                       cudf::type_id::UINT16,
+                                       cudf::type_id::DECIMAL128};
+  for (auto const compression :
+       {cx::pack_compression::cascaded, cx::pack_compression::cascaded_symmetric}) {
+    SCOPED_TRACE(static_cast<int>(compression));
+    auto const plan   = cx::prepare_pack(input, make_options(compression));
+    auto const packed = pack_to_device(plan);
+    ASSERT_EQ(packed.result.metadata.size(), plan.sizes().metadata_bytes);
+    auto const entries = read_region_entries(packed.result.metadata);
+    ASSERT_GE(entries.size(), 6);
+    for (auto const type : {cudf::type_id::INT16,
+                            cudf::type_id::INT64,
+                            cudf::type_id::FLOAT32,
+                            cudf::type_id::STRING}) {
+      EXPECT_TRUE(std::any_of(entries.begin(),
+                              entries.end(),
+                              [type](auto const& entry) {
+                                return entry.is_validity == 0 &&
+                                       static_cast<cudf::type_id>(entry.type) == type;
+                              }))
+        << static_cast<int>(type);
+    }
+    EXPECT_TRUE(std::any_of(
+      entries.begin(), entries.end(), [](auto const& entry) { return entry.is_validity != 0; }));
+    for (auto const& entry : entries) {
+      auto const type     = static_cast<cudf::type_id>(entry.type);
+      auto const expected = compression == cx::pack_compression::cascaded_symmetric &&
+                                entry.is_validity == 0 && narrow.contains(type)
+                              ? cx::pack_compression::none
+                              : compression;
+      EXPECT_EQ(static_cast<cx::pack_compression>(entry.compression), expected)
+        << static_cast<int>(type);
+    }
 
-  expect_materializes_to(input, packed.view());
+    expect_materializes_to(input, packed.view());
+  }
 }
 
 TEST_F(ExperimentalPackUnpackTest, CompressMisalignedSlices)
@@ -676,6 +697,7 @@ TEST_F(ExperimentalPackUnpackTest, CompressMisalignedSlices)
 
   for (auto const compression : {cx::pack_compression::automatic,
                                  cx::pack_compression::cascaded,
+                                 cx::pack_compression::cascaded_symmetric,
                                  cx::pack_compression::zstd,
                                  cx::pack_compression::snappy}) {
     SCOPED_TRACE(static_cast<int>(compression));
@@ -772,7 +794,9 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
   cudf::test::fixed_width_column_wrapper<int16_t> shorts(values.begin(), values.end());
   cudf::test::strings_column_wrapper strings(words.begin(), words.end());
   cudf::test::fixed_width_column_wrapper<int64_t> hashes(mixed, mixed + rows);
-  auto const input = cudf::table_view{{numbers, shorts, strings, hashes}};
+  cudf::test::fixed_point_column_wrapper<__int128_t> decimals(
+    values.begin(), values.end(), numeric::scale_type{-2});
+  auto const input = cudf::table_view{{numbers, shorts, strings, hashes, decimals}};
 
   // A 1 MiB staging budget spreads the 33 INT64 blocks over several windows.
   auto options                 = make_options(cx::pack_compression::automatic);
@@ -783,10 +807,11 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
   for (auto const& entry : entries) {
     auto const expected =
       std::map<cudf::type_id, cx::pack_compression>{
-        {cudf::type_id::INT32, cx::pack_compression::cascaded},
+        {cudf::type_id::INT32, cx::pack_compression::cascaded_symmetric},
         {cudf::type_id::INT16, cx::pack_compression::none},
         {cudf::type_id::STRING, cx::pack_compression::none},
-        {cudf::type_id::INT64, cx::pack_compression::cascaded}}
+        {cudf::type_id::INT64, cx::pack_compression::cascaded_symmetric},
+        {cudf::type_id::DECIMAL128, cx::pack_compression::none}}
         .at(static_cast<cudf::type_id>(entry.type));
     EXPECT_EQ(static_cast<cx::pack_compression>(entry.compression), expected)
       << static_cast<int>(entry.type);

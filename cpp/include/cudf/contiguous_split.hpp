@@ -313,21 +313,27 @@ namespace experimental {
 /**
  * @brief Compression algorithms supported by prepared pack operations.
  *
- * A concrete codec is applied to every block of a region, even when that expands the block.
+ * A concrete codec is applied to every block of a region, even when that expands the block, except
+ * that `cascaded_symmetric` leaves regions it cannot encode uncompressed.
  * Values are recorded in packed metadata and must not change.
  */
 enum class pack_compression : int32_t {
   none      = 0,  ///< Preserve the current uncompressed packed representation
-  automatic = 1,  ///< Cascaded, except that string characters, 8- and 16-bit values, and small
-                  ///< regions stay uncompressed, and so do blocks that Cascaded shrinks too
-                  ///< little. Every
-                  ///< region stays uncompressed when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP. A
-                  ///< table whose regions all stay uncompressed uses the uncompressed format.
-  cascaded = 2,   ///< nvCOMP Cascaded, on values of each region's native width and signedness.
-                  ///< Values wider than 64 bits, such as `DECIMAL128`, and string characters are
-                  ///< treated as bytes. Unavailable when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP.
-  zstd   = 3,     ///< Zstandard
-  snappy = 4,     ///< Snappy
+  automatic = 1,  ///< `cascaded_symmetric`, except that small regions stay uncompressed, and so
+                  ///< do blocks that it shrinks too little. Every region stays uncompressed when
+                  ///< `LIBCUDF_NVCOMP_POLICY` disables nvCOMP. A table whose regions all stay
+                  ///< uncompressed uses the uncompressed format.
+  cascaded = 2,   ///< nvCOMP Cascaded in asymmetric mode, on values of each region's native width
+                  ///< and signedness. Values wider than 64 bits, such as `DECIMAL128`, and string
+                  ///< characters are treated as bytes. Unavailable when `LIBCUDF_NVCOMP_POLICY`
+                  ///< disables nvCOMP.
+  zstd               = 3,  ///< Zstandard
+  snappy             = 4,  ///< Snappy
+  cascaded_symmetric = 5,  ///< nvCOMP Cascaded in symmetric mode, which compresses several times
+                           ///< faster than `cascaded` at a slightly lower ratio. Applies to 32-
+                           ///< and 64-bit values; regions of other values, such as 8- and 16-bit
+                           ///< integers, `DECIMAL128` and string characters, stay uncompressed.
+                           ///< Unavailable when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP.
 };
 
 /**
@@ -472,8 +478,8 @@ class pack_plan_builder {
    * @brief Consume the builder.
    *
    * @throw std::invalid_argument if a region's codec is not a `pack_compression` value
-   * @throw cudf::logic_error if a region's codec is `pack_compression::cascaded` and
-   * `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
+   * @throw cudf::logic_error if a region's codec is `pack_compression::cascaded` or
+   * `pack_compression::cascaded_symmetric` and `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
    *
    * @return The configured plan
    */
@@ -554,8 +560,8 @@ pack_plan_builder make_pack_plan_builder(
  *
  * @throw std::invalid_argument if `options.staging_buffer_bytes` is less than 1 MiB
  * @throw std::invalid_argument if `options.compression` is not a `pack_compression` value
- * @throw cudf::logic_error if `options.compression` is `pack_compression::cascaded` and
- * `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
+ * @throw cudf::logic_error if `options.compression` is `pack_compression::cascaded` or
+ * `pack_compression::cascaded_symmetric` and `LIBCUDF_NVCOMP_POLICY` disables nvCOMP
  *
  * @param input View of the table to pack
  * @param options Compression and codec options

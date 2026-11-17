@@ -179,6 +179,33 @@ void batched_compress(compression_type compression,
   feature_status_parameters params = feature_status_parameters());
 
 /**
+ * @brief nvCOMP Cascaded compression modes.
+ */
+enum class cascaded_mode : uint8_t {
+  ASYMMETRIC,  ///< Adaptive search over encodings; supports 8-, 16-, 32- and 64-bit integers
+  SYMMETRIC,   ///< Fixed encodings with faster compression; supports 32- and 64-bit integers
+};
+
+/**
+ * @brief How a Cascaded chunk is encoded: the integral type its data is interpreted as, and the
+ * mode.
+ */
+struct cascaded_format {
+  type_id value_type;
+  cascaded_mode mode;
+
+  bool operator==(cascaded_format const&) const = default;
+};
+
+/**
+ * @brief Whether nvCOMP Cascaded supports a value type in symmetric mode.
+ *
+ * @param value_type Integral type the chunk data is interpreted as
+ * @returns true for 32- and 64-bit integral types
+ */
+[[nodiscard]] bool is_cascaded_symmetric_supported(type_id value_type);
+
+/**
  * @brief Maximum size of uncompressed chunks that can be compressed with nvCOMP Cascaded.
  *
  * @returns maximum chunk size
@@ -195,20 +222,18 @@ void batched_compress(compression_type compression,
 /**
  * @brief Gets the maximum size any chunk could compress to with nvCOMP Cascaded.
  *
- * @param value_type Integral type the chunk data is interpreted as
+ * @param format Value type and mode the chunks are compressed with
  * @param max_uncomp_chunk_size Size of the largest uncompressed chunk in the batch
  * @returns maximum compressed chunk size
  */
-[[nodiscard]] size_t cascaded_compress_max_output_chunk_size(type_id value_type,
+[[nodiscard]] size_t cascaded_compress_max_output_chunk_size(cascaded_format format,
                                                              size_t max_uncomp_chunk_size);
 
 /**
  * @brief Device batch compression with nvCOMP Cascaded.
  *
- * 32- and 64-bit values are compressed in symmetric mode, and narrower values in asymmetric mode.
- *
- * @param[in] value_type Integral type the data of every chunk is interpreted as; the chunk sizes
- * must be multiples of its size
+ * @param[in] format Value type and mode every chunk is compressed with; the chunk sizes must be
+ * multiples of the value type's size
  * @param[in] inputs List of input buffers
  * @param[out] outputs List of output buffers
  * @param[out] results List of output status structures
@@ -216,7 +241,7 @@ void batched_compress(compression_type compression,
  * @param[in] stream CUDA stream to use
  * @param[in] mr Memory resources; only the temporary resource is used
  */
-void batched_cascaded_compress(type_id value_type,
+void batched_cascaded_compress(cascaded_format format,
                                device_span<device_span<uint8_t const> const> inputs,
                                device_span<device_span<uint8_t> const> outputs,
                                device_span<codec_exec_result> results,
@@ -227,17 +252,16 @@ void batched_cascaded_compress(type_id value_type,
 /**
  * @brief Device batch decompression with nvCOMP Cascaded.
  *
- * nvCOMP decompresses a batch only if all of its chunks were compressed with the same value type,
- * so the chunks are given in groups of one value type each. Group `i` holds the chunks in
+ * nvCOMP decompresses a batch only if all of its chunks were compressed with the same format, so
+ * the chunks are given in groups of one format each. Group `i` holds the chunks in
  * `[group_offsets[i], group_offsets[i + 1])`, and the groups are decompressed concurrently.
- * Chunks must have been compressed by `batched_cascaded_compress` with their group's value type.
  *
  * @param[in] inputs List of input buffers
  * @param[out] outputs List of output buffers
  * @param[out] results List of output status structures
  * @param[in] group_offsets Offsets of the chunk groups, starting with 0 and ending with the number
  * of chunks
- * @param[in] group_types Integral type the chunks of each group were compressed as
+ * @param[in] group_formats Format the chunks of each group were compressed with
  * @param[in] stream CUDA stream to use
  * @param[in] mr Memory resources; only the temporary resource is used
  */
@@ -245,7 +269,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                  device_span<device_span<uint8_t> const> outputs,
                                  device_span<codec_exec_result> results,
                                  std::span<size_t const> group_offsets,
-                                 std::span<type_id const> group_types,
+                                 std::span<cascaded_format const> group_formats,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr);
 

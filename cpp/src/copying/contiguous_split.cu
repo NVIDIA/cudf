@@ -2585,7 +2585,23 @@ using io::detail::codec_status;
 [[nodiscard]] bool is_concrete_codec(pack_compression compression)
 {
   return compression == pack_compression::none || compression == pack_compression::cascaded ||
-         compression == pack_compression::zstd || compression == pack_compression::snappy;
+         compression == pack_compression::zstd || compression == pack_compression::snappy ||
+         compression == pack_compression::cascaded_symmetric;
+}
+
+[[nodiscard]] bool is_cascaded(pack_compression compression)
+{
+  return compression == pack_compression::cascaded ||
+         compression == pack_compression::cascaded_symmetric;
+}
+
+[[nodiscard]] io::detail::nvcomp::cascaded_format cascaded_format_of(pack_compression compression,
+                                                                     type_id value_type)
+{
+  using io::detail::nvcomp::cascaded_mode;
+  return {value_type,
+          compression == pack_compression::cascaded_symmetric ? cascaded_mode::SYMMETRIC
+                                                              : cascaded_mode::ASYMMETRIC};
 }
 
 [[nodiscard]] io::compression_type to_io_compression(pack_compression compression)
@@ -2667,27 +2683,23 @@ struct block_batch {
 
 [[nodiscard]] std::size_t max_allowed_block_bytes(pack_compression codec)
 {
-  if (codec == pack_compression::cascaded) {
-    return io::detail::nvcomp::cascaded_compress_max_allowed_chunk_size();
-  }
+  if (is_cascaded(codec)) { return io::detail::nvcomp::cascaded_compress_max_allowed_chunk_size(); }
   return io::detail::compress_max_allowed_chunk_size(to_io_compression(codec))
     .value_or(std::numeric_limits<std::size_t>::max());
 }
 
 [[nodiscard]] std::size_t block_alignment(pack_compression codec)
 {
-  if (codec == pack_compression::cascaded) {
-    return io::detail::nvcomp::cascaded_compress_required_alignment();
-  }
+  if (is_cascaded(codec)) { return io::detail::nvcomp::cascaded_compress_required_alignment(); }
   return std::max(sizeof(uint64_t),
                   io::detail::compress_required_chunk_alignment(to_io_compression(codec)));
 }
 
 [[nodiscard]] std::size_t max_compressed_block_bytes(block_batch const& batch)
 {
-  if (batch.codec == pack_compression::cascaded) {
-    return io::detail::nvcomp::cascaded_compress_max_output_chunk_size(batch.cascaded_type,
-                                                                       batch.max_block_bytes);
+  if (is_cascaded(batch.codec)) {
+    return io::detail::nvcomp::cascaded_compress_max_output_chunk_size(
+      cascaded_format_of(batch.codec, batch.cascaded_type), batch.max_block_bytes);
   }
   return io::detail::max_compressed_size(to_io_compression(batch.codec), batch.max_block_bytes);
 }
@@ -2762,9 +2774,15 @@ void compress_batch(block_batch const& batch,
                     cuda::stream_ref stream,
                     cudf::memory_resources mr)
 {
-  if (batch.codec == pack_compression::cascaded) {
+  if (is_cascaded(batch.codec)) {
     return io::detail::nvcomp::batched_cascaded_compress(
-      batch.cascaded_type, inputs, outputs, results, batch.max_block_bytes, stream, mr);
+      cascaded_format_of(batch.codec, batch.cascaded_type),
+      inputs,
+      outputs,
+      results,
+      batch.max_block_bytes,
+      stream,
+      mr);
   }
   io::detail::compress(to_io_compression(batch.codec), inputs, outputs, results, stream, mr);
 }
@@ -3307,17 +3325,15 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
 
 [[nodiscard]] pack_compression select_automatic_compression(compression_region_layout const& layout)
 {
-  // 8- and 16-bit values need asymmetric Cascaded, which packs them several times slower than
-  // symmetric mode packs wider ones.
-  auto const is_narrow = layout.kind == pack_region_kind::data &&
-                         cudf::is_fixed_width(data_type{layout.type}) &&
-                         cudf::size_of(data_type{layout.type}) < sizeof(int32_t);
-  if (layout.uncompressed_bytes < automatic_min_region_bytes ||
-      layout.kind == pack_region_kind::string_characters || is_narrow ||
+  // Values that symmetric Cascaded cannot encode would need asymmetric mode, which packs them
+  // several times slower.
+  auto const is_symmetric = io::detail::nvcomp::is_cascaded_symmetric_supported(
+    cascaded_type(layout.type, layout.kind == pack_region_kind::validity));
+  if (layout.uncompressed_bytes < automatic_min_region_bytes || !is_symmetric ||
       io::detail::nvcomp::is_cascaded_disabled().has_value()) {
     return pack_compression::none;
   }
-  return pack_compression::cascaded;
+  return pack_compression::cascaded_symmetric;
 }
 
 std::unique_ptr<detail::contiguous_split_state> make_split_state(cudf::table_view const& input,
@@ -3692,10 +3708,16 @@ class pack_plan::impl {
         CUDF_EXPECTS(is_concrete_codec(requested),
                      "Unsupported pack compression codec",
                      std::invalid_argument);
-        if (requested == pack_compression::cascaded) {
+        if (is_cascaded(requested)) {
           if (auto const reason = io::detail::nvcomp::is_cascaded_disabled()) {
             CUDF_FAIL("Cascaded compression is unavailable: " + *reason);
           }
+        }
+        auto const& layout = layouts[index];
+        if (requested == pack_compression::cascaded_symmetric &&
+            !io::detail::nvcomp::is_cascaded_symmetric_supported(
+              cascaded_type(layout.type, layout.kind == pack_region_kind::validity))) {
+          return pack_compression::none;
         }
         return requested;
       });
@@ -3773,8 +3795,8 @@ class pack_plan::impl {
     std::vector<std::size_t> region_batch;
     for (auto const& region : regions) {
       auto const batch = std::ranges::find_if(batches, [&](auto const& item) {
-        return item.codec == region.compression && (item.codec != pack_compression::cascaded ||
-                                                    item.cascaded_type == region.cascaded_type);
+        return item.codec == region.compression &&
+               (!is_cascaded(item.codec) || item.cascaded_type == region.cascaded_type);
       });
       region_batch.push_back(batch - batches.begin());
       if (batch == batches.end()) {
@@ -3894,7 +3916,7 @@ class pack_plan::impl {
                                 std::plus{},
                                 [](auto const& block) { return block.input_bytes; });
         auto const codec_scratch =
-          batch.codec == pack_compression::cascaded
+          is_cascaded(batch.codec)
             ? 0
             : io::detail::get_compression_scratch_size(to_io_compression(batch.codec),
                                                        num_blocks,
@@ -4095,6 +4117,10 @@ namespace {
     uncompressed_end += entry.uncompressed_bytes;
     auto const compression = static_cast<pack_compression>(entry.compression);
     CUDF_EXPECTS(is_concrete_codec(compression), "Compressed region declares an unsupported codec");
+    CUDF_EXPECTS(compression != pack_compression::cascaded_symmetric ||
+                   io::detail::nvcomp::is_cascaded_symmetric_supported(
+                     cascaded_type(static_cast<type_id>(entry.type), entry.is_validity != 0)),
+                 "Compressed region declares symmetric Cascaded for values it cannot hold");
     // Whole blocks of values keep every decoder output aligned.
     auto const max_block_bytes = compression == pack_compression::none
                                    ? max_raw_block_bytes
@@ -4160,11 +4186,10 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
   };
   auto submit_decompression = [&](compression_metadata_entry const& entry, void* destination) {
     auto const compression = static_cast<pack_compression>(entry.compression);
-    auto const cascaded =
-      compression == pack_compression::cascaded
-        ? cascaded_type(static_cast<type_id>(entry.type), entry.is_validity != 0)
-        : type_id::UINT8;
-    auto* const output   = static_cast<uint8_t*>(destination);
+    auto const cascaded = is_cascaded(compression) ? cascaded_type(static_cast<type_id>(entry.type),
+                                                                   entry.is_validity != 0)
+                                                   : type_id::UINT8;
+    auto* const output  = static_cast<uint8_t*>(destination);
     auto const block_end = entry.block_begin + entry.num_blocks;
     for (auto block_idx = entry.block_begin; block_idx < block_end; ++block_idx) {
       auto const offset   = (block_idx - entry.block_begin) * entry.block_bytes;
@@ -4217,7 +4242,7 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
   // Cascaded tasks go first so that their value-type groups form one contiguous range of blocks.
   auto const num_cascaded = static_cast<std::size_t>(
     std::ranges::distance(tasks.begin(), std::ranges::stable_partition(tasks, [](auto const& item) {
-                                           return item.codec == pack_compression::cascaded;
+                                           return is_cascaded(item.codec);
                                          }).begin()));
 
   // Descriptors for all codecs go up in one copy and their results come back in one copy.
@@ -4255,12 +4280,12 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
     };
     if (num_cascaded > 0) {
       auto const [d_in, d_out, d_results] = spans(0, task_offsets[num_cascaded]);
-      std::vector<type_id> types;
+      std::vector<io::detail::nvcomp::cascaded_format> formats;
       for (auto const& task : std::span{tasks}.first(num_cascaded)) {
-        types.push_back(task.cascaded_type);
+        formats.push_back(cascaded_format_of(task.codec, task.cascaded_type));
       }
       io::detail::nvcomp::batched_cascaded_decompress(
-        d_in, d_out, d_results, {task_offsets.data(), num_cascaded + 1}, types, stream, mr);
+        d_in, d_out, d_results, {task_offsets.data(), num_cascaded + 1}, formats, stream, mr);
     }
     for (auto i = num_cascaded; i < tasks.size(); ++i) {
       auto const [d_in, d_out, d_results] = spans(task_offsets[i], task_offsets[i + 1]);
@@ -4365,7 +4390,7 @@ std::size_t materialize_scratch(packed_data_view input,
   for (auto const& [codec, blocks] : codecs) {
     if (codec == pack_compression::none) { continue; }
     auto const codec_scratch =
-      codec == pack_compression::cascaded
+      is_cascaded(codec)
         ? 0
         : io::detail::get_decompression_scratch_size(
             {to_io_compression(codec), blocks.count, blocks.max_bytes, blocks.total_bytes}, stream);

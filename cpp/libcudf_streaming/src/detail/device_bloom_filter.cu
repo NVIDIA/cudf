@@ -21,7 +21,6 @@
 #include <cudf/reduction/bloom_filter.cuh>
 
 #include <cuco/bloom_filter_ref.cuh>
-#include <cuco/hash_functions.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -56,13 +55,17 @@ namespace cudf_streaming::detail {
 namespace {
 using key_type = std::uint64_t;
 
-using bloom_filter_policy_type =
-  cudf::arrow_bloom_filter_policy<key_type, cuco::identity_hash<key_type>>;
-using bloom_filter_ref_type = cuco::bloom_filter_ref<key_type,
-                                                     cuco::extent<std::size_t>,
-                                                     cuco::thread_scope_device,
-                                                     bloom_filter_policy_type>;
-using storage_type          = bloom_filter_ref_type::filter_block_type;
+// The keys are already row hashes.
+struct identity_hash {
+  __host__ __device__ constexpr key_type operator()(key_type key) const noexcept { return key; }
+};
+
+using bloom_filter_policy_type = cudf::arrow_bloom_filter_policy<key_type, identity_hash>;
+using bloom_filter_ref_type    = cuco::bloom_filter_ref<key_type,
+                                                        cuco::extent<std::size_t>,
+                                                        cuco::thread_scope_device,
+                                                        bloom_filter_policy_type>;
+using storage_type             = bloom_filter_ref_type::filter_block_type;
 
 std::size_t num_blocks(std::size_t filter_size)
 {

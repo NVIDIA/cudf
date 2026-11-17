@@ -782,7 +782,9 @@ def test_parquet_reader_file_logical_type(datadir):
         "duckdb_variant_sample.parquet",
     ],
 )
-def test_parquet_reader_logical_group_binary_not_categorized(datadir, filename):
+def test_parquet_reader_logical_group_binary_not_categorized(
+    datadir, filename
+):
     # Binary children of FILE (`inline`) and VARIANT (`metadata`, `value`)
     # groups stay `list<uint8>` when strings are converted to categories, while
     # all other strings are read as INT32 hashes

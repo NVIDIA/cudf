@@ -376,7 +376,8 @@ async def _extract_partitions_and_send(
         stream = ir_context.get_cuda_stream()
         table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
-            table = evaluate_ir(
+            df = await ir_context.to_thread(
+                evaluate_ir,
                 post_sort_ir,
                 DataFrame.from_table(
                     table,
@@ -385,11 +386,12 @@ async def _extract_partitions_and_send(
                     stream,
                 ),
                 context=ir_context,
-            ).table
+            )
+            table = df.table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
             chunk = TableChunk.from_pylibcudf_table(
-                table, stream, exclusive_view=True, br=context.br()
+                table, df.stream, exclusive_view=True, br=context.br()
             )
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 

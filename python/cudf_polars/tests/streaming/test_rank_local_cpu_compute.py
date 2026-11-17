@@ -145,7 +145,7 @@ def test_config_invalid():
 
 def test_filter_hstack_select(left, engine, cpu_calls):
     q = left.filter(pl.col("a") > 1).with_columns(d=pl.col("a") * 2 + 1)
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q, engine=engine)
     assert cpu_calls["Filter"] > 0
     assert cpu_calls["HStack"] > 0
 

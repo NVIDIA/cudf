@@ -36,6 +36,12 @@ def test_concat_vertical(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_concat_single_empty_null_frame(engine: pl.GPUEngine):
+    q = pl.concat([pl.LazyFrame({"A": []})])
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "value,dtype",
     [(1, pl.Int64()), ("foo", pl.String())],

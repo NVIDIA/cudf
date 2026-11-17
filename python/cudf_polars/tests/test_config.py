@@ -488,6 +488,10 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         m.setenv("CUDF_POLARS__EXECUTOR__BROADCAST_LIMIT", "44")
         m.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "6")
         m.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+        m.delenv(
+            "CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S",
+            raising=False,
+        )
 
         engine = pl.GPUEngine()
         config = ConfigOptions.from_polars_engine(engine)
@@ -501,6 +505,7 @@ def test_config_option_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
             local=6, remote=6
         )
         assert config.executor.quent_context is not None
+        assert config.executor.quent_context.device_memory_poll_interval_s == 0.1
 
 
 def test_max_concurrent_io_tasks_local_remote_env(
@@ -616,6 +621,42 @@ def test_quent_context_from_env_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
         engine = pl.GPUEngine()
         config = ConfigOptions.from_polars_engine(engine)
         assert config.executor.quent_context is None
+
+
+def test_quent_context_poll_interval_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S",
+        "0.001",
+    )
+    config = ConfigOptions.from_polars_engine(pl.GPUEngine())
+    assert config.executor.quent_context is not None
+    assert config.executor.quent_context.device_memory_poll_interval_s == 0.001
+
+
+def test_quent_context_rejects_invalid_poll_interval_from_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__QUENT_CONTEXT", "1")
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S",
+        "invalid",
+    )
+    with pytest.raises(
+        ValueError, match=r"quent_context.device_memory_poll_interval_s"
+    ):
+        ConfigOptions.from_polars_engine(pl.GPUEngine())
+
+    monkeypatch.setenv(
+        "CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S",
+        "-0.1",
+    )
+    with pytest.raises(
+        ValueError, match=r"quent_context.device_memory_poll_interval_s"
+    ):
+        ConfigOptions.from_polars_engine(pl.GPUEngine())
 
 
 def test_resolve_quent_context_preserves_explicit_none(

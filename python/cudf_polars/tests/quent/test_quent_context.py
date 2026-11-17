@@ -29,10 +29,12 @@ from cudf_polars.quent._context import (
 from cudf_polars.quent._runtime import QuentWorkerRuntime
 
 
-def test_context_serialization_roundtrip(tmp_path) -> None:
+@pytest.mark.parametrize("interval_s", [None, 0.25])
+def test_context_serialization_roundtrip(tmp_path, interval_s: float | None) -> None:
     context = QuentConfig(
         engine_id=uuid.uuid4(),
         output_root=str(tmp_path),
+        device_memory_poll_interval_s=interval_s,
         query=QuentQueryConfig(
             query_group_id=uuid.uuid4(),
             query_group_name="group",

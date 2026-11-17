@@ -155,11 +155,7 @@ def _unconfigured_engine(
             case "dask":  # pragma: no cover
                 from cudf_polars.engine.dask import DaskEngine
 
-                engine = DaskEngine(
-                    engine_options={
-                        "allow_gpu_sharing": True,
-                    }
-                )
+                engine = DaskEngine(engine_options={"allow_gpu_sharing": True})
             case "ray":  # pragma: no cover
                 from cudf_polars.engine.ray import RayEngine
 
@@ -169,9 +165,7 @@ def _unconfigured_engine(
                 # ``get_num_gpus_in_ray_cluster()``
                 engine = RayEngine(
                     num_ranks=ray_num_ranks,
-                    engine_options={
-                        "allow_gpu_sharing": True,
-                    },
+                    engine_options={"allow_gpu_sharing": True},
                     ray_init_options=ray_init_options,
                 )
             case _:  # pragma: no cover

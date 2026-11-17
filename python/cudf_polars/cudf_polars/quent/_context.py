@@ -85,7 +85,7 @@ class QuentConfig:
     implementation_version: str = __version__
     output_root: str = dataclasses.field(default_factory=resolve_quent_output_root)
     query: QuentQueryConfig = dataclasses.field(default_factory=QuentQueryConfig)
-    device_memory_poll_interval_s: float = 0.1
+    device_memory_poll_interval_s: float | None = 0.1
 
     def __post_init__(self) -> None:
         object.__setattr__(

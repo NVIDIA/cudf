@@ -13,7 +13,6 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Iterator
 
-    # TODO: figure out if this is safe to import here with the optional quent
     import cudf_polars_quent as quent_bindings
 
     from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
@@ -79,26 +78,33 @@ def memory_resource_sampler(
     stop_event = threading.Event()
 
     # Declare the sampler FSM on the main thread
-    nbytes = mr.current_allocated
     fsm = (
         quent_session.binding_context.memory_resource_sampler_observer()
         .handle()
         .sampling(
             query=query_id,
-            memory=device_memory_usage(sampled_memory_resource_id, nbytes),
+            memory=device_memory_usage(
+                sampled_memory_resource_id, mr.current_allocated
+            ),
         )
     )
+    errors: list[BaseException] = []
 
     def run() -> None:
         # We reassign fsm to handle state transitions in `.sampling()`.
         nonlocal fsm
 
-        while not stop_event.wait(interval_s):
-            nbytes = mr.current_allocated
-            fsm = fsm.sampling(
-                query=query_id,
-                memory=device_memory_usage(sampled_memory_resource_id, nbytes),
-            )
+        try:
+            while not stop_event.wait(interval_s):
+                fsm = fsm.sampling(
+                    query=query_id,
+                    memory=device_memory_usage(
+                        sampled_memory_resource_id, mr.current_allocated
+                    ),
+                )
+        except BaseException as error:
+            errors.append(error)
+            stop_event.set()
 
     # Start the background monitoring thread.
     thread = threading.Thread(
@@ -106,10 +112,26 @@ def memory_resource_sampler(
     )
     thread.start()
 
-    try:
-        yield
-    finally:
-        # TODO: more robust error handling here...
+    def stop() -> None:
         stop_event.set()
         thread.join()
-        fsm.stopped()
+        try:
+            fsm.stopped()
+        except BaseException as error:
+            errors.append(error)
+
+    try:
+        yield
+    except BaseException as query_error:
+        stop()
+        if errors:
+            raise BaseExceptionGroup(
+                "query and memory resource sampler failed", [query_error, *errors]
+            ) from None
+        raise
+    else:
+        stop()
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("memory resource sampler failed", errors)

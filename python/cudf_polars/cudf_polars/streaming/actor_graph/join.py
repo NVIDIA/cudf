@@ -410,7 +410,6 @@ async def _collect_small_side_for_broadcast(
                 rows += chunk_rows
             if group:
                 groups.append(group)
-            del chunks
             for group in groups:
                 group_size = sum(chunk.data_alloc_size() for chunk in group)
                 group, extra = await make_table_chunks_available_or_wait(  # noqa: PLW2901

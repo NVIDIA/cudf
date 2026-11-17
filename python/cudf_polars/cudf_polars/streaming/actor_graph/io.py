@@ -945,7 +945,6 @@ async def callback_sink_actor(
                     )
                     assert exchange is not None
                     exchange.insert(0, chunk.into_packed_data(extra))
-                del chunk
         finally:
             if exchange is not None:
                 await exchange.insert_finished(context)

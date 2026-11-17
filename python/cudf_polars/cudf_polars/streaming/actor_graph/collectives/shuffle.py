@@ -433,9 +433,8 @@ class LocalRepartitioner:
                     exclusive_view=False,
                     br=self._br,
                 )
-                del cols, chunk
                 await inserter.insert_index(payload, partition_map)
-                del payload, partition_map
+                del cols, chunk, payload, partition_map
 
     def local_partitions(self) -> list[int]:
         """Return the local partition IDs."""

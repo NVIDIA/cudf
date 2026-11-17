@@ -321,7 +321,6 @@ async def _insert_chunks_into_shuffle(
             )
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
-            del tbl
 
             with stream_ordered_after(
                 ir_context.get_cuda_stream,
@@ -339,9 +338,8 @@ async def _insert_chunks_into_shuffle(
                     stream=stream,
                     chunk_relative=True,
                 )
-            del sort_cols_tbl
             await inserter.insert_split(available_chunk, splits)
-            del available_chunk
+            del tbl, sort_cols_tbl, available_chunk
 
     post_sort_ir = ir
     if ir.stable:

@@ -353,7 +353,6 @@ async def extract_orderscheme_partitioning(
     boundaries, strict = _extract_boundaries_from_endpoint_rows(
         endpoint_table, num_partitions, stream
     )
-    del endpoint_table
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )
@@ -894,7 +893,6 @@ async def _send_remote_partition(
         ir_context,
         chunks,
     )
-    del chunks
     # A single stored piece is returned as is and may be spilled.
     chunk, _ = await make_table_chunks_available_or_wait(
         context, chunk, reserve_extra=0, net_memory_delta=0
@@ -909,7 +907,6 @@ async def _send_remote_partition(
     )
     with opaque_memory_usage(reservation):
         packed = pack(table, stream, mr=context.br().device_mr)
-    del table, chunk
     exchange.insert(
         partition_owner(pid, comm.nranks, npartitions),
         packed_data_from_cudf_packed_columns(packed, stream, context.br()),

@@ -214,7 +214,6 @@ async def default_node_multi(
                     # Store the new chunk (replacing previous if any)
                     ready_chunks[ch_idx] = TableChunk.from_message(msg, br=context.br())
                     chunk_count[ch_idx] += 1
-                del msg
 
             # If all channels finished, we're done
             if len(finished_channels) == n_children:
@@ -327,7 +326,6 @@ async def fanout_node_bounded(
                 net_memory_delta=0,
             )
             seq_num = msg.sequence_number
-            del msg
             for ch_out in chs_out:
                 await ch_out.send(
                     context,

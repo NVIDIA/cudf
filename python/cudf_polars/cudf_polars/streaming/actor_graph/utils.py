@@ -629,7 +629,6 @@ async def concat_batch(
             ],
             context=ir_context,
         )
-        del batch
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
@@ -664,7 +663,6 @@ async def evaluate_batch(
     first_ir = irs[0]
     input_schema = first_ir.children[0].schema
     chunk = await concat_batch(batch, context, input_schema, ir_context)
-    del batch
     return await evaluate_chunk(context, chunk, *irs, ir_context=ir_context)
 
 
@@ -740,7 +738,6 @@ async def chunkwise_evaluate(
             ir_context=chunk_ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
@@ -752,7 +749,6 @@ async def chunkwise_evaluate(
             ir_context=ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)

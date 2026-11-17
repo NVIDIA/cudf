@@ -161,7 +161,6 @@ async def concatenate_node(
                         seq_num, TableChunk.from_message(msg, br=context.br())
                     )
                     seq_num += 1
-                    del msg
 
             # Extract concatenated result
             result_table = await allgather.extract_concatenated(

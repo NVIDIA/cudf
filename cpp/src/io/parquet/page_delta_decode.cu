@@ -763,7 +763,9 @@ struct walker {
 #pragma unroll
       for (uint32_t i = 0; i < header_words; ++i) {
         auto const word = aligned + word_bytes * i;
-        w[i]            = clear_past_end(staged[i], word, page_end);
+        // `clear_past_end` also checks `word < page_end`; repeating it here keeps the faster code
+        // generation of the general path.
+        w[i] = word < page_end ? clear_past_end(staged[i], word, page_end) : 0;
       }
       // The `header_bytes` bytes starting at p; bytes past the end of the page read as zero, like
       // the bounded byte loads of the fallback.
@@ -946,9 +948,9 @@ __device__ __forceinline__ uint64_t unpack(tile_input const& in)
  * arrive in tiles of `tile_size` starting at ordinal 1.
  *
  * - `place_first(uint64_t value, uint32_t value_limit)`: ordinal 0, when `value_limit > 0`
- * - `prefetch(uint32_t tile_start, uint32_t value_limit)`: the previously prefetched tile becomes
- *   the one to place, and the tile starting at `tile_start` is prefetched while its packed input
- *   is loaded; `tile_start` may be at or past `value_limit` for the last tile
+ * - `prefetch(uint32_t tile_start, uint32_t value_limit)`: the tile after the one about to be
+ *   placed, called while that tile's packed input is loaded
+ * - `next_tile()`: the most recently prefetched tile becomes the one to place
  * - `place(uint32_t tile_start, uint64_t const (&values)[items_per_lane], uint32_t value_limit)`:
  *   `values[item]` holds ordinal `tile_start + item * 32 + lane`, valid below `value_limit`
  *
@@ -1023,9 +1025,12 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     }
     uint32_t const remaining     = value_limit - position;
     uint32_t const next_position = position + cuda::std::min(uint32_t{tile_size}, remaining);
+    consumer.next_tile();
     tile_input next{};
-    if (next_position < value_limit) { next = load_tile(wk, value_limit - next_position, warp); }
-    consumer.prefetch(next_position, value_limit);
+    if (next_position < value_limit) {
+      next = load_tile(wk, value_limit - next_position, warp);
+      consumer.prefetch(next_position, value_limit);
+    }
 
     uint64_t values[items_per_lane];
     values[0] = unpack<0>(current);
@@ -1085,6 +1090,8 @@ struct direct_output {
   }
 
   __device__ __forceinline__ void prefetch(uint32_t, uint32_t) const {}
+
+  __device__ __forceinline__ void next_tile() const {}
 
   __device__ __forceinline__ void place(uint32_t tile_start,
                                         uint64_t const (&values)[items_per_lane],
@@ -1197,8 +1204,15 @@ struct rank_map_output {
 #pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       uint32_t const ordinal = tile_start + item * warp_lanes + warp.thread_rank();
-      rows[item]             = next_rows[item];
       next_rows[item]        = ordinal < value_limit ? row_of(ordinal) : 0;
+    }
+  }
+
+  __device__ __forceinline__ void next_tile()
+  {
+#pragma unroll
+    for (uint32_t item = 0; item < items_per_lane; ++item) {
+      rows[item] = next_rows[item];
     }
   }
 
@@ -1248,8 +1262,10 @@ struct rank_map_output {
 }  // namespace nz_register_delta
 
 /**
- * @brief Returns whether `decode_delta_binary_kernel_with_nz_map` decodes `page`: a
- * DELTA_BINARY_PACKED page with a flat nz map.
+ * @brief Returns whether a page has a delta binary nz map
+ *
+ * @param page The page to check
+ * @return True if the page has a delta binary nz map, false otherwise
  */
 CUDF_HOST_DEVICE inline bool has_delta_binary_nz_map(PageInfo const& page)
 {
@@ -1258,7 +1274,8 @@ CUDF_HOST_DEVICE inline bool has_delta_binary_nz_map(PageInfo const& page)
 }
 
 /**
- * @brief Returns whether pages in a chunk are decoded by the no-null path: required INT64 columns, no definition or repetition levels, no nesting.
+ * @brief Returns whether pages in a chunk are decoded by the no-null path: required INT64 columns,
+ * no definition or repetition levels, no nesting.
  *
  * @param chunk The chunk to check
  * @return True if the pages in the chunk are decoded by the no-null path, false otherwise

@@ -1052,7 +1052,7 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
             std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
       };
       auto const same_logical_groups = [&](metadata const& pfm) {
-        auto const pfm_idx = static_cast<int>(std::distance(per_file_metadata.data(), &pfm));
+        auto const pfm_idx = static_cast<int>(&pfm - per_file_metadata.data());
         return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
           return is_file_group(schema, idx) == is_file_group(pfm.schema, idx) and
                  is_binary_leaf(idx) == is_binary_leaf(idx, pfm_idx);

@@ -17,7 +17,7 @@ git log --follow --name-only --format= $REMOTE/main -- <file> | sort -u
 git log -n 10 --format=%s -L ':<function>:<file>' $REMOTE/main | grep -E '\(#[0-9]+\)$'
 
 # For each PR kept: description, then human review summaries and inline comments, one line each.
-F='"\(.user.login) \(.state // (if .path then "\(.path):\(.line // .original_line)" else "" end)): \(.body | gsub("[\r\n]+"; " ") | .[:400])"'
+F='"\(.user.login) \(.state // (if .path then "\(.path):\(.line // .original_line)" else "" end)): \(.body | gsub("[\r\n]+"; " "))"'
 gh pr view <N> --repo NVIDIA/cudf --json title,author,mergedAt,body
 for e in pulls/<N>/reviews pulls/<N>/comments; do
   gh api repos/NVIDIA/cudf/$e --paginate --jq ".[] | select(.user.type != \"Bot\" and .body != \"\") | $F"

@@ -164,6 +164,8 @@ ConfigureNVBench(
   join/mixed_join.cpp
   join/multiplicity_join.cpp
   join/sort_merge_join.cpp
+  join/streaming_hash_join.cpp
+  join/streaming_join.cpp
 )
 
 # ##################################################################################################

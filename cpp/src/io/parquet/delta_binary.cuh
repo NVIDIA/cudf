@@ -75,6 +75,18 @@ inline __device__ uleb128_t get_uleb128(uint8_t const*& cur, uint8_t const* end)
 }
 
 /**
+ * @brief Decode a zig-zag encoded integer
+ *
+ * @param u The zig-zag encoded value
+ *
+ * @return The decoded value
+ */
+inline __device__ zigzag128_t zigzag_decode(uleb128_t u)
+{
+  return static_cast<zigzag128_t>((u >> 1u) ^ -static_cast<zigzag128_t>(u & 1));
+}
+
+/**
  * @brief Read a ULEB128 zig-zag encoded varint integer
  *
  * @param[in,out] cur The current data position, updated after the read
@@ -84,8 +96,7 @@ inline __device__ uleb128_t get_uleb128(uint8_t const*& cur, uint8_t const* end)
  */
 inline __device__ zigzag128_t get_zz128(uint8_t const*& cur, uint8_t const* end)
 {
-  uleb128_t u = get_uleb128(cur, end);
-  return static_cast<zigzag128_t>((u >> 1u) ^ -static_cast<zigzag128_t>(u & 1));
+  return zigzag_decode(get_uleb128(cur, end));
 }
 
 struct delta_binary_decoder {

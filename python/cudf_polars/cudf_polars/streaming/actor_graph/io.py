@@ -434,6 +434,7 @@ async def _process_and_send_chunk(
     chunk_out = TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
+    del df
     await send_chunk(context, ch_out, chunk_out, seq_num, tracer=tracer)
 
 
@@ -626,6 +627,7 @@ async def read_chunk(
             exclusive_view=True,
             br=context.br(),
         )
+        del df
 
     await send_chunk(context, ch_out, chunk, seq_num, tracer=tracer)
 

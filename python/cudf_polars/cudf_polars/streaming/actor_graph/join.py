@@ -475,9 +475,9 @@ async def _broadcast_join_large_chunk(
     output_chunk = TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
+    del df, large_df
     output_rows = output_chunk.shape[0]
     await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
-    del df, large_df
     return output_rows
 
 
@@ -582,6 +582,7 @@ async def broadcast_join(
             broadcast_side,
             tracer=tracer,
         )
+        del large_chunk
 
     if prefilter_statistics is not None:
         prefilter_statistics.input_rows = input_rows
@@ -920,6 +921,7 @@ async def _join_chunks(
         output_chunk = TableChunk.from_pylibcudf_table(
             df.table, df.stream, exclusive_view=True, br=context.br()
         )
+        del df
         await send_chunk(
             context,
             ch_out,
@@ -927,7 +929,6 @@ async def _join_chunks(
             left_msg.sequence_number,
             tracer=tracer,
         )
-        del df
 
     await ch_out.drain(context)
 

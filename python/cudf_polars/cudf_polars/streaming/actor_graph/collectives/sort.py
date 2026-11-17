@@ -255,6 +255,7 @@ async def _receive_and_buffer_chunks(
             )
             local_row_offset += nrows
             tbl = plc.Table([*df.table.columns(), seq_id_col])
+            del seq_id_col
         else:
             tbl = df.table
         chunk_store.insert(
@@ -265,7 +266,7 @@ async def _receive_and_buffer_chunks(
                 ),
             )
         )
-        del df
+        del df, tbl
 
     return local_candidates_list
 
@@ -390,6 +391,7 @@ async def _extract_partitions_and_send(
             chunk = TableChunk.from_pylibcudf_table(
                 table, stream, exclusive_view=True, br=context.br()
             )
+            del table
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)

@@ -569,9 +569,11 @@ async def _evaluate_and_route_to_origin(
                 stamps,
                 sort_by_input_order=sort_by_input_order,
             )
+            del partition, extracted
             routed = await ir_context.to_thread(
                 _split_off_origin_rank, evaluated, context.br()
             )
+            del evaluated
             if routed is not None:
                 if duplicated_origin:
                     # Duplicated input was inserted by rank 0 only. Every
@@ -584,8 +586,10 @@ async def _evaluate_and_route_to_origin(
                             payload,
                             [0] * rank + [nrows] * (comm.nranks - rank - 1),
                         )
+                    del payload
                 else:
                     await inserter.insert_index(*routed)
+            del routed
 
 
 async def _reassemble_input_chunks(
@@ -635,6 +639,8 @@ async def _reassemble_input_chunks(
                 exclusive_view=True,
                 br=context.br(),
             )
+            del sorted_tbl
+        del tbl
         await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
 
 

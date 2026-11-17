@@ -265,9 +265,9 @@ async def default_node_multi(
                 exclusive_view=True,
                 br=context.br(),
             )
+            del df
             await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
             seq_num += 1
-            del df
 
         # Drain the output channel
         del ready_chunks
@@ -651,6 +651,7 @@ async def empty_node(
         chunk = TableChunk.from_pylibcudf_table(
             df.table, df.stream, exclusive_view=True, br=context.br()
         )
+        del df
         await send_chunk(context, ch_out, chunk, 0, tracer=actor_scope.tracer)
 
         await ch_out.drain(context)

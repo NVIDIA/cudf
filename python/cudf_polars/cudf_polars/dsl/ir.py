@@ -81,6 +81,7 @@ if TYPE_CHECKING:
 
     from polars import _plr as polars
 
+    from rapidsmpf.statistics import Statistics
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.containers.dataframe import NamedColumn
@@ -151,6 +152,9 @@ class IRExecutionContext:
         The actor tracer. Used to propagate statistics.
     rank_local_cpu_compute
         When the streaming executor evaluates IR nodes on the CPU with Polars.
+    statistics
+        The RapidsMPF statistics of the rank, which record the IR nodes
+        evaluated on the CPU.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
@@ -160,6 +164,7 @@ class IRExecutionContext:
     unbound_quent_ir_execution_state: UnboundQuentIRExecutionState | None = None
     tracer: ActorTracer | None = None
     rank_local_cpu_compute: RankLocalCPUComputeMode = RankLocalCPUComputeMode.NEVER
+    statistics: Statistics | None = None
 
     async def to_thread[**P, T](
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs

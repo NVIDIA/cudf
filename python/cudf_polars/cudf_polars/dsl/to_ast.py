@@ -565,6 +565,8 @@ class JoinPredicate(NamedTuple):
     """Columns appended to the left table, evaluated on the left input."""
     right_exprs: tuple[expr.NamedExpr, ...]
     """Columns appended to the right table, evaluated on the right input."""
+    mask: expr.Expr
+    """The condition before the split, over the output columns of the join."""
 
 
 def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableReference]:
@@ -804,4 +806,5 @@ def split_join_predicate(
         predicate,
         tuple(expr.NamedExpr(name, e) for e, name in extras[left].items()),
         tuple(expr.NamedExpr(name, e) for e, name in extras[right].items()),
+        node,
     )

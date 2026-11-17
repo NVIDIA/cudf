@@ -140,7 +140,7 @@ def test_operands_of_different_types_are_not_supported() -> None:
         expr.ColRef(I64, 1, RIGHT, expr.Col(I64, "b")),
     )
     with pytest.raises(NotImplementedError, match="different types"):
-        make_join("Inner", JoinPredicate(node, (), ()))
+        make_join("Inner", JoinPredicate(node, (), (), node))
 
 
 @pytest.mark.parametrize("decimal_side", [LEFT, RIGHT])
@@ -158,5 +158,5 @@ def test_decimal_and_float_columns_are_cast_to_match(
         expr.ColRef(left_dtype, 1, LEFT, expr.Col(left_dtype, "a")),
         expr.ColRef(right_dtype, 1, RIGHT, expr.Col(right_dtype, "b")),
     )
-    join = make_join("Inner", JoinPredicate(node, (), ()))
+    join = make_join("Inner", JoinPredicate(node, (), (), node))
     assert join.predicate is not None

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import collections
 import datetime
+import decimal
 import threading
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import MemoryResourceConfig, RankLocalCPUComputeMode
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -192,6 +194,170 @@ def test_statistics(left, streaming_engine_factory, cpu_calls, filter_oom, mode)
     report = stats.report()
     assert "rank-local-cpu-compute-time" in report
     assert "rank-local-cpu-compute-bytes" in report
+
+
+@pytest.mark.parametrize(
+    "how,coalesce",
+    [
+        ("inner", None),
+        ("left", None),
+        ("right", None),
+        ("full", None),
+        ("full", True),
+        ("semi", None),
+        ("anti", None),
+    ],
+)
+def test_join(left, right, engine, cpu_calls, how, coalesce):
+    q = left.join(right, on="a", how=how, coalesce=coalesce)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["Join"] > 0
+
+
+@pytest.mark.parametrize("how", ["inner", "left", "right", "full"])
+@pytest.mark.parametrize("coalesce", [False, True])
+def test_join_expression_keys(left, right, engine, cpu_calls, how, coalesce):
+    q = left.join(
+        right.with_columns(b=pl.col("c") / 10),
+        left_on=[pl.col("a"), pl.col("a") * 10],
+        right_on=["a", "c"],
+        how=how,
+        coalesce=coalesce,
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["Join"] > 0
+
+
+def test_cross_join(left, right, engine, cpu_calls):
+    q = left.join(right, how="cross")
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["Join"] > 0
+
+
+def test_join_slice(left, right, engine, cpu_calls):
+    # The row order is not defined, so only the length is compared.
+    q = left.join(right, on="a").slice(1, 3).select(pl.len())
+    assert_gpu_result_equal(q, engine=engine)
+    assert cpu_calls["Join"] > 0
+
+
+@pytest.fixture(scope="module")
+def nonequi_left():
+    return pl.LazyFrame(
+        {
+            "a": [1, 2, 3, 1, None],
+            "b": [1, 2, 3, 4, 5],
+            "x": [1.0, float("nan"), None, -2.5, 3.0],
+        }
+    )
+
+
+@pytest.fixture(scope="module")
+def nonequi_right():
+    return pl.LazyFrame(
+        {
+            "a": [1, 4, 3, 7, None, None, 1],
+            "c": [2, 3, 4, 5, 6, 7, 8],
+            "y": [0.5, float("nan"), 2.0, None, -3.0, 4.0, 1.0],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "options",
+    [{"nulls_equal": True}, {"suffix": "_r", "coalesce": False}],
+)
+def test_join_options(nonequi_left, nonequi_right, engine, cpu_calls, options):
+    q = nonequi_left.join(nonequi_right, on="a", **options)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["Join"] > 0
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason=(
+        "The query needs a join with a fused predicate, which Polars exposes to "
+        "cudf-polars from 2.1. On Polars 2.0 it always runs on the Polars CPU engine."
+    ),
+)
+def test_join_with_predicate(nonequi_left, nonequi_right, engine, cpu_calls):
+    # Polars plans this as an equi join on a == c with the inequality as its
+    # predicate, which drops one of the two matching rows.
+    q = nonequi_left.join_where(
+        nonequi_right,
+        pl.col("b") * 2 > pl.col("a_right") + 2,
+        pl.col("a") == pl.col("c"),
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["Join"] > 0
+
+
+@pytest.mark.parametrize(
+    "conditions",
+    [
+        [pl.col("a") < pl.col("a_right")],
+        [pl.col("b") * 2 <= pl.col("c"), pl.col("a") < pl.col("a_right")],
+    ],
+)
+@pytest.mark.parametrize("zlice", [None, (1, 3)])
+def test_conditional_join(
+    nonequi_left, nonequi_right, engine, cpu_calls, conditions, zlice
+):
+    q = nonequi_left.join_where(nonequi_right, *conditions)
+    if zlice is None:
+        assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    else:
+        # The row order is not defined, so only the length is compared.
+        assert_gpu_result_equal(q.slice(*zlice).select(pl.len()), engine=engine)
+    assert cpu_calls["ConditionalJoin"] > 0
+
+
+def test_conditional_join_decimal_float(engine, cpu_calls):
+    # As in do_evaluate, the decimal column is cast to Float64 to be compared
+    # with the float column.
+    left = pl.LazyFrame(
+        {
+            "d": pl.Series(
+                [decimal.Decimal(v) for v in ("1.50", "2.25", "3.00", "0.10")],
+                dtype=pl.Decimal(10, 2),
+            )
+        }
+    )
+    right = pl.LazyFrame({"y": [1.0, 2.5, 2.999, 0.05]})
+    q = left.join_where(right, pl.col("d") > pl.col("y"))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert cpu_calls["ConditionalJoin"] > 0
+
+
+# Polars plans a "!=" condition as a cross join followed by a filter.
+@pytest.mark.parametrize(
+    "op,node",
+    [
+        ("lt", "ConditionalJoin"),
+        pytest.param(
+            "ne",
+            "Filter",
+            marks=pytest.mark.skipif(
+                POLARS_VERSION_LT_21,
+                reason=(
+                    "The query needs a nested loop join, which Polars exposes to "
+                    "cudf-polars from 2.1. On Polars 2.0 it always runs on the "
+                    "Polars CPU engine."
+                ),
+            ),
+        ),
+    ],
+)
+def test_conditional_join_nan(
+    nonequi_left, nonequi_right, streaming_engine_factory, cpu_calls, op, node
+):
+    # The result is compared with the GPU. A null operand never matches, even
+    # against NaN.
+    q = nonequi_left.join_where(
+        nonequi_right, getattr(pl.col("x"), op)(pl.col("y"))
+    ).sort(pl.all())
+
+    _compare_backends(q, streaming_engine_factory, cpu_calls, node)
 
 
 def test_groupby_mean_all_null_group(left, right, engine, cpu_calls):

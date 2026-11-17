@@ -157,9 +157,28 @@ async def concatenate_node(
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:
                 while (msg := await ch_in.recv(context)) is not None:
-                    await inserter.insert(
-                        seq_num, TableChunk.from_message(msg, br=context.br())
+                    chunk, extra = await make_table_chunks_available_or_wait(
+                        context,
+                        TableChunk.from_message(msg, br=context.br()),
+                        reserve_extra=0,
+                        net_memory_delta=0,
                     )
+                    with opaque_memory_usage(extra):
+                        df = DataFrame.from_table(
+                            chunk.table_view(),
+                            list(ir.schema.keys()),
+                            list(ir.schema.values()),
+                            chunk.stream,
+                        )
+                        normalized = _concat(df, context=ir_context)
+                        if normalized is not df:
+                            chunk = TableChunk.from_pylibcudf_table(
+                                normalized.table,
+                                normalized.stream,
+                                exclusive_view=True,
+                                br=context.br(),
+                            )
+                    await inserter.insert(seq_num, chunk)
                     seq_num += 1
                     del msg
 

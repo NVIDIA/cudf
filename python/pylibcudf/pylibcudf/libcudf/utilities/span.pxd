@@ -3,7 +3,6 @@
 from libc.stddef cimport size_t
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
-from pylibcudf.libcudf.types cimport size_type
 
 
 cdef extern from "cudf/utilities/span.hpp" namespace "cudf" nogil:

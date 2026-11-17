@@ -113,8 +113,8 @@ struct host_span {
     requires(
       is_host_span_supported_container<C>::value and
       std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>)                              // NOLINT
+                              std::declval<C&>().data()))> (*)[],
+                            T (*)[]>)  // NOLINT
   constexpr host_span(C& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
@@ -126,8 +126,8 @@ struct host_span {
     requires(
       is_host_span_supported_container<C>::value and
       std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>)                              // NOLINT
+                              std::declval<C&>().data()))> (*)[],
+                            T (*)[]>)  // NOLINT
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }

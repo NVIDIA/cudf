@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "partition_identity.cuh"
+#include "partition_identity.hpp"
 #include "partition_strings.cuh"
 
 #include <cudf/column/column_factories.hpp>
@@ -884,15 +884,13 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
       make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr).host_offsets;
   }
   if (!uniform) {
-    return std::pair{cudf::detail::partition_identity::copy(input, stream, mr.get_output_mr()),
-                     std::move(offsets)};
+    return std::pair{cudf::detail::partition_identity::copy(input, stream, mr), std::move(offsets)};
   }
 
   std::vector<std::unique_ptr<column>> columns;
   columns.reserve(input.num_columns());
   for (auto const& col : input) {
-    columns.push_back(
-      cudf::detail::partition_identity::uniform_column(col, stream, mr.get_output_mr()));
+    columns.push_back(cudf::detail::partition_identity::uniform_column(col, stream, mr));
   }
   return std::pair{std::make_unique<table>(std::move(columns), rows), std::move(offsets)};
 }

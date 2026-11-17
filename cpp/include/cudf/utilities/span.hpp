@@ -54,6 +54,18 @@ template <typename T, typename Alloc>
 struct is_host_span_supported_container<  //
   std::basic_string<T, std::char_traits<T>, Alloc>> : std::true_type {};
 
+namespace detail {
+// Supported containers whose elements, accessed through `C&`, are convertible to `T`
+// NOLINTBEGIN(modernize-avoid-c-arrays)
+template <typename C, typename T>
+concept host_span_compatible_container_impl =
+  is_host_span_supported_container<std::remove_cv_t<C>>::value and
+  std::is_convertible_v<
+    std::remove_pointer_t<decltype(thrust::raw_pointer_cast(std::declval<C&>().data()))> (*)[],
+    T (*)[]>;
+// NOLINTEND(modernize-avoid-c-arrays)
+}  // namespace detail
+
 /**
  * @brief Host span, a non-owning view over a contiguous sequence of host-accessible elements.
  *
@@ -108,26 +120,16 @@ struct host_span {
 
   /// Constructor from container
   /// @param in The container to construct the span from
-  // Only supported containers of types convertible to T
   template <typename C>
-    requires(
-      is_host_span_supported_container<C>::value and
-      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],
-                            T (*)[]>)  // NOLINT
+    requires(detail::host_span_compatible_container_impl<C, T>)
   constexpr host_span(C& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   /// Constructor from const container
   /// @param in The container to construct the span from
-  // Only supported containers of types convertible to T
   template <typename C>
-    requires(
-      is_host_span_supported_container<C>::value and
-      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],
-                            T (*)[]>)  // NOLINT
+    requires(detail::host_span_compatible_container_impl<C const, T>)
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }

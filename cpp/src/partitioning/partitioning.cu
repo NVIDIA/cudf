@@ -4,7 +4,6 @@
  */
 
 #include "partition_identity.cuh"
-#include "partition_policy.hpp"
 #include "partition_strings.cuh"
 
 #include <cudf/column/column_factories.hpp>
@@ -52,6 +51,12 @@ constexpr size_type THRESHOLD_FOR_OPTIMIZED_PARTITION_KERNEL = 1024;
 // Launch configuration for fallback hash partition
 constexpr size_type FALLBACK_BLOCK_SIZE      = 256;
 constexpr size_type FALLBACK_ROWS_PER_THREAD = 1;
+
+constexpr size_type MIN_BATCHED_STRING_ROWS                  = 1'024;
+constexpr size_type MAX_BATCHED_STRING_PARTITIONS            = 256;
+constexpr size_type MIN_BATCHED_STRING_COLUMNS               = 2;
+constexpr size_type MIN_TWO_PARTITION_BATCHED_STRING_COLUMNS = 4;
+constexpr size_type MAX_BATCHED_STRING_COLUMNS               = 65'535;
 
 /**
  * @brief  Functor to map a hash value to a particular 'bin' or partition number
@@ -852,9 +857,7 @@ std::optional<std::pair<std::unique_ptr<table>, std::vector<size_type>>> try_par
   auto const uniform = std::all_of(input.begin(), input.end(), [](auto const& col) {
     return cudf::detail::partition_identity::is_uniform(col);
   });
-  if (!cudf::detail::partition_policy::use_trivial(rows, num_partitions, uniform)) {
-    return std::nullopt;
-  }
+  if (num_partitions != 1 && rows != 1 && !uniform) { return std::nullopt; }
 
   std::vector<size_type> offsets;
   if (num_partitions == 1) {
@@ -953,8 +956,11 @@ struct dispatch_map_type {
     // Copy offsets to host before the transform below modifies the histogram
     auto const partition_offsets = cudf::detail::make_std_vector(histogram, stream);
 
-    if (t.num_rows() >= 1'024 && num_partitions <= 256 && t.num_columns() >= 2 &&
-        t.num_columns() <= 65'535 && (t.num_columns() >= 4 || num_partitions != 2) &&
+    if (t.num_rows() >= MIN_BATCHED_STRING_ROWS &&
+        num_partitions <= MAX_BATCHED_STRING_PARTITIONS &&
+        t.num_columns() >= MIN_BATCHED_STRING_COLUMNS &&
+        t.num_columns() <= MAX_BATCHED_STRING_COLUMNS &&
+        (t.num_columns() >= MIN_TWO_PARTITION_BATCHED_STRING_COLUMNS || num_partitions != 2) &&
         std::all_of(t.begin(), t.end(), [](auto const& col) {
           return col.type().id() == type_id::STRING && col.null_count() == 0 &&
                  strings_column_view(col).offsets().type().id() == type_id::INT32;

@@ -2,8 +2,6 @@
  * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#include "../../src/partitioning/partition_policy.hpp"
-
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -345,32 +343,6 @@ TEST_F(PartitionTestNotTyped, ListOfListOfListOfIntEmpty)
   auto result = cudf::partition(table_to_partition, map, 2);
   CUDF_TEST_EXPECT_TABLES_EQUAL(table_to_partition, result.first->view());
   EXPECT_EQ(3, result.second.size());
-}
-
-TEST_F(PartitionTestNotTyped, HostMetadataPolicy)
-{
-  namespace policy = cudf::detail::partition_policy;
-  int64_t value{};
-  cudf::bitmask_type mask{};
-  auto const view = [&](cudf::size_type nulls) {
-    return cudf::column_view{
-      cudf::data_type{cudf::type_id::INT64}, 1'000'000, &value, nulls ? &mask : nullptr, nulls};
-  };
-  auto const valid  = view(0);
-  auto const sparse = view(100'000);
-  auto const dense  = view(900'000);
-  auto result       = policy::select_partition_plan(cudf::table_view{{valid, valid}}, 2);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->method, policy::algorithm::recompute);
-  EXPECT_TRUE(result->direct);
-  result = policy::select_partition_plan(cudf::table_view{{sparse, sparse}}, 256);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(result->method, policy::algorithm::saved);
-  result = policy::select_partition_plan(cudf::table_view{{dense, dense, dense}}, 2);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_TRUE(result->reordered);
-  EXPECT_FALSE(policy::select_partition_plan(cudf::table_view{{valid}}, 257).has_value());
-  EXPECT_FALSE(policy::select_partition_plan(cudf::table_view{{valid}}, 1).has_value());
 }
 
 TEST_F(PartitionTestNotTyped, TrivialPartitionSlices)

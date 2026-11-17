@@ -86,7 +86,7 @@ public class JoinMatchContext implements AutoCloseable {
   }
 
   /** The number of row pairs a full retrieval of the left table would produce. */
-  public long getOutputSize() {
+  public synchronized long getOutputSize() {
     ensureOpen();
     return outputSize(cleaner.nativeHandle);
   }
@@ -94,7 +94,7 @@ public class JoinMatchContext implements AutoCloseable {
   /**
    * The per-row match counts as an INT32 column. The caller owns the returned column.
    */
-  public ColumnVector getMatchCounts() {
+  public synchronized ColumnVector getMatchCounts() {
     ensureOpen();
     return new ColumnVector(matchCountsColumn(cleaner.nativeHandle));
   }

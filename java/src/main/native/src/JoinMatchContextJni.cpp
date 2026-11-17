@@ -72,6 +72,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_JoinMatchContext_create(
 
     auto match_ctx =
       std::make_unique<cudf::join_match_context>(build_match_context(*hash, *left, j_kind));
+    // Finish the build so the context can be used from another thread's stream.
+    cudf::get_default_stream().sync();
     auto part_ctx                = std::make_unique<cudf::join_partition_context>();
     part_ctx->left_table_context = std::move(match_ctx);
     part_ctx->left_start_idx     = 0;

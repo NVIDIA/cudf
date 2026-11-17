@@ -243,7 +243,7 @@ inline std::pair<__int128_t, __int128_t> integer_type_range(cudf::type_id tid)
  */
 inline __int128_t bounded_round(long double value, std::pair<__int128_t, __int128_t> range)
 {
-  if (std::isnan(value)) { return std::clamp<__int128_t>(0, range.first, range.second); }
+  if (std::isnan(value)) { return 0; }
   auto const rounded = std::round(value);
   if (rounded <= static_cast<long double>(range.first)) { return range.first; }
   if (rounded >= static_cast<long double>(range.second)) { return range.second; }

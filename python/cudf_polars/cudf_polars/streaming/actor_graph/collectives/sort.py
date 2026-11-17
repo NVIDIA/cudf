@@ -393,6 +393,7 @@ async def _extract_partitions_and_send(
             chunk = TableChunk.from_pylibcudf_table(
                 table, df.stream, exclusive_view=True, br=context.br()
             )
+            del df, table
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)

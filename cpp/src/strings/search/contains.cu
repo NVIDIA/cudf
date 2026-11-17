@@ -60,7 +60,7 @@ namespace {
  *                          block per bin (warp-aggregated shared atomics) and appends them to
  *                          their bin with one global atomic per (block, bin). Rows from the same
  *                          block stay adjacent inside a bin, which keeps character reads local.
- *   lrb_search_kernel      persistent grid-stride kernel. Each warp maps its virtual task id to
+ *   lrb_search_kernel      grid-stride kernel over tasks. Each warp maps its virtual task id to
  *                          a bin using the same 32-entry scan (kept in registers via warp
  *                          shuffles). A task is 32/G rows searched with G threads each, G in
  *                          {8,16,32} by bin, or, for rows longer than LRB_CHUNK_BYTES, one
@@ -275,14 +275,15 @@ CUDF_KERNEL void lrb_scatter_kernel(column_device_view const d_strings,
  * `row_is_chunked` says whether other tasks share this row, in which case a result already
  * written by one of them ends this task immediately.
  */
-template <int G, typename Tile>
-__device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
-                                                    column_device_view const& d_strings,
-                                                    string_view const d_target,
-                                                    bool* d_results,
-                                                    size_type const row,
-                                                    int const chunk,
-                                                    bool const row_is_chunked)
+template <unsigned int G, typename Parent>
+__device__ __forceinline__ void lrb_search_row(
+  cooperative_groups::thread_block_tile<G, Parent> const& tile,
+  column_device_view const& d_strings,
+  string_view const d_target,
+  bool* d_results,
+  size_type const row,
+  int const chunk,
+  bool const row_is_chunked)
 {
   if (row < 0) { return; }
   auto result = cuda::atomic_ref<bool, cuda::thread_scope_device>(d_results[row]);
@@ -307,7 +308,7 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
   // tile stops at the iteration in which any lane matches (one vote per iteration). The loop
   // bound is tile-uniform because every lane of the tile searches the same row.
   auto constexpr bytes_per_lane = 8;
-  auto constexpr window         = G * bytes_per_lane;
+  auto constexpr window         = static_cast<size_type>(G) * bytes_per_lane;
   auto const lane_offset        = static_cast<size_type>(tile.thread_rank()) * bytes_per_lane;
   auto found                    = false;
   for (size_type base = 0; base < count; base += window) {
@@ -325,45 +326,7 @@ __device__ __forceinline__ void lrb_search_row_tile(Tile const& tile,
 }
 
 /**
- * @brief Dispatch lrb_search_row_tile() with a tile of G lanes carved from `warp`.
- *
- * The warp itself is the tile when G == 32; otherwise the warp is partitioned into 32/G tiles that
- * each take one row.
- *
- * @tparam G Threads per row for this bin
- * @param warp The calling warp
- * @param d_strings Column of input strings
- * @param d_target String to search for
- * @param d_results Output flags, one per row
- * @param row Row for this lane's tile, or -1 when the tile has no row
- * @param chunk Index of the LRB_CHUNK_BYTES window this task owns
- * @param row_is_chunked Whether other tasks share this row
- */
-template <int G>
-__device__ __forceinline__ void lrb_search_row(
-  cooperative_groups::thread_block_tile<cudf::detail::warp_size> const& warp,
-  column_device_view const& d_strings,
-  string_view const d_target,
-  bool* d_results,
-  size_type const row,
-  int const chunk,
-  bool const row_is_chunked)
-{
-  if constexpr (G == cudf::detail::warp_size) {
-    lrb_search_row_tile<G>(warp, d_strings, d_target, d_results, row, chunk, row_is_chunked);
-  } else {
-    lrb_search_row_tile<G>(cooperative_groups::tiled_partition<G>(warp),
-                           d_strings,
-                           d_target,
-                           d_results,
-                           row,
-                           chunk,
-                           row_is_chunked);
-  }
-}
-
-/**
- * @brief Pass 3: persistent warp search over every binned row.
+ * @brief Pass 3: grid-stride warp search over every binned row.
  *
  * A task is 32/G consecutive rows of one bin for the sub-warp tiers, or one LRB_CHUNK_BYTES window
  * of one row for rows longer than a chunk. Task counts are 64-bit because chunk tasks can exceed
@@ -412,10 +375,16 @@ CUDF_KERNEL void lrb_search_kernel(column_device_view const d_strings,
     auto const slot     = first + lane / G;
     auto const row      = (slot < end) ? d_sorted[slot] : -1;
 
-    switch (G) {  // warp-uniform
-      case 8: lrb_search_row<8>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
-      case 16: lrb_search_row<16>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
-      default: lrb_search_row<32>(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
+    switch (G) {  // warp-uniform; the warp is split into 32/G tiles that each take one row
+      case 8:
+        lrb_search_row(
+          cg::tiled_partition<8>(warp), d_strings, d_target, d_results, row, chunk, chunked);
+        break;
+      case 16:
+        lrb_search_row(
+          cg::tiled_partition<16>(warp), d_strings, d_target, d_results, row, chunk, chunked);
+        break;
+      default: lrb_search_row(warp, d_strings, d_target, d_results, row, chunk, chunked); break;
     }
   }
 }
@@ -473,8 +442,9 @@ std::unique_ptr<column> contains(strings_column_view const& input,
   auto const row_blocks  = cudf::detail::div_rounding_up_safe<int64_t>(num_rows, LRB_BLOCK_SIZE);
   auto const stride_grid = static_cast<int>(std::min<int64_t>(row_blocks, num_sms * 8));
 
-  // one row per thread (like thrust::transform) rather than grid-stride: the direct search in
-  // this pass is the whole job for short-string columns and benefits from maximal parallelism
+  // enough blocks for one row per thread, so the kernel's grid-stride loop runs once: the direct
+  // search in this pass is the whole job for short-string columns and benefits from maximal
+  // parallelism
   lrb_histogram_kernel<<<static_cast<int>(row_blocks), LRB_BLOCK_SIZE, 0, stream.get()>>>(
     *d_strings, d_target, d_results, hist.data());
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -483,8 +453,9 @@ std::unique_ptr<column> contains(strings_column_view const& input,
     *d_strings, d_target.size_bytes(), d_results, hist.data(), sorted.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
-  // persistent launch filling the GPU; the task count (rows plus chunks of long rows) is only
-  // known on the device, and idle warps cost a few microseconds at most
+  // as many blocks as can be resident at once; warps grid-stride over the tasks because the task
+  // count (rows plus chunks of long rows) is only known on the device. Idle warps cost a few
+  // microseconds at most.
   int max_blocks_per_sm = 0;
   CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
     &max_blocks_per_sm, lrb_search_kernel, LRB_BLOCK_SIZE, 0));

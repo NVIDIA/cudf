@@ -1831,6 +1831,10 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
     cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
                                      cudf::host_span<char const>{buffer.data(), buffer.size()}}))
       .front();
+  auto const& encodings = footer.row_groups[0].columns[0].meta_data.encodings;
+  ASSERT_NE(std::ranges::find(encodings, cudf::io::parquet::Encoding::RLE_DICTIONARY),
+            encodings.end());
+
   auto& schema             = footer.schema[1];
   schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
   schema.decimal_scale     = scale;

@@ -2843,6 +2843,54 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   EXPECT_FALSE(read_metadata(std::array{annotated_inline}).schema_info[0].is_file.has_value());
 }
 
+TEST_F(ParquetReaderTest, VariantAndPlainStructAcrossSources)
+{
+  // A VARIANT group and a plain struct with the same binary children across sources throw, with
+  // or without mismatched schemas, as only the VARIANT binary leaves skip category conversion
+
+  cudf::test::strings_column_wrapper metadata_col{"m"};
+  cudf::test::strings_column_wrapper value_col{"v"};
+  auto variant_col = cudf::test::structs_column_wrapper{{metadata_col, value_col}};
+
+  auto const input = table_view{{variant_col}};
+  cudf::io::table_input_metadata input_metadata(input);
+  auto& variant_metadata = input_metadata.column_metadata[0].set_name("variant");
+  variant_metadata.child(0).set_name("metadata").set_output_as_binary(true);
+  variant_metadata.child(1).set_name("value").set_output_as_binary(true);
+
+  std::vector<char> plain_struct;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&plain_struct}, input)
+      .metadata(std::move(input_metadata))
+      .build());
+
+  // cudf cannot write VARIANT groups yet, so retag the struct group as VARIANT in the footer
+  auto variant_group = plain_struct;
+  edit_footer(variant_group, [](cudf::io::parquet::FileMetaData& fmd) {
+    EXPECT_EQ(fmd.schema[1].name, "variant");
+    fmd.schema[1].logical_type =
+      cudf::io::parquet::LogicalType{cudf::io::parquet::LogicalType::VARIANT};
+  });
+
+  auto const read = [](std::span<std::vector<char> const> files, bool allow_mismatched) {
+    std::vector<cudf::host_span<std::byte const>> sources;
+    for (auto const& file : files) {
+      sources.emplace_back(reinterpret_cast<std::byte const*>(file.data()), file.size());
+    }
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
+        .allow_mismatched_pq_schemas(allow_mismatched)
+        .column_names({"variant"})
+        .convert_strings_to_categories(true));
+  };
+
+  for (auto const allow_mismatched : {true, false}) {
+    EXPECT_THROW(read(std::array{variant_group, plain_struct}, allow_mismatched), std::logic_error);
+    EXPECT_THROW(read(std::array{plain_struct, variant_group}, allow_mismatched), std::logic_error);
+  }
+}
+
 TEST_F(ParquetReaderTest, NestingOptimizationTest)
 {
   // test nesting levels > cudf::io::parquet::detail::max_cacheable_nesting_decode_info deep.

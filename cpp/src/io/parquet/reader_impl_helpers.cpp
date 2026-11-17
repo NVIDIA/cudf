@@ -1043,26 +1043,30 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     // Validate that all sources have the same schema unless we are reading select columns
     // from mismatched sources, in which case, we will only check the projected columns later.
     if (not has_cols_from_mismatched_srcs) {
-      // `SchemaElement::operator==` ignores logical types, so compare FILE groups separately
+      // `SchemaElement::operator==` ignores logical types, so compare FILE groups and binary
+      // leaves of logical groups (FILE, VARIANT) separately
       auto const is_file_group = [](std::vector<SchemaElement> const& tree, size_t idx) {
         return is_valid_file_group(
           tree[idx],
           tree[idx].children_idx |
             std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
       };
-      auto const same_file_groups = [&](std::vector<SchemaElement> const& other) {
+      auto const same_logical_groups = [&](size_t pfm_idx) {
+        auto const& other = per_file_metadata[pfm_idx].schema;
         return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
-          return is_file_group(schema, idx) == is_file_group(other, idx);
+          return is_file_group(schema, idx) == is_file_group(other, idx) and
+                 is_binary_leaf(idx) == is_binary_leaf(idx, pfm_idx);
         });
       };
 
       // Verify that the input files have matching numbers of columns and schema.
-      for (auto const& pfm : per_file_metadata) {
+      for (size_t pfm_idx = 0; pfm_idx < per_file_metadata.size(); ++pfm_idx) {
+        auto const& pfm = per_file_metadata[pfm_idx];
         if (pfm.row_groups.size() > 0) {
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema and same_file_groups(pfm.schema),
+        CUDF_EXPECTS(schema == pfm.schema and same_logical_groups(pfm_idx),
                      "All sources must have the same schema");
       }
 

@@ -28,13 +28,12 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import kvikio
 import kvikio.defaults
 
 import pylibcudf.utils
-import rmm.mr
 
 if TYPE_CHECKING:
     import uuid
@@ -46,6 +45,7 @@ if TYPE_CHECKING:
 
     import polars.lazyframe.engine_config
 
+    import rmm.mr
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
 
@@ -905,47 +905,7 @@ class MemoryResourceConfig:
                 f"MemoryResourceConfig.qualname '{self.qualname}' must be a fully qualified name to a class, including the module name."
             )
 
-    @overload
-    def create_memory_resource(
-        self, *, enable_tracking: Literal[False] = False
-    ) -> rmm.mr.DeviceMemoryResource: ...
-    @overload
-    def create_memory_resource(
-        self, *, enable_tracking: Literal[True]
-    ) -> rmm.mr.LimitingResourceAdaptor: ...
-    @overload
-    def create_memory_resource(
-        self, *, enable_tracking: bool
-    ) -> rmm.mr.DeviceMemoryResource: ...
-
-    def create_memory_resource(
-        self, *, enable_tracking: bool = False
-    ) -> rmm.mr.DeviceMemoryResource:
-        """
-        Create a memory resource from the configuration.
-
-        Parameters
-        ----------
-        enable_tracking
-            Whether to enable tracking of allocated bytes. If True, the memory
-            resource will be wrapped in a limiting memory resource to allow
-            Quent to track the allocated bytes. Default is False.
-
-        Returns
-        -------
-        A memory resource.
-        """
-        mr = self._create_base_memory_resource()
-        if isinstance(mr, rmm.mr.LimitingResourceAdaptor):
-            return mr
-        if enable_tracking:
-            # Note: we don't actually care about the "limiting" part of this
-            # adaptor. We're only using it because it offers an atomic (lock-free)
-            # way of reading the number of allocated bytes.
-            mr = rmm.mr.LimitingResourceAdaptor(mr, allocation_limit=2**63)
-        return mr
-
-    def _create_base_memory_resource(self) -> rmm.mr.DeviceMemoryResource:
+    def create_memory_resource(self) -> rmm.mr.DeviceMemoryResource:
         """Create a memory resource from the configuration."""
 
         def create_mr(

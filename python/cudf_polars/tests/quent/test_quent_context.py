@@ -151,6 +151,7 @@ def test_emit_evaluate_failure() -> None:
         session=MagicMock(),
         worker_resources=MagicMock(),
         _worker_handle=MagicMock(),
+        mr=MagicMock(),
     )
     runtime.session._evaluations = {
         evaluate_id: running_evaluation,

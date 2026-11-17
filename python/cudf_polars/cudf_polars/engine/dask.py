@@ -190,25 +190,26 @@ def _worker_evaluate_persisted(
         raise RuntimeError(
             "_setup_worker must be called before _worker_evaluate_persisted"
         )
-    quent_query_worker_state = None
+    query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+        contextlib.nullcontext()
+    )
     if config_options.executor.quent_context is not None:
         assert mp_ctx.quent_worker_runtime is not None
-        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
-            query_id
+        query_scope = mp_ctx.quent_worker_runtime.query(query_id)
+    with query_scope as quent_query_worker_state:
+        return persisted_result.evaluate_and_persist(
+            uid,
+            mp_ctx.ctx,
+            mp_ctx.comm,
+            mp_ctx.py_executor,
+            ir,
+            config_options,
+            query_id,
+            # Partitions are gathered to the client and concatenated, so a duplicated
+            # output is deduplicated to a single copy.
+            deduplicate_replicated=True,
+            quent_query_worker_state=quent_query_worker_state,
         )
-    return persisted_result.evaluate_and_persist(
-        uid,
-        mp_ctx.ctx,
-        mp_ctx.comm,
-        mp_ctx.py_executor,
-        ir,
-        config_options,
-        query_id,
-        # Partitions are gathered to the client and concatenated, so a duplicated
-        # output is deduplicated to a single copy.
-        deduplicate_replicated=True,
-        quent_query_worker_state=quent_query_worker_state,
-    )
 
 
 class DaskPersistedBackend(PersistedBackend):
@@ -264,7 +265,6 @@ def _setup_root(
     hardware_binding: HardwareBindingPolicy,
     memory_resource_config: MemoryResourceConfig | None,
     dask_worker: distributed.Worker | None = None,
-    enable_mr_tracking: bool = False,
 ) -> bytes:
     """
     Initialize the root rank on one Dask worker.
@@ -289,8 +289,6 @@ def _setup_root(
         :class:`rmm.mr.CudaAsyncMemoryResource`.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
-    enable_mr_tracking
-        Whether to enable tracking of allocated bytes for Quent.
 
     Returns
     -------
@@ -300,9 +298,7 @@ def _setup_root(
     options = Options.deserialize(rapidsmpf_options_as_bytes)
     bind_to_gpu(hardware_binding)
     memory_resource_config = memory_resource_config or MemoryResourceConfig.default()
-    base_mr = memory_resource_config.create_memory_resource(
-        enable_tracking=enable_mr_tracking
-    )
+    base_mr = memory_resource_config.create_memory_resource()
 
     statistics = Statistics.from_options(options)
     comm = new_communicator(
@@ -344,7 +340,6 @@ def _setup_worker(
     kvikio_reactor_count: int,
     kvikio_request_ceiling: int,
     dask_worker: distributed.Worker | None = None,
-    enable_mr_tracking: bool = False,
 ) -> None:
     """
     Complete communicator bootstrap and create the streaming context.
@@ -387,8 +382,6 @@ def _setup_worker(
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
-    enable_mr_tracking
-        Whether to enable tracking of allocated bytes for Quent.
     """
     assert dask_worker is not None
     options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -409,9 +402,7 @@ def _setup_worker(
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
-        base_mr = memory_resource_config.create_memory_resource(
-            enable_tracking=enable_mr_tracking
-        )
+        base_mr = memory_resource_config.create_memory_resource()
         root_addr = ucx_api.UCXAddress.create_from_buffer(root_ucxx_address_as_bytes)
         statistics = Statistics.from_options(options)
         comm = new_communicator(
@@ -482,13 +473,7 @@ def _update_quent_on_worker(
             mp_ctx.quent_worker_runtime = None
     if quent_context is not None and collector_address is not None:
         assert mp_ctx.comm is not None
-        # quent_context being not None implies that the memory resource is a tracked memory resource.
-        # However, `StreamingEngine._reset` breaks this invariant, since it allows replacing
-        # the QuentContext but not the base Memory Resource.
-        if isinstance(mp_ctx.base_mr, rmm.mr.LimitingResourceAdaptor):
-            allocated_bytes = mp_ctx.base_mr.get_allocated_bytes
-        else:
-            allocated_bytes = None
+        assert mp_ctx.mr is not None
         worker_id = uuid.uuid4()
         mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
             quent_context,
@@ -497,7 +482,7 @@ def _update_quent_on_worker(
             rank=mp_ctx.comm.rank,
             nranks=mp_ctx.comm.nranks,
             instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
-            allocated_bytes=allocated_bytes,
+            mr=mp_ctx.mr,
         )
 
 
@@ -814,12 +799,12 @@ def _worker_evaluate(
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
     if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
-    quent_query_worker_state: QuentQueryWorkerState | None = None
+    query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+        contextlib.nullcontext()
+    )
     if quent_context is not None:
         assert mp_ctx.quent_worker_runtime is not None
-        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
-            query_id
-        )
+        query_scope = mp_ctx.quent_worker_runtime.query(query_id)
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
     # The client concatenates each rank's result, so without this dedup an
@@ -827,15 +812,16 @@ def _worker_evaluate(
     # collect_metadata parameter still controls whether the collected list is
     # returned to the client (see the return statement), which is the cost we
     # care about saving when the caller doesn't need the metadata.
-    gpu_df, metadata = evaluate_on_rank(
-        mp_ctx.ctx,
-        mp_ctx.comm,
-        mp_ctx.py_executor,
-        ir,
-        config_options,
-        quent_query_worker_state=quent_query_worker_state,
-        query_id=query_id,
-    )
+    with query_scope as quent_query_worker_state:
+        gpu_df, metadata = evaluate_on_rank(
+            mp_ctx.ctx,
+            mp_ctx.comm,
+            mp_ctx.py_executor,
+            ir,
+            config_options,
+            quent_query_worker_state=quent_query_worker_state,
+            query_id=query_id,
+        )
     gpu_df = drop_if_replicated(gpu_df, mp_ctx.comm.rank, metadata)
     return mp_ctx.comm.rank, gpu_df.to_polars(), metadata if collect_metadata else None
 
@@ -1102,7 +1088,6 @@ class DaskEngine(StreamingEngine):
                     uid=rapidsmpf_id,
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
-                    enable_mr_tracking=quent_context is not None,
                 ),
                 nranks,
                 rapidsmpf_options_as_bytes,
@@ -1118,7 +1103,6 @@ class DaskEngine(StreamingEngine):
                     uid=rapidsmpf_id,
                     hardware_binding=hw_binding,
                     memory_resource_config=mr_config,
-                    enable_mr_tracking=quent_context is not None,
                 ),
                 root_ucxx_address_as_bytes,
                 nranks,

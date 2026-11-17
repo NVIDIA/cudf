@@ -248,9 +248,6 @@ class RankActor:
     memory_resource_config
         Optional RMM memory resource configuration. If ``None``, defaults to
         :meth:`cudf_polars.utils.config.MemoryResourceConfig.default`.
-    enable_mr_tracking
-        Whether to enable tracking of allocated bytes for Quent. Only set
-        when Quent is enabled, since it wraps the memory resource.
 
     Notes
     -----
@@ -275,7 +272,6 @@ class RankActor:
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
         worker_id: uuid.UUID,
-        enable_mr_tracking: bool = False,
     ) -> None:
         bind_to_gpu(hardware_binding)
         configure_kvikio(
@@ -290,9 +286,7 @@ class RankActor:
             memory_resource_config or MemoryResourceConfig.default()
         )
         self._base_mr: rmm.mr.DeviceMemoryResource | None = (
-            memory_resource_config.create_memory_resource(
-                enable_tracking=enable_mr_tracking
-            )
+            memory_resource_config.create_memory_resource()
         )
         self._mr: RmmResourceAdaptor | None = (
             None  # set after `Context` is built (below).
@@ -395,6 +389,7 @@ class RankActor:
                 self._quent_worker_runtime = None
         if quent_context is not None and collector_address is not None:
             assert self._comm is not None
+            assert self._mr is not None
             self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
                 collector_address,
@@ -402,13 +397,7 @@ class RankActor:
                 rank=self._comm.rank,
                 nranks=self._nranks,
                 instance_name=f"RankActor-{self._worker_id.hex[:8]}",
-                # Quent can be enabled after construction (via a reset), in which
-                # case the memory resource isn't tracked and isn't sampled.
-                allocated_bytes=(
-                    self._base_mr.get_allocated_bytes
-                    if isinstance(self._base_mr, rmm.mr.LimitingResourceAdaptor)
-                    else None
-                ),
+                mr=self._mr,
             )
 
     def reset(
@@ -623,12 +612,12 @@ class RankActor:
         # object store (pickle / Arrow IPC). The DataFrame is already on CPU at
         # this point (to_polars() copies the result off-GPU), so no GPU memory
         # crosses process boundaries.
-        quent_query_worker_state: QuentQueryWorkerState | None = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
-            )
+            query_scope = self._quent_worker_runtime.query(query_id)
         # evaluate_on_rank always collects metadata internally so we can read
         # metadata[-1].duplicated to decide whether to suppress this rank's
         # output. The client concatenates each rank's result, so without this
@@ -637,15 +626,16 @@ class RankActor:
         # collected list is returned to the client (see the return statement),
         # which is the cost we care about saving when the caller doesn't need
         # the metadata.
-        gpu_df, metadata = evaluate_on_rank(
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            quent_query_worker_state=quent_query_worker_state,
-            query_id=query_id,
-        )
+        with query_scope as quent_query_worker_state:
+            gpu_df, metadata = evaluate_on_rank(
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                quent_query_worker_state=quent_query_worker_state,
+                query_id=query_id,
+            )
         gpu_df = drop_if_replicated(gpu_df, self._comm.rank, metadata)
         return (
             self._comm.rank,
@@ -686,25 +676,26 @@ class RankActor:
         """
         if self._ctx is None or self._comm is None:
             raise RuntimeError("setup_worker must be called before execute_persisted")
-        quent_query_worker_state = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if config_options.executor.quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
+            query_scope = self._quent_worker_runtime.query(query_id)
+        with query_scope as quent_query_worker_state:
+            return persisted_result.evaluate_and_persist(
+                uid,
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                query_id,
+                # Partitions are gathered to the client and concatenated, so a
+                # duplicated output is deduplicated to a single copy.
+                deduplicate_replicated=True,
+                quent_query_worker_state=quent_query_worker_state,
             )
-        return persisted_result.evaluate_and_persist(
-            uid,
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            query_id,
-            # Partitions are gathered to the client and concatenated, so a
-            # duplicated output is deduplicated to a single copy.
-            deduplicate_replicated=True,
-            quent_query_worker_state=quent_query_worker_state,
-        )
 
     def drop_persisted(self, uid: str, query_id: uuid.UUID) -> None:
         """Drop this query's partitions from this engine's store (idempotent)."""
@@ -990,7 +981,6 @@ class RayEngine(StreamingEngine):
                         hardware_binding=hw_binding,
                         memory_resource_config=mr_config,
                         worker_id=worker_id,
-                        enable_mr_tracking=quent_context is not None,
                     )
                 )
 

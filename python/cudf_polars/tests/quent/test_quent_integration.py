@@ -137,6 +137,7 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         session=session,
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
+        mr=MagicMock(),
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):
@@ -201,8 +202,7 @@ def test_sampled_memory_resource(
         if "Initialized" in event["data"]["Query"]
     }
     assert sampled_memory_ids
-    # The test engines are built with a tracked memory resource, so the
-    # sampler actually ran (it isn't started for untracked memory resources).
+    # Each worker samples its RapidsMPF memory resource while a query runs.
     assert _of_type(events, "MemoryResourceSampler")
     assert memory_ids
     assert not sampled_memory_ids & memory_ids

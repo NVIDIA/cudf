@@ -263,10 +263,12 @@ def evaluate_pipeline_spmd_mode(
     spmd_context = config_options.executor.spmd_context
 
     quent_context = config_options.executor.quent_context
-    quent_query_worker_state: QuentQueryWorkerState | None = None
     quent_worker_runtime = spmd_context.quent_worker_runtime
     quent_controller_runtime = spmd_context.quent_controller_runtime
     query_scope: contextlib.AbstractContextManager = contextlib.nullcontext()
+    worker_query_scope: contextlib.AbstractContextManager[
+        QuentQueryWorkerState | None
+    ] = contextlib.nullcontext()
     if quent_context is not None:
         assert quent_worker_runtime is not None
         query_id = synchronize_quent_query_id(
@@ -274,14 +276,14 @@ def evaluate_pipeline_spmd_mode(
             context=context,
             query_id=query_id,
         )
-        quent_query_worker_state = quent_worker_runtime.query_worker_state(query_id)
+        worker_query_scope = quent_worker_runtime.query(query_id)
         if comm.rank == 0:
             assert quent_controller_runtime is not None
             query_scope = quent_controller_runtime.query(
                 query_id,
                 query_config=quent_context.query,
             )
-    with query_scope:
+    with query_scope, worker_query_scope as quent_query_worker_state:
         df, metadata = evaluate_on_rank(
             context,
             comm,
@@ -644,10 +646,7 @@ class SPMDEngine(StreamingEngine):
         mr_config: MemoryResourceConfig = engine_options.get(
             "memory_resource_config", MemoryResourceConfig.default()
         )
-        # When quent is enabled, we create a tracked memory resource
-        base_mr = mr_config.create_memory_resource(
-            enable_tracking=quent_context is not None
-        )
+        base_mr = mr_config.create_memory_resource()
         if comm is None:
             statistics = Statistics.from_options(self.rapidsmpf_options)
             if bootstrap.is_running_with_rrun():
@@ -838,14 +837,7 @@ class SPMDEngine(StreamingEngine):
                 rank=comm.rank,
                 nranks=comm.nranks,
                 instance_name=f"rank-{comm.rank}",
-                # Quent can be enabled after construction (via a reset, or by
-                # rank 0's context), in which case the memory resource isn't
-                # tracked and isn't sampled.
-                allocated_bytes=(
-                    self._base_mr.get_allocated_bytes
-                    if isinstance(self._base_mr, rmm.mr.LimitingResourceAdaptor)
-                    else None
-                ),
+                mr=self._mr,
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             steps: list[Callable[[], object]] = [
@@ -1393,25 +1385,26 @@ class SpmdPersistedBackend(PersistedBackend):
         query_id: uuid.UUID,
     ) -> list[int]:
         """Evaluate and store this rank's partition (see :class:`PersistedBackend`)."""
-        quent_query_worker_state = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if config_options.executor.quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
+            query_scope = self._quent_worker_runtime.query(query_id)
+        with query_scope as quent_query_worker_state:
+            rank = persisted_result.evaluate_and_persist(
+                self._uid,
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                query_id,
+                # SPMD collects rank-locally: each rank reads its own partition, so a
+                # duplicated output must stay whole on every rank (not deduplicated).
+                deduplicate_replicated=False,
+                quent_query_worker_state=quent_query_worker_state,
             )
-        rank = persisted_result.evaluate_and_persist(
-            self._uid,
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            query_id,
-            # SPMD collects rank-locally: each rank reads its own partition, so a
-            # duplicated output must stay whole on every rank (not deduplicated).
-            deduplicate_replicated=False,
-            quent_query_worker_state=quent_query_worker_state,
-        )
         return [rank]
 
     def drop_persisted(self, query_id: uuid.UUID) -> None:

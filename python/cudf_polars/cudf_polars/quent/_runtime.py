@@ -12,7 +12,7 @@ import socket
 import threading
 from typing import TYPE_CHECKING
 
-from cudf_polars.quent._memory_monitor import MemoryResourceSampler
+from cudf_polars.quent._memory_monitor import memory_resource_sampler
 from cudf_polars.utils.cleanup import run_cleanup_steps
 
 if TYPE_CHECKING:
@@ -21,6 +21,8 @@ if TYPE_CHECKING:
     from os import PathLike
 
     import cudf_polars_quent as quent_bindings
+
+    from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
@@ -219,7 +221,7 @@ class QuentControllerRuntime:
         run_cleanup_steps("Quent controller shutdown failed", *steps)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class QuentWorkerRuntime:
     """Own worker-side Worker, resource, plan, Actor, and Evaluate state."""
 
@@ -227,7 +229,7 @@ class QuentWorkerRuntime:
     session: QuentSession
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
-    allocated_bytes: Callable[[], int] | None = None
+    mr: RmmResourceAdaptor
 
     @classmethod
     def create(
@@ -239,7 +241,7 @@ class QuentWorkerRuntime:
         rank: int,
         nranks: int,
         instance_name: str,
-        allocated_bytes: Callable[[], int] | None = None,
+        mr: RmmResourceAdaptor,
     ) -> QuentWorkerRuntime:
         """
         Create a worker runtime and declare its resources.
@@ -258,10 +260,8 @@ class QuentWorkerRuntime:
             Total number of ranks.
         instance_name
             Display name of the Worker entity.
-        allocated_bytes
-            Lock-free reader of live device bytes allocated by this worker,
-            e.g. ``rmm.mr.LimitingResourceAdaptor.get_allocated_bytes``.
-            When ``None``, the memory resource is not sampled.
+        mr
+            The worker's memory resource adaptor to sample.
         """
         from cudf_polars.quent._context import WorkerResources
 
@@ -293,79 +293,42 @@ class QuentWorkerRuntime:
             session=session,
             worker_resources=resources,
             _worker_handle=worker_handle,
-            allocated_bytes=allocated_bytes,
+            mr=mr,
         )
-
-    def query_worker_state(self, query_id: uuid.UUID) -> QuentQueryWorkerState:
-        """Build state for one query executing on this worker."""
-        from cudf_polars.quent._context import QuentQueryWorkerState
-
-        return QuentQueryWorkerState(runtime=self, query_id=query_id)
-
-    def _device_memory_usage(
-        self, nbytes: int
-    ) -> quent_bindings.SampledMemoryResourceUsageRefDict:
-        return {
-            "target": self.worker_resources.sampled_memory_resource_id,
-            "data": {"bytes": nbytes},
-        }
-
-    def _start_device_memory(
-        self, query_id: uuid.UUID, nbytes: int
-    ) -> quent_bindings.MemoryResourceSamplerSamplingHandle:
-        """Create the sampler FSM with its initial reading."""
-        return (
-            self.session.binding_context.memory_resource_sampler_observer()
-            .handle()
-            .sampling(query=query_id, memory=self._device_memory_usage(nbytes))
-        )
-
-    def _record_device_memory(
-        self,
-        fsm: quent_bindings.MemoryResourceSamplerSamplingHandle,
-        query_id: uuid.UUID,
-        nbytes: int,
-    ) -> quent_bindings.MemoryResourceSamplerSamplingHandle:
-        """Record one reading as the next state of the query's sampler FSM."""
-        return fsm.sampling(query=query_id, memory=self._device_memory_usage(nbytes))
-
-    def _stop_device_memory(
-        self, fsm: quent_bindings.MemoryResourceSamplerSamplingHandle
-    ) -> None:
-        """Close the sampler FSM, ending its last reading."""
-        fsm.stopped()
 
     @contextlib.contextmanager
-    def monitor_device_memory(self, query_id: uuid.UUID) -> Iterator[None]:
+    def query(self, query_id: uuid.UUID) -> Iterator[QuentQueryWorkerState]:
         """
-        Context manager for sampling the memory resource while executing a query.
+        Wrap the lifetime of an individual query.
 
         Parameters
         ----------
         query_id
             The ID of the query being executed.
 
+        Yields
+        ------
+        The state for the query executing on this worker.
+
         Notes
         -----
-        Does nothing when no reader was supplied or sampling is disabled with
-        ``QuentConfig.device_memory_poll_interval_s=None``.
+        The lifetime of this context just includes query execution.
         """
-        read_bytes = self.allocated_bytes
+        from cudf_polars.quent._context import QuentQueryWorkerState
+
+        state = QuentQueryWorkerState(runtime=self, query_id=query_id)
         interval_s = self.config.device_memory_poll_interval_s
-        if read_bytes is None or interval_s is None:
-            yield
+        if interval_s is None:
+            yield state
             return
-        sampler = MemoryResourceSampler(
-            read_bytes=read_bytes,
-            start=lambda nbytes: self._start_device_memory(query_id, nbytes),
-            record=lambda fsm, nbytes: self._record_device_memory(
-                fsm, query_id, nbytes
-            ),
-            stop=self._stop_device_memory,
+        with memory_resource_sampler(
+            mr=self.mr,
             interval_s=interval_s,
-        )
-        with sampler.monitor():
-            yield
+            quent_session=self.session,
+            query_id=query_id,
+            sampled_memory_resource_id=self.worker_resources.sampled_memory_resource_id,
+        ):
+            yield state
 
     def emit_physical_plan(
         self,
@@ -472,8 +435,6 @@ class QuentWorkerRuntime:
         """Close the Worker and its process-local Collector client."""
         worker_handle = self._worker_handle
         self._worker_handle = None
-        # Don't keep the memory resource alive past engine shutdown.
-        self.allocated_bytes = None
         steps: list[Callable[[], object]] = []
         if worker_handle is not None:
             steps.append(worker_handle.exit)

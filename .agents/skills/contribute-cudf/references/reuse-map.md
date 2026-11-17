@@ -14,9 +14,10 @@ Search these directories on `$REMOTE/main`, nearest first, before adding new cod
 | CCCL: `cub/cub/`, `thrust/thrust/`, `libcudacxx/include/cuda/` | Parallel algorithms, block- and warp-level primitives, and device-side math, bit, atomic, and iterator utilities |
 | cuco: `include/cuco/` | Hash tables and filters |
 
-Any configured cudf build has the CCCL and cuco sources under `<build dir>/_deps/cccl-src` and `<build dir>/_deps/cuco-src`.
+A configured cudf build records where the CCCL and cuco sources are in its `CMakeCache.txt`.
 
 ```bash
+grep -E '^(CCCL|CUCO)_SOURCE_DIR' <build dir>/CMakeCache.txt
 git grep -n '<operation or symbol>' $REMOTE/main -- <directory>
 grep -rln '<operation or symbol>' <cccl-src>/cub/cub <cccl-src>/thrust/thrust <cccl-src>/libcudacxx/include/cuda <cuco-src>/include/cuco
 ```

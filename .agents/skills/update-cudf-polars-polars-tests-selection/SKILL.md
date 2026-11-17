@@ -112,7 +112,12 @@ python .agents/skills/update-cudf-polars-polars-tests-selection/prune-run-list.p
 
 The script reads the minimum supported version from the `polars` requirement
 and rewrites `ci/cudf_polars/gpu_test_run_list.json` in place. Without `uv`, run
-it with any Python 3.11+ environment that has `packaging` installed.
+it with any Python that satisfies the `requires-python` bound in
+`python/cudf_polars/pyproject.toml` and has `packaging` installed:
+
+```bash
+grep -m1 '^requires-python' python/cudf_polars/pyproject.toml
+```
 
 Entries are only removed for versions below the minimum. Entries for newer
 versions than the upper bound are kept. Every version that PR CI can install

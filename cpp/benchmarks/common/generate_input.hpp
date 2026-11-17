@@ -369,7 +369,7 @@ class data_profile {
   }
 
   // Fixed-point parameters are normally set with integer bounds and an explicit scale via this
-  // overload. The two overloads above also accept fixed-point targets without a scale, in which
+  // overload. The overload above also accepts fixed-point targets without a scale, in which
   // case a random scale in [-digits10, digits10] of the rep type is drawn at generation time.
   template <cuda::std::integral T, typename Type_enum>
   void set_distribution_params(Type_enum type_or_group,

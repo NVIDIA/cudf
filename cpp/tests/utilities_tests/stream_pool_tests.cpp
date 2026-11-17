@@ -7,7 +7,7 @@
 
 #include <cudf/detail/utilities/stream_pool.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>
@@ -40,9 +40,12 @@ TEST_F(StreamPoolTest, ConcurrentThreadsGetDistinctStreams)
   auto constexpr num_streams  = 8;
 
   // Repeated requests make a shared round-robin counter very likely to hand the same stream to both
-  // threads. The latch makes them overlap; a thread starting after the other exited would adopt its
-  // retired pool and see the same streams.
+  // threads. Each thread takes its pool before the latch: a pool is created on first use and
+  // returned to the free list when its thread exits, so a thread that made its first request after
+  // the other one exited would adopt the retired pool and see the same streams.
   auto collect = [](std::unordered_set<cudaStream_t>& out, std::latch& ready) {
+    auto const first = get_hashable_streams(num_streams);
+    out.insert(first.begin(), first.end());
     ready.arrive_and_wait();
     for (auto request = 0; request < num_requests; request++) {
       auto const streams = get_hashable_streams(num_streams);

@@ -1,5 +1,6 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 import seaborn as sns
@@ -11,6 +12,14 @@ def assert_plots_equal(expect, got):
 
 
 pytestmark = pytest.mark.assert_eq(fn=assert_plots_equal)
+
+
+@pytest.fixture(autouse=True)
+def isolated_figures():
+    # Existing axes can make a later test inspect collections from an earlier plot.
+    plt.close("all")
+    yield
+    plt.close("all")
 
 
 @pytest.fixture(scope="module")

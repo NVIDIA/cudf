@@ -38,7 +38,7 @@ static void bench_slice(nvbench::state& state)
     cudf::test::fixed_width_column_wrapper<cudf::size_type>(stops_itr, stops_itr + num_rows);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   // gather some throughput statistics as well
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);  // all bytes are read

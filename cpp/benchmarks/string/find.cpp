@@ -32,7 +32,7 @@ static void bench_find_string(nvbench::state& state)
   auto targets_col   = cudf::make_column_from_scalar(target, num_rows);
   auto const targets = cudf::strings_column_view(targets_col->view());
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = col->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   if (api == "find") {
@@ -102,7 +102,7 @@ static void bench_find_string_skewed(nvbench::state& state)
 
   auto target = cudf::string_scalar(skewed_string_target_substring);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = col->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(input.size());

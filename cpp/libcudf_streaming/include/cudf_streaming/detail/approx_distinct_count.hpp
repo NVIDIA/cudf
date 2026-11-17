@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -20,7 +20,7 @@ namespace cudf_streaming::detail {
  * @param value Value to set @p data to.
  * @param stream CUDA stream for kernel launches and memory operations.
  */
-void set_value(std::uint64_t* data, std::uint64_t value, rmm::cuda_stream_view stream);
+void set_value(std::uint64_t* data, std::uint64_t value, cuda::stream_ref stream);
 
 /**
  * @brief Add the value in @p left into @p right.
@@ -31,6 +31,6 @@ void set_value(std::uint64_t* data, std::uint64_t value, rmm::cuda_stream_view s
  * @param right Array to add into.
  * @param stream CUDA stream for kernel launches and memory operations.
  */
-void add_values(std::uint64_t const* left, std::uint64_t* right, rmm::cuda_stream_view stream);
+void add_values(std::uint64_t const* left, std::uint64_t* right, cuda::stream_ref stream);
 
 }  // namespace cudf_streaming::detail

@@ -17,10 +17,9 @@
 
 #include <cuda/iterator>
 #include <cuda/std/cmath>
-#include <cuda/std/type_traits>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/count.h>
-#include <thrust/execution_policy.h>
 
 namespace cudf {
 namespace detail {
@@ -30,15 +29,13 @@ namespace {
  * the row `index` of `column_device_view` is `NaN`.
  */
 struct check_nan {
-  template <typename T>
+  template <cuda::std::floating_point T>
   __device__ inline bool operator()(column_device_view const& input, size_type index)
-    requires(cuda::std::is_floating_point_v<T>)
   {
     return cuda::std::isnan(input.data<T>()[index]);
   }
   template <typename T>
   __device__ inline bool operator()(column_device_view const&, size_type)
-    requires(not cuda::std::is_floating_point_v<T>)
   {
     return false;
   }
@@ -52,16 +49,18 @@ cudf::size_type unique_count(column_view const& input,
 {
   auto const num_rows = input.size();
 
-  if (num_rows == 0 or num_rows == input.null_count()) { return 0; }
+  if (num_rows == 0) { return 0; }
+  if (num_rows == input.null_count()) {
+    return static_cast<size_type>(null_handling == null_policy::INCLUDE);
+  }
 
   auto const count_nulls      = null_handling == null_policy::INCLUDE;
   auto const nan_is_null      = nan_handling == nan_policy::NAN_IS_NULL;
   auto const should_check_nan = cudf::is_floating_point(input.type());
-  auto input_device_view      = cudf::column_device_view::create(input, stream);
+  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto input_device_view      = cudf::column_device_view::create(input, stream, temp_mr);
   auto device_view            = *input_device_view;
   auto input_table_view       = table_view{{input}};
-
-  auto temp_mr = cudf::get_current_device_resource_ref();
   auto const comparator =
     cudf::detail::row::equality::self_comparator{input_table_view, stream, temp_mr};
   auto const comp = comparator.equal_to<false>(

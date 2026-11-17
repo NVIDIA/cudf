@@ -44,12 +44,12 @@ auto setup_masks(nvbench::state& state)
   std::exclusive_scan(segments.begin(), segments.end(), segments.begin(), 0);
 
   // Create masks
-  std::vector<rmm::device_buffer> masks;
+  std::vector<cuda::device_buffer<cudf::bitmask_type>> masks;
   std::vector<cudf::bitmask_type*> mask_pointers;
   masks.reserve(num_masks);
   std::generate_n(std::back_inserter(masks), num_masks, [mask_size_bits, seed, &mask_pointers]() {
     auto mask_pair = create_random_null_mask(mask_size_bits, null_probability, seed);
-    mask_pointers.push_back(static_cast<cudf::bitmask_type*>(mask_pair.first.data()));
+    mask_pointers.push_back(mask_pair.first.data());
     return std::move(mask_pair.first);
   });
 
@@ -73,7 +73,7 @@ void BM_segmented_bitmask_and(nvbench::state& state)
 
   auto [segments, masks, mask_pointers, mask_begin_bits, data_bytes] = setup_masks(state);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -87,6 +87,8 @@ void BM_segmented_bitmask_and(nvbench::state& state)
   set_throughputs(state);
 }
 
+void BM_segmented_bitmask_and_wide_masks(nvbench::state& state) { BM_segmented_bitmask_and(state); }
+
 void BM_multi_segment_bitmask_and(nvbench::state& state)
 {
   auto const mask_size_bits = static_cast<size_t>(state.get_int64("mask_size_bits"));
@@ -94,7 +96,7 @@ void BM_multi_segment_bitmask_and(nvbench::state& state)
 
   auto [segments, masks, mask_pointers, mask_begin_bits, data_bytes] = setup_masks(state);
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.add_element_count(data_bytes, "input size");
   state.template add_global_memory_reads<nvbench::int8_t>(data_bytes);
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -136,6 +138,12 @@ NVBENCH_BENCH(BM_segmented_bitmask_and)
   .add_int64_axis("num_segments", {100, 1000, 10000})
   .add_int64_axis("expected_masks_per_segment", {4, 8, 16})
   .add_int64_axis("mask_size_bits", {32, 64, 128});
+
+NVBENCH_BENCH(BM_segmented_bitmask_and_wide_masks)
+  .set_name("segmented_bitmask_and_wide_masks")
+  .add_int64_axis("num_segments", {8, 64, 512})
+  .add_int64_axis("expected_masks_per_segment", {4, 8})
+  .add_int64_axis("mask_size_bits", {100000, 1000000});
 
 NVBENCH_BENCH(BM_multi_segment_bitmask_and)
   .set_name("multi_segment_bitmask_and")

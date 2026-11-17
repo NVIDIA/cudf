@@ -13,9 +13,8 @@
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/memory/buffer_resource.hpp>
@@ -95,7 +94,7 @@ namespace detail {
  * @return Filter expression with proper lifetime management
  */
 template <typename timestamp_type>
-std::unique_ptr<cudf_streaming::filter> make_date_filter(rmm::cuda_stream_view stream,
+std::unique_ptr<cudf_streaming::filter> make_date_filter(cuda::stream_ref stream,
                                                          cuda::std::chrono::year_month_day date,
                                                          std::string const& column_name,
                                                          cudf::ast::ast_operator op)
@@ -135,7 +134,7 @@ std::unique_ptr<cudf_streaming::filter> make_date_filter(rmm::cuda_stream_view s
  */
 template <typename timestamp_type>
 std::unique_ptr<cudf_streaming::filter> make_date_range_filter(
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   cuda::std::chrono::year_month_day start_date,
   cuda::std::chrono::year_month_day end_date,
   std::string const& column_name)

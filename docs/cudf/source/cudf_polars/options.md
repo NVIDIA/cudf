@@ -20,18 +20,18 @@ opts = StreamingOptions(
 with RayEngine.from_options(opts) as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
 ```{note}
 `engine="gpu"` (the default when no engine is constructed) accepts no
 {class}`~cudf_polars.engine.options.StreamingOptions`. Many of the
-fields below have a noticeable runtime impact (for example `spill_to_pinned_memory=True`
-significantly speeds up spill-heavy workflows), so to use any non-default value construct one
+fields below have a noticeable runtime impact (for example `spill_device_limit` controls when
+spilling to host memory begins), so to use any non-default value construct one
 of the engines listed below.
 ```
 
@@ -54,10 +54,14 @@ the plain `pl.GPUEngine`. Most users will not need to touch these directly. See 
 [streaming runtime configuration reference][rapidsmpf-config] for the underlying meaning of each
 `RAPIDSMPF_*` field.
 
-Every option has a corresponding environment variable. When an option is not set explicitly, its
+Most options have a corresponding environment variable. When an option is not set explicitly, its
 value is read from the environment variable if present; otherwise the underlying library applies
-its built-in default. Boolean environment variables accept `{"1", "true", "yes", "y"}` as true
-and `{"0", "false", "no", "n"}` as false.
+its built-in default. `raise_on_fail` has no environment variable. The environment variables for
+`dynamic_planning`, `join_filter_pushdown`, and `quent_context` accept a boolean that enables or
+disables the feature; the nested fields of `dynamic_planning` and `join_filter_pushdown` have their
+own environment variables (e.g. `CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_CHUNK_COUNT`).
+Boolean environment variables accept `{"1", "true", "yes", "y"}` as true and
+`{"0", "false", "no", "n"}` as false.
 
 
 ## Building from a dictionary
@@ -66,10 +70,12 @@ and `{"0", "false", "no", "n"}` as false.
 Unknown keys raise `TypeError` and `None` values leave the field unspecified:
 
 ```python
-opts = StreamingOptions.from_dict({
-    "num_streaming_threads": 8,
-    "fallback_mode": "silent",
-})
+opts = StreamingOptions.from_dict(
+    {
+        "num_streaming_threads": 8,
+        "fallback_mode": "silent",
+    }
+)
 ```
 
 This is convenient when options come from a config file or CLI.
@@ -95,7 +101,7 @@ See {doc}`in_memory_engine` for how to configure it.
 Environment variables follow these patterns:
 
 * `executor`: `CUDF_POLARS__EXECUTOR__<OPTION_NAME>` (e.g. `CUDF_POLARS__EXECUTOR__FALLBACK_MODE`)
-* `engine`: `CUDF_POLARS__<OPTION_NAME>` (e.g. `CUDF_POLARS__RAISE_ON_FAIL`; nested prefixes for structured options)
+* `engine`: `CUDF_POLARS__<OPTION_NAME>` (e.g. `CUDF_POLARS__ALLOW_GPU_SHARING`; nested prefixes for structured options)
 * `rapidsmpf`: `RAPIDSMPF_<OPTION_NAME>` (e.g. `RAPIDSMPF_NUM_STREAMING_THREADS`)
 
 ### Category: `executor`
@@ -107,15 +113,16 @@ Environment variables follow these patterns:
 | `max_rows_per_partition` | Maximum number of rows per partition. Only used for in-memory `DataFrame` sources, never for disk IO or dynamic planning.                           | `1_000_000` |
 | `broadcast_limit`        | Maximum number of bytes for broadcast joins.                                                                                                        | auto        |
 | `target_partition_size`  | Target partition size in bytes. Used for IO and dynamic planning. `0` means auto.                                                                   | auto        |
+| `max_concurrent_io_tasks` | Number of concurrent IO producer tasks for each scan node. Tune with an integer or a `{"local": ..., "remote": ...}` dict. | auto        |
 | `dynamic_planning`       | Dynamic planning configuration, dict or {class}`~cudf_polars.utils.config.DynamicPlanningOptions`. `None` disables.                                 | enabled     |
-| `join_filter_pushdown`   | Configuration for join filter pushdown plan rewrites, dict or {class}`~cudf_polars.utils.config.JoinFilterPushdownOptions`. `None` disables.        | enabled     |
+| `join_filter_pushdown`   | Configuration for join filter pushdown plan rewrites, dict or {class}`~cudf_polars.utils.config.JoinFilterPushdownOptions`. `None` disables.        | disabled     |
 | `sink_to_directory`      | Whether `.sink_*()` writes its output as a directory. The `spmd`, `ray`, and `dask` engines always use `True`; passing `False` raises `ValueError`. | `True`      |
 
 ### Category: `engine`
 
 | Field                    | Description                                                                                                                   | Default                   |
 |--------------------------|-------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| `raise_on_fail`          | Raise an error instead of falling back to CPU execution.                                                                      | `False`                   |
+| `raise_on_fail`          | Raise an error instead of falling back to CPU execution. Has no environment variable.                                         | `False`                   |
 | `parquet_options`        | Parquet configuration, dict or {class}`~cudf_polars.utils.config.ParquetOptions`.                                             | —                         |
 | `memory_resource_config` | RMM configuration, dict or {class}`~cudf_polars.utils.config.MemoryResourceConfig`.                                           | —                         |
 | `hardware_binding`       | Hardware binding policy. Pass a {class}`~cudf_polars.engine.hardware_binding.HardwareBindingPolicy` for fine-grained control. | `HardwareBindingPolicy()` |
@@ -132,7 +139,7 @@ These environment variables are intended for library developers and advanced use
 
 | Environment variable        | Description                                                                                                    | Default |
 |-----------------------------|----------------------------------------------------------------------------------------------------------------|---------|
-| `CUDF_POLARS_WARN_UNSTABLE` | Raises a `cudf_polars.UnstableWarning` whenever an unstable cudf-polars feature is used. Set to `1` to enable. | `0`     |
+| `CUDF_POLARS_WARN_UNSTABLE` | Emits a `cudf_polars.UnstableWarning` whenever an unstable cudf-polars feature is used. Set to `1` to enable.  | `0`     |
 
 <!-- Reference links -->
-[rapidsmpf-config]: https://docs.rapids.ai/api/rapidsmpf/nightly/configuration/
+[rapidsmpf-config]: inv:rapidsmpf:std:doc:#configuration

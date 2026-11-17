@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,8 +7,6 @@
 
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/types.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <filesystem>
 #include <iostream>
@@ -90,7 +88,7 @@ int main(int argc, char const** argv)
     write_page_metadata(metadata, output_filepath, stream);
   }
 
-  stream.synchronize();
+  stream.sync();
 
   return 0;
 }

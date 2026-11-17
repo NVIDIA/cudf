@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <vector>
 
@@ -30,7 +30,7 @@ std::unique_ptr<cudf::table> compute_results(
   cudf::column_view const& cities,
   cudf::column_view const& temperatures,
   std::vector<std::unique_ptr<cudf::groupby_aggregation>>&& aggregations,
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Produce the final aggregations from sub-aggregate results
@@ -41,4 +41,4 @@ std::unique_ptr<cudf::table> compute_results(
  */
 std::unique_ptr<cudf::table> compute_final_aggregates(
   std::vector<std::unique_ptr<cudf::table>>& agg_data,
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());

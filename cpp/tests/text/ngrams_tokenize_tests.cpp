@@ -53,7 +53,7 @@ TEST_F(TextNgramsTokenizeTest, Tokenize)
                                                 "ate_the",
                                                 "the_cheese"};
     auto results =
-      nvtext::ngrams_tokenize(strings_view, 2, std::string_view(), std::string_view("_"));
+      nvtext::ngrams_tokenize(strings_view, 2, cudf::string_scalar(""), cudf::string_scalar("_"));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -71,7 +71,7 @@ TEST_F(TextNgramsTokenizeTest, Tokenize)
                                                 "mousé:ate:the",
                                                 "ate:the:cheese"};
     auto results =
-      nvtext::ngrams_tokenize(strings_view, 3, std::string_view{" "}, std::string_view{":"});
+      nvtext::ngrams_tokenize(strings_view, 3, cudf::string_scalar{" "}, cudf::string_scalar{":"});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -85,7 +85,7 @@ TEST_F(TextNgramsTokenizeTest, Tokenize)
                                                 "the--mousé--ate--the",
                                                 "mousé--ate--the--cheese"};
     auto results =
-      nvtext::ngrams_tokenize(strings_view, 4, std::string_view{" "}, std::string_view{"--"});
+      nvtext::ngrams_tokenize(strings_view, 4, cudf::string_scalar{" "}, cudf::string_scalar{"--"});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }

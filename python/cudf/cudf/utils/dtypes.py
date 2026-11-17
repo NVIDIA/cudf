@@ -304,6 +304,20 @@ def _get_nan_for_dtype(dtype: DtypeObj) -> ScalarLike:
         return np.float64("nan")
 
 
+def _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+    dtypes: Iterable[DtypeObj],
+) -> bool:
+    """
+    Whether ``dtypes`` mixes bool with numeric, or datetime64 with
+    timedelta64. Pandas coerces these combinations to ``object`` rather
+    than promoting via NumPy's type promotion rules.
+    """
+    kinds = {dtype.kind for dtype in dtypes if isinstance(dtype, np.dtype)}
+    return ("b" in kinds and bool(kinds & set("iuf"))) or (
+        "M" in kinds and "m" in kinds
+    )
+
+
 def find_common_type(dtypes: Iterable[DtypeObj]) -> DtypeObj:
     """
     Wrapper over np.result_type to handle cudf specific types.
@@ -398,24 +412,23 @@ def find_common_type(dtypes: Iterable[DtypeObj]) -> DtypeObj:
             "not supported"
         )
 
-    if pandas_compatible:
+    if (
+        pandas_compatible
+        and _is_dtypes_object_mixed_with_bool_with_numeric_or_datetime_with_timedelta(
+            dtypes
+        )
+    ):
         # cudf follows NumPy promotion: bool+int->int, bool+float->float,
         # datetime64+timedelta64->datetime64. Pandas returns `object` for
         # these mixes. Raise so that, when used as the cudf.pandas fast path
         # for `pandas.core.dtypes.cast.find_common_type`, we fall back to
         # pandas' implementation rather than silently producing a different
         # answer.
-        kinds = {dtype.kind for dtype in dtypes if isinstance(dtype, np.dtype)}
-        if "b" in kinds and kinds & set("iuf"):
-            raise NotImplementedError(
-                "Common type of bool with numeric dtypes is not supported "
-                "in pandas-compatible mode."
-            )
-        if "M" in kinds and "m" in kinds:
-            raise NotImplementedError(
-                "Common type of datetime64 with timedelta64 is not supported "
-                "in pandas-compatible mode."
-            )
+        raise NotImplementedError(
+            "Common type of bool with numeric, or datetime64 with "
+            "timedelta64, dtypes is not supported in pandas-compatible "
+            "mode."
+        )
 
     try:
         common_dtype = np.result_type(*dtypes)  # noqa: TID251

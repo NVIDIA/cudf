@@ -7,8 +7,9 @@
 
 #include "text/detail/cp_data.h"
 
-#include <rmm/device_uvector.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <cstdint>
@@ -54,19 +55,26 @@ __device__ constexpr uint32_t extract_token_cat(uint32_t metadata)
 /**
  * @brief Return true if category of metadata value specifies the character should be replaced.
  */
-__device__ constexpr bool should_remove_cp(uint32_t metadata, bool lower_case)
+__device__ constexpr bool should_remove_cp(uint32_t metadata, bool lower_case, bool strip_accents)
 {
   auto const cat = extract_token_cat(metadata);
-  return (cat == TOKEN_CAT_REMOVE_CHAR) || (lower_case && (cat == TOKEN_CAT_REMOVE_CHAR_IF_LOWER));
+  return (cat == TOKEN_CAT_REMOVE_CHAR) ||
+         ((lower_case || strip_accents) && (cat == TOKEN_CAT_REMOVE_CHAR_IF_LOWER));
 }
 
 /**
  * @brief Return true if category of metadata value specifies the character should be padded.
+ *
+ * @param lower_case Controls padding of the 4 chars with category TOKEN_CAT_ADD_SPACE_IF_LOWER
+ * @param pad_punctuation Controls padding of punctuation and CJK (TOKEN_CAT_ADD_SPACE)
  */
-__device__ constexpr bool should_add_spaces(uint32_t metadata, bool lower_case)
+__device__ constexpr bool should_add_spaces(uint32_t metadata,
+                                            bool lower_case,
+                                            bool pad_punctuation)
 {
   auto const cat = extract_token_cat(metadata);
-  return (cat == TOKEN_CAT_ADD_SPACE) || (lower_case && (cat == TOKEN_CAT_ADD_SPACE_IF_LOWER));
+  return (pad_punctuation && (cat == TOKEN_CAT_ADD_SPACE)) ||
+         (lower_case && (cat == TOKEN_CAT_ADD_SPACE_IF_LOWER));
 }
 
 /**
@@ -95,15 +103,19 @@ __device__ constexpr bool is_head_byte(unsigned char utf8_byte) { return (utf8_b
  * @brief Retrieve the code point metadata table.
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations and the returned table
  */
-rmm::device_uvector<codepoint_metadata_type> get_codepoint_metadata(cuda::stream_ref stream);
+cuda::device_buffer<codepoint_metadata_type> get_codepoint_metadata(cuda::stream_ref stream,
+                                                                    cudf::memory_resources mr);
 
 /**
  * @brief Retrieve the auxiliary code point metadata table.
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources used for temporary allocations and the returned table
  */
-rmm::device_uvector<aux_codepoint_data_type> get_aux_codepoint_data(cuda::stream_ref stream);
+cuda::device_buffer<aux_codepoint_data_type> get_aux_codepoint_data(cuda::stream_ref stream,
+                                                                    cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace nvtext

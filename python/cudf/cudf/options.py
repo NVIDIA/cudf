@@ -1,5 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+"""Define and manage cuDF's global configuration options."""
+
 from __future__ import annotations
 
 import os
@@ -14,6 +16,8 @@ if TYPE_CHECKING:
 
 @dataclass
 class Option:
+    """Store the definition and current state of a single cuDF option."""
+
     default: Any
     value: Any
     description: str
@@ -72,16 +76,17 @@ def _register_option(
 
 
 def get_option(name: str) -> Any:
-    """Get the value of option.
+    """Get the value of the specified option.
 
     Parameters
     ----------
-    key : str
+    name : str
         The name of the option.
 
     Returns
     -------
-    The value of the option.
+    Any
+        The value of the option.
 
     Raises
     ------
@@ -128,7 +133,7 @@ def _build_option_description(name, opt):
 
 
 def describe_option(name: str | None = None):
-    """Prints the description of an option.
+    """Print the description of an option.
 
     If `name` is unspecified, prints the description of all available options.
 
@@ -349,8 +354,13 @@ class option_context(ContextDecorator):
     """
     Context manager to temporarily set options in the `with` statement context.
 
-    You need to invoke as ``option_context(pat, val, [(pat, val), ...])``.
+    You need to invoke as ``option_context(pat1, val1, pat2, val2, ...)``.
 
+    Parameters
+    ----------
+    *args
+        Alternating option names and values, e.g.
+        ``option_context(name1, val1, name2, val2, ...)``.
 
     Examples
     --------
@@ -367,12 +377,24 @@ class option_context(ContextDecorator):
             )
 
         self.ops = tuple(zip(args[::2], args[1::2], strict=True))
-        self.undo = tuple((pat, get_option(pat)) for pat, _ in self.ops)
+        # Validate names eagerly so cudf.pandas can fall back on unknown options.
+        for pat, _ in self.ops:
+            get_option(pat)
+        self.undo: list[tuple[tuple[str, Any], ...]] = []
 
     def __enter__(self) -> None:
-        for pat, val in self.ops:
-            set_option(pat, val)
+        undo = tuple((pat, get_option(pat)) for pat, _ in self.ops)
+        applied = []
+        try:
+            for (pat, val), (_, old_val) in zip(self.ops, undo, strict=True):
+                set_option(pat, val)
+                applied.append((pat, old_val))
+        except BaseException:
+            for pat, old_val in reversed(applied):
+                set_option(pat, old_val)
+            raise
+        self.undo.append(undo)
 
     def __exit__(self, *args) -> None:
-        for pat, val in self.undo:
+        for pat, val in self.undo.pop():
             set_option(pat, val)

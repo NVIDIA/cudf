@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
@@ -78,7 +78,7 @@ cpdef Column rolling_window(
 
 cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg)
 
-cpdef tuple make_range_windows(
+cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
     order order,

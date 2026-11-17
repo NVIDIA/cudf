@@ -5,7 +5,7 @@ description: Reproduce cudf CI failures locally. Provide a GitHub Actions job UR
 
 # Reproducing cudf CI Failures Locally
 
-For full background, see the [RAPIDS docs on reproducing CI](https://docs.rapids.ai/resources/reproducing-ci/).
+For full background, see the [documentation on reproducing CI](https://docs.nvidia.com/datascience/resources/reproducing-ci/).
 
 ## Prerequisites
 
@@ -24,7 +24,7 @@ Verify all of the following before proceeding. Stop and report if any are missin
 
 3. **Working directory** is a `cudf` checkout with the correct PR commit checked out.
 
-4. **Consistency check** — Read `run.sh` and verify it is still consistent with the [RAPIDS reproducing-CI guide](https://docs.rapids.ai/resources/reproducing-ci/). Key things to check:
+4. **Consistency check** — Read `run.sh` and verify it is still consistent with the [guide to reproducing CI](https://docs.nvidia.com/datascience/resources/reproducing-ci/). Key things to check:
    - Environment variables passed to docker (`RAPIDS_BUILD_TYPE`, `RAPIDS_REPOSITORY`, `RAPIDS_REF_NAME`, `GH_TOKEN`)
    - The `docker run` flags (`--pull=always`, `--volume $PWD:/repo`, `--workdir /repo`)
    - The CI script invocation pattern
@@ -71,7 +71,7 @@ gh api repos/NVIDIA/cudf/actions/runs/$RUN_ID/jobs \
 ```
 
 From the job JSON, note:
-- `name` — job name (e.g. `conda-cpp-build / 12.9.1, 3.11, amd64, rockylinux8`)
+- `name` — job name (e.g. `conda-cpp-build / 12.9.2, 3.14, amd64, rockylinux8`)
 - `steps[].name` and `steps[].conclusion` — which steps ran and their outcome
 
 Download the full job log:
@@ -82,7 +82,7 @@ gh run view "$RUN_ID" --repo NVIDIA/cudf --job "$JOB_ID" --log > /tmp/ci_job_log
 
 Read through the log to identify:
 1. The **container image** — look for the `Initialize Containers` step or docker pull lines (e.g. `rapidsai/ci-conda:<tag>`)
-2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python.sh`)
+2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python_cudf.sh`)
 3. The **final outcome** — whether the job passed or failed
 4. If failed, the **exact failure** — error messages, test names, assertion text
 

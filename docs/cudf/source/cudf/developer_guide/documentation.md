@@ -25,6 +25,7 @@ class A:
     x : int
         Description of x, the first constructor parameter.
     """
+
     def __init__(self, x: int):
         pass
 
@@ -119,7 +120,7 @@ When adding a new API, include the API name to the appropriate page.
 
 ### Documenting classes
 
-Python classes and the Sphinx plugins used in RAPIDS interact in nontrivial ways.
+Python classes and the Sphinx plugins used in cuDF documentation interact in nontrivial ways.
 `autosummary`'s default page generated for a class uses [`autodoc`](https://www.sphinx-doc.org/en/master/usage/extensions/autodoc.html) to automatically detect and document all methods of a class.
 That means that in addition to the manually created `autosummary` pages where class methods are grouped into sections of related features, there is another page for each class where all the methods of that class are automatically summarized in a table for quick access.
 However, we also use the [`numpydoc`](https://numpydoc.readthedocs.io/en/latest/) extension, which offers the same feature.
@@ -184,21 +185,33 @@ when possible.
 ### Requirements
 
 The following are required to build the documentation:
-- A RAPIDS-compatible GPU. This is necessary because the documentation execute code.
+- A compatible GPU. This is necessary because the documentation executes code.
 - A working copy of cudf in the same build environment.
   If you are only making changes to documentation we recommend following the
   [Documentation contributions guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#documentation-contributions) otherwise follow the
   [build instructions](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#setting-up-your-build-environment).
-- Sphinx, numpydoc, and MyST-NB.
+- Sphinx, numpydoc, MyST-NB, Breathe, and Doxygen.
   Assuming you follow the instructions in the previous step, these should automatically be installed into your environment.
 
 ### Building and viewing docs
 
-Once you have a working copy of cudf, building the docs is straightforward:
-1. Navigate to `/path/to/cudf/docs/cudf/`.
-2. Execute `make html`
+The libcudf C++ and cuDF Java API pages are rendered from Doxygen XML files.
+These files must be generated before building the docs, otherwise the build fails.
+Generate them and build the docs from the root of your cudf checkout:
 
-This will run Sphinx in your shell and generate outputs at `build/html/index.html`.
+```bash
+cd cpp/doxygen && doxygen Doxyfile
+cd ../../java/doxygen && doxygen Doxyfile
+cd ../../docs/cudf && make html
+```
+
+The two `doxygen` commands write `cpp/doxygen/xml`, `cpp/doxygen/html`, and
+`java/doxygen/xml`, which are ignored by Git. Rerun them after changing C++
+headers or Java sources to see your changes in the API reference.
+Doxygen may warn that the `rmm.tag` tag file is missing; this only removes links
+to the RMM documentation and does not affect the build.
+
+`make html` runs Sphinx in your shell and generates outputs at `build/html/index.html`.
 To view the results.
 1. Navigate to `build/html`
 2. Execute `python -m http.server`

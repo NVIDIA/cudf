@@ -130,17 +130,26 @@ def _pyarrow_quantiles(
                     "Having varying null precendences is not implemented!"
                 )
 
-            pa_tbl_data = pa_tbl_data.sort_by(
-                [
-                    (name, order_mapper[order])
-                    for name, order in zip(
-                        pa_tbl_data.column_names, column_order, strict=True
-                    )
-                ],
-                null_placement="at_start"
+            null_placement = (
+                "at_start"
                 if null_precedence[0] == plc.types.NullOrder.BEFORE
-                else "at_end",
+                else "at_end"
             )
+            sort_keys = [
+                (name, order_mapper[order])
+                for name, order in zip(
+                    pa_tbl_data.column_names, column_order, strict=True
+                )
+            ]
+            if int(pa.__version__.split(".", 1)[0]) >= 25:
+                sort_keys = [
+                    (*sort_key, null_placement) for sort_key in sort_keys
+                ]
+                pa_tbl_data = pa_tbl_data.sort_by(sort_keys)
+            else:
+                pa_tbl_data = pa_tbl_data.sort_by(
+                    sort_keys, null_placement=null_placement
+                )
         row_idxs = pc.quantile(
             np.arange(0, len(pa_tbl_data)), q=q, interpolation=pa_interp_opt
         )

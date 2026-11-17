@@ -1,15 +1,21 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/aggregation.hpp>
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 
+#include <cstddef>
+#include <functional>
+#include <memory>
 #include <unordered_map>
+#include <utility>
 
 namespace cudf {
 namespace detail {

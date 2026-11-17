@@ -36,7 +36,7 @@ __all__ = [
 
 cpdef Column replace_nulls(
     Column source_column,
-    ReplacementType replacement,
+    ReplacementType replacement: Column | Scalar | ReplacePolicy,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
@@ -78,7 +78,7 @@ cpdef Column replace_nulls(
     cdef column_view c_replacement
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source_column = source_column.view()
@@ -163,7 +163,7 @@ cpdef Column find_and_replace_all(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source_column = source_column.view()
@@ -223,7 +223,7 @@ cpdef Column clamp(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source_column = source_column.view()
@@ -279,7 +279,7 @@ cpdef Column normalize_nans_and_zeros(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_source_column = source_column.view()

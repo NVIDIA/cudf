@@ -21,12 +21,11 @@ as the ``"cudf"`` dataframe backend for
   of the GPU and networking hardware.
 
 If you are familiar with Dask and `pandas <pandas.pydata.org>`__ or
-`cuDF <https://docs.rapids.ai/api/cudf/stable/>`__, then Dask cuDF
+:doc:`cuDF <cudf:cudf/index>`, then Dask cuDF
 should feel familiar to you. If not, we recommend starting with `10
 minutes to Dask
 <https://docs.dask.org/en/stable/10-minutes-to-dask.html>`__ followed
-by `10 minutes to cuDF and Dask cuDF
-<https://docs.rapids.ai/api/cudf/latest/user_guide/10min/>`__.
+by :doc:`10 minutes to cuDF and Dask cuDF <cudf:cudf/10min>`.
 
 After reviewing the sections below, please see the
 :ref:`Best Practices <best-practices>` page for further guidance on
@@ -120,7 +119,7 @@ automatic query planning (see the next section).
 Query Planning
 ~~~~~~~~~~~~~~
 
-Dask cuDF now provides automatic query planning by default (RAPIDS 24.06+).
+Since version 24.06, Dask cuDF provides automatic query planning by default.
 As long as the ``"dataframe.query-planning"`` configuration is set to
 ``True`` (the default) when ``dask.dataframe`` is first imported, `Dask
 Expressions <https://github.com/dask/dask-expr>`__ will be used under the hood.
@@ -148,6 +147,8 @@ Simplified expression graph (``df.simplify().pprint()``)::
   :func:`dask.optimize`) when the result is converted to a task graph
   (via :func:`dask.compute` or :func:`dask.persist`). You do not need
   to optimize or simplify the graph yourself.
+
+.. _multiple_gpus:
 
 Using Multiple GPUs and Multiple Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -193,8 +194,7 @@ to define a client object. For example::
 
 Please see the :doc:`dask-cuda:index`
 documentation for more information about deploying GPU-aware clusters
-(including `best practices
-<https://docs.rapids.ai/api/dask-cuda/stable/examples/best-practices/>`__).
+(including :doc:`best practices <dask-cuda:examples/best-practices>`).
 
 
 API Reference
@@ -202,7 +202,7 @@ API Reference
 
 Generally speaking, Dask cuDF tries to offer exactly the same API as
 Dask DataFrame. There are, however, some minor differences mostly because
-cuDF does not `perfectly mirror <https://docs.rapids.ai/api/cudf/stable/user_guide/pandascompat/>`__
+cuDF does not :doc:`perfectly mirror <cudf:cudf/PandasCompat>`
 the pandas API, or because cuDF provides additional configuration
 flags (these mostly occur in data reading and writing interfaces).
 

@@ -128,11 +128,11 @@ void BM_ast_jit_wide_table(nvbench::state& state)
             break;
           }
           case executor_type::JIT: {
-            outputs.push_back(cudf::compute_column_jit(input_view, tree.back(), stream));
+            outputs.push_back(cudf::compute_column_jit(input_view, tree.back(), {}, stream));
             break;
           }
           case executor_type::JIT_OPT: {
-            outputs.push_back(cudf::compute_column_jit(input_view, tree.back(), stream));
+            outputs.push_back(cudf::compute_column_jit(input_view, tree.back(), {}, stream));
             break;
           }
         }

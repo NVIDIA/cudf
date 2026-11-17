@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from contextlib import redirect_stdout
@@ -66,6 +66,47 @@ class TestCleanOptions:
             "odd_option:\n\tAn odd option.\n\t[Default: 1] [Current: 1]\n"
         )
         assert expected == s.read()
+
+    def test_option_context_invalid_name_raises_on_construction(self):
+        with pytest.raises(KeyError, match="unregistered_option"):
+            cudf.option_context("unregistered_option", True)
+
+    def test_option_context_delayed_entry_and_reuse(self):
+        context = cudf.option_context("odd_option", 3, "even_option", 2)
+        for odd, even in [(5, 4), (7, 6)]:
+            with cudf.option_context("odd_option", odd, "even_option", even):
+                with context:
+                    assert cudf.get_option("odd_option") == 3
+                    assert cudf.get_option("even_option") == 2
+                assert cudf.get_option("odd_option") == odd
+                assert cudf.get_option("even_option") == even
+
+    def test_option_context_failed_entry(self):
+        with cudf.option_context("odd_option", 5, "even_option", 4):
+            with pytest.raises(ValueError, match="Invalid option value 3"):
+                with cudf.option_context("odd_option", 3, "even_option", 3):
+                    pass
+            assert cudf.get_option("odd_option") == 5
+            assert cudf.get_option("even_option") == 4
+
+    def test_option_context_recursive_decorator(self):
+        @cudf.option_context("odd_option", 3, "even_option", 2)
+        def check_options(depth):
+            assert cudf.get_option("odd_option") == 3
+            assert cudf.get_option("even_option") == 2
+            if depth:
+                cudf.set_option("odd_option", 5)
+                cudf.set_option("even_option", 4)
+                with pytest.raises(RuntimeError, match="context body error"):
+                    check_options(depth - 1)
+                assert cudf.get_option("odd_option") == 5
+                assert cudf.get_option("even_option") == 4
+            else:
+                raise RuntimeError("context body error")
+
+        check_options(1)
+        assert cudf.get_option("odd_option") == 1
+        assert cudf.get_option("even_option") == 0
 
     def test_option_description_all(odd_option, even_option):
         s = StringIO()

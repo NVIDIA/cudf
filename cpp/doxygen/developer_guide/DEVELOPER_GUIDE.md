@@ -26,7 +26,7 @@ A column is an array of data of a single type. Along with Tables, columns are th
 structures used in libcudf. Most libcudf algorithms operate on columns. Columns may have a validity
 mask representing whether each element is valid or null (invalid). Columns of nested types are
 supported, meaning that a column may have child columns. A column is the C++ equivalent to a cuDF
-Python [Series](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.series/).
+Python [Series](https://docs.nvidia.com/cudf/latest/cudf/api_docs/series/).
 
 ### Element
 
@@ -41,7 +41,7 @@ A type representing a single element of a data type.
 A table is a collection of columns that all have the same number of elements (rows). A table may
 also have zero columns while still carrying a row count, mirroring an `(N, 0)` DataFrame. A table is
 the C++ equivalent to a cuDF Python
-[DataFrame](https://docs.rapids.ai/api/cudf/stable/user_guide/api_docs/api/cudf.dataframe/).
+[DataFrame](https://docs.nvidia.com/cudf/latest/cudf/api_docs/dataframe/).
 
 ### View
 
@@ -114,7 +114,7 @@ prefixed with an underscore.
 
 ```c++
 template <typename IteratorType>
-void algorithm_function(int x, rmm::cuda_stream_view s, rmm::device_async_resource_ref mr)
+void algorithm_function(int x, cuda::stream_ref s, rmm::device_async_resource_ref mr)
 {
   ...
 }
@@ -196,7 +196,7 @@ The following guidelines apply to organizing `#include` lines.
    groupings and sort the individual includes within a group lexicographically.
  * Separate groups by a blank line.
  * Order the groups from "nearest" to "farthest". In other words, local includes, then includes
-   from other RAPIDS libraries, then includes from related libraries, like `<thrust/...>`, then
+   from other NVIDIA CUDA-X libraries, then includes from related libraries, like `<thrust/...>`, then
    includes from dependencies installed with cuDF, and then standard headers (for example
    `<string>`, `<iostream>`).
  * We use clang-format for grouping and sorting headers automatically. See the
@@ -379,7 +379,7 @@ following function that copies device data to a host `std::vector`.
 
 ```c++
 template <typename T>
-std::vector<T> make_std_vector_async(device_span<T const> v, rmm::cuda_stream_view stream)
+std::vector<T> make_std_vector_async(device_span<T const> v, cuda::stream_ref stream)
 ```
 
 ### When to use `host_span` vs `std::span`
@@ -397,6 +397,10 @@ Use `cudf::host_span<T>` only when one of the following applies:
    skip an explicit host-to-device copy).
 2. The function must accept a libcudf-specific container that `std::span` cannot be constructed
    from directly.
+
+`cudf::host_span` converts implicitly to `std::span`, which silently drops `is_device_accessible()`
+(e.g. a downstream host-device copy then takes the pageable path). Ensure the whole API chain where
+this property is useful takes `cudf::host_span` consistently.
 
 ## cudf::scalar
 
@@ -560,7 +564,7 @@ libcudf throws under different circumstances, see the [section on error handling
 libcudf is in the process of adding support for asynchronous execution using
 CUDA streams. In order to facilitate the usage of streams, all new libcudf APIs
 that allocate device memory or execute a kernel should accept an
-`rmm::cuda_stream_view` parameter at the end with a default value of
+`cuda::stream_ref` parameter at the end with a default value of
 `cudf::get_default_stream()`.  There is one exception to this rule: if the API
 also accepts a memory resource parameter, the stream parameter should be placed
 just *before* the memory resource. This API should then forward the call to a
@@ -579,18 +583,18 @@ For example:
 ```c++
 // cpp/include/cudf/header.hpp
 void external_function(...,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
+  cuda::stream_ref stream      = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
 // cpp/include/cudf/detail/header.hpp
 namespace detail{
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 } // namespace detail
 
 // cudf/src/implementation.cpp
 namespace detail{
 // Use the stream parameter in the detail implementation.
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr){
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr){
   // Implementation uses the stream with async APIs.
   rmm::device_buffer buff(..., stream, mr);
   CUDF_CUDA_TRY(cudaMemcpyAsync(...,stream.value()));
@@ -599,7 +603,7 @@ void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_reso
 }
 } // namespace detail
 
-void external_function(..., rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+void external_function(..., cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE(); // Generates an NVTX range for the lifetime of this function.
   detail::external_function(..., stream, mr);
@@ -662,19 +666,20 @@ Prefer a trailing return type; it is the lightest and most readable. Fall back t
 
 ```c++
 // Fails: return type of a bare __device__ lambda is not visible to host code
-cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) { return d[i] > 0; }, stream);
+cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) { return d[i] > 0; }, stream, mr);
 
 // Preferred: trailing return type
-cudf::detail::copy_if(begin, end, output, [d] __device__(auto i) -> bool { return d[i] > 0; }, stream);
+cudf::detail::copy_if(
+  begin, end, output, [d] __device__(auto i) -> bool { return d[i] > 0; }, stream, mr);
 
 // Alternative: proclaim_return_type
 cudf::detail::copy_if(
-  begin, end, output, cuda::proclaim_return_type<bool>([d] __device__(auto i) { return d[i] > 0; }), stream);
+  begin, end, output, cuda::proclaim_return_type<bool>([d] __device__(auto i) { return d[i] > 0; }), stream, mr);
 ```
 
 ## Memory Allocation
 
-Device [memory resources](#rmmdevice_memory_resource) are used in libcudf to abstract and control
+Device [memory resources](#memory-resources) are used in libcudf to abstract and control
 how device memory is allocated.
 
 ### Output Memory
@@ -789,7 +794,7 @@ Similar to a `device_vector`, allocates a contiguous set of elements in device m
 differences:
 - As an optimization, elements are uninitialized and no synchronization occurs at construction.
 This limits the types `T` to trivially copyable types.
-- All operations are stream ordered (i.e., they accept a `cuda_stream_view` specifying the stream
+- All operations are stream ordered (i.e., they accept a `cuda::stream_ref` specifying the stream
 on which the operation is performed). This improves safety when using non-default streams.
 - `device_uvector.hpp` does not include any `__device__` code, unlike `thrust/device_vector.hpp`,
   which means `device_uvector`s can be used in `.cpp` files, rather than just in `.cu` files.
@@ -1420,12 +1425,12 @@ types, respectively.
 ```c++
 struct integral_or_floating_point {
 template <typename ColumnType,
-          std::enable_if_t<not std::is_integral<ColumnType>::value and
+          std::enable_if_t<not cuda::std::is_integral_v<ColumnType> and
                            not std::is_floating_point<ColumnType>::value>* = nullptr>
 void operator()() { std::cout << "neither integral nor floating point\n"; }
 
 template <typename ColumnType,
-          std::enable_if_t<std::is_integral<ColumnType>::value>* = nullptr>
+          std::enable_if_t<cuda::std::is_integral_v<ColumnType>>* = nullptr>
 void operator()() { std::cout << "integral\n"; }
 
 template < typename ColumnType,
@@ -1721,7 +1726,7 @@ formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and 
 
 Here are some tools that can help with debugging libcudf (besides printf of course):
 1. `cuda-gdb`\
-   Follow the instructions in the [Contributor to cuDF guide](../../../CONTRIBUTING.md#debugging-cudf) to build
+   Follow the instructions in the [Contributor to cuDF guide](https://github.com/NVIDIA/cudf/blob/main/CONTRIBUTING.md#debugging-cudf) to build
    and run libcudf with debug symbols.
 2. `compute-sanitizer`\
    The [CUDA Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html)

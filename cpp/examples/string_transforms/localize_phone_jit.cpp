@@ -9,8 +9,8 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <array>
 #include <utility>
@@ -18,7 +18,7 @@
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto const udf = R"***(
@@ -130,9 +130,9 @@ __device__ void format_phone(void* scratch,
   constexpr cudf::size_type MAX_ENTRY_LENGTH = 24;  // Enough space for "(123) 123-4567" or "n/a"
 
   auto const num_rows = table.num_rows();
-  rmm::device_uvector<char> scratch(MAX_ENTRY_LENGTH * static_cast<std::size_t>(num_rows),
-                                    stream,
-                                    mr);  // allocate scratch space for the outputs
+  // allocate scratch space for the outputs
+  cuda::device_buffer<char> scratch(
+    stream, mr, MAX_ENTRY_LENGTH * static_cast<std::size_t>(num_rows), cuda::no_init);
 
   auto size = cudf::make_column_from_scalar(
     cudf::numeric_scalar<int32_t>(MAX_ENTRY_LENGTH, true, stream, mr), 1, stream, mr);

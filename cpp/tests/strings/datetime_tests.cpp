@@ -232,13 +232,13 @@ TEST_F(StringsDatetimeTest, ToTimestampYear)
 TEST_F(StringsDatetimeTest, ToTimestampWeeks)
 {
   cudf::test::strings_column_wrapper input{
-    "2012-01/3", "2012-04/4", "2023-01/1", "2012-52/5", "2020-44/2", "1960-20/0", "1986-04/6"};
+    "2012-01/3", "2012-04/4", "2018-01/3", "2012-52/5", "2020-44/2", "1960-20/0", "1986-04/6"};
 
   auto format  = std::string("%Y-%W/%w");
   auto results = cudf::strings::to_timestamps(
     cudf::strings_column_view(input), cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}, format);
   auto expected = cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, cudf::timestamp_D::rep>{
-    15343, 15365, 19359, 15702, 18569, -3511, 5875};
+    15343, 15365, 17534, 15702, 18569, -3511, 5875};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results          = cudf::strings::is_timestamp(cudf::strings_column_view(input), format);
@@ -246,13 +246,13 @@ TEST_F(StringsDatetimeTest, ToTimestampWeeks)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, is_expected);
 
   cudf::test::strings_column_wrapper input_iso{
-    "2012-01/3", "2012-04/4", "2023-01/1", "2012-52/5", "2020-44/2", "1960-20/7", "1986-04/6"};
+    "2012-01/3", "2012-04/4", "2018-01/3", "2012-52/5", "2020-44/2", "1960-20/7", "1986-04/6"};
 
   format  = std::string("%Y-%U/%u");
   results = cudf::strings::to_timestamps(
     cudf::strings_column_view(input_iso), cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}, format);
   expected = cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, cudf::timestamp_D::rep>{
-    15342, 15364, 19358, 15701, 18568, -3512, 5874};
+    15343, 15365, 17541, 15702, 18569, -3518, 5875};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 
   results = cudf::strings::is_timestamp(cudf::strings_column_view(input_iso), format);

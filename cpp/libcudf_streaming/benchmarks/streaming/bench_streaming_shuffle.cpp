@@ -17,6 +17,7 @@
 #include <rapidsmpf/communicator/communicator.hpp>
 #include <rapidsmpf/communicator/logger.hpp>
 #include <rapidsmpf/error.hpp>
+#include <rapidsmpf/memory/buffer_resource.hpp>
 #include <rapidsmpf/nvtx.hpp>
 #include <rapidsmpf/shuffler/shuffler.hpp>
 #include <rapidsmpf/statistics.hpp>
@@ -215,7 +216,7 @@ rapidsmpf::streaming::Actor consumer(std::shared_ptr<rapidsmpf::streaming::Conte
 rapidsmpf::Duration run(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
                         std::shared_ptr<rapidsmpf::Communicator> comm,
                         ArgumentParser const& args,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
   constexpr std::int32_t min_val        = 0;
   constexpr std::int32_t max_val        = 10;
@@ -336,20 +337,19 @@ int main(int argc, char** argv)
                     std::runtime_error);
   auto pinned_pool_properties =
     args.pinned_mem_disable ? rapidsmpf::PinnedMemoryDisabled : rapidsmpf::PinnedPoolProperties{};
-  auto br = rapidsmpf::BufferResource::create(
-    rmm_mr,
-    std::move(pinned_pool_properties),
-    std::move(memory_limits),
-    std::nullopt,
-    std::make_shared<rmm::cuda_stream_pool>(16, rmm::cuda_stream::flags::non_blocking),
-    stats);
+  auto br = rapidsmpf::BufferResource::create(rmm_mr,
+                                              std::move(pinned_pool_properties),
+                                              std::move(memory_limits),
+                                              std::nullopt,
+                                              std::make_shared<rapidsmpf::StreamPool>(16),
+                                              stats);
   // `BufferResource` wraps the device resource in an internal tracking
   // `RmmResourceAdaptor` (exposed via `device_mr_adaptor()`). Install it as
   // the current device resource so libcudf temp allocations are also tracked.
   auto& stat_enabled_mr = br->device_mr_adaptor();
   rmm::mr::set_current_device_resource(stat_enabled_mr);
 
-  rmm::cuda_stream_view stream = cudf::get_default_stream();
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   // Print benchmark/hardware info.
   {

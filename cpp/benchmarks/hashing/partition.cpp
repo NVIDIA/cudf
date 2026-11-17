@@ -151,7 +151,7 @@ void run_hash_partition(nvbench::state& state,
                         cudf::size_type num_partitions)
 {
   auto const stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const input_view  = input.view();
   auto const key_begin   = cuda::counting_iterator<cudf::size_type>{0};

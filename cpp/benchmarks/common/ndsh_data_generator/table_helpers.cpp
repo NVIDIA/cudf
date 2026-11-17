@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,8 +24,9 @@
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <vector>
 
@@ -41,7 +42,7 @@ namespace cudf::datagen {
  */
 std::unique_ptr<cudf::column> add_calendrical_days(cudf::column_view const& timestamp_days,
                                                    cudf::column_view const& days,
-                                                   rmm::cuda_stream_view stream,
+                                                   cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -67,7 +68,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
                                                cudf::table_view const& right_input,
                                                std::vector<cudf::size_type> const& left_on,
                                                std::vector<cudf::size_type> const& right_on,
-                                               rmm::cuda_stream_view stream,
+                                               cuda::stream_ref stream,
                                                rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -102,9 +103,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_p_retailprice(
-  cudf::column_view const& p_partkey,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cudf::column_view const& p_partkey, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
   // Expression: (90000 + ((p_partkey/10) modulo 20001) + 100 * (p_partkey modulo 1000)) / 100
@@ -147,7 +146,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_l_suppkey(cudf::column_view const& l_partkey,
                                                                 cudf::size_type scale_factor,
                                                                 cudf::size_type num_rows,
-                                                                rmm::cuda_stream_view stream,
+                                                                cuda::stream_ref stream,
                                                                 rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -219,7 +218,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
   cudf::column_view const& ps_partkey,
   cudf::size_type scale_factor,
   cudf::size_type num_rows,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -286,7 +285,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 [[nodiscard]] cudf::size_type calculate_l_cardinality(cudf::column_view const& o_rep_freqs,
-                                                      rmm::cuda_stream_view stream,
+                                                      cuda::stream_ref stream,
                                                       rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -309,7 +308,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_charge(cudf::column_view const& extendedprice,
                                                              cudf::column_view const& tax,
                                                              cudf::column_view const& discount,
-                                                             rmm::cuda_stream_view stream,
+                                                             cuda::stream_ref stream,
                                                              rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
@@ -340,7 +339,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 [[nodiscard]] std::unique_ptr<cudf::column> generate_address_column(
-  cudf::size_type num_rows, rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
+  cudf::size_type num_rows, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();
   return generate_random_string_column(10, 40, num_rows, stream, mr);
@@ -354,7 +353,7 @@ std::unique_ptr<cudf::table> perform_left_join(cudf::table_view const& left_inpu
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 [[nodiscard]] std::unique_ptr<cudf::column> generate_phone_column(cudf::size_type num_rows,
-                                                                  rmm::cuda_stream_view stream,
+                                                                  cuda::stream_ref stream,
                                                                   rmm::device_async_resource_ref mr)
 {
   CUDF_BENCHMARK_RANGE();

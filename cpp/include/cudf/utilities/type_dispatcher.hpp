@@ -421,13 +421,13 @@ using scalar_device_type_t = typename type_to_scalar_type_impl<T>::ScalarDeviceT
  * @code
  * struct integral_or_floating_point {
  *   template <typename ColumnType,
- *             std::enable_if_t<not std::is_integral_v<ColumnType>  and
+ *             std::enable_if_t<not cuda::std::is_integral_v<ColumnType>  and
  *                              not std::is_floating_point_v<ColumnType> >* = nullptr>
  *   void operator()() {
  *     std::cout << "neither integral nor floating point\n "; }
  *
  *   template <typename ColumnType,
- *             std::enable_if_t<std::is_integral_v<ColumnType> >* = nullptr>
+ *             std::enable_if_t<cuda::std::is_integral_v<ColumnType> >* = nullptr>
  *   void operator()() { std::cout << "integral\n"; }
  *
  *   template <typename ColumnType,

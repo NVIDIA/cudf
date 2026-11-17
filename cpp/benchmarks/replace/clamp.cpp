@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,7 +25,8 @@ void bench_clamp(nvbench::state& state, nvbench::type_list<ClampType>)
 
   auto const dtype = cudf::type_to_id<ClampType>();
   auto const input = create_random_column(dtype, row_count{n_rows});
-  if (!include_nulls) input->set_null_mask(rmm::device_buffer{}, 0);
+  if (!include_nulls)
+    input->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
   auto [low_scalar, high_scalar] = cudf::minmax(*input);
 
@@ -42,7 +43,7 @@ void bench_clamp(nvbench::state& state, nvbench::type_list<ClampType>)
   }
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   auto const data_size = input->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

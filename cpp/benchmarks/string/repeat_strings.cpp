@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,26 +30,29 @@ static void bench_repeat(nvbench::state& state)
   auto const input = cudf::strings_column_view(table->view().column(0));
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
 
-  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (api == "scalar") {
     state.add_global_memory_writes<nvbench::int8_t>(data_size * max_repeat);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::repeat_strings(input, max_repeat); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "column") {
     auto repeats = table->view().column(1);
     {
       auto result = cudf::strings::repeat_strings(input, repeats);
       state.add_global_memory_writes<nvbench::int8_t>(result->alloc_size());
     }
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync,
                [&](nvbench::launch& launch) { cudf::strings::repeat_strings(input, repeats); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
-  state.add_buffer_size(
-    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_repeat)

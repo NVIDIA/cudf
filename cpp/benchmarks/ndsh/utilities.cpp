@@ -11,7 +11,6 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/reduction.hpp>
@@ -23,6 +22,8 @@
 
 #include <rmm/mr/managed_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/cmath>
 
 #include <algorithm>
 #include <cstdlib>
@@ -218,7 +219,7 @@ std::unique_ptr<table_with_names> apply_filter(std::unique_ptr<table_with_names>
 {
   CUDF_BENCHMARK_RANGE();
   auto const boolean_mask = cudf::compute_column(table->table(), predicate);
-  auto result_table       = cudf::apply_boolean_mask(table->table(), boolean_mask->view());
+  auto result_table       = cudf::apply_retention_mask(table->table(), boolean_mask->view());
   return std::make_unique<table_with_names>(std::move(result_table), table->column_names());
 }
 
@@ -226,7 +227,7 @@ std::unique_ptr<table_with_names> apply_mask(std::unique_ptr<table_with_names> c
                                              std::unique_ptr<cudf::column> const& mask)
 {
   CUDF_BENCHMARK_RANGE();
-  auto result_table = cudf::apply_boolean_mask(table->table(), mask->view());
+  auto result_table = cudf::apply_retention_mask(table->table(), mask->view());
   return std::make_unique<table_with_names>(std::move(result_table), table->column_names());
 }
 
@@ -367,7 +368,7 @@ void write_to_parquet_device_buffer(std::unique_ptr<cudf::table> const& table,
       std::ceil(static_cast<long double>(est_size) / (PQ_MAX_TABLE_BYTES)));
     std::vector<cudf::size_type> splits(num_splits - 1);
     auto num_rows          = table->num_rows();
-    auto num_row_per_chunk = cudf::util::div_rounding_up_safe(num_rows, num_splits);
+    auto num_row_per_chunk = cuda::ceil_div(num_rows, num_splits);
     std::generate_n(splits.begin(), splits.size(), [num_row_per_chunk, i = 0]() mutable {
       return (i += num_row_per_chunk);
     });

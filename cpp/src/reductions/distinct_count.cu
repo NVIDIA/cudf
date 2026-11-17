@@ -23,14 +23,12 @@
 
 #include <cuco/static_set.cuh>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/stream>
-#include <thrust/count.h>
-#include <thrust/execution_policy.h>
 #include <thrust/logical.h>
 
 #include <cmath>
 #include <cstddef>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -95,9 +93,8 @@ struct has_nans {
    *
    * @returns bool true if `input` has `NaN` else false
    */
-  template <typename T>
+  template <cuda::std::floating_point T>
   bool operator()(column_view const& input, cuda::stream_ref stream)
-    requires(std::is_floating_point_v<T>)
   {
     auto input_device_view = cudf::column_device_view::create(input, stream);
     auto device_view       = *input_device_view;
@@ -121,7 +118,6 @@ struct has_nans {
    */
   template <typename T>
   bool operator()(column_view const&, cuda::stream_ref)
-    requires(not std::is_floating_point_v<T>)
   {
     return false;
   }
@@ -170,7 +166,7 @@ cudf::size_type distinct_count(table_view const& keys,
       // zero. So, it is only when null_count is not zero that we need
       // to do a filtered insertion.
       if (null_count > 0) {
-        row_validity pred{static_cast<bitmask_type const*>(row_bitmask.data())};
+        row_validity pred{row_bitmask.data()};
         return key_set.insert_if(iter, iter + num_rows, stencil, pred, stream.get()) + 1;
       }
     }

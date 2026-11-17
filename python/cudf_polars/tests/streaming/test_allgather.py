@@ -40,7 +40,7 @@ async def _test_allgather(engine) -> None:
     allgather = AllGatherManager(context, comm, 0)
     with allgather.inserting() as inserter:
         for i, table in enumerate(tables):
-            inserter.insert(
+            await inserter.insert(
                 i,
                 TableChunk.from_pylibcudf_table(
                     table, stream, exclusive_view=True, br=context.br()

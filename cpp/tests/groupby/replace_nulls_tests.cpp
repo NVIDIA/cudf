@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,8 +9,10 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/replace.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -35,8 +37,11 @@ void TestReplaceNullsGroupbySingle(K const& key,
   std::vector<cudf::replace_policy> policies{policy};
   auto p = gb_obj.replace_nulls(cudf::table_view({input}), policies);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(*p.first, cudf::table_view({expected_key}));
-  CUDF_TEST_EXPECT_TABLES_EQUAL(*p.second, cudf::table_view({expected_val}));
+  auto const order          = cudf::stable_sorted_order(p.first->view());
+  auto const ordered_keys   = cudf::gather(p.first->view(), *order);
+  auto const ordered_values = cudf::gather(p.second->view(), *order);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_keys, cudf::table_view({expected_key}));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_values, cudf::table_view({expected_val}));
 }
 
 TYPED_TEST(GroupbyReplaceNullsFixedWidthTest, PrecedingFill)
@@ -96,6 +101,21 @@ TYPED_TEST(GroupbyReplaceNullsFixedWidthTest, FollowingFillTrailingNulls)
                                                                {1, 0, 0, 1, 1, 1, 0, 0});
 
   TestReplaceNullsGroupbySingle(key, val, expect_key, expect_val, cudf::replace_policy::FOLLOWING);
+}
+
+TYPED_TEST(GroupbyReplaceNullsFixedWidthTest, PrecedingFillNullKeys)
+{
+  // Rows with null keys are excluded and do not fill other rows.
+  // Group 0 value: {null, 24, null}  --> {null, 24, 24}
+  // Group 1 value: {7, null}         --> {7, 7}
+  cudf::test::fixed_width_column_wrapper<K> key({0, 0, 1, 0, 0, 1, 1}, {0, 1, 1, 1, 1, 0, 1});
+  cudf::test::fixed_width_column_wrapper<TypeParam> val({5, 42, 7, 24, 1, 9, 1000},
+                                                        {1, 0, 1, 1, 0, 1, 0});
+
+  cudf::test::fixed_width_column_wrapper<K> expect_key({0, 0, 0, 1, 1}, no_nulls());
+  cudf::test::fixed_width_column_wrapper<TypeParam> expect_val({-1, 24, 24, 7, 7}, {0, 1, 1, 1, 1});
+
+  TestReplaceNullsGroupbySingle(key, val, expect_key, expect_val, cudf::replace_policy::PRECEDING);
 }
 
 struct GroupbyReplaceNullsStringsTest : public cudf::test::BaseFixture {};
@@ -222,25 +242,25 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, PrecedingFillNested)
 
   // clang-format off
   LCW val({{},
-           LCW({LCW({1, -1, 3}, Mask_t{1, 0, 1}.begin()), {}}, Mask_t{1, 0}.begin()),
-           LCW({LCW{}, LCW({102, -1}, Mask_t{1, 0}.begin())}, Mask_t{0, 1}.begin()),
+           {{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
+           {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
            {},
            {},
-           {LCW({{}}, Mask_t{0}.begin()), LCW{}},
-           {LCW({-1, 202}, Mask_t{0, 1}.begin()), LCW{}}},
+           {{{0}, Mask_t{0}.begin()}, {}},
+           {{{-1, 202}, Mask_t{0, 1}.begin()}, {}}},
            Mask_t{0, 1, 1, 0, 0, 1, 1}.begin());
   // clang-format on
 
   cudf::test::fixed_width_column_wrapper<K> expect_key{0, 0, 0, 1, 1, 1, 1};
 
   // clang-format off
-  LCW expect_val({LCW({LCW({1, -1, 3}, Mask_t{1, 0, 1}.begin()), {}}, Mask_t{1, 0}.begin()),
-                  LCW({LCW({1, -1, 3}, Mask_t{1, 0, 1}.begin()), {}}, Mask_t{1, 0}.begin()),
-                  {LCW({{}}, Mask_t{0}.begin()), LCW{}},
+  LCW expect_val({{{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
+                  {{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
+                  {{{0}, Mask_t{0}.begin()}, {}},
                   {},
-                  LCW({LCW{}, LCW({102, -1}, Mask_t{1, 0}.begin())}, Mask_t{0, 1}.begin()),
-                  LCW({LCW{}, LCW({102, -1}, Mask_t{1, 0}.begin())}, Mask_t{0, 1}.begin()),
-                  {LCW({-1, 202}, Mask_t{0, 1}.begin()), LCW{}}},
+                  {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
+                  {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
+                  {{{-1, 202}, Mask_t{0, 1}.begin()}, {}}},
            Mask_t{1, 1, 1, 0, 1 ,1 ,1}.begin());
   // clang-format on
 
@@ -269,12 +289,12 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, FollowingFillNested)
   cudf::test::fixed_width_column_wrapper<K> key{1, 0, 1, 1, 0, 0, 1};
 
   // clang-format off
-  LCW val({LCW({LCW{}, LCW({102, -1}, Mask_t{1, 0}.begin())}, Mask_t{0, 1}.begin()),
-           LCW({LCW({1, -1, 3}, Mask_t{1, 0, 1}.begin()), {}}, Mask_t{1, 0}.begin()),
+  LCW val({{{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
+           {{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
            {},
-           {LCW({-1, 202}, Mask_t{0, 1}.begin()), LCW{}},
+           {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},
            {},
-           {LCW({{}}, Mask_t{0}.begin()), LCW{}},
+           {{{0}, Mask_t{0}.begin()}, {}},
            {}},
            Mask_t{1, 1, 0, 1, 0, 1, 0}.begin());
   // clang-format on
@@ -282,12 +302,12 @@ TYPED_TEST(GroupbyReplaceNullsListsTest, FollowingFillNested)
   cudf::test::fixed_width_column_wrapper<K> expect_key{0, 0, 0, 1, 1, 1, 1};
 
   // clang-format off
-  LCW expect_val({LCW({LCW({1, -1, 3}, Mask_t{1, 0, 1}.begin()), {}}, Mask_t{1, 0}.begin()),
-                 {LCW({{}}, Mask_t{0}.begin()), LCW{}},
-                 {LCW({{}}, Mask_t{0}.begin()), LCW{}},
-                 LCW({LCW{}, LCW({102, -1}, Mask_t{1, 0}.begin())}, Mask_t{0, 1}.begin()),
-                 {LCW({-1, 202}, Mask_t{0, 1}.begin()), LCW{}},
-                 {LCW({-1, 202}, Mask_t{0, 1}.begin()), LCW{}},
+  LCW expect_val({{{{{1, -1, 3}, Mask_t{1, 0, 1}.begin()}, {}}, Mask_t{1, 0}.begin()},
+                 {{{0}, Mask_t{0}.begin()}, {}},
+                 {{{0}, Mask_t{0}.begin()}, {}},
+                 {{{}, {{102, -1}, Mask_t{1, 0}.begin()}}, Mask_t{0, 1}.begin()},
+                 {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},
+                 {{{-1, 202}, Mask_t{0, 1}.begin()}, {}},
                  {}},
            Mask_t{1, 1, 1, 1, 1, 1, 0}.begin());
   // clang-format on
@@ -326,7 +346,7 @@ TEST_F(GroupbyReplaceNullsStructsTest, PrecedingFill)
   SCW expect_val = this->data(
     {{-1, -1, -1, 1, 1, -1, -1}, {false, false, false, true, true, false, false}},
     {{"yy", "yy", "", "x", "x", "zz", "zz"}, {true, true, false, true, true, true, true}},
-    LCW({LCW{-1}, {-1}, {42}, {1, 2, 3}, {1, 2, 3}, {}, {}}, Mask_t{1, 1, 1, 1, 1, 0, 0}.begin()),
+    LCW({{-1}, {-1}, {42}, {1, 2, 3}, {1, 2, 3}, {}, {}}, Mask_t{1, 1, 1, 1, 1, 0, 0}.begin()),
     {1, 1, 1, 1, 1, 1, 1});
 
   TestReplaceNullsGroupbySingle(key, val, expect_key, expect_val, cudf::replace_policy::PRECEDING);
@@ -348,11 +368,11 @@ TEST_F(GroupbyReplaceNullsStructsTest, FollowingFill)
 
   cudf::test::fixed_width_column_wrapper<K> expect_key{0, 0, 0, 1, 1, 1, 1};
 
-  SCW expect_val = this->data(
-    {{-1, -1, -1, 1, -1, -1, -1}, {false, false, false, true, false, false, false}},
-    {{"yy", "", "", "x", "zz", "zz", ""}, {true, false, false, true, true, true, false}},
-    LCW({LCW{-1}, {42}, {42}, {1, 2, 3}, {}, {}, {}}, Mask_t{1, 1, 1, 1, 0, 0, 0}.begin()),
-    {1, 1, 1, 1, 1, 1, 0});
+  SCW expect_val =
+    this->data({{-1, -1, -1, 1, -1, -1, -1}, {false, false, false, true, false, false, false}},
+               {{"yy", "", "", "x", "zz", "zz", ""}, {true, false, false, true, true, true, false}},
+               LCW({{-1}, {42}, {42}, {1, 2, 3}, {}, {}, {}}, Mask_t{1, 1, 1, 1, 0, 0, 0}.begin()),
+               {1, 1, 1, 1, 1, 1, 0});
 
   TestReplaceNullsGroupbySingle(key, val, expect_key, expect_val, cudf::replace_policy::FOLLOWING);
 }

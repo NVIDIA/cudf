@@ -10,8 +10,10 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -45,17 +47,14 @@ constexpr inline bool is_timestamp_sum()
   return cudf::is_timestamp<T>() && std::is_same_v<BinaryOp, cudf::DeviceSum>;
 }
 // Disable SUM of TIMESTAMP types
-template <typename T,
-          typename BinaryOp,
-          std::enable_if_t<is_timestamp_sum<T, BinaryOp>()>* = nullptr>
+template <typename T, typename BinaryOp>
+  requires(is_timestamp_sum<T, BinaryOp>())
 __device__ T atomic_op(T* addr, T const& value, BinaryOp op)
 {
   return {};
 }
 
-template <typename T,
-          typename BinaryOp,
-          std::enable_if_t<!is_timestamp_sum<T, BinaryOp>()>* = nullptr>
+template <typename T, typename BinaryOp>
 __device__ T atomic_op(T* addr, T const& value, BinaryOp op)
 {
   T old_value = *addr;
@@ -88,13 +87,13 @@ CUDF_KERNEL void gpu_atomicCAS_test(T* result, T* data, size_t size)
 }
 
 template <typename T>
-std::enable_if_t<!cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
+T accumulate(cudf::host_span<T const> xs)
 {
   return std::accumulate(xs.begin(), xs.end(), T{0});
 }
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), T> accumulate(cudf::host_span<T const> xs)
+template <cudf::concepts::timestamp T>
+T accumulate(cudf::host_span<T const> xs)
 {
   auto ys = std::vector<typename T::rep>(xs.size());
   std::transform(
@@ -137,24 +136,24 @@ struct AtomicsTest : public cudf::test::BaseFixture {
     result_init[4] = result_init[1];
     result_init[5] = result_init[2];
 
-    auto dev_data = cudf::detail::make_device_uvector(
+    auto dev_data = cudf::detail::make_device_buffer(
       v, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-    auto dev_result = cudf::detail::make_device_uvector(
+    auto dev_result = cudf::detail::make_device_buffer(
       result_init, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
     if (block_size == 0) { block_size = vec_size; }
 
     if (is_cas_test) {
-      gpu_atomicCAS_test<<<grid_size, block_size, 0, cudf::get_default_stream().value()>>>(
+      gpu_atomicCAS_test<<<grid_size, block_size, 0, cudf::get_default_stream().get()>>>(
         dev_result.data(), dev_data.data(), vec_size);
     } else {
-      gpu_atomic_test<<<grid_size, block_size, 0, cudf::get_default_stream().value()>>>(
+      gpu_atomic_test<<<grid_size, block_size, 0, cudf::get_default_stream().get()>>>(
         dev_result.data(), dev_data.data(), vec_size);
     }
 
     auto host_result = cudf::detail::make_host_vector(dev_result, cudf::get_default_stream());
 
-    CUDF_CHECK_CUDA(cudf::get_default_stream().value());
+    CUDF_CHECK_CUDA(cudf::get_default_stream().get());
 
     if (!is_timestamp_sum<T, cudf::DeviceSum>()) {
       EXPECT_EQ(host_result[0], exact[0]) << "atomicAdd test failed";
@@ -264,9 +263,9 @@ class Atomic128Test : public cudf::test::BaseFixture {
                            __int128_t expected_result)
   {
     cudf::detail::device_scalar<__int128_t> d_target(initial_value, cudf::get_default_stream());
-    test_single_atomic_add_kernel<<<32, 256, 0, cudf::get_default_stream().value()>>>(
-      d_target.data(), add_value);
-    CUDF_CHECK_CUDA(cudf::get_default_stream().value());
+    test_single_atomic_add_kernel<<<32, 256, 0, cudf::get_default_stream().get()>>>(d_target.data(),
+                                                                                    add_value);
+    CUDF_CHECK_CUDA(cudf::get_default_stream().get());
     __int128_t result = d_target.value(cudf::get_default_stream());
     EXPECT_EQ(result, expected_result);
   }

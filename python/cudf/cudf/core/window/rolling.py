@@ -356,6 +356,30 @@ class Rolling(GetAttrGetItemMixin, _RollingBase, Reducible):
                 f"not {type(self.window).__name__}"
             )
 
+    def _window_start_end(self) -> tuple[cupy.ndarray, cupy.ndarray]:
+        """
+        Return the absolute ``[start, end)`` row indices of each row's window
+        as ``size_type`` cupy arrays, used by the UDF (``apply``) kernel path.
+        """
+        n = len(self.obj)
+        idx = cupy.arange(n, dtype=SIZE_TYPE_DTYPE)
+        pre, fwd = self._plc_windows
+        if isinstance(pre, int):
+            start = idx - (pre - 1)
+            end = idx + (fwd + 1)
+        else:
+            preceding = cupy.asarray(
+                ColumnBase.from_pylibcudf(pre).astype(SIZE_TYPE_DTYPE).values
+            )
+            following = cupy.asarray(
+                ColumnBase.from_pylibcudf(fwd).astype(SIZE_TYPE_DTYPE).values
+            )
+            start = idx - preceding + np.int32(1)
+            end = idx + following + np.int32(1)
+        start = cupy.clip(start, 0, n).astype(SIZE_TYPE_DTYPE)
+        end = cupy.clip(end, 0, n).astype(SIZE_TYPE_DTYPE)
+        return start, end
+
     def _apply_agg_column(
         self, source_column: ColumnBase, agg_name: str | Callable, **agg_kwargs
     ) -> ColumnBase:
@@ -363,17 +387,24 @@ class Rolling(GetAttrGetItemMixin, _RollingBase, Reducible):
             # pandas window aggregations operate on the category values,
             # not the codes
             source_column = source_column._get_decategorized_column()  # type: ignore[attr-defined]
+
+        min_periods = 1 if self.min_periods is None else self.min_periods
+
+        if callable(agg_name):
+            from cudf.core.udf.rolling_utils import jit_rolling_apply
+
+            start, end = self._window_start_end()
+            return jit_rolling_apply(
+                source_column, start, end, min_periods, agg_name
+            )
+
         pre, fwd = self._plc_windows
 
         rolling_agg = aggregation.make_aggregation(
-            agg_name,
-            {"dtype": source_column.dtype}
-            if callable(agg_name)
-            else agg_kwargs,
+            agg_name, agg_kwargs
         ).plc_obj
 
-        min_periods = 1 if self.min_periods is None else self.min_periods
-        if self.min_periods == 0 and isinstance(agg_name, str):
+        if self.min_periods == 0:
             # libcudf supports min_periods=0 and returns identity values for windows with
             # insufficient observations: SUM and COUNT return 0, MIN returns the maximum
             # value for the type, MAX returns the minimum value for the type. Only SUM and
@@ -394,9 +425,7 @@ class Rolling(GetAttrGetItemMixin, _RollingBase, Reducible):
                 plc_result, dtype_from_pylibcudf_column(plc_result)
             )
 
-        if isinstance(agg_name, str):
-            return col.astype(np.dtype("float64"))
-        return col
+        return col.astype(np.dtype("float64"))
 
     def _reduce(
         self,

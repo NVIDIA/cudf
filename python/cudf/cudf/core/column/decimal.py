@@ -100,6 +100,23 @@ class DecimalColumn(NumericalBaseColumn):
         precision = max(min(new_p, col_dtype.MAX_PRECISION), 0)
         return type(col_dtype)(precision, scale)
 
+    def _reduce(
+        self,
+        op: str,
+        skipna: bool = True,
+        min_count: int = 0,
+        **kwargs: Any,
+    ) -> ScalarLike:
+        if op == "mean":
+            # pyarrow would return a pyarrow.Decimal128Scalar (decimal)
+            # while duckdb and Polars returns a float64 (float)
+            return self.astype(np.dtype(np.float64))._reduce(
+                op, skipna=skipna, min_count=min_count, **kwargs
+            )
+        return super()._reduce(
+            op, skipna=skipna, min_count=min_count, **kwargs
+        )
+
     @property
     def __cuda_array_interface__(self) -> Mapping[str, Any]:
         raise NotImplementedError(
@@ -177,7 +194,10 @@ class DecimalColumn(NumericalBaseColumn):
             if not isinstance(other, NumericalBaseColumn):
                 return NotImplemented
             elif other.dtype.kind == "f":
-                return self.astype(other.dtype)._binaryop(other, op)
+                casted = self.astype(other.dtype)
+                if reflect:
+                    return other._binaryop(casted, op)
+                return casted._binaryop(other, op)
             elif other.dtype.kind == "b":
                 raise TypeError(
                     "Decimal columns only support binary operations with "
@@ -205,7 +225,11 @@ class DecimalColumn(NumericalBaseColumn):
                 )
             other_cudf_dtype = self.dtype._from_decimal(Decimal(other))  # type: ignore[union-attr]
         elif isinstance(other, float):
-            return self._binaryop(as_column(other, length=len(self)), op)
+            other_col = as_column(other, length=len(self))
+            casted = self.astype(other_col.dtype)
+            if reflect:
+                return other_col._binaryop(casted, op)
+            return casted._binaryop(other_col, op)
         elif is_na_like(other):
             other = pa.scalar(None, type=cudf_dtype_to_pa_type(self.dtype))
             other_cudf_dtype = self.dtype

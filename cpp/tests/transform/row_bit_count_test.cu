@@ -12,6 +12,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 
@@ -45,9 +46,18 @@ std::pair<std::unique_ptr<cudf::column>, std::unique_ptr<cudf::column>> build_li
     1, 2, 3, 4, 5, 10, 6, 7, 8, 9, -1, -2, -3, -4, -5, -6, -7, -8, -9};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> inner_offsets{
     0, 2, 5, 6, 9, 10, 12, 14, 17, 19};
-  auto inner_list = cudf::make_lists_column(9, inner_offsets.release(), values.release(), 0, {});
+  auto inner_list =
+    cudf::make_lists_column(9,
+                            inner_offsets.release(),
+                            values.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets{0, 2, 2, 3, 5, 7, 9};
-  auto list = cudf::make_lists_column(6, outer_offsets.release(), std::move(inner_list), 0, {});
+  auto list = cudf::make_lists_column(6,
+                                      outer_offsets.release(),
+                                      std::move(inner_list),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // expected size = (num rows at level 1 + num_rows at level 2) + # values in the leaf
   cudf::test::fixed_width_column_wrapper<cudf::size_type> expected{
@@ -130,7 +140,7 @@ std::unique_ptr<cudf::column> build_nested_column1(std::vector<bool> const& stru
                                  outer_offsets_col.release(),
                                  struct_column.release(),
                                  0,
-                                 rmm::device_buffer{});
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 std::unique_ptr<cudf::column> build_nested_column2(std::vector<bool> const& struct_validity)
@@ -162,7 +172,7 @@ std::unique_ptr<cudf::column> build_nested_column2(std::vector<bool> const& stru
                                  outer_offsets_col.release(),
                                  outer_struct.release(),
                                  0,
-                                 rmm::device_buffer{});
+                                 cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }
 
 }  // namespace row_bit_count_test
@@ -247,7 +257,11 @@ TYPED_TEST(RowBitCountTyped, ListsWithNulls)
   auto inner_list = cudf::make_lists_column(
     5, inner_offsets.release(), values.release(), null_count, std::move(null_mask));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> outer_offsets{0, 2, 2, 3, 5};
-  auto list = cudf::make_lists_column(4, outer_offsets.release(), std::move(inner_list), 0, {});
+  auto list = cudf::make_lists_column(4,
+                                      outer_offsets.release(),
+                                      std::move(inner_list),
+                                      0,
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::table_view t({*list});
   auto result = cudf::row_bit_count(t);
@@ -351,12 +365,20 @@ TEST_F(RowBitCount, StructsWithLists_RowsExceedingASingleBlock)
 
   // List<int32_t> = {{0,1}, {2,3}, {4,5}, ..., {2*(num_rows-1), 2*num_rows-1}};
   auto lists_column =
-    cudf::make_lists_column(num_rows, std::move(list_offsets), std::move(ints), 0, {});
+    cudf::make_lists_column(num_rows,
+                            std::move(list_offsets),
+                            std::move(ints),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Struct<List<int32_t>.
   auto struct_members = std::vector<std::unique_ptr<cudf::column>>{};
   struct_members.emplace_back(std::move(lists_column));
-  auto structs_column = cudf::make_structs_column(num_rows, std::move(struct_members), 0, {});
+  auto structs_column =
+    cudf::make_structs_column(num_rows,
+                              std::move(struct_members),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // Compute row_bit_count, and compare.
   auto row_bit_counts = cudf::row_bit_count(cudf::table_view{{structs_column->view()}});
@@ -505,7 +527,7 @@ TEST_F(RowBitCount, NestedTypes)
                                       l4_offsets_col.release(),
                                       innermost_struct.release(),
                                       0,
-                                      rmm::device_buffer{});
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     // inner struct
     std::vector<std::unique_ptr<cudf::column>> inner_struct_children;
@@ -542,7 +564,7 @@ TEST_F(RowBitCount, NullsInStringsList)
     offsets_wrapper{0, 2, 4, 6, 8}.release(),
     cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids.begin()}.release(),
     0,
-    {});
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
     cudf::test::fixed_width_column_wrapper<cudf::size_type>{138, 106, 130, 130});
@@ -553,9 +575,13 @@ TEST_F(RowBitCount, EmptyChildColumnInListOfStrings)
   // Test with a list<string> column with 4 empty list rows.
   // Note: Since there are no strings in any of the lists,
   //       the lists column's child can be empty.
-  auto offsets   = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
-  auto lists_col = cudf::make_lists_column(
-    4, offsets.release(), cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}), 0, {});
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
+  auto lists_col =
+    cudf::make_lists_column(4,
+                            offsets.release(),
+                            cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING}),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
@@ -572,8 +598,13 @@ TEST_F(RowBitCount, EmptyChildColumnInListOfLists)
     return cudf::empty_like(exemplar);
   };
 
-  auto offsets   = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
-  auto lists_col = cudf::make_lists_column(4, offsets.release(), empty_child_lists_column(), 0, {});
+  auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 0, 0, 0};
+  auto lists_col =
+    cudf::make_lists_column(4,
+                            offsets.release(),
+                            empty_child_lists_column(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
     cudf::row_bit_count(cudf::table_view{{lists_col->view()}})->view(),
@@ -635,12 +666,20 @@ TEST_F(RowBitCount, DepthJump)
   // to depth 0 (the topmost int column)
   cudf::test::fixed_width_column_wrapper<T> ____c0{1, 2, 3, 5, 5, 6, 7, 8};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> ___offsets{0, 2, 4, 6, 8};
-  auto ___c0 = cudf::make_lists_column(4, ___offsets.release(), ____c0.release(), 0, {});
+  auto ___c0 = cudf::make_lists_column(4,
+                                       ___offsets.release(),
+                                       ____c0.release(),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   std::vector<std::unique_ptr<cudf::column>> __children;
   __children.push_back(std::move(___c0));
   cudf::test::structs_column_wrapper __c0(std::move(__children));
   cudf::test::fixed_width_column_wrapper<cudf::size_type> _offsets{0, 3, 4};
-  auto _c0 = cudf::make_lists_column(2, _offsets.release(), __c0.release(), 0, {});
+  auto _c0 = cudf::make_lists_column(2,
+                                     _offsets.release(),
+                                     __c0.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   cudf::test::fixed_width_column_wrapper<int> _c1{3, 4};
   std::vector<std::unique_ptr<cudf::column>> children;
   children.push_back(std::move(_c0));

@@ -9,15 +9,15 @@ multi-GPU engines.
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.ray.RayEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.dask.DaskEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.spmd.SPMDEngine
-   :members: from_options, gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks, rank, comm, context
+   :members: from_options, from_torch_distributed, execute, gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks, rank, comm, context
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.default_singleton_engine.DefaultSingletonEngine
@@ -29,7 +29,7 @@ The engine classes share a common base class:
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.core.StreamingEngine
-   :members: gather_cluster_info, gather_statistics, global_statistics, shutdown, nranks
+   :members: gather_cluster_info, gather_statistics, global_statistics, gather_io_summary, shutdown, nranks
    :show-inheritance:
 
 .. autoclass:: cudf_polars.engine.core.ClusterInfo
@@ -42,7 +42,7 @@ Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`exe
 
 ```{eval-rst}
 .. autoclass:: cudf_polars.engine.persisted_result.PersistedQueryResult
-   :members: lazy, release
+   :members: lazy, release, take_local, local_is_duplicated
 ```
 
 ## Configuration
@@ -64,7 +64,19 @@ Returned by `engine.execute()` to keep query results GPU-resident (see {doc}`exe
 ```{eval-rst}
 .. autofunction:: cudf_polars.engine.spmd.allgather_polars_dataframe
 
+.. autofunction:: cudf_polars.engine.spmd.use_gpu
+
 .. autofunction:: cudf_polars.streaming.actor_graph.collectives.common.reserve_op_id
+
+.. autofunction:: cudf_polars.streaming.actor_graph.collectives.common.collective_id_scope
+```
+
+## PyTorch interoperability
+
+```{eval-rst}
+.. autofunction:: cudf_polars.engine.torch_interop.persisted_to_torch
+
+.. autofunction:: cudf_polars.engine.torch_interop.polars_to_tensor
 ```
 
 ## Internal configuration objects
@@ -91,13 +103,6 @@ used to profile your queries.
 ```{eval-rst}
 .. automodule:: cudf_polars.quent
    :members:
-      Attribute,
-      Engine,
-      HomogeneousListValue,
-      Implementation,
-      QuentContext,
-      Query,
-      QueryGroup,
-      ScalarValue,
-      Value,
+      QuentConfig,
+      QuentQueryConfig,
 ```

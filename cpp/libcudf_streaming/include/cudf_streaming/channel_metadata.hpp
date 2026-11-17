@@ -60,23 +60,80 @@ struct order_key {
 };
 
 /**
- * @brief A valid ordering description for sorted/range-partitioned data.
+ * @brief Rows covered by a row-ordering guarantee.
+ *
+ * `GLOBAL` applies to the complete logical dataset. For duplicated data, this
+ * means one logical copy rather than all copies concatenated together.
+ * `RANK_LOCAL` applies independently to each rank.
+ */
+enum class row_ordering_scope : std::uint8_t {
+  GLOBAL,      ///< The complete logical dataset.
+  RANK_LOCAL,  ///< Each rank's local data independently.
+};
+
+/**
+ * @brief A row-ordering guarantee for a data stream.
+ *
+ * An empty `group_keys` denotes an ungrouped ordering: all rows in the selected
+ * scope are ordered by `order_keys`. Otherwise, each group's subsequence is
+ * ordered by `order_keys`. Groups need not be contiguous or ordered relative
+ * to one another.
+ *
+ * A global ordering applies to the rank-ordered concatenation of FIFO streams.
+ * For duplicated data, each rank contains an ordered copy of the same logical
+ * stream. A rank-local ordering makes no guarantee between ranks.
+ */
+struct row_ordering {
+  std::vector<order_key> order_keys;                     ///< Keys that order rows.
+  row_ordering_scope scope{row_ordering_scope::GLOBAL};  ///< Scope of the guarantee.
+  std::vector<cudf::size_type> group_keys;               ///< Columns defining equality groups.
+
+  /// @brief Default constructor. Produces an invalid (empty) row ordering.
+  row_ordering() = default;
+
+  /**
+   * @brief Construct a row-ordering guarantee.
+   *
+   * @param order_keys Non-empty keys that order rows.
+   * @param scope Scope of the ordering guarantee.
+   * @param group_keys Columns defining equality groups. These must not also
+   * appear in `order_keys`.
+   * @throws std::invalid_argument if `order_keys` is empty or overlaps with
+   * `group_keys`.
+   */
+  row_ordering(std::vector<order_key> order_keys,
+               row_ordering_scope scope,
+               std::vector<cudf::size_type> group_keys = {});
+
+  /**
+   * @brief Equality comparison.
+   * @return True if all fields are equal.
+   */
+  bool operator==(row_ordering const&) const = default;
+};
+
+/**
+ * @brief A valid ordering description for order-partitioned data.
  *
  * Data is partitioned by value ranges based on predetermined boundaries.
- * For N partitions, there are N-1 boundary rows:
- * - Partition 0: values < boundaries[0]
- * - Partition i (0 < i < N-1): boundaries[i-1] <= values < boundaries[i]
- * - Partition N-1: values >= boundaries[N-2]
+ * This type describes partition boundaries only. Row-order guarantees are
+ * stored separately in `partitioning::row_orderings`.
+ * For N partitions, there are N-1 boundary rows. With strict boundaries,
+ * the partition ranges in the declared sort order are:
+ * - Partition 0: values <= boundaries[0]
+ * - Partition i (0 < i < N-1): boundaries[i-1] < values <= boundaries[i]
+ * - Partition N-1: values > boundaries[N-2]
  *
- * `keys[i]` is the i-th sort column; ordering is lexicographic by `keys[0]`,
- * then `keys[1]`, and so on.
+ * `keys[i]` is the i-th sort column; partition boundaries are compared
+ * lexicographically by `keys[0]`, then `keys[1]`, and so on. This does not
+ * imply that rows within the partitions are ordered.
  *
  * When `boundaries` is set, its columns must align with `keys`
  * (same count and compatible dtypes). Mismatched dtypes are a usage error.
  *
- * `strict_boundaries`: when true, every row in a chunk belongs to a single partition's
- * half-open key range (partition keys do not straddle chunk interiors). When false,
- * a chunk may contain keys spanning multiple partitions.
+ * Rows in each partition lie between its neighboring boundaries in sort order.
+ * A boundary value may appear in either neighboring partition unless
+ * `strict_boundaries` is true, in which case it belongs to the lower-numbered one.
  */
 struct ordering {
   std::vector<order_key> keys;              ///< Sort keys (column, order, null_order per entry).
@@ -115,6 +172,16 @@ struct ordering {
   [[nodiscard]] ordering with_keys(std::vector<order_key> new_keys) const;
 
   /**
+   * @brief Return an equivalent ordering with strict boundaries.
+   *
+   * Duplicate boundary rows are removed when converting a non-strict ordering.
+   *
+   * @param br Buffer resource used to allocate new boundary rows.
+   * @return A strict ordering equivalent to this ordering.
+   */
+  [[nodiscard]] ordering as_strict(rapidsmpf::BufferResource& br) const;
+
+  /**
    * @brief Check whether boundary values are aligned with another ordering.
    *
    * @param other The ordering to compare against.
@@ -128,12 +195,11 @@ struct ordering {
 };
 
 /**
- * @brief Order-based partitioning scheme for sorted/range-partitioned data.
+ * @brief Order-based partitioning scheme for order-partitioned data.
  *
- * An order_scheme advertises that the same stream is sorted/range-partitioned
- * with respect to any individual ordering it contains. Consumers are
- * responsible for selecting the ordering that is relevant to a particular
- * operation.
+ * An order_scheme advertises that the same stream is order-partitioned with
+ * respect to any individual ordering it contains. Consumers are responsible for
+ * selecting the ordering that is relevant to a particular operation.
  */
 struct order_scheme {
   std::vector<ordering> orderings;  ///< Ordering descriptions valid for the stream.
@@ -219,7 +285,7 @@ struct partitioning_spec {
 };
 
 /**
- * @brief Hierarchical partitioning metadata for a data stream.
+ * @brief Partitioning and row-ordering metadata for a data stream.
  *
  * Describes how data flowing through a channel is partitioned at multiple
  * levels of the system hierarchy. Each level corresponds to a communicator
@@ -231,12 +297,17 @@ struct partitioning_spec {
  * - `local`: Distribution within a rank, corresponding to a single-rank
  *   communicator. Operations at this level repartition data locally without
  *   network communication.
+ * - `row_orderings`: Independent row-ordering guarantees for the stream. These
+ *   guarantees do not require either partitioning level to have a known scheme.
+ *   Producers are responsible for ensuring that every guarantee is valid.
  */
 struct partitioning {
   /// Distribution across ranks (corresponds to primary communicator).
   partitioning_spec inter_rank;
   /// Distribution within a rank (corresponds to local/single communicator).
   partitioning_spec local;
+  /// Row-ordering guarantees for the stream.
+  std::vector<row_ordering> row_orderings{};
 };
 
 /**

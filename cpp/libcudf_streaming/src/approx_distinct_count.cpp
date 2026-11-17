@@ -13,8 +13,7 @@
 #include <cudf_streaming/detail/approx_distinct_count.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/stream>
 #include <cuda_runtime_api.h>
 
 #include <rapidsmpf/cuda_stream.hpp>
@@ -41,7 +40,10 @@ constexpr auto nan_handling  = cudf::nan_policy::NAN_IS_VALID;
 rapidsmpf::streaming::Message to_message(std::uint64_t sequence_number,
                                          std::unique_ptr<cardinality_estimate> estimate)
 {
-  return {sequence_number, std::move(estimate), {}, {}};
+  return {sequence_number,
+          std::move(estimate),
+          rapidsmpf::ContentDescription{},
+          rapidsmpf::streaming::Message::Callbacks{}};
 }
 
 cardinality_estimator::cardinality_estimator(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
@@ -85,7 +87,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
     co_await ctx_->memory(rapidsmpf::MemoryType::DEVICE)->reserve_or_wait(storage_bytes, 0);
   auto buf = rmm::device_buffer(
     storage_bytes, cudf::approx_distinct_count::sketch_alignment(), sketch_stream, br->device_mr());
-  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream));
+  RAPIDSMPF_CUDA_TRY(cudaMemsetAsync(buf.data(), 0, storage_bytes, sketch_stream.get()));
   reservation.clear();
   rapidsmpf::CudaEvent init_event;
   rapidsmpf::CudaEvent add_event;
@@ -141,7 +143,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
       tag_,
       [precision = precision_, sketch_bytes, row_count_offset](rapidsmpf::Buffer const* left,
                                                                rapidsmpf::Buffer* right) {
-        right->write_access([&](std::byte* out, rmm::cuda_stream_view stream) {
+        right->write_access([&](std::byte* out, cuda::stream_ref stream) {
           auto sketch =
             cudf::approx_distinct_count({reinterpret_cast<cuda::std::byte*>(out), sketch_bytes},
                                         precision,
@@ -160,7 +162,7 @@ rapidsmpf::streaming::Actor cardinality_estimator::estimate(
   }
 
   auto const [distinct_count, row_count] =
-    storage->write_access([&](std::byte* data, rmm::cuda_stream_view stream) {
+    storage->write_access([&](std::byte* data, cuda::stream_ref stream) {
       auto sketch =
         cudf::approx_distinct_count({reinterpret_cast<cuda::std::byte*>(data), sketch_bytes},
                                     precision_,

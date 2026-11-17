@@ -1,4 +1,7 @@
-.. _md_regex:
+.. _mr::md_regex:
 
-.. include:: ../../../../cpp/doxygen/regex.md
-   :parser: myst_parser.sphinx_
+Regex Features
+==============
+
+.. flatdoxygenpage:: md_regex
+   :project: libcudf

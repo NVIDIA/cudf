@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -53,8 +53,7 @@ TEST_P(MaskToBoolsTest, LargeDataSizeTest)
 
   auto mask = cudf::bools_to_mask(col);
 
-  auto out = cudf::mask_to_bools(
-    static_cast<cudf::bitmask_type const*>(mask.first->data()), begin_bit, end_bit);
+  auto out = cudf::mask_to_bools(mask.first->data(), begin_bit, end_bit);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, out->view());
 }

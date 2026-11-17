@@ -8,8 +8,10 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <rmm/error.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+
+#include <cuda/buffer>
 
 #include <stdexcept>
 #include <type_traits>
@@ -112,12 +114,15 @@ TEST(MemoryResourceTestHarness, FailingCurrentResourceDetectsFallbackAndRestores
 
   {
     auto current_scope = harness.fail_on_current_device_resource_use();
-    EXPECT_THROW(rmm::device_buffer(1, stream), rmm::bad_alloc);
+    EXPECT_THROW((cuda::device_buffer<std::byte>{
+                   stream, cudf::get_current_device_resource_ref(), 1, cuda::no_init}),
+                 rmm::bad_alloc);
     harness.synchronize(stream);
   }
 
   EXPECT_TRUE(cudf::get_current_device_resource_ref() == original);
-  EXPECT_NO_THROW(rmm::device_buffer(1, stream));
+  EXPECT_NO_THROW((cuda::device_buffer<std::byte>{
+    stream, cudf::get_current_device_resource_ref(), 1, cuda::no_init}));
 }
 
 TEST(MemoryResourceTestHarness, ExplicitResourcesWorkWithFailingCurrentResource)
@@ -128,8 +133,10 @@ TEST(MemoryResourceTestHarness, ExplicitResourcesWorkWithFailingCurrentResource)
   {
     auto current_scope = harness.fail_on_current_device_resource_use();
     auto resources     = harness.resources();
-    auto output        = rmm::device_buffer(64, stream, resources.get_output_mr());
-    auto temporary     = rmm::device_buffer(32, stream, resources.get_temporary_mr());
+    auto output =
+      cuda::device_buffer<std::byte>{stream, resources.get_output_mr(), 64, cuda::no_init};
+    auto temporary =
+      cuda::device_buffer<std::byte>{stream, resources.get_temporary_mr(), 32, cuda::no_init};
     harness.synchronize(stream);
   }
 
@@ -140,13 +147,16 @@ TEST(MemoryResourceTestHarness, TracksSetupOutputAndTemporaryLifetimes)
 {
   auto harness = cudf::test::memory_resource_test_harness{};
   auto stream  = cudf::test::get_default_stream();
-  auto setup   = rmm::device_buffer(16, stream, harness.setup_mr());
+  auto setup   = cuda::device_buffer<std::byte>{
+    stream, rmm::device_async_resource_ref{harness.setup_mr()}, 16, cuda::no_init};
 
   {
     auto resources = harness.resources();
-    auto output    = rmm::device_buffer(64, stream, resources.get_output_mr());
+    auto output =
+      cuda::device_buffer<std::byte>{stream, resources.get_output_mr(), 64, cuda::no_init};
     {
-      auto temporary = rmm::device_buffer(32, stream, resources.get_temporary_mr());
+      auto temporary =
+        cuda::device_buffer<std::byte>{stream, resources.get_temporary_mr(), 32, cuda::no_init};
     }
 
     harness.expect_output_allocations_live(stream);

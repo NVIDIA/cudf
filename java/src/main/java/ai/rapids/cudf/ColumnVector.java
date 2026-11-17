@@ -819,42 +819,6 @@ public final class ColumnVector extends ColumnView {
     return super.castTo(type);
   }
 
-  /**
-   * Replace the null mask of a column. The resultant null mask is the bitwise {@code mergeOp} of
-   * null masks in the columns given as arguments, AND-ed with this column's existing null mask.
-   *
-   * If applying the null mask would be a no-op, the original column is returned with incremented
-   * refcount. Otherwise, a deep copy of the column is made.
-   *
-   * For STRUCT columns the new mask is also pushed down into every descendant column, to
-   * stay consistent with the parent. For LIST/STRING columns the resultant offsets are
-   * sanitized to not contain any non-empty nulls.
-   *
-   * If {@code columns} is empty, the column is returned unchanged (no-op).
-   *
-   * @param mergeOp binary operator (either BITWISE_AND or BITWISE_OR)
-   * @param columns array of columns whose null masks are merged, must have identical number of rows.
-   * @return the new ColumnVector with merged null mask.
-   */
-  @Override
-  public ColumnVector mergeAndSetValidity(BinaryOp mergeOp, ColumnView... columns) {
-    assert mergeOp == BinaryOp.BITWISE_AND || mergeOp == BinaryOp.BITWISE_OR : "Only BITWISE_AND and BITWISE_OR supported right now";
-    long[] columnViews = new long[columns.length];
-    long size = getRowCount();
-
-    for (int i = 0; i < columns.length; i++) {
-      assert columns[i] != null : "Column vectors passed may not be null";
-      assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
-      columnViews[i] = columns[i].getNativeView();
-    }
-
-    long mergeOutput = bitwiseMergeAndSetValidity(getNativeView(), columnViews, mergeOp.nativeId);
-    if (mergeOutput == 0) {  // no-op, the current column is unchanged
-      return incRefCount();
-    }
-    return new ColumnVector(mergeOutput);
-  }
-
   /////////////////////////////////////////////////////////////////////////////
   // NATIVE METHODS
   /////////////////////////////////////////////////////////////////////////////
@@ -877,19 +841,6 @@ public final class ColumnVector extends ColumnView {
       throws CudfException;
 
   private static native long concatenate(long[] viewHandles) throws CudfException;
-
-  /**
-   * Native method to replace a column's null mask. The null mask is the
-   * bitwise merge of the null masks in the columns given as arguments.
-   *
-   * @param baseHandle column view of the column whose null mask is being replaced.
-   * @param viewHandles array of views whose null masks are merged, must have identical row counts.
-   * @param mergeOp native id of the binary op (BITWISE_AND or BITWISE_OR) used to merge the null masks.
-   * @return native handle of the resulting column, or 0 when the original is unchanged
-   *         (a no-op) and no copied column was produced.
-   */
-  private static native long bitwiseMergeAndSetValidity(long baseHandle, long[] viewHandles,
-                                                        int mergeOp) throws CudfException;
 
   /**
    * Native method to concatenate columns of lists horizontally (row by row), combining a row
@@ -1420,7 +1371,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from unscaled values (int array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromInts(int scale, int... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromInts(scale, values)) {
@@ -1431,7 +1383,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from boxed unscaled values (Integer array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBoxedInts(int scale, Integer... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBoxedInts(scale, values)) {
@@ -1442,7 +1395,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from unscaled values (long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromLongs(int scale, long... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromLongs(scale, values)) {
@@ -1453,7 +1407,8 @@ public final class ColumnVector extends ColumnView {
   /**
    * Create a new decimal vector from boxed unscaled values (Long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBoxedLongs(int scale, Long... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBoxedLongs(scale, values)) {
@@ -1466,7 +1421,8 @@ public final class ColumnVector extends ColumnView {
    * All doubles will be rescaled if necessary, according to scale of input DecimalType and RoundingMode.
    * If any overflow occurs in extracting integral part, an IllegalArgumentException will be thrown.
    * This API is inefficient because of slow double -> decimal conversion, so it is mainly for testing.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromDoubles(DType type, RoundingMode mode, double... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromDoubles(type, mode, values)) {
@@ -1477,7 +1433,8 @@ public final class ColumnVector extends ColumnView {
 
   /**
    * Create a new decimal vector from BigIntegers
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static ColumnVector decimalFromBigInt(int scale, BigInteger... values) {
     try (HostColumnVector host = HostColumnVector.decimalFromBigIntegers(scale, values)) {

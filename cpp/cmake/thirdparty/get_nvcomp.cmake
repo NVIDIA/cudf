@@ -127,7 +127,7 @@ function(find_and_configure_nvcomp)
   endif()
 endfunction()
 
-set(_nvcomp_args VERSION 5.3.0.16)
+set(_nvcomp_args VERSION 6.0.0.12)
 if(CUDF_BUILD_STATIC_DEPS STREQUAL "FORCE")
   list(APPEND _nvcomp_args DOWNLOAD_ONLY)
 endif()

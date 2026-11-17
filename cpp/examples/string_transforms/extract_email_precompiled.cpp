@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,21 +14,21 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   auto emails      = table.column(1);
   auto transformed = std::vector<int32_t>{1};
 
-  auto const index_max =
-    cudf::numeric_scalar<cudf::size_type>{std::numeric_limits<cudf::size_type>::max(), stream, mr};
-  auto const npos = cudf::numeric_scalar<cudf::size_type>{-1, stream, mr};
-  auto const one  = cudf::numeric_scalar<cudf::size_type>{1, stream, mr};
+  auto const index_max = cudf::numeric_scalar<cudf::size_type>{
+    std::numeric_limits<cudf::size_type>::max(), true, stream, mr};
+  auto const npos = cudf::numeric_scalar<cudf::size_type>{-1, true, stream, mr};
+  auto const one  = cudf::numeric_scalar<cudf::size_type>{1, true, stream, mr};
   auto const alt  = cudf::string_scalar(cudf::string_view{"(unknown)", 9}, true, stream, mr);
 
   // find the positions of the "@" in the email, -1 is returned if not found

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
@@ -6,7 +6,6 @@ from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
-from pylibcudf.libcudf.expressions cimport expression
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport (
@@ -37,6 +36,13 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         table_view source_table,
         vector[size_type] keys,
         size_type keep_threshold,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef unique_ptr[table] apply_retention_mask(
+        table_view source_table,
+        column_view retention_mask,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
@@ -89,14 +95,6 @@ cdef extern from "cudf/stream_compaction.hpp" namespace "cudf" nogil:
         duplicate_keep_option keep,
         null_equality nulls_equal,
         nan_equality nans_equal,
-        cudaStream_t stream,
-        device_async_resource_ref mr
-    ) except +libcudf_exception_handler
-
-    cdef unique_ptr[table] filter(
-        table_view predicate_table,
-        const expression& predicate_expr,
-        table_view filter_table,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler

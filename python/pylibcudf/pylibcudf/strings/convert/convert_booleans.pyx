@@ -53,7 +53,7 @@ cpdef Column to_booleans(
         true_string.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -107,7 +107,7 @@ cpdef Column from_booleans(
         false_string.c_obj.get()
     )
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_booleans = booleans.view()

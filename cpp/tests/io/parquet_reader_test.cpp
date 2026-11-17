@@ -433,6 +433,43 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 }
 
+TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
+{
+  // Reads only nulls, which follow the page's first string. With 50 rows the page holds that one
+  // string; with 150 it also holds 50 short strings after the nulls.
+  constexpr int first_null    = 1;
+  constexpr int num_nulls     = 99;
+  constexpr int num_read_rows = 40;
+  for (auto const num_rows : {50, 150}) {
+    SCOPED_TRACE(std::to_string(num_rows) + " rows");
+    std::vector<std::string> strings(num_rows, "a");
+    strings[0]        = std::string(100, 'x');
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return i < first_null or i >= first_null + num_nulls; });
+    auto const col = cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+    auto const result = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                                 .skip_rows(first_null)
+                                                 .num_rows(num_read_rows)
+                                                 .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(
+      cudf::slice(expected, {first_null, first_null + num_read_rows})[0], result.tbl->view());
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBounds)
 {
   // trying to read more rows than there are should result in

@@ -110,8 +110,8 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
     device_columns    = cudf::detail::make_device_buffer(copy_columns, stream, temp_mr);
     auto const blocks = std::min<std::size_t>(
       partition_strings_plan::max_copy_blocks,
-      cudf::util::div_rounding_up_safe(static_cast<std::size_t>(rows),
-                                       partition_strings_plan::rows_per_copy_block));
+      cudf::detail::div_rounding_up_safe(static_cast<std::size_t>(rows),
+                                         partition_strings_plan::rows_per_copy_block));
     partition_strings_plan::copy_characters<true>
       <<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
         device_columns.data(), gather_map.data(), rows);
@@ -122,7 +122,11 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
   output.reserve(columns);
   for (size_type i = 0; i < columns; ++i) {
     output.push_back(cudf::make_strings_column(
-      rows, std::move(offsets[i]), std::move(chars[i]), 0, cuda::device_buffer<bitmask_type>{}));
+      rows,
+      std::move(offsets[i]),
+      std::move(chars[i]),
+      0,
+      cuda::device_buffer<bitmask_type>(stream, output_mr, 0, cuda::no_init)));
   }
   return std::make_unique<table>(std::move(output));
 }

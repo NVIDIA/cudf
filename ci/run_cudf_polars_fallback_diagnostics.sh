@@ -25,10 +25,12 @@ fi
 output_dir="${1:-cudf-polars-fallback-diagnostics}"
 
 # The shared test workflows upload RAPIDS_ARTIFACTS_DIR even after test failures.
-# Restrict downloads to this attempt so reruns cannot reuse earlier diagnostics.
+# Download the reports of every attempt: rerunning failed jobs does not repeat
+# the jobs that passed, so their reports are from an earlier attempt. The
+# analyzer keeps only the reports of the latest job IDs.
 if ! aws s3 cp "$(rapids-s3-path)" "${report_dir}/" --recursive \
     --exclude '*' \
-    --include "*.cudf-polars-fallback-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-*.json" \
+    --include "*.cudf-polars-fallback-${GITHUB_RUN_ID}-*.json" \
     --only-show-errors; then
     fetch_status=1
 fi

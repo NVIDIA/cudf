@@ -454,8 +454,8 @@ class aggregate_reader_metadata {
    * with a literal of its output type
    *
    * A column is flagged if, in any source, it is a timestamp whose Parquet logical type requires
-   * rescaling to the output clock rate, or a FIXED_LEN_BYTE_ARRAY decimal narrowed to a storage type
-   * shorter than its byte length.
+   * rescaling to the output clock rate, or a FIXED_LEN_BYTE_ARRAY decimal narrowed to a storage
+   * type shorter than its byte length.
    *
    * @param output_dtypes Output column data types
    * @param output_column_schemas Output column schema indices

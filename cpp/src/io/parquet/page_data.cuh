@@ -385,7 +385,7 @@ __device__ inline void read_byte_stream_split_decimal(auto* s,
                                                       size_type stride,
                                                       void* dst)
 {
-  auto const dtype_len = s->output_cvt.dtype_len;
+  auto const dtype_len         = s->output_cvt.dtype_len;
   auto const store_int_decimal = [&]<typename P>() {
     P value;
     gpuOutputByteStreamSplit<P>(reinterpret_cast<uint8_t*>(&value), src, stride);

@@ -11,6 +11,7 @@
 
 #include <nanoarrow/nanoarrow.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -166,9 +167,9 @@ void rebase_offsets(In const* offsets, int64_t first_row, int64_t num_rows, Out*
                  static_cast<int64_t>(std::numeric_limits<Out>::max()),
                "offsets exceed the bounds of the cudf offsets type",
                std::overflow_error);
-  for (int64_t i = 0; i <= num_rows; ++i) {
-    out[i] = static_cast<Out>(offsets[first_row + i] - first);
-  }
+  std::transform(offsets + first_row, offsets + first_row + num_rows + 1, out, [first](In o) {
+    return static_cast<Out>(o - first);
+  });
 }
 
 }  // namespace detail

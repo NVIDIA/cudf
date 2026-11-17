@@ -21,6 +21,7 @@
 #include <cudf/reduction/bloom_filter.cuh>
 
 #include <cuco/bloom_filter_ref.cuh>
+#include <cuco/extent.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
 #ifdef __clang__
 #pragma clang diagnostic pop

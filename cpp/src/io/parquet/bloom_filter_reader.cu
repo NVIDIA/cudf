@@ -28,6 +28,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
+#include <cuco/extent.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/bit>

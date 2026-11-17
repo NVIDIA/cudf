@@ -1051,22 +1051,21 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
           tree[idx].children_idx |
             std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
       };
-      auto const same_logical_groups = [&](size_t pfm_idx) {
-        auto const& other = per_file_metadata[pfm_idx].schema;
+      auto const same_logical_groups = [&](metadata const& pfm) {
+        auto const pfm_idx = static_cast<int>(std::distance(per_file_metadata.data(), &pfm));
         return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
-          return is_file_group(schema, idx) == is_file_group(other, idx) and
+          return is_file_group(schema, idx) == is_file_group(pfm.schema, idx) and
                  is_binary_leaf(idx) == is_binary_leaf(idx, pfm_idx);
         });
       };
 
       // Verify that the input files have matching numbers of columns and schema.
-      for (size_t pfm_idx = 0; pfm_idx < per_file_metadata.size(); ++pfm_idx) {
-        auto const& pfm = per_file_metadata[pfm_idx];
+      for (auto const& pfm : per_file_metadata) {
         if (pfm.row_groups.size() > 0) {
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema and same_logical_groups(pfm_idx),
+        CUDF_EXPECTS(schema == pfm.schema and same_logical_groups(pfm),
                      "All sources must have the same schema");
       }
 

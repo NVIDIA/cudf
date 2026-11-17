@@ -26,6 +26,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
@@ -375,8 +376,8 @@ async def _extract_partitions_and_send(
         stream = ir_context.get_cuda_stream()
         table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
-            table = post_sort_ir.do_evaluate(
-                *post_sort_ir._non_child_args,
+            table = evaluate_ir(
+                post_sort_ir,
                 DataFrame.from_table(
                     table,
                     list(post_sort_ir.schema.keys()),

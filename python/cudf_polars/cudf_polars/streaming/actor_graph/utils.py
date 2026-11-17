@@ -36,6 +36,7 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
 from cudf_polars.streaming.actor_graph.tracing import (
@@ -464,11 +465,7 @@ def _evaluate_chunk_sync(
     The resulting table chunk after evaluation.
     """
     df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
-    df = ir.do_evaluate(
-        *ir._non_child_args,
-        df_in,
-        context=ir_context,
-    )
+    df = evaluate_ir(ir, df_in, context=ir_context)
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=br
     )

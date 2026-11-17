@@ -30,6 +30,7 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import (
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.ir import IR, Join, Projection
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import (
@@ -462,8 +463,8 @@ async def _broadcast_join_large_chunk(
     ):
         for sdf in dfs_to_join:
             result = await ir_context.to_thread(
-                ir.do_evaluate,
-                *ir._non_child_args,
+                evaluate_ir,
+                ir,
                 *([large_df, sdf] if broadcast_side == "right" else [sdf, large_df]),
                 context=ir_context,
             )
@@ -908,8 +909,8 @@ async def _join_chunks(
         ):
             df = await ir_context.to_thread(
                 partial(
-                    ir.do_evaluate,
-                    *ir._non_child_args,
+                    evaluate_ir,
+                    ir,
                     chunk_to_frame(left_chunk, left),
                     chunk_to_frame(right_chunk, right),
                     context=ir_context,

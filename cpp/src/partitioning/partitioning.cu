@@ -941,7 +941,7 @@ struct dispatch_map_type {
         cuda::counting_iterator<size_type>(t.num_rows()),
         [map     = partition_map.begin<MapType>(),
          offsets = histogram.data(),
-         gather  = gather_map.data()] __device__(size_type row) {
+         gather  = gather_map.data()] __device__(size_type row) -> void {
           cuda::atomic_ref<size_type, cuda::thread_scope_device> cursor{offsets[map[row]]};
           gather[cursor.fetch_add(1, cuda::memory_order_relaxed)] = row;
         });

@@ -60,6 +60,19 @@ constexpr size_type MIN_BATCHED_STRING_COLUMNS               = 2;
 constexpr size_type MIN_TWO_PARTITION_BATCHED_STRING_COLUMNS = 4;
 constexpr size_type MAX_BATCHED_STRING_COLUMNS               = 65'535;
 
+bool can_batch_partition_strings(table_view const& input, size_type num_partitions)
+{
+  return input.num_rows() >= MIN_BATCHED_STRING_ROWS &&
+         num_partitions <= MAX_BATCHED_STRING_PARTITIONS &&
+         input.num_columns() >= MIN_BATCHED_STRING_COLUMNS &&
+         input.num_columns() <= MAX_BATCHED_STRING_COLUMNS &&
+         (input.num_columns() >= MIN_TWO_PARTITION_BATCHED_STRING_COLUMNS || num_partitions != 2) &&
+         std::all_of(input.begin(), input.end(), [](auto const& col) {
+           return col.type().id() == type_id::STRING && col.null_count() == 0 &&
+                  strings_column_view(col).offsets().type().id() == type_id::INT32;
+         });
+}
+
 /**
  * @brief  Functor to map a hash value to a particular 'bin' or partition number
  * that uses the modulo operation.
@@ -922,15 +935,7 @@ struct dispatch_map_type {
     auto [histogram, partition_offsets] =
       make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr);
 
-    if (t.num_rows() >= MIN_BATCHED_STRING_ROWS &&
-        num_partitions <= MAX_BATCHED_STRING_PARTITIONS &&
-        t.num_columns() >= MIN_BATCHED_STRING_COLUMNS &&
-        t.num_columns() <= MAX_BATCHED_STRING_COLUMNS &&
-        (t.num_columns() >= MIN_TWO_PARTITION_BATCHED_STRING_COLUMNS || num_partitions != 2) &&
-        std::all_of(t.begin(), t.end(), [](auto const& col) {
-          return col.type().id() == type_id::STRING && col.null_count() == 0 &&
-                 strings_column_view(col).offsets().type().id() == type_id::INT32;
-        })) {
+    if (can_batch_partition_strings(t, num_partitions)) {
       rmm::device_uvector<size_type> gather_map(t.num_rows(), stream, temp_mr);
       thrust::for_each(
         rmm::exec_policy_nosync(stream, temp_mr),

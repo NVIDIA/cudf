@@ -40,20 +40,13 @@ CUDF_KERNEL void partition_string_sizes(partition_string_column const* columns,
 }
 
 // Materialize a complete permutation of non-nullable INT32-offset STRING columns.
+// The caller checks the input schema and column-count limits before calling this helper.
 [[nodiscard]] inline std::unique_ptr<table> gather_partition_strings(
   table_view const& input,
   device_span<size_type const> gather_map,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  if (input.num_columns() < 2 || input.num_columns() > 65'535 ||
-      !std::all_of(input.begin(), input.end(), [](auto const& column) {
-        return column.type().id() == type_id::STRING && column.null_count() == 0 &&
-               strings_column_view(column).offsets().type().id() == type_id::INT32;
-      })) {
-    return nullptr;
-  }
-
   auto const rows      = input.num_rows();
   auto const columns   = input.num_columns();
   auto const temp_mr   = mr.get_temporary_mr();

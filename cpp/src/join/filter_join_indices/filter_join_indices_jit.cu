@@ -167,6 +167,14 @@ void launch_join_filter_kernel(kernel const& kernel,
   }
 }
 
+std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+          std::unique_ptr<rmm::device_uvector<size_type>>>
+make_empty_result(cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  return {std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+          std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
+}
+
 // Same join semantics handling as the AST version
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
@@ -179,12 +187,6 @@ apply_join_semantics(cudf::table_view const& left,
                      cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
-  auto make_empty_result = [&]() {
-    return std::pair{
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
-  };
-
   auto make_result_vectors = [&](std::size_t size) {
     return std::pair{
       std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr.get_output_mr()),
@@ -206,7 +208,7 @@ apply_join_semantics(cudf::table_view const& left,
                              stream,
                              mrs.as_temporary());
 
-    if (num_valid == 0) { return make_empty_result(); }
+    if (num_valid == 0) { return make_empty_result(stream, mr); }
 
     auto [filtered_left_indices, filtered_right_indices] = make_result_vectors(num_valid);
 
@@ -265,7 +267,7 @@ apply_join_semantics(cudf::table_view const& left,
       stream,
       mrs.as_temporary());
     auto const output_size = num_valid + num_invalid;
-    if (output_size == 0) { return make_empty_result(); }
+    if (output_size == 0) { return make_empty_result(stream, mr); }
 
     auto [filtered_left_indices, filtered_right_indices] = make_result_vectors(output_size);
     if (num_valid > 0) {
@@ -344,16 +346,16 @@ void validate_filter_inputs(cudf::table_view const& left,
 // evaluated, so a FULL join is the LEFT join of the same maps plus the unmatched right rows.
 std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
-filter_join_indices(kernel const& kernel,
-                    cudf::table_view const& left,
-                    cudf::table_view const& right,
-                    cudf::device_span<size_type const> left_indices,
-                    cudf::device_span<size_type const> right_indices,
-                    std::span<transform_input const> inputs,
-                    std::optional<void*> user_data,
-                    join_kind join_kind,
-                    cuda::stream_ref stream,
-                    cudf::memory_resources mr)
+evaluate_join_filter(kernel const& kernel,
+                     cudf::table_view const& left,
+                     cudf::table_view const& right,
+                     cudf::device_span<size_type const> left_indices,
+                     cudf::device_span<size_type const> right_indices,
+                     std::span<transform_input const> inputs,
+                     std::optional<void*> user_data,
+                     join_kind join_kind,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
   auto predicate_results =
     cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), left_indices.size(), cuda::no_init);
@@ -394,11 +396,7 @@ filter_join_indices_jit(cudf::table_view const& left,
 
   validate_filter_inputs(left, right, left_indices, right_indices, join_kind);
 
-  if (left_indices.empty()) {
-    return std::pair{
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
-  }
+  if (left_indices.empty()) { return make_empty_result(stream, mr); }
 
   std::vector<transform_input> inputs;
   std::vector<std::optional<int32_t>> table_sources;
@@ -414,7 +412,7 @@ filter_join_indices_jit(cudf::table_view const& left,
   auto kernel = build_join_filter_kernel(
     udf, udf_type, inputs, table_sources, user_data.has_value(), is_null_aware == null_aware::YES);
 
-  return filter_join_indices(
+  return evaluate_join_filter(
     kernel, left, right, left_indices, right_indices, inputs, user_data, join_kind, stream, mr);
 }
 
@@ -434,11 +432,7 @@ filter_join_indices_jit(cudf::table_view const& left,
 
   validate_filter_inputs(left, right, left_indices, right_indices, join_kind);
 
-  if (left_indices.empty()) {
-    return std::pair{
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
-      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
-  }
+  if (left_indices.empty()) { return make_empty_result(stream, mr); }
 
   // Convert AST predicate to JIT code
   auto filter_result = row_ir::ast_converter::filter(row_ir::target::CUDA,
@@ -467,16 +461,16 @@ filter_join_indices_jit(cudf::table_view const& left,
                                           cuda_source,
                                           filter_result.lto_fragments);
 
-  return filter_join_indices(kernel,
-                             left,
-                             right,
-                             left_indices,
-                             right_indices,
-                             filter_result.inputs,
-                             filter_result.user_data,
-                             join_kind,
-                             stream,
-                             mr);
+  return evaluate_join_filter(kernel,
+                              left,
+                              right,
+                              left_indices,
+                              right_indices,
+                              filter_result.inputs,
+                              filter_result.user_data,
+                              join_kind,
+                              stream,
+                              mr);
 }
 
 }  // namespace detail

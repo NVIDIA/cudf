@@ -36,7 +36,8 @@ namespace detail {
  * @param left_indices Device span of row indices in left table from join
  * @param right_indices Device span of row indices in right table from join
  * @param udf The predicate as CUDA source, PTX (NUL-terminated), or an LTO binary
- * @param udf_type The source language or LTO binary type of `udf`
+ * @param udf_type `udf_source_type::CUDA` for CUDA source, or the binary type of a precompiled
+ * `udf`
  * @param is_null_aware Whether the predicate receives row inputs as optional values
  * @param user_data Caller-owned device data passed to the predicate
  * @param join_kind The type of join operation

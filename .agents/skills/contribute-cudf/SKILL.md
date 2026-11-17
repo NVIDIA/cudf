@@ -68,15 +68,11 @@ For each kernel, loop, functor, helper, type, fixture, or generator you are abou
 
 ## 3. Add only the tests that are missing
 
-```bash
-# Existing tests of the same function, on main.
-git grep -n '<function under test>' $REMOTE/main -- cpp/tests python
-```
+Keep test code small by extending and reusing what exists. Follow how the tests in each file are organized, and use judgment rather than a single rule.
 
-- For each branch or result the diff adds or changes (not code it only moves), name the test that would fail if it were wrong. If an existing test already does, add nothing.
-- Otherwise add a row, type, or parameter to an existing `TYPED_TEST_SUITE`, `INSTANTIATE_TEST_SUITE_P`, or `@pytest.mark.parametrize` list before writing a new test function. `cpp/doxygen/developer_guide/TESTING.md` lists the edge cases and the stream test new code must have; those are not repeats.
-- Keep one test per branch and kind of input. Drop a new test or row that repeats an existing test, another new one, or a lower layer's test (gtest, pylibcudf, cudf, cudf.pandas) while checking nothing of its own layer.
-- A bug fix or behavior change needs at least one test that fails without it. Check by committing the whole change (`git status` must show no modified files, because the restore discards uncommitted edits), restoring the changed source files to the base (`git restore -s $BASE -- <source files>`), rebuilding, and running the test. A base build that fails to compile only because the test uses an API the change adds counts as failing. Then restore them (`git restore -s HEAD -- <source files>`) before doing anything else, also when the build fails or the run is interrupted. Other new tests need their own reason: a control case or a missing edge case.
+- Find the existing tests of the function first (`git grep -n '<function under test>' $REMOTE/main -- cpp/tests python`). If one already fails when the new code is wrong, add nothing.
+- Extend a test of related behavior (a row, type, or parameter, such as nested or nullable columns in a test of flat ones) before writing a new one, but do not grow a single test until it is hard to read. Move setup that several tests need into a helper.
+- A bug fix or behavior change needs a test that fails without it.
 
 ## 4. Cut the diff down
 

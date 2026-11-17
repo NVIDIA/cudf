@@ -18,7 +18,10 @@
 #include <cuco/static_map_ref.cuh>
 #include <cuda/atomic>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/bit>
+
+#include <algorithm>
 
 namespace cudf::io::parquet::detail {
 
@@ -267,29 +270,31 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   populate_chunk_hash_maps_kernel(device_span<slot_type> const map_storage,
                                   cudf::detail::device_2dspan<PageFragment> frags)
 {
-  auto const col_idx  = blockIdx.y;
   auto const frag_idx = blockIdx.x;
-  auto& frag          = frags[col_idx][frag_idx];
-  auto const chunk    = frag.chunk;
-  auto col            = chunk->col_desc;
+  // Grid-stride over columns as the number of columns may exceed the max grid y-dimension
+  for (auto col_idx = blockIdx.y; col_idx < frags.size().first; col_idx += gridDim.y) {
+    auto& frag       = frags[col_idx][frag_idx];
+    auto const chunk = frag.chunk;
+    auto col         = chunk->col_desc;
 
-  if (not chunk->use_dictionary) { return; }
+    if (not chunk->use_dictionary) { continue; }
 
-  auto const start_row = frag.start_row;
-  auto const end_row   = frag.start_row + frag.num_rows;
+    auto const start_row = frag.start_row;
+    auto const end_row   = frag.start_row + frag.num_rows;
 
-  // Find the bounds of values in leaf column to be inserted into the map for current chunk.
-  auto const start_value_idx = row_to_value_idx(start_row, *col);
-  auto const end_value_idx   = row_to_value_idx(end_row, *col);
+    // Find the bounds of values in leaf column to be inserted into the map for current chunk.
+    auto const start_value_idx = row_to_value_idx(start_row, *col);
+    auto const end_value_idx   = row_to_value_idx(end_row, *col);
 
-  column_device_view const& data_col = *col->leaf_column;
-  storage_ref_type const storage_ref{chunk->dict_map_size,
-                                     map_storage.data() + chunk->dict_map_offset};
-  type_dispatcher(
-    data_col.type(),
-    map_insert_fn<block_size>{storage_ref, chunk, &frag, static_cast<mapped_type>(frag_idx)},
-    start_value_idx,
-    end_value_idx);
+    column_device_view const& data_col = *col->leaf_column;
+    storage_ref_type const storage_ref{chunk->dict_map_size,
+                                       map_storage.data() + chunk->dict_map_offset};
+    type_dispatcher(
+      data_col.type(),
+      map_insert_fn<block_size>{storage_ref, chunk, &frag, static_cast<mapped_type>(frag_idx)},
+      start_value_idx,
+      end_value_idx);
+  }
 }
 
 /**
@@ -388,31 +393,33 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   get_dictionary_indices_kernel(device_span<slot_type> const map_storage,
                                 cudf::detail::device_2dspan<PageFragment const> frags)
 {
-  auto const col_idx  = blockIdx.y;
   auto const frag_idx = blockIdx.x;
-  auto const& frag    = frags[col_idx][frag_idx];
-  auto const chunk    = frag.chunk;
+  // Grid-stride over columns as the number of columns may exceed the max grid y-dimension
+  for (auto col_idx = blockIdx.y; col_idx < frags.size().first; col_idx += gridDim.y) {
+    auto const& frag = frags[col_idx][frag_idx];
+    auto const chunk = frag.chunk;
 
-  if (not chunk->use_dictionary) { return; }
+    if (not chunk->use_dictionary) { continue; }
 
-  auto const start_row = frag.start_row;
-  auto const end_row   = frag.start_row + frag.num_rows;
+    auto const start_row = frag.start_row;
+    auto const end_row   = frag.start_row + frag.num_rows;
 
-  auto const col = chunk->col_desc;
-  // Find the bounds of values in leaf column to be searched in the map for current chunk
-  auto const start_value_idx  = row_to_value_idx(start_row, *col);
-  auto const end_value_idx    = row_to_value_idx(end_row, *col);
-  auto const ck_start_val_idx = row_to_value_idx(chunk->start_row, *col);
+    auto const col = chunk->col_desc;
+    // Find the bounds of values in leaf column to be searched in the map for current chunk
+    auto const start_value_idx  = row_to_value_idx(start_row, *col);
+    auto const end_value_idx    = row_to_value_idx(end_row, *col);
+    auto const ck_start_val_idx = row_to_value_idx(chunk->start_row, *col);
 
-  column_device_view const& data_col = *col->leaf_column;
-  storage_ref_type const storage_ref{chunk->dict_map_size,
-                                     map_storage.data() + chunk->dict_map_offset};
+    column_device_view const& data_col = *col->leaf_column;
+    storage_ref_type const storage_ref{chunk->dict_map_size,
+                                       map_storage.data() + chunk->dict_map_offset};
 
-  type_dispatcher(data_col.type(),
-                  map_find_fn<block_size>{storage_ref, chunk},
-                  start_value_idx,
-                  end_value_idx,
-                  ck_start_val_idx);
+    type_dispatcher(data_col.type(),
+                    map_find_fn<block_size>{storage_ref, chunk},
+                    start_value_idx,
+                    end_value_idx,
+                    ck_start_val_idx);
+  }
 }
 
 /**
@@ -482,7 +489,8 @@ void populate_chunk_hash_maps(device_span<slot_type> const map_storage,
                               cudf::detail::device_2dspan<PageFragment> frags,
                               cuda::stream_ref stream)
 {
-  dim3 const dim_grid(frags.size().second, frags.size().first);
+  auto const grid_y = std::min<uint32_t>(frags.size().first, MAX_GRID_Y_SIZE);
+  dim3 const dim_grid(frags.size().second, grid_y);
   populate_chunk_hash_maps_kernel<dict_encode_block_size>
     <<<dim_grid, dict_encode_block_size, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -506,7 +514,8 @@ void get_dictionary_indices(device_span<slot_type> const map_storage,
                             cudf::detail::device_2dspan<PageFragment const> frags,
                             cuda::stream_ref stream)
 {
-  dim3 const dim_grid(frags.size().second, frags.size().first);
+  auto const grid_y = std::min<uint32_t>(frags.size().first, MAX_GRID_Y_SIZE);
+  dim3 const dim_grid(frags.size().second, grid_y);
   get_dictionary_indices_kernel<DEFAULT_BLOCK_SIZE>
     <<<dim_grid, DEFAULT_BLOCK_SIZE, 0, stream.get()>>>(map_storage, frags);
   CUDF_CUDA_TRY(cudaGetLastError());

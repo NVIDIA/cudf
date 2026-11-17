@@ -50,11 +50,11 @@ std::unique_ptr<column> from_arrow_string(
   std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>&& mask,
   size_type null_count,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto [offsets_column, offset, char_data_length] = get_offsets_column(schema, input, stream, mr);
 
-  rmm::device_buffer chars(char_data_length, stream, mr);
+  rmm::device_buffer chars(char_data_length, stream, mr.get_output_mr());
   auto const* chars_data = static_cast<uint8_t const*>(input->buffers[chars_buffer_idx]) + offset;
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(chars.data(), chars_data, chars.size(), stream));
 
@@ -72,7 +72,7 @@ std::unique_ptr<column> from_arrow_stringview(
   ArrowArray const* input,
   std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>&& mask,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   ArrowArrayView view;
   NANOARROW_THROW_NOT_OK(ArrowArrayViewInitFromSchema(&view, schema->schema, nullptr));
@@ -136,7 +136,7 @@ std::unique_ptr<column> string_column_from_arrow_host(
   std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>&& mask,
   size_type null_count,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return schema->type == NANOARROW_TYPE_STRING_VIEW
            ? from_arrow_stringview(schema, input, std::move(mask), stream, mr)

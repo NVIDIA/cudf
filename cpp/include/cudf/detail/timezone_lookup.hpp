@@ -9,7 +9,7 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.upper_bound.h>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {

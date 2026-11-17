@@ -29,7 +29,7 @@ namespace detail {
  */
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   // get ordered children
   auto ordered_children = extract_ordered_struct_children(columns, stream);

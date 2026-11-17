@@ -97,7 +97,7 @@ std::unique_ptr<column> make_column_names_column(host_span<column_name_info cons
 
 std::unique_ptr<column> timestamp_to_strings(column_view const& column,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   auto format = [&]() {
     switch (column.type().id()) {
@@ -118,7 +118,7 @@ std::unique_ptr<column> timestamp_to_strings(column_view const& column,
 
 std::unique_ptr<column> duration_to_strings(column_view const& column,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   auto duration_string = cudf::io::detail::csv::pandas_format_durations(column, stream, mr);
   auto d_column        = column_device_view::create(duration_string->view(), stream);
@@ -135,7 +135,7 @@ std::unique_ptr<column> duration_to_strings(column_view const& column,
 std::unique_ptr<column> string_to_strings(column_view const& column,
                                           bool escaped_utf8,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   auto d_column = column_device_view::create(column, stream);
   return make_escaped_json_strings(*d_column,
@@ -151,7 +151,7 @@ std::unique_ptr<column> string_to_strings(column_view const& column,
 std::unique_ptr<column> leaf_column_to_strings(column_view const& column,
                                                json_writer_options const& options,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   if (column.type().id() == type_id::STRING) {
     return string_to_strings(column, options.is_enabled_utf8_escaped(), stream, mr);
@@ -191,7 +191,7 @@ host_span<column_name_info const> child_column_names(
 struct column_to_strings_fn {
   explicit column_to_strings_fn(json_writer_options const& options,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
     : options_(options),
       stream_(stream),
       mr_(std::move(mr)),
@@ -319,7 +319,7 @@ struct column_to_strings_fn {
  private:
   json_writer_options const& options_;
   cuda::stream_ref stream_;
-  rmm::device_async_resource_ref mr_;
+  cudf::memory_resources mr_;
   string_scalar const narep;
   string_scalar const struct_value_separator;
   string_scalar const struct_row_begin_wrap;

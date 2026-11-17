@@ -18,7 +18,7 @@ std::unique_ptr<table> split(strings_column_view const& strings_column,
                              string_scalar const& delimiter,
                              size_type maxsplit,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::strings::rsplit
@@ -27,7 +27,7 @@ std::unique_ptr<table> rsplit(strings_column_view const& strings_column,
                               string_scalar const& delimiter,
                               size_type maxsplit,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::strings::split_record
@@ -36,7 +36,7 @@ std::unique_ptr<column> split_record(strings_column_view const& strings,
                                      string_scalar const& delimiter,
                                      size_type maxsplit,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::strings::rsplit_record
@@ -45,6 +45,6 @@ std::unique_ptr<column> rsplit_record(strings_column_view const& strings,
                                       string_scalar const& delimiter,
                                       size_type maxsplit,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 }  // namespace cudf::strings::detail

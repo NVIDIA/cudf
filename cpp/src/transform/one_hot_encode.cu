@@ -51,7 +51,7 @@ struct ohe_equality_functor {
 std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const& input,
                                                               column_view const& categories,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(input, categories),
                "Mismatch type between input and categories.",
@@ -109,7 +109,7 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
 std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const& input,
                                                               column_view const& categories,
                                                               cuda::stream_ref stream,
-                                                              rmm::device_async_resource_ref mr)
+                                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::one_hot_encode(input, categories, stream, mr);

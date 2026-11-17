@@ -676,6 +676,7 @@ cdef class HybridScanReader:
                 _stream.view().get(),
                 mr.get_mr()
             ))
+        row_mask.set_null_count(mask_view.null_count())
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
     def payload_column_chunks_byte_ranges(
@@ -968,6 +969,7 @@ cdef class HybridScanReader:
                 mask_view
             ))
             more_chunks = self.c_obj.get()[0].has_next_table_chunk()
+        row_mask.set_null_count(mask_view.null_count())
         if not more_chunks:
             self._filter_chunk_data = None
             self._filter = None

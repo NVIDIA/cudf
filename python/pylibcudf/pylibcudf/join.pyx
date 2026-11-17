@@ -1080,8 +1080,7 @@ cdef class FilteredJoin:
     left table should be reused with multiple right tables, use ``MarkJoin``
     instead.
 
-    The object retains the right table and construction memory resource until
-    it is destroyed.
+    The object retains the right table until it is destroyed.
 
     For details, see :cpp:class:`cudf::filtered_join`.
     """
@@ -1116,8 +1115,6 @@ cdef class FilteredJoin:
         cdef table_view c_right = right.view()
         mr = _get_memory_resource(mr)
         self.right = right  # keep filter table alive
-        # The native resource reference does not own the Python resource.
-        self._mr = mr
         with nogil:
             self.c_obj.reset(
                 new cpp_join.filtered_join(
@@ -1222,8 +1219,7 @@ cdef class HashJoin:
     Hash join that builds a hash table from the right table and reuses it
     across subsequent inner, left, or full joins with left tables.
 
-    The object retains the right table and construction memory resource until
-    it is destroyed.
+    The object retains the right table until it is destroyed.
 
     For details, see :cpp:class:`cudf::hash_join`.
     """
@@ -1264,8 +1260,6 @@ cdef class HashJoin:
         cdef table_view c_right = right.view()
         self.right = right  # keep table alive
         mr = _get_memory_resource(mr)
-        # The native resource reference does not own the Python resource.
-        self._mr = mr
         with nogil:
             self.c_obj.reset(
                 new cpp_join.hash_join(

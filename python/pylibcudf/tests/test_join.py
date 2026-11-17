@@ -1,14 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import weakref
-
 import numpy as np
 import pyarrow as pa
 import pytest
 from utils import assert_table_eq
 
-from rmm.pylibrmm.memory_resource import CudaMemoryResource
 from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
@@ -237,32 +234,6 @@ def test_hash_join_non_nullable(left, right, join_type):
     assert sorted(
         zip(*(col.to_pylist() for col in result), strict=True)
     ) == sorted(zip(*(col.to_pylist() for col in expected), strict=True))
-
-
-@pytest.mark.parametrize(
-    "join_class", [plc.join.HashJoin, plc.join.FilteredJoin]
-)
-def test_join_owns_build_inputs(join_class):
-    class Resource(CudaMemoryResource):
-        pass
-
-    right = plc.Table([plc.Column.from_arrow(pa.array([1, 2]))])
-    mr = Resource()
-    mr_ref = weakref.ref(mr)
-    joiner = join_class(right, mr=mr)
-    del right, mr
-    # Probing and destruction must remain safe after the caller drops its owners.
-    assert mr_ref() is not None
-    left = plc.Table([plc.Column.from_arrow(pa.array([2, 3]))])
-    if join_class is plc.join.HashJoin:
-        lg, rg = joiner.inner_join(left)
-        assert list(zip(lg.to_pylist(), rg.to_pylist(), strict=True)) == [
-            (0, 1)
-        ]
-    else:
-        assert joiner.semi_join(left).to_pylist() == [0]
-    del joiner
-    assert mr_ref() is None
 
 
 @pytest.mark.parametrize(

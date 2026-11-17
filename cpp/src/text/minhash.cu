@@ -126,7 +126,7 @@ struct staged_string {
   __device__ inline uint32_t operator()(cudf::size_type pos) const
   {
     auto const rpos = pos - base;
-    if (fully_staged || (rpos + 8 <= staged)) {
+    if (fully_staged || (rpos <= staged - 8)) {
       auto const idx = rpos / 4;
       return __funnelshift_r(words[idx], words[idx + 1], (rpos % 4) * 8);
     }
@@ -143,7 +143,7 @@ struct staged_string {
   __device__ inline char const* data(cudf::size_type pos, cudf::size_type bytes) const
   {
     auto const rpos = pos - base;
-    if (fully_staged || (rpos + bytes <= staged)) {
+    if (fully_staged || (bytes <= staged - rpos)) {
       return reinterpret_cast<char const*>(words) + rpos;
     }
     return d_str + pos;
@@ -579,7 +579,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, fused_min_blocks<hash_value_type>
                             ? 0
                             : static_cast<cudf::size_type>(offsets_itr[row_idx + 1] - offset);
   if (size_bytes == 0) {
-    for (auto i = lane_idx; i < param_count; i += block_size) {
+    for (cudf::thread_index_type i = lane_idx; i < param_count; i += block_size) {
       d_output[i] = 0;
     }
     return;

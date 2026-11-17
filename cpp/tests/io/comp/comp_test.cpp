@@ -27,7 +27,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <limits>
+#include <optional>
+#include <string>
 #include <vector>
 
 using cudf::device_span;
@@ -424,10 +427,26 @@ TEST_F(NvcompConfigTest, Decompression)
 }
 
 struct DecompressionScratchSizesTest : public cudf::test::BaseFixture {
+  // Tests below change these; restore the values inherited from the environment afterwards
+  static constexpr std::array<char const*, 2> env_vars{"LIBCUDF_HOST_DECOMPRESSION",
+                                                       "LIBCUDF_NVCOMP_POLICY"};
+  std::array<std::optional<std::string>, env_vars.size()> saved_env;
+
+  DecompressionScratchSizesTest()
+  {
+    for (size_t i = 0; i < env_vars.size(); ++i) {
+      if (auto const* value = std::getenv(env_vars[i]); value != nullptr) { saved_env[i] = value; }
+    }
+  }
   ~DecompressionScratchSizesTest() override
   {
-    unsetenv("LIBCUDF_HOST_DECOMPRESSION");
-    unsetenv("LIBCUDF_NVCOMP_POLICY");
+    for (size_t i = 0; i < env_vars.size(); ++i) {
+      if (saved_env[i].has_value()) {
+        setenv(env_vars[i], saved_env[i]->c_str(), 1);
+      } else {
+        unsetenv(env_vars[i]);
+      }
+    }
   }
 };
 
@@ -470,9 +489,18 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
     return sizes;
   };
 
-  // nvCOMP (default policy): nvCOMP needs scratch space at least for some codecs
+  // Device decompression with nvCOMP enabled (independent of the inherited environment)
+  unsetenv("LIBCUDF_HOST_DECOMPRESSION");
+  setenv("LIBCUDF_NVCOMP_POLICY", "STABLE", 1);
   auto const nvcomp_sizes = check();
-  EXPECT_TRUE(std::any_of(nvcomp_sizes.begin(), nvcomp_sizes.end(), [](auto s) { return s > 0; }));
+  // ZSTD is only decompressed on the device through nvCOMP, which needs scratch space
+  if (not nvcomp::is_decompression_disabled(nvcomp::compression_type::ZSTD)) {
+    for (size_t i = 0; i < infos.size(); ++i) {
+      if (infos[i].type == compression_type::ZSTD and infos[i].num_pages > 0) {
+        EXPECT_GT(nvcomp_sizes[i], 0) << "element " << i;
+      }
+    }
+  }
   // Host decompression forced on where supported
   setenv("LIBCUDF_HOST_DECOMPRESSION", "ON", 1);
   check();

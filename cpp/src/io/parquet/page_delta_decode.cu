@@ -19,6 +19,7 @@
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
+#include <cuda/std/limits>
 
 namespace cudf::io::parquet::detail {
 
@@ -705,10 +706,19 @@ struct walker {
     return widths + m < end ? widths[m] : 0u;
   }
 
+  /**
+   * @brief Enters mini-block `m`, which holds values.
+   *
+   * Like `delta_binary_decoder::check_mini_block`, flags an error when the mini-block is wider than
+   * 64 bits or its packed values run past the end of the page. A block whose bit-width array runs
+   * past the end leaves `mb_start` past the end too, so it fails the same check.
+   */
   __device__ __forceinline__ void set_bits(uint32_t m)
   {
     bits = width(m);
-    if (bits > word_bits) {
+    if (bits > word_bits || reinterpret_cast<uintptr_t>(mb_start) +
+                                static_cast<size_t>(bits) * passes_per_mb * pass_bytes_per_bit >
+                              reinterpret_cast<uintptr_t>(end)) {
       error = true;
       bits  = 0;
     }
@@ -980,7 +990,10 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
   auto const mini_block_count   = get_uleb128(p, end);
   auto const value_count        = get_uleb128(p, end);
   zigzag128_t const first_value = get_zz128(p, end);
-  if (mini_block_count == 0 or block_size == 0 or (block_size % mini_block_count) != 0 or
+  // The same header checks as `delta_binary_decoder::init_binary_block`
+  constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
+  if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
+      value_count > max_count or (block_size % mini_block_count) != 0 or
       ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
     return static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
   }

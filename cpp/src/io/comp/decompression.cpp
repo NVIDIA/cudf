@@ -27,12 +27,12 @@
 #include <zlib.h>  // uncompress
 #include <zstd.h>
 
+#include <array>
 #include <cstdint>
 #include <cstring>  // memset
 #include <future>
+#include <optional>
 #include <sstream>
-#include <utility>
-#include <vector>
 
 namespace cudf::io::detail {
 
@@ -626,6 +626,60 @@ void host_decompress(compression_type compression,
   CUDF_FAIL("Invalid LIBCUDF_HOST_DECOMPRESSION value: " + env_var);
 }
 
+/**
+ * @brief Device decompression path used for a compression type, as far as scratch space goes.
+ */
+enum class device_decompressor : uint8_t {
+  NONE,           ///< No device decompression: uncompressed data or host decompression forced ON
+  NVCOMP,         ///< nvCOMP batched decompression
+  BROTLI_KERNEL,  ///< nvCOMP disabled; libcudf Brotli kernel, which needs scratch space
+  OTHER_KERNEL,   ///< nvCOMP disabled; a libcudf kernel that does not need scratch space
+};
+
+/**
+ * @brief Resolves which device decompression path is used for the given compression type.
+ *
+ * Reads environment variables and queries (mutex-protected) nvCOMP feature status, so callers
+ * that handle many elements should resolve this once per compression type.
+ */
+[[nodiscard]] device_decompressor get_device_decompressor(compression_type compression)
+{
+  if (compression == compression_type::NONE or
+      get_host_engine_state(compression) == host_engine_state::ON) {
+    return device_decompressor::NONE;
+  }
+
+  auto const nvcomp_type     = to_nvcomp_compression(compression);
+  auto const nvcomp_disabled = nvcomp_type.has_value()
+                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
+                                 : "invalid compression type";
+  if (not nvcomp_disabled) { return device_decompressor::NVCOMP; }
+  return compression == compression_type::BROTLI ? device_decompressor::BROTLI_KERNEL
+                                                 : device_decompressor::OTHER_KERNEL;
+}
+
+/**
+ * @brief Computes the scratch space for `di` given its resolved device decompression path.
+ */
+[[nodiscard]] size_t get_decompression_scratch_size(device_decompressor decompressor,
+                                                    decompression_info const& di,
+                                                    cuda::stream_ref stream)
+{
+  switch (decompressor) {
+    case device_decompressor::NVCOMP:
+      return nvcomp::batched_decompress_temp_size(*to_nvcomp_compression(di.type),
+                                                  di.num_pages,
+                                                  di.max_page_decompressed_size,
+                                                  di.total_decompressed_size,
+                                                  stream);
+    case device_decompressor::BROTLI_KERNEL: return get_gpu_debrotli_scratch_size(di.num_pages);
+    // Only the Brotli kernel requires scratch memory
+    case device_decompressor::NONE:
+    case device_decompressor::OTHER_KERNEL: return 0;
+  }
+  CUDF_FAIL("Invalid device decompressor");
+}
+
 }  // namespace
 
 size_t get_uncompressed_size(compression_type compression, host_span<uint8_t const> src)
@@ -636,26 +690,7 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
 [[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
                                                     cuda::stream_ref stream)
 {
-  if (di.type == compression_type::NONE or
-      get_host_engine_state(di.type) == host_engine_state::ON) {
-    return 0;
-  }
-
-  auto const nvcomp_type     = to_nvcomp_compression(di.type);
-  auto const nvcomp_disabled = nvcomp_type.has_value()
-                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
-                                 : "invalid compression type";
-  if (not nvcomp_disabled) {
-    return nvcomp::batched_decompress_temp_size(nvcomp_type.value(),
-                                                di.num_pages,
-                                                di.max_page_decompressed_size,
-                                                di.total_decompressed_size,
-                                                stream);
-  }
-
-  if (di.type == compression_type::BROTLI) return get_gpu_debrotli_scratch_size(di.num_pages);
-  // only Brotli kernel requires scratch memory
-  return 0;
+  return get_decompression_scratch_size(get_device_decompressor(di.type), di, stream);
 }
 
 void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
@@ -663,47 +698,20 @@ void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
                                      cuda::stream_ref stream)
 {
   CUDF_EXPECTS(infos.size() == sizes.size(), "infos and sizes must have the same size");
-  // How the scratch size of a given compression type is computed. Resolving this requires reading
-  // environment variables and querying (mutex-protected) nvCOMP feature status, which is far too
-  // expensive to repeat for every page of a large file.
-  enum class scratch_kind : uint8_t { NONE, NVCOMP, BROTLI };
-  std::vector<std::pair<compression_type, scratch_kind>> kinds;
-  auto const kind_of = [&](compression_type type) {
-    for (auto const& [t, k] : kinds) {
-      if (t == type) { return k; }
-    }
-    auto kind = scratch_kind::NONE;
-    if (type != compression_type::NONE and get_host_engine_state(type) != host_engine_state::ON) {
-      auto const nvcomp_type     = to_nvcomp_compression(type);
-      auto const nvcomp_disabled = nvcomp_type.has_value()
-                                     ? nvcomp::is_decompression_disabled(*nvcomp_type)
-                                     : "invalid compression type";
-      if (not nvcomp_disabled) {
-        kind = scratch_kind::NVCOMP;
-      } else if (type == compression_type::BROTLI) {
-        kind = scratch_kind::BROTLI;
-      }
-    }
-    kinds.emplace_back(type, kind);
-    return kind;
+  // Resolve the decompression path once per compression type; doing it for every page of a large
+  // file is far too expensive (see `get_device_decompressor`).
+  std::array<std::optional<device_decompressor>,
+             static_cast<std::size_t>(compression_type::ZSTD) + 1>
+    decompressors;
+  auto const decompressor_of = [&](compression_type type) {
+    auto& cached = decompressors.at(static_cast<std::size_t>(type));
+    if (not cached.has_value()) { cached = get_device_decompressor(type); }
+    return *cached;
   };
   for (size_t i = 0; i < infos.size(); ++i) {
     auto const& di = infos[i];
-    if (di.num_pages == 0) {
-      sizes[i] = 0;
-      continue;
-    }
-    switch (kind_of(di.type)) {
-      case scratch_kind::NVCOMP:
-        sizes[i] = nvcomp::batched_decompress_temp_size(*to_nvcomp_compression(di.type),
-                                                        di.num_pages,
-                                                        di.max_page_decompressed_size,
-                                                        di.total_decompressed_size,
-                                                        stream);
-        break;
-      case scratch_kind::BROTLI: sizes[i] = get_gpu_debrotli_scratch_size(di.num_pages); break;
-      default: sizes[i] = 0;
-    }
+    sizes[i] =
+      di.num_pages == 0 ? 0 : get_decompression_scratch_size(decompressor_of(di.type), di, stream);
   }
 }
 
@@ -715,20 +723,17 @@ void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  if (compression == compression_type::NONE or
-      get_host_engine_state(compression) == host_engine_state::ON) {
-    return 0;
-  }
-
-  auto const nvcomp_type     = to_nvcomp_compression(compression);
-  auto const nvcomp_disabled = nvcomp_type.has_value()
-                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
-                                 : "invalid compression type";
+  auto const decompressor = get_device_decompressor(compression);
+  if (decompressor == device_decompressor::NONE) { return 0; }
   CUDF_EXPECTS(
-    !nvcomp_disabled,
+    decompressor == device_decompressor::NVCOMP,
     "Cannot compute decompression scratch size for " + compression_type_name(compression));
-  return nvcomp::batched_decompress_temp_size_ex(
-    nvcomp_type.value(), inputs, max_uncomp_chunk_size, max_total_uncomp_size, stream, mr);
+  return nvcomp::batched_decompress_temp_size_ex(*to_nvcomp_compression(compression),
+                                                 inputs,
+                                                 max_uncomp_chunk_size,
+                                                 max_total_uncomp_size,
+                                                 stream,
+                                                 mr);
 }
 
 [[nodiscard]] bool is_decompression_scratch_size_ex_supported(compression_type compression)

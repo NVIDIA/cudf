@@ -22,8 +22,8 @@ libcudf.
 ## Building
 
 You need an environment that has cudf-polars's own build requirements (libcudf, pylibcudf, a CUDA
-toolkit, Cython, scikit-build-core, cython-cmake) and what cuCascade's io core needs: liburing,
-libcurl, OpenSSL and libnuma (and their headers), and network access to GitHub at configure time
+toolkit, Cython, scikit-build-core, cython-cmake) and what cuCascade's io core needs: liburing and
+OpenSSL (and their headers), and network access to GitHub at configure time
 (for cuCascade, rapids-cmake and the header-only `concurrentqueue`).
 
 From the root of the repository:

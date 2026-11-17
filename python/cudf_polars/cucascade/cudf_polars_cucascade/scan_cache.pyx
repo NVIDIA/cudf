@@ -98,11 +98,11 @@ cdef class ScanCacheConfig:
         self.c_obj.pinning_threads = pinning_threads
         if numa_node is not None:
             self.c_obj.numa_node = <int> numa_node
-        self.c_obj.endpoint = endpoint.encode()
-        self.c_obj.region = region.encode()
-        self.c_obj.access_key = access_key.encode()
-        self.c_obj.secret_key = secret_key.encode()
-        self.c_obj.session_token = session_token.encode()
+        self.c_obj.object_store.endpoint = endpoint.encode()
+        self.c_obj.object_store.region = region.encode()
+        self.c_obj.object_store.access_key = access_key.encode()
+        self.c_obj.object_store.secret_key = secret_key.encode()
+        self.c_obj.object_store.session_token = session_token.encode()
 
 
 cdef class ScanCache:

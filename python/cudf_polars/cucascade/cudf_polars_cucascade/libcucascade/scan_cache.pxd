@@ -18,6 +18,16 @@ ctypedef const uint32_t const_uint32_t
 ctypedef const uint64_t const_uint64_t
 
 
+cdef extern from "cucascade/io/object_store_config.hpp" namespace "cucascade::io" nogil:
+
+    cdef cppclass object_store_config:
+        string endpoint
+        string region
+        string access_key
+        string secret_key
+        string session_token
+
+
 cdef extern from "cucascade/io/scan_cache.hpp" namespace "cucascade::io" nogil:
 
     cdef cppclass scan_cache_config:
@@ -33,11 +43,7 @@ cdef extern from "cucascade/io/scan_cache.hpp" namespace "cucascade::io" nogil:
         long stall_seconds
         size_t pinning_threads
         optional[int] numa_node
-        string endpoint
-        string region
-        string access_key
-        string secret_key
-        string session_token
+        object_store_config object_store
 
 
 cdef extern from "scan_cache.hpp" namespace "cudf_polars_cucascade" nogil:

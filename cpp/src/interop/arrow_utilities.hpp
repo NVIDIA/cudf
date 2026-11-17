@@ -135,8 +135,9 @@ dictionary_indices_types get_dictionary_indices_types(ArrowType storage_type, in
 int initialize_array(ArrowArray* arr, ArrowType storage_type, cudf::column_view column);
 
 /**
- * @brief Return the number of rows of an Arrow array as a cudf row count
+ * @brief Validate the number of rows of an Arrow array and return it as a cudf row count
  *
+ * @throw std::invalid_argument if `num_rows` is negative
  * @throw std::overflow_error if the column, or its offsets child when `requires_offsets_child`,
  * would have more rows than `size_type` can hold
  *
@@ -162,6 +163,7 @@ size_type checked_row_count(int64_t num_rows, bool requires_offsets_child = fals
 template <typename In, typename Out>
 void rebase_offsets(In const* offsets, int64_t first_row, int64_t num_rows, Out* out)
 {
+  // The offsets are assumed to be non-decreasing, so only the last one is range checked.
   auto const first = offsets[first_row];
   CUDF_EXPECTS(static_cast<int64_t>(offsets[first_row + num_rows] - first) <=
                  static_cast<int64_t>(std::numeric_limits<Out>::max()),

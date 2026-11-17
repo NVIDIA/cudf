@@ -851,6 +851,47 @@ TEST_F(FromArrowHostDeviceTest, SpoofedRowCounts)
   }
 }
 
+TEST_F(FromArrowHostDeviceTest, LargeListSlicedOffsets)
+{
+  using LCW = cudf::test::lists_column_wrapper<int32_t>;
+
+  nanoarrow::UniqueSchema schema;
+  NANOARROW_THROW_NOT_OK(ArrowSchemaInitFromType(schema.get(), NANOARROW_TYPE_LARGE_LIST));
+  NANOARROW_THROW_NOT_OK(ArrowSchemaSetType(schema->children[0], NANOARROW_TYPE_INT32));
+
+  // Rows: [2, 3], [], [4, 5, 6], [7, 8, 9], []. The int64 offsets are {0, 2, 2, 5, 8, 8}, so the
+  // slice below starts at a non-zero offset and has to be rebased to zero.
+  nanoarrow::UniqueArray array;
+  NANOARROW_THROW_NOT_OK(ArrowArrayInitFromSchema(array.get(), schema.get(), nullptr));
+  NANOARROW_THROW_NOT_OK(ArrowArrayStartAppending(array.get()));
+  for (auto const& row : std::vector<std::vector<int32_t>>{{2, 3}, {}, {4, 5, 6}, {7, 8, 9}, {}}) {
+    for (auto const value : row) {
+      NANOARROW_THROW_NOT_OK(ArrowArrayAppendInt(array->children[0], value));
+    }
+    NANOARROW_THROW_NOT_OK(ArrowArrayFinishElement(array.get()));
+  }
+  NANOARROW_THROW_NOT_OK(
+    ArrowArrayFinishBuilding(array.get(), NANOARROW_VALIDATION_LEVEL_MINIMAL, nullptr));
+
+  auto input = as_host_device_array(array);
+
+  // The full array.
+  {
+    auto expected = LCW{{2, 3}, {}, {4, 5, 6}, {7, 8, 9}, {}};
+    auto got      = cudf::from_arrow_host_column(schema.get(), &input);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, got->view());
+  }
+
+  // Rows 1 to 3.
+  {
+    input.array.offset = 1;
+    input.array.length = 3;
+    auto expected      = LCW{{}, {4, 5, 6}, {7, 8, 9}};
+    auto got           = cudf::from_arrow_host_column(schema.get(), &input);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, got->view());
+  }
+}
+
 TEST_F(FromArrowHostDeviceTest, StructColumn)
 {
   // Create cudf table

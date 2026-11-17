@@ -490,10 +490,11 @@ std::tuple<std::unique_ptr<column>, int64_t, int64_t> get_offsets_column(
   // Large-lists must be copied to int32 column
   auto int64_offsets = static_cast<int64_t const*>(offsets_buffer);
   auto const offset  = int64_offsets[input->offset];
-  auto const length  = int64_offsets[input->offset + input->length] - offset;
   // Left uninitialized, rebase_offsets checks the bounds and then writes every entry
   auto int32_offsets = std::make_unique_for_overwrite<int32_t[]>(input->length + 1);
   rebase_offsets(int64_offsets, input->offset, input->length, int32_offsets.get());
+  // The last rebased offset is the length of the child range
+  auto const length = static_cast<int64_t>(int32_offsets[input->length]);
 
   offsets_buffers[fixed_width_data_buffer_idx] = int32_offsets.get();
   offsets_array.offset                         = 0;  // already accounted for by rebase_offsets

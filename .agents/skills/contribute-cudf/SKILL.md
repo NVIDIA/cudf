@@ -7,7 +7,7 @@ description: Use this skill before writing or changing code or tests in the cudf
 
 cudf adds new code only when nothing existing does the job, and keeps what it adds concise. Run steps 1 and 2 on the files you plan to touch before writing code, and steps 3 to 6 on the diff before opening the PR and before each later push.
 
-The author is the human you work for: they open the PR, as a draft. Push, and post or edit PR text and replies, only when they tell you to (see "Automated and AI-assisted contributions" in `CONTRIBUTING.md`).
+Push, open the PR, and post or edit PR text and replies only when the user tells you to (see "Automated and AI-assisted contributions" in `CONTRIBUTING.md`).
 
 ```bash
 # REMOTE is the remote that tracks NVIDIA/cudf: `upstream` in a fork, `origin` in a direct clone.
@@ -56,14 +56,14 @@ gh pr list --repo NVIDIA/cudf --state open --limit 400 --json number,title,isDra
 
 - A new file has no history: use the sibling file it is modelled on and the helpers it calls.
 - Follow what reviewers settled on this code. Reintroduce something a reviewer removed only when the task needs it, and give the reason in the PR description.
-- If an open PR changes the same functions (`gh pr diff <N>`), report it to the author before writing.
+- If an open PR changes the same functions (`gh pr diff <N>`), tell the user before writing.
 
 ## 2. Write only what does not exist
 
 For each kernel, loop, functor, helper, type, fixture, or generator you are about to add, name the operation it performs and search for an existing one in the directories [references/reuse-map.md](references/reuse-map.md) lists for cudf, CCCL, and cuco. Do not skip the search: tell the user which directories you searched and what you found.
 
 - A copy or near-copy of existing logic stays only when the existing code cannot give the required semantics, or with a measured performance, build-time, or binary-size gain from an A/B of the branch with and without it (run it as the `perf-compare-cudf` skill does). A fast path added for speed needs the same measurement.
-- If the existing code is private to another file, share it when its responsibilities and dependencies fit both callers. Otherwise report the duplication to the author before widening the change.
+- If the existing code is private to another file, share it when its responsibilities and dependencies fit both callers. Otherwise report the duplication to the user before widening the change.
 - Two blocks in your own diff that differ by a constant, type, or flag become one helper or one parameter. Derive each value once.
 
 ## 3. Add only the tests that are missing
@@ -97,6 +97,6 @@ Read `git diff $BASE` hunk by hunk, leaving code it only moves as it was.
 
 - Keep `.github/PULL_REQUEST_TEMPLATE.md` and its checklist. The title becomes the changelog line: imperative, user-facing names, and no claim beyond what the diff does.
 - Description: one short paragraph on what changes, how, and why. Add `closes #N` when an issue exists, every public API or behavior change and whether it is breaking, the existing tests that cover the change if you added none, and overlapping open PRs.
-- A measured gain goes in the description in one line. Draft the benchmark table for the author to post as a PR comment, with both commits, the GPU, and the exact command.
+- A measured gain goes in the description in one line. Draft the benchmark table for the user to post as a PR comment, with both commits, the GPU, and the exact command.
 - Leave out test and validation logs, agent reports, and tool or co-author lines. Disclose AI assistance in one plain sentence, as `CONTRIBUTING.md` asks.
 - Re-read the title and description against the diff before every push.

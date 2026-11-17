@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -6,7 +6,6 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
 
 
@@ -47,6 +46,19 @@ def test_series_upsample_simple():
         gsr.resample("3min").sum(),
         check_index=False,
     )
+
+
+def test_series_resample_preserves_frequency():
+    index = pd.DatetimeIndex(
+        pd.date_range("2020-01-01", freq="D", periods=3).to_numpy()
+    )
+    psr = pd.Series(range(3), index=index)
+    gsr = cudf.from_pandas(psr)
+
+    expected = psr.resample("D").max()
+    result = gsr.resample("D").max()
+
+    assert_eq(result, expected, check_dtype=False, check_index_type=False)
 
 
 @pytest.mark.parametrize("rule", ["2s", "10s"])
@@ -144,26 +156,22 @@ def test_dataframe_resample_level():
 
 
 @pytest.mark.parametrize(
-    "in_freq, sampling_freq, out_freq",
+    "in_freq, sampling_freq",
     [
-        ("1ns", "1us", "us"),
-        ("1us", "10us", "us"),
-        ("ms", "100us", "us"),
-        ("ms", "1s", "s"),
-        ("s", "1min", "s"),
-        ("1min", "30s", "s"),
-        ("1D", "10D", "s"),
-        ("10D", "1D", "s"),
+        ("1ns", "1us"),
+        ("1us", "10us"),
+        ("ms", "100us"),
+        ("ms", "1s"),
+        ("s", "1min"),
+        ("1min", "30s"),
+        ("1D", "10D"),
+        ("10D", "1D"),
     ],
 )
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
-def test_resampling_frequency_conversion(in_freq, sampling_freq, out_freq):
+def test_resampling_frequency_conversion(in_freq, sampling_freq):
     rng = np.random.default_rng(seed=0)
-    # test that we cast to the appropriate frequency
-    # when resampling:
+    # Pandas resample preserves the input column's unit; verify cuDF
+    # matches that behavior across sampling frequencies.
     pdf = pd.DataFrame(
         {
             "x": rng.standard_normal(size=100),
@@ -175,13 +183,9 @@ def test_resampling_frequency_conversion(in_freq, sampling_freq, out_freq):
     got = gdf.resample(sampling_freq, on="y").mean()
     assert_resample_results_equal(expect, got)
 
-    assert got.index.dtype == np.dtype(f"datetime64[{out_freq}]")
+    assert got.index.dtype == pdf["y"].dtype
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
 def test_resampling_downsampling_ms():
     pdf = pd.DataFrame(
         {
@@ -194,3 +198,52 @@ def test_resampling_downsampling_ms():
     result = gdf.resample("10ms", on="time").mean()
     result.index = result.index.astype("datetime64[ns]")
     assert_eq(result, expected, check_freq=False)
+
+
+@pytest.mark.parametrize("input_unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("freq", ["D", "h", "30min"])
+@pytest.mark.parametrize(
+    "agg", ["mean", "sum", "min", "max", "first", "last", "count", "var"]
+)
+def test_resample_empty_preserves_input_unit_and_freq(input_unit, freq, agg):
+    # Resample on an empty datetime index must preserve the input column's
+    # unit (pandas behavior; cuDF previously collapsed to [s] for D/h offsets)
+    # and must keep the offset attached to the result index.
+    idx = pd.DatetimeIndex([], dtype=f"datetime64[{input_unit}]", name="t")
+    pser = pd.Series([], index=idx, dtype=float)
+    gser = cudf.from_pandas(pser)
+
+    expected = getattr(pser.resample(freq), agg)()
+    actual = getattr(gser.resample(freq), agg)()
+
+    assert actual.index.dtype == expected.index.dtype
+    assert_eq(actual, expected, check_dtype=False, check_index_type=False)
+
+
+def test_resample_size_matches_pandas_with_empty_buckets():
+    # GroupBy.size bypasses _Resampler.agg, so the freq has to be re-attached
+    # by the size override; empty buckets must come back as 0 (not NaN), and
+    # the result must be sorted by bin label like pandas.
+    idx = pd.date_range("2020-01-01", periods=4, freq="1h")
+    pser = pd.Series(range(4), index=idx)
+    gser = cudf.from_pandas(pser)
+
+    expected = pser.resample("30min").size()
+    actual = gser.resample("30min").size()
+
+    assert_eq(actual, expected, check_dtype=False, check_index_type=False)
+
+    # Empty case
+    idx_empty = pd.DatetimeIndex([], dtype="datetime64[us]", name="t")
+    pser_empty = pd.Series([], index=idx_empty, dtype=float)
+    gser_empty = cudf.from_pandas(pser_empty)
+
+    expected_empty = pser_empty.resample("h").size()
+    actual_empty = gser_empty.resample("h").size()
+
+    assert_eq(
+        actual_empty,
+        expected_empty,
+        check_dtype=False,
+        check_index_type=False,
+    )

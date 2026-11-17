@@ -1,10 +1,13 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
 import datetime
 import io
 import pathlib
+import subprocess
+import sys
+import textwrap
 
 import fastavro
 import numpy as np
@@ -12,7 +15,6 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
 from cudf.testing.dataset_generator import rand_dataframe
 
@@ -188,7 +190,7 @@ def test_can_parse_no_data(avro_type_params):
     reason="cudf avro reader is unable to parse zero-field metadata."
 )
 def test_can_parse_no_fields(avro_type_params):
-    avro_type, expected_dtype = avro_type_params
+    _avro_type, _expected_dtype = avro_type_params
     schema_root = {
         "name": "root",
         "type": "record",
@@ -226,7 +228,7 @@ def test_avro_decompression(set_decomp_env_vars, rows, codec):
 
     # N.B. rand_dataframe() is brutally slow for some reason.  Switching to
     #      np.random() speeds things up by a factor of 10.
-    #      See also: https://github.com/rapidsai/cudf/issues/13128
+    #      See also: https://github.com/NVIDIA/cudf/issues/13128
     df = rand_dataframe(
         [
             {"dtype": "int32", "null_frequency": 0, "cardinality": 1000},
@@ -294,10 +296,6 @@ def get_days_from_epoch(date: datetime.date | None) -> int | None:
 
 
 @pytest.mark.parametrize("namespace", [None, "root_ns"])
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas (datetime(9999, ...) too large)",
-)
 def test_can_parse_avro_date_logical_type(namespace, nullable, prepend_null):
     avro_type = {"logicalType": "date", "type": "int"}
     if nullable:
@@ -363,7 +361,7 @@ def test_alltypes_plain_avro():
     # added simply to verify we fixed the problematic code path that was
     # causing CUDA kernel crashes.
     #
-    # See https://github.com/rapidsai/cudf/pull/12788#issuecomment-1468822875
+    # See https://github.com/NVIDIA/cudf/pull/12788#issuecomment-1468822875
     # for more information.
     relpath = "../../../../java/src/test/resources/alltypes_plain.avro"
     path = pathlib.Path(__file__).parent.parent.joinpath(relpath).resolve()
@@ -423,18 +421,20 @@ def test_alltypes_plain_avro():
 
     data = [{column: row[column] for column in columns} for row in records]
 
-    # discard timezone information as we don't support it:
     expected = pd.DataFrame(data)
-    expected["timestamp_col"].dt.tz_localize(None)
 
     # The fastavro.reader supports the `'logicalType': 'timestamp-micros'` used
     # by the 'timestamp_col' column, which is converted into Python
     # datetime.datetime() objects (see output of pprint(records[0]) above).
-    # As we don't support that logical type yet in cudf, we need to convert to
-    # int64, then divide by 1000 to convert from nanoseconds to microseconds.
-    timestamps = expected["timestamp_col"].astype("int64")
-    timestamps //= 1000
-    expected["timestamp_col"] = timestamps
+    # cudf reads this column as int64 (raw microseconds) because the logical
+    # type appears inside a union schema (['timestamp-micros', 'null']), so we
+    # convert the expected datetime values to int64 microseconds to match.
+    expected["timestamp_col"] = (
+        expected["timestamp_col"]
+        .dt.tz_convert(None)
+        .astype("datetime64[us]")
+        .astype("int64")
+    )
 
     # Furthermore, we need to force the 'int_col' into an int32, per the schema
     # definition.  (It ends up as an int64 due to cudf.DataFrame() defaulting
@@ -594,7 +594,7 @@ def test_avro_reader_multiblock(
         # We don't use rand_dataframe() here, because it increases the
         # execution time of each test by a factor of 10 or more (it appears
         # to use a very costly approach to generating random data).
-        # See also: https://github.com/rapidsai/cudf/issues/13128
+        # See also: https://github.com/NVIDIA/cudf/issues/13128
         values = rng.random(total_rows).astype(dtype)
         bytes_per_row = values.dtype.itemsize
 
@@ -644,3 +644,32 @@ def test_avro_reader_multiblock(
     actual_df = cudf.read_avro(buffer, skiprows=skip_rows, num_rows=num_rows)
 
     assert_eq(expected_df, actual_df)
+
+
+def test_avro_reader_no_hang_on_truncated_schema(datadir):
+    path = datadir / "avro" / "hang_input.avro"
+    assert path.is_file(), path
+
+    script = textwrap.dedent(
+        f"""
+        import cudf
+        try:
+            cudf.read_avro({str(path)!r})
+        except Exception:
+            pass
+        """
+    )
+
+    timeout_s = 10
+    try:
+        subprocess.run(
+            [sys.executable, "-c", script],
+            timeout=timeout_s,
+            check=False,
+            capture_output=True,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"cudf.read_avro hung on malformed input {path.name!r} "
+            f"(no completion within {timeout_s}s)"
+        )

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,11 +8,12 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 
-#include <rmm/cuda_stream.hpp>
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <src/io/fst/logical_stack.cuh>
 
@@ -24,6 +25,13 @@
 
 namespace {
 namespace fst = cudf::io::fst;
+
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
 
 /**
  * @brief Generates the sparse representation of stack operations to feed into the logical
@@ -152,8 +160,8 @@ TEST_F(LogicalStackTest, GroundTruth)
   constexpr SymbolT read_symbol = 'x';
 
   // Prepare cuda stream for data transfers & kernels
-  rmm::cuda_stream stream{};
-  rmm::cuda_stream_view stream_view(stream);
+  auto stream = make_stream();
+  cuda::stream_ref stream_view{stream.get()};
 
   // Test input,
   std::string input = R"(  {)"
@@ -190,33 +198,24 @@ TEST_F(LogicalStackTest, GroundTruth)
                           std::back_inserter(stack_symbols),
                           std::back_inserter(stack_op_indexes));
 
-  rmm::device_uvector<SymbolT> d_stack_ops{stack_symbols.size(), stream_view};
-  rmm::device_uvector<SymbolOffsetT> d_stack_op_indexes{stack_op_indexes.size(), stream_view};
-  cudf::detail::hostdevice_vector<SymbolT> top_of_stack_gpu{string_size, stream_view};
-  cudf::device_span<SymbolOffsetT> d_stack_op_idx_span{d_stack_op_indexes};
-
-  CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_ops.data(),
-                                stack_symbols.data(),
-                                stack_symbols.size() * sizeof(SymbolT),
-                                cudaMemcpyDefault,
-                                stream.value()));
-
-  CUDF_CUDA_TRY(cudaMemcpyAsync(d_stack_op_indexes.data(),
-                                stack_op_indexes.data(),
-                                stack_op_indexes.size() * sizeof(SymbolOffsetT),
-                                cudaMemcpyDefault,
-                                stream.value()));
-
+  auto d_stack_ops = cudf::detail::make_device_buffer_async(
+    stack_symbols, stream_view, cudf::get_current_device_resource_ref());
+  auto d_stack_op_indexes = cudf::detail::make_device_buffer_async(
+    stack_op_indexes, stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolT> top_of_stack_gpu{
+    string_size, stream_view, cudf::get_current_device_resource_ref()};
   // Run algorithm
-  fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT, StackLevelT>(
-    d_stack_ops.data(),
-    d_stack_op_idx_span,
-    JSONToStackOp{},
-    top_of_stack_gpu.device_ptr(),
-    empty_stack_symbol,
-    read_symbol,
-    string_size,
-    stream.value());
+  fst::sparse_stack_op_to_top_of_stack<fst::stack_op_support::NO_RESET_SUPPORT,
+                                       StackLevelT,
+                                       SymbolT*,
+                                       SymbolOffsetT>(d_stack_ops.data(),
+                                                      d_stack_op_indexes,
+                                                      JSONToStackOp{},
+                                                      top_of_stack_gpu.device_ptr(),
+                                                      empty_stack_symbol,
+                                                      read_symbol,
+                                                      string_size,
+                                                      stream.get());
 
   // Async copy results from device to host
   top_of_stack_gpu.device_to_host_async(stream_view);
@@ -231,7 +230,7 @@ TEST_F(LogicalStackTest, GroundTruth)
                   std::back_inserter(top_of_stack_cpu));
 
   // Make sure results have been copied back to host
-  stream.synchronize();
+  stream.sync();
 
   // Verify results
   ASSERT_EQ(string_size, top_of_stack_cpu.size());

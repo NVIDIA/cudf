@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,12 +10,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for removing specified characters from the ends of each string.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_modify
  * @{
- * @file
  */
 
 /**
@@ -49,12 +53,11 @@ namespace strings {
  * @param mr Device memory resource used to allocate the returned column's device memory.
  * @return New strings column.
  */
-std::unique_ptr<column> strip(
-  strings_column_view const& input,
-  side_type side                    = side_type::BOTH,
-  string_scalar const& to_strip     = string_scalar(""),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> strip(strings_column_view const& input,
+                              side_type side                = side_type::BOTH,
+                              string_scalar const& to_strip = string_scalar(""),
+                              cuda::stream_ref stream       = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

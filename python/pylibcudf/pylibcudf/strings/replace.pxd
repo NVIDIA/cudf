@@ -1,11 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
-from rmm.pylibrmm.stream cimport Stream
 
 
 cpdef Column replace(
@@ -13,7 +12,7 @@ cpdef Column replace(
     Scalar target,
     Scalar repl,
     size_type maxrepl=*,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 cpdef Column replace_multiple(
@@ -21,7 +20,7 @@ cpdef Column replace_multiple(
     Column target,
     Column repl,
     size_type maxrepl=*,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )
 cpdef Column replace_slice(
@@ -29,6 +28,6 @@ cpdef Column replace_slice(
     Scalar repl=*,
     size_type start=*,
     size_type stop=*,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*,
 )

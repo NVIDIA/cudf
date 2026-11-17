@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -19,7 +19,6 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.types cimport null_order, order
 
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
-from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
 from .table cimport Table
@@ -45,32 +44,34 @@ cdef class GroupBy:
     cdef unique_ptr[vector[order]] _column_order
     cdef unique_ptr[vector[null_order]] _null_precedence
 
-    cpdef tuple aggregate(
-        self, list requests, Stream stream=*, DeviceMemoryResource mr=*
+    cpdef tuple[Table, list[Table]] aggregate(
+        self, list requests, object stream = *, DeviceMemoryResource mr=*
     )
-    cpdef tuple scan(self, list requests, Stream stream=*, DeviceMemoryResource mr=*)
-    cpdef tuple shift(
+    cpdef tuple[Table, list[Table]] scan(
+        self, list requests, object stream = *, DeviceMemoryResource mr=*
+    )
+    cpdef tuple[Table, Table] shift(
         self,
         Table values,
         list offset,
         list fill_values,
-        Stream stream=*,
+        object stream = *,
         DeviceMemoryResource mr=*,
     )
-    cpdef tuple replace_nulls(
+    cpdef tuple[Table, Table] replace_nulls(
         self,
         Table values,
         list replace_policies,
-        Stream stream=*,
+        object stream = *,
         DeviceMemoryResource mr=*,
     )
-    cpdef tuple get_groups(
-        self, Table values=*, Stream stream=*, DeviceMemoryResource mr=*
+    cpdef tuple[list[int], Table, object] get_groups(
+        self, Table values=*, object stream = *, DeviceMemoryResource mr=*
     )
 
     @staticmethod
-    cdef tuple _parse_outputs(
+    cdef tuple[Table, list[Table]] _parse_outputs(
         pair[unique_ptr[table], vector[aggregation_result]] c_res,
-        Stream stream,
+        object stream,
         DeviceMemoryResource mr,
     )

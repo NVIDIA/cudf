@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: Document StructFunction to remove noqa
 # ruff: noqa: D101
@@ -10,17 +10,18 @@ from enum import IntEnum, auto
 from io import StringIO
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-import polars as pl
+import polars as pl  # noqa: TC002 (used at runtime for pl.Struct, pl.Series etc.)
 
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
     from typing import Self
 
-    from polars import polars  # type: ignore[attr-defined]
+    from polars import _plr as polars
 
     from cudf_polars.containers import DataFrame, DataType
 
@@ -32,12 +33,13 @@ class StructFunction(Expr):
         """Internal and picklable representation of polars' `StructFunction`."""
 
         FieldByName = auto()
+        DropFields = auto()
         RenameFields = auto()
         PrefixFields = auto()
         SuffixFields = auto()
         JsonEncode = auto()
-        WithFields = auto()  # TODO: https://github.com/rapidsai/cudf/issues/19284
-        MapFieldNames = auto()  # TODO: https://github.com/rapidsai/cudf/issues/19285
+        WithFields = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19284
+        MapFieldNames = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19285
         FieldByIndex = auto()
         MultipleFields = (
             auto()
@@ -95,7 +97,7 @@ class StructFunction(Expr):
                 (
                     i
                     for i, field in enumerate(
-                        cast(pl.Struct, self.children[0].dtype.polars_type).fields
+                        cast("pl.Struct", self.children[0].dtype.polars_type).fields
                     )
                     if field.name == self.options[0]
                 ),
@@ -107,8 +109,16 @@ class StructFunction(Expr):
                 dtype=self.dtype,
             )
         elif self.name == StructFunction.Name.JsonEncode:
-            # Once https://github.com/rapidsai/cudf/issues/19338 is implemented,
+            # Once https://github.com/NVIDIA/cudf/issues/19338 is implemented,
             # we can use do this conversion on host.
+            if column.size == 0:
+                # write_json emits no lines for an empty input, which makes
+                # from_iterable_of_py unable to infer a dtype. Skip the
+                # round-trip and return a typed empty column.
+                return Column(
+                    make_empty_column(self.dtype, df.stream),
+                    dtype=self.dtype,
+                )
             buff = StringIO()
             target = plc.io.SinkInfo([buff])
             table = plc.Table(column.obj.children())
@@ -117,7 +127,7 @@ class StructFunction(Expr):
                 [
                     (field.name, [])
                     for field in cast(
-                        pl.Struct, self.children[0].dtype.polars_type
+                        "pl.Struct", self.children[0].dtype.polars_type
                     ).fields
                 ],
             )

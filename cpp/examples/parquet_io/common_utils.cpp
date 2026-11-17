@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,12 +7,14 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/io/types.hpp>
-#include <cudf/join/filtered_join.hpp>
+#include <cudf/table/equality.hpp>
 #include <cudf/table/table_view.hpp>
 
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/owning_wrapper.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/stream>
 
 #include <chrono>
 #include <iomanip>
@@ -24,14 +26,13 @@
  *
  */
 
-std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(bool is_pool_used)
+cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used)
 {
-  auto cuda_mr = std::make_shared<rmm::mr::cuda_memory_resource>();
   if (is_pool_used) {
-    return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(
-      cuda_mr, rmm::percent_of_free_device_memory(50));
+    return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                         rmm::percent_of_free_device_memory(80)};
   }
-  return cuda_mr;
+  return rmm::mr::cuda_async_memory_resource{};
 }
 
 cudf::io::column_encoding get_encoding_type(std::string name)
@@ -85,26 +86,16 @@ bool get_boolean(std::string input)
 
 void check_tables_equal(cudf::table_view const& lhs_table,
                         cudf::table_view const& rhs_table,
-                        rmm::cuda_stream_view stream)
+                        cuda::stream_ref stream)
 {
-  try {
-    // Left anti-join the original and transcoded tables identical tables should not throw an
-    // exception and return an empty indices vector
-    cudf::filtered_join join_obj(
-      lhs_table, cudf::null_equality::EQUAL, cudf::set_as_build_table::RIGHT, stream);
-    auto const indices = join_obj.anti_join(rhs_table, stream);
-
-    // No exception thrown, check indices
-    auto const valid = indices->size() == 0;
-    std::cout << "Tables identical: " << valid << "\n\n";
-  } catch (std::exception& e) {
-    std::cerr << e.what() << std::endl << std::endl;
-    throw std::runtime_error("Tables identical: false\n\n");
-  }
+  auto const tables_equal =
+    cudf::tables_equal(lhs_table, rhs_table, cudf::null_equality::EQUAL, stream);
+  std::cout << "Tables identical: " << std::boolalpha << tables_equal << "\n\n";
+  if (not tables_equal) { throw std::logic_error("Table equality check failed"); }
 }
 
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
-                                                rmm::cuda_stream_view stream)
+                                                cuda::stream_ref stream)
 {
   if (tables.size() == 1) { return std::move(tables[0]); }
 

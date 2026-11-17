@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,7 +9,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace lists::detail {
 /**
  * @copydoc cudf::lists::concatenate_rows
@@ -18,8 +18,8 @@ namespace lists::detail {
  */
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
-                                         rmm::cuda_stream_view stream,
-                                         rmm::device_async_resource_ref mr);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::lists::concatenate_list_elements
@@ -28,8 +28,8 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
  */
 std::unique_ptr<column> concatenate_list_elements(column_view const& input,
                                                   concatenate_null_policy null_policy,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr);
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr);
 
 }  // namespace lists::detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

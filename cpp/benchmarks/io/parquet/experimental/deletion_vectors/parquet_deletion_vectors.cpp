@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,8 @@
 
 #include <cudf/io/experimental/deletion_vectors.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 #include <roaring/roaring64.h>
@@ -44,7 +46,7 @@ auto serialize_roaring_bitmap(roaring64_bitmap_t const* roaring_bitmap)
  *
  * @return Host vector of expected row indices
  */
-auto build_row_indices(cudf::host_span<size_t const> row_group_offsets,
+auto build_row_indices(cudf::host_span<std::size_t const> row_group_offsets,
                        cudf::host_span<cudf::size_type const> row_group_num_rows,
                        cudf::size_type num_rows)
 {
@@ -57,7 +59,7 @@ auto build_row_indices(cudf::host_span<size_t const> row_group_offsets,
     row_group_num_rows.begin(), row_group_num_rows.end(), row_group_span_offsets.begin() + 1);
 
   // Expected row indices data
-  auto expected_row_indices = thrust::host_vector<size_t>(num_rows);
+  auto expected_row_indices = thrust::host_vector<std::size_t>(num_rows);
   std::fill(expected_row_indices.begin(), expected_row_indices.end(), 1);
 
   // Scatter row group row offsets to expected row indices
@@ -67,14 +69,15 @@ auto build_row_indices(cudf::host_span<size_t const> row_group_offsets,
                   expected_row_indices.begin());
 
   // Inclusive scan to compute the rest of the expected row indices
-  std::for_each(
-    thrust::counting_iterator(0), thrust::counting_iterator(num_row_groups), [&](auto i) {
-      auto start_row_index = row_group_span_offsets[i];
-      auto end_row_index   = row_group_span_offsets[i + 1];
-      thrust::inclusive_scan(expected_row_indices.begin() + start_row_index,
-                             expected_row_indices.begin() + end_row_index,
-                             expected_row_indices.begin() + start_row_index);
-    });
+  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                cuda::counting_iterator{num_row_groups},
+                [&](cudf::size_type i) {
+                  auto start_row_index = row_group_span_offsets[i];
+                  auto end_row_index   = row_group_span_offsets[i + 1];
+                  thrust::inclusive_scan(expected_row_indices.begin() + start_row_index,
+                                         expected_row_indices.begin() + end_row_index,
+                                         expected_row_indices.begin() + start_row_index);
+                });
 
   return expected_row_indices;
 }
@@ -90,7 +93,7 @@ auto build_row_indices(cudf::host_span<size_t const> row_group_offsets,
  *
  * @return Serialized roaring64 bitmap buffer
  */
-auto build_deletion_vector(cudf::host_span<size_t const> row_group_offsets,
+auto build_deletion_vector(cudf::host_span<std::size_t const> row_group_offsets,
                            cudf::host_span<cudf::size_type const> row_group_num_rows,
                            cudf::size_type num_rows,
                            float deletion_probability)
@@ -112,8 +115,8 @@ auto build_deletion_vector(cudf::host_span<size_t const> row_group_offsets,
   auto roaring64_context =
     roaring64_bulk_context_t{.high_bytes = {0, 0, 0, 0, 0, 0}, .leaf = nullptr};
 
-  std::for_each(thrust::counting_iterator<size_t>(0),
-                thrust::counting_iterator<size_t>(num_rows),
+  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                cuda::counting_iterator{num_rows},
                 [&](auto row_idx) {
                   // Insert provided host row index if the row is deleted in the row mask
                   if (not input_row_mask[row_idx]) {
@@ -158,12 +161,12 @@ auto setup_table_and_deletion_vector(nvbench::state& state)
   }
 
   // Row offsets for each row group - arbitrary, only used to build the index column
-  auto row_group_offsets = std::vector<size_t>(num_row_groups);
-  row_group_offsets[0]   = static_cast<size_t>(std::llround(2e9));
+  auto row_group_offsets = std::vector<std::size_t>(num_row_groups);
+  row_group_offsets[0]   = static_cast<std::size_t>(std::llround(2e9));
   std::for_each(
-    thrust::counting_iterator<size_t>(1),
-    thrust::counting_iterator<size_t>(num_row_groups),
-    [&](auto i) { row_group_offsets[i] = std::llround(row_group_offsets[i - 1] + 0.5e9); });
+    cuda::counting_iterator<int>{1}, cuda::counting_iterator{num_row_groups}, [&](auto i) {
+      row_group_offsets[i] = std::llround(row_group_offsets[i - 1] + 0.5e9);
+    });
 
   // Row group splits
   auto row_group_splits = std::vector<cudf::size_type>(num_row_groups - 1);
@@ -222,7 +225,7 @@ void BM_parquet_deletion_vectors(nvbench::state& state)
   };
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_opts.get_source().filepaths());
@@ -263,7 +266,7 @@ void BM_parquet_chunked_deletion_vectors(nvbench::state& state)
 
   auto num_chunks       = 0;
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                drop_page_cache_if_enabled(read_opts.get_source().filepaths());

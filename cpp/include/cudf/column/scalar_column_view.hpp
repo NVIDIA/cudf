@@ -18,7 +18,7 @@ namespace CUDF_EXPORT cudf {
  *
  * Unless otherwise noted, the memory layout of the `scalar_column_view`'s data and
  * bitmask is expected to adhere to the Arrow Physical Memory Layout
- * Specification: https://arrow.apache.org/docs/memory_layout.html
+ * Specification: https://arrow.apache.org/docs/format/Columnar.html#format-columnar
  *
  * Because `scalar_column_view` is non-owning, no device memory is allocated nor freed
  * when `scalar_column_view` objects are created or destroyed.

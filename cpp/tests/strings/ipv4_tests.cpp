@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/strings/convert/convert_ipv4.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -23,8 +23,7 @@ TEST_F(StringsConvertTest, IPv4ToIntegers)
   cudf::test::strings_column_wrapper strings(
     h_strings.cbegin(),
     h_strings.cend(),
-    thrust::make_transform_iterator(h_strings.begin(),
-                                    [](auto const str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto const str) { return str != nullptr; }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::ipv4_to_integers(strings_view);
@@ -33,8 +32,7 @@ TEST_F(StringsConvertTest, IPv4ToIntegers)
   cudf::test::fixed_width_column_wrapper<uint32_t> expected(
     h_expected.cbegin(),
     h_expected.cend(),
-    thrust::make_transform_iterator(h_strings.begin(),
-                                    [](auto const str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto const str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -45,15 +43,13 @@ TEST_F(StringsConvertTest, IntegersToIPv4)
   cudf::test::strings_column_wrapper strings(
     h_strings.cbegin(),
     h_strings.cend(),
-    thrust::make_transform_iterator(h_strings.begin(),
-                                    [](auto const str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto const str) { return str != nullptr; }));
 
   std::vector<uint32_t> h_column{3232235521, 167772161, 0, 0, 700055553, 700776449};
   cudf::test::fixed_width_column_wrapper<uint32_t> column(
     h_column.cbegin(),
     h_column.cend(),
-    thrust::make_transform_iterator(h_strings.begin(),
-                                    [](auto const str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto const str) { return str != nullptr; }));
 
   auto results = cudf::strings::integers_to_ipv4(column);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, strings);
@@ -90,9 +86,9 @@ TEST_F(StringsConvertTest, IsIPv4)
                                      "9.1.2.3.4",
                                      "8.9"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::test::fixed_width_column_wrapper<bool> expected(
     {0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0},
     {true, true, false, true, true, true, true, true, true, true, true, true});

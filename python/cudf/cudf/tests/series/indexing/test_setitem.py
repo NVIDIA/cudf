@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
+import operator
 
 import cupy as cp
 import numpy as np
@@ -9,10 +10,8 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
-from cudf.core.buffer.spill_manager import get_global_manager
 from cudf.testing import assert_eq
-from cudf.testing._utils import assert_exceptions_equal, expect_warning_if
+from cudf.testing._utils import assert_exceptions_equal
 
 
 @pytest.mark.parametrize(
@@ -102,30 +101,16 @@ def test_series_slice_setitem_struct():
     assert_eq(actual, expected)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
-@pytest.mark.parametrize("dtype", [np.int32, np.int64, np.float32, np.float64])
+@pytest.mark.parametrize("dtype", [np.int32, np.int64, np.float32])
 @pytest.mark.parametrize("indices", [0, [1, 2]])
-def test_series_setitem_upcasting(dtype, indices):
+def test_series_setitem_upcasting_raises(dtype, indices):
     sr = pd.Series([0, 0, 0], dtype=dtype)
     cr = cudf.from_pandas(sr)
-    assert_eq(sr, cr)
-    # Must be a non-integral floating point value that can't be losslessly
-    # converted to float32, otherwise pandas will try and match the source
-    # column dtype.
     new_value = np.float64(np.pi)
-    col_ref = cr._column
-    with expect_warning_if(dtype != np.float64):
+    with pytest.raises(TypeError):
         sr[indices] = new_value
-    with expect_warning_if(dtype != np.float64):
+    with pytest.raises(TypeError):
         cr[indices] = new_value
-    assert_eq(sr, cr)
-
-    if dtype == np.float64:
-        # no-op type cast should not modify backing column
-        assert col_ref == cr._column
 
 
 @pytest.mark.parametrize(
@@ -178,11 +163,10 @@ def test_series_setitem_upcasting_string_column():
 
 def test_series_setitem_upcasting_string_value():
     sr = cudf.Series([0, 0, 0], dtype=int)
-    # This is a distinction with pandas, which lets you instead make an
-    # object column with ["10", 0, 0]
-    sr[0] = "10"
-    assert_eq(pd.Series([10, 0, 0], dtype=int), sr)
-    with pytest.raises(ValueError):
+    # Matches pandas: assigning a string scalar to a numeric column raises.
+    with pytest.raises(TypeError, match="Invalid value"):
+        sr[0] = "10"
+    with pytest.raises(TypeError, match="Invalid value"):
         sr[0] = "non-integer"
 
 
@@ -239,7 +223,7 @@ def test_series_set_item_range_index(ps, arg):
     assert_eq(psr, gsr, check_index_type=True)
 
 
-@pytest.mark.xfail(reason="https://github.com/rapidsai/cudf/issues/7448")
+@pytest.mark.xfail(reason="https://github.com/NVIDIA/cudf/issues/7448")
 def test_iloc_setitem_7448():
     index = pd.MultiIndex.from_product([(1, 2), (3, 4)])
     expect = cudf.Series([1, 2, 3, 4], index=index)
@@ -428,339 +412,235 @@ def test_null_copy():
     assert len(col) == 2049
 
 
-@pytest.mark.parametrize(
-    "copy_on_write, expected",
-    [
-        (True, [1, 2, 3, 4, 5]),
-        (False, [1, 100, 3, 4, 5]),
-    ],
-)
-def test_series_setitem_cow(copy_on_write, expected):
-    with cudf.option_context("copy_on_write", copy_on_write):
-        actual = cudf.Series([1, 2, 3, 4, 5])
-        new_copy = actual.copy(deep=False)
+def test_series_setitem_cow():
+    actual = cudf.Series([1, 2, 3, 4, 5])
+    new_copy = actual.copy(deep=False)
 
-        actual[1] = 100
-        assert_eq(actual, cudf.Series([1, 100, 3, 4, 5]))
-        assert_eq(new_copy, cudf.Series(expected))
+    actual[1] = 100
+    assert_eq(actual, cudf.Series([1, 100, 3, 4, 5]))
+    assert_eq(new_copy, cudf.Series([1, 2, 3, 4, 5]))
 
 
-def test_series_setitem_both_slice_cow_on():
-    with cudf.option_context("copy_on_write", True):
-        actual = cudf.Series([1, 2, 3, 4, 5])
-        new_copy = actual.copy(deep=False)
+def test_series_setitem_both_slice():
+    actual = cudf.Series([1, 2, 3, 4, 5])
+    new_copy = actual.copy(deep=False)
 
-        actual[slice(0, 2, 1)] = 100
-        assert_eq(actual, cudf.Series([100, 100, 3, 4, 5]))
-        assert_eq(new_copy, cudf.Series([1, 2, 3, 4, 5]))
+    actual[slice(0, 2, 1)] = 100
+    assert_eq(actual, cudf.Series([100, 100, 3, 4, 5]))
+    assert_eq(new_copy, cudf.Series([1, 2, 3, 4, 5]))
 
-        new_copy[slice(2, 4, 1)] = 300
-        assert_eq(actual, cudf.Series([100, 100, 3, 4, 5]))
-        assert_eq(new_copy, cudf.Series([1, 2, 300, 300, 5]))
-
-
-def test_series_setitem_both_slice_cow_off():
-    with cudf.option_context("copy_on_write", False):
-        actual = cudf.Series([1, 2, 3, 4, 5])
-        new_copy = actual.copy(deep=False)
-
-        actual[slice(0, 2, 1)] = 100
-        assert_eq(actual, cudf.Series([100, 100, 3, 4, 5]))
-        assert_eq(new_copy, cudf.Series([100, 100, 3, 4, 5]))
-
-        new_copy[slice(2, 4, 1)] = 300
-        assert_eq(actual, cudf.Series([100, 100, 300, 300, 5]))
-        assert_eq(new_copy, cudf.Series([100, 100, 300, 300, 5]))
+    new_copy[slice(2, 4, 1)] = 300
+    assert_eq(actual, cudf.Series([100, 100, 3, 4, 5]))
+    assert_eq(new_copy, cudf.Series([1, 2, 300, 300, 5]))
 
 
-def test_series_setitem_partial_slice_cow_on():
-    with cudf.option_context("copy_on_write", True):
-        actual = cudf.Series([1, 2, 3, 4, 5])
-        new_copy = actual.copy(deep=False)
+def test_series_setitem_partial_slice():
+    actual = cudf.Series([1, 2, 3, 4, 5])
+    new_copy = actual.copy(deep=False)
 
-        new_copy[slice(2, 4, 1)] = 300
-        assert_eq(actual, cudf.Series([1, 2, 3, 4, 5]))
-        assert_eq(new_copy, cudf.Series([1, 2, 300, 300, 5]))
+    new_copy[slice(2, 4, 1)] = 300
+    assert_eq(actual, cudf.Series([1, 2, 3, 4, 5]))
+    assert_eq(new_copy, cudf.Series([1, 2, 300, 300, 5]))
 
-        new_slice = actual[2:]
-        assert new_slice._column.data.owner == actual._column.data.owner
-        new_slice[0:2] = 10
-        assert_eq(new_slice, cudf.Series([10, 10, 5], index=[2, 3, 4]))
-        assert_eq(actual, cudf.Series([1, 2, 3, 4, 5]))
-
-
-def test_series_setitem_partial_slice_cow_off():
-    with cudf.option_context("copy_on_write", False):
-        actual = cudf.Series([1, 2, 3, 4, 5])
-        new_copy = actual.copy(deep=False)
-
-        new_copy[slice(2, 4, 1)] = 300
-        assert_eq(actual, cudf.Series([1, 2, 300, 300, 5]))
-        assert_eq(new_copy, cudf.Series([1, 2, 300, 300, 5]))
-
-        new_slice = actual[2:]
-        # Since COW is off, a slice should point to the same memory
-        ptr1 = new_slice._column.data.ptr
-        ptr2 = actual._column.data.ptr
-        assert ptr1 == ptr2
-
-        new_slice[0:2] = 10
-        assert_eq(new_slice, cudf.Series([10, 10, 5], index=[2, 3, 4]))
-        assert_eq(actual, cudf.Series([1, 2, 10, 10, 5]))
+    new_slice = actual[2:]
+    assert new_slice._column.data.owner == actual._column.data.owner
+    new_slice[0:2] = 10
+    assert_eq(new_slice, cudf.Series([10, 10, 5], index=[2, 3, 4]))
+    assert_eq(actual, cudf.Series([1, 2, 3, 4, 5]))
 
 
 def test_multiple_series_cow():
-    with cudf.option_context("copy_on_write", True):
-        # Verify constructing, modifying, deleting
-        # multiple copies of a series preserves
-        # the data appropriately when COW is enabled.
-        s = cudf.Series([10, 20, 30, 40, 50])
-        s1 = s.copy(deep=False)
-        s2 = s.copy(deep=False)
-        s3 = s.copy(deep=False)
-        s4 = s2.copy(deep=False)
-        s5 = s4.copy(deep=False)
-        s6 = s3.copy(deep=False)
+    # Verify constructing, modifying, deleting
+    # multiple copies of a series preserves
+    # the data appropriately when COW is enabled.
+    s = cudf.Series([10, 20, 30, 40, 50])
+    s1 = s.copy(deep=False)
+    s2 = s.copy(deep=False)
+    s3 = s.copy(deep=False)
+    s4 = s2.copy(deep=False)
+    s5 = s4.copy(deep=False)
+    s6 = s3.copy(deep=False)
 
-        s1[0:3] = 10000
-        # s1 will be unlinked from actual data in s,
-        # and then modified. Rest all should
-        # contain the original data.
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        for ser in [s, s2, s3, s4, s5, s6]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    s1[0:3] = 10000
+    # s1 will be unlinked from actual data in s,
+    # and then modified. Rest all should
+    # contain the original data.
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    for ser in [s, s2, s3, s4, s5, s6]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        s6[0:3] = 3000
-        # s6 will be unlinked from actual data in s,
-        # and then modified. Rest all should
-        # contain the original data.
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        for ser in [s2, s3, s4, s5]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    s6[0:3] = 3000
+    # s6 will be unlinked from actual data in s,
+    # and then modified. Rest all should
+    # contain the original data.
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    for ser in [s2, s3, s4, s5]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        s2[1:4] = 4000
-        # s2 will be unlinked from actual data in s,
-        # and then modified. Rest all should
-        # contain the original data.
-        assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        for ser in [s3, s4, s5]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    s2[1:4] = 4000
+    # s2 will be unlinked from actual data in s,
+    # and then modified. Rest all should
+    # contain the original data.
+    assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    for ser in [s3, s4, s5]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        s4[2:4] = 5000
-        # s4 will be unlinked from actual data in s,
-        # and then modified. Rest all should
-        # contain the original data.
-        assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
-        assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        for ser in [s3, s5]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    s4[2:4] = 5000
+    # s4 will be unlinked from actual data in s,
+    # and then modified. Rest all should
+    # contain the original data.
+    assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
+    assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    for ser in [s3, s5]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        s5[2:4] = 6000
-        # s5 will be unlinked from actual data in s,
-        # and then modified. Rest all should
-        # contain the original data.
-        assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
-        assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
-        assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        for ser in [s3]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    s5[2:4] = 6000
+    # s5 will be unlinked from actual data in s,
+    # and then modified. Rest all should
+    # contain the original data.
+    assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
+    assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
+    assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    for ser in [s3]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        s7 = s5.copy(deep=False)
-        assert_eq(s7, cudf.Series([10, 20, 6000, 6000, 50]))
-        s7[1:3] = 55
-        # Making a copy of s5, i.e., s7 and modifying shouldn't
-        # be touching/modifying data in other series.
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
+    s7 = s5.copy(deep=False)
+    assert_eq(s7, cudf.Series([10, 20, 6000, 6000, 50]))
+    s7[1:3] = 55
+    # Making a copy of s5, i.e., s7 and modifying shouldn't
+    # be touching/modifying data in other series.
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
-        assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
-        assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        for ser in [s3]:
-            assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
+    assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
+    assert_eq(s2, cudf.Series([10, 4000, 4000, 4000, 50]))
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    for ser in [s3]:
+        assert_eq(ser, cudf.Series([10, 20, 30, 40, 50]))
 
-        # Deleting any of the following series objects
-        # shouldn't delete rest of the weekly referenced data
-        # elsewhere.
+    # Deleting any of the following series objects
+    # shouldn't delete rest of the weekly referenced data
+    # elsewhere.
 
-        del s2
+    del s2
 
-        assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
-        assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
-        assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
-        assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
+    assert_eq(s1, cudf.Series([10000, 10000, 10000, 40, 50]))
+    assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
+    assert_eq(s4, cudf.Series([10, 20, 5000, 5000, 50]))
+    assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
-        del s4
-        del s1
+    del s4
+    del s1
 
-        assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
-        assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
-        assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
+    assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
+    assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
+    assert_eq(s6, cudf.Series([3000, 3000, 3000, 40, 50]))
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
-        del s
-        del s6
+    del s
+    del s6
 
-        assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
-        assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
+    assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
+    assert_eq(s5, cudf.Series([10, 20, 6000, 6000, 50]))
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
-        del s5
+    del s5
 
-        assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
+    assert_eq(s3, cudf.Series([10, 20, 30, 40, 50]))
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
-        del s3
-        assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
-
-
-def test_series_zero_copy_cow_on():
-    with cudf.option_context("copy_on_write", True):
-        s = cudf.Series([1, 2, 3, 4, 5])
-        s1 = s.copy(deep=False)
-        cp_array = cp.asarray(s)
-
-        # Ensure all original data & zero-copied
-        # data is same.
-        assert_eq(s, cudf.Series([1, 2, 3, 4, 5]))
-        assert_eq(s1, cudf.Series([1, 2, 3, 4, 5]))
-        assert_eq(cp_array, cp.array([1, 2, 3, 4, 5]))
-
-        cp_array[0:3] = 10
-
-        assert_eq(s.to_numpy(), np.array([10, 10, 10, 4, 5]))
-        assert_eq(s, cudf.Series([10, 10, 10, 4, 5]))
-        assert_eq(s1, cudf.Series([10, 10, 10, 4, 5]))
-        assert_eq(cp_array, cp.array([10, 10, 10, 4, 5]))
-
-        s2 = cudf.Series(cp_array)
-        assert_eq(s2, cudf.Series([10, 10, 10, 4, 5]))
-
-        s3 = s2.copy(deep=False)
-        cp_array[0] = 20
-
-        assert_eq(s, cudf.Series([20, 10, 10, 4, 5]))
-        assert_eq(s1, cudf.Series([20, 10, 10, 4, 5]))
-        assert_eq(cp_array, cp.array([20, 10, 10, 4, 5]))
-        assert_eq(s2, cudf.Series([20, 10, 10, 4, 5]))
-        assert_eq(s3, cudf.Series([20, 10, 10, 4, 5]))
-
-        s4 = cudf.Series([10, 20, 30, 40, 50])
-        s5 = cudf.Series(s4)
-        assert_eq(s5, cudf.Series([10, 20, 30, 40, 50]))
-        s5[0:2] = 1
-        # Modifying `s5` should also modify `s4`
-        # because they are zero-copied.
-        assert_eq(s5, cudf.Series([1, 1, 30, 40, 50]))
-        assert_eq(s4, cudf.Series([1, 1, 30, 40, 50]))
+    del s3
+    assert_eq(s7, cudf.Series([10, 55, 55, 6000, 50]))
 
 
-def test_series_zero_copy_cow_off():
-    is_spill_enabled = get_global_manager() is not None
+def test_series_zero_copy_cow():
+    s = cudf.Series([1, 2, 3, 4, 5])
+    s1 = s.copy(deep=False)
+    cp_array = cp.asarray(s)
 
-    with cudf.option_context("copy_on_write", False):
-        s = cudf.Series([1, 2, 3, 4, 5])
-        s1 = s.copy(deep=False)
-        cp_array = cp.asarray(s)
+    # Ensure all original data & zero-copied
+    # data is same.
+    assert_eq(s, cudf.Series([1, 2, 3, 4, 5]))
+    assert_eq(s1, cudf.Series([1, 2, 3, 4, 5]))
+    assert_eq(cp_array, cp.array([1, 2, 3, 4, 5]))
 
-        # Ensure all original data & zero-copied
-        # data is same.
-        assert_eq(s, cudf.Series([1, 2, 3, 4, 5]))
-        assert_eq(s1, cudf.Series([1, 2, 3, 4, 5]))
-        assert_eq(cp_array, cp.array([1, 2, 3, 4, 5]))
+    cp_array[0:3] = 10
 
-        cp_array[0:3] = 10
-        # When COW is off, modifying a zero-copied array
-        # will need to modify `s` & `s1` since they are
-        # shallow copied.
+    assert_eq(s.to_numpy(), np.array([10, 10, 10, 4, 5]))
+    assert_eq(s, cudf.Series([10, 10, 10, 4, 5]))
+    assert_eq(s1, cudf.Series([10, 10, 10, 4, 5]))
+    assert_eq(cp_array, cp.array([10, 10, 10, 4, 5]))
 
-        assert_eq(s, cudf.Series([10, 10, 10, 4, 5]))
-        assert_eq(s1, cudf.Series([10, 10, 10, 4, 5]))
-        assert_eq(cp_array, cp.array([10, 10, 10, 4, 5]))
+    s2 = cudf.Series(cp_array)
+    assert_eq(s2, cudf.Series([10, 10, 10, 4, 5]))
 
-        s2 = cudf.Series(cp_array)
-        assert_eq(s2, cudf.Series([10, 10, 10, 4, 5]))
-        s3 = s2.copy(deep=False)
-        cp_array[0] = 20
+    s3 = s2.copy(deep=False)
+    cp_array[0] = 20
 
-        # Modifying `cp_array`, will propagate the changes
-        # across all Series objects, because they are
-        # either shallow copied or zero-copied.
+    assert_eq(s, cudf.Series([20, 10, 10, 4, 5]))
+    assert_eq(s1, cudf.Series([20, 10, 10, 4, 5]))
+    assert_eq(cp_array, cp.array([20, 10, 10, 4, 5]))
+    assert_eq(s2, cudf.Series([20, 10, 10, 4, 5]))
+    assert_eq(s3, cudf.Series([20, 10, 10, 4, 5]))
 
-        assert_eq(s, cudf.Series([20, 10, 10, 4, 5]))
-        assert_eq(s1, cudf.Series([20, 10, 10, 4, 5]))
-        assert_eq(cp_array, cp.array([20, 10, 10, 4, 5]))
-        if not is_spill_enabled:
-            # Since spilling might make a copy of the data, we cannot
-            # expect the two series to be a zero-copy of the cupy array
-            # when spilling is enabled globally.
-            assert_eq(s2, cudf.Series([20, 10, 10, 4, 5]))
-            assert_eq(s3, cudf.Series([20, 10, 10, 4, 5]))
-
-        s4 = cudf.Series([10, 20, 30, 40, 50])
-        s5 = cudf.Series(s4)
-        assert_eq(s5, cudf.Series([10, 20, 30, 40, 50]))
-        s5[0:2] = 1
-
-        # Modifying `s5` should also modify `s4`
-        # because they are zero-copied.
-        assert_eq(s5, cudf.Series([1, 1, 30, 40, 50]))
-        assert_eq(s4, cudf.Series([1, 1, 30, 40, 50]))
+    s4 = cudf.Series([10, 20, 30, 40, 50])
+    s5 = cudf.Series(s4)
+    assert_eq(s5, cudf.Series([10, 20, 30, 40, 50]))
+    s5[0:2] = 1
+    # With CoW, modifying `s5` should NOT modify `s4`.
+    assert_eq(s5, cudf.Series([1, 1, 30, 40, 50]))
+    assert_eq(s4, cudf.Series([10, 20, 30, 40, 50]))
 
 
-@pytest.mark.parametrize("copy_on_write", [True, False])
-def test_series_str_copy(copy_on_write):
-    with cudf.option_context("copy_on_write", copy_on_write):
-        s = cudf.Series(["a", "b", "c", "d", "e"])
-        s1 = s.copy(deep=True)
-        s2 = s.copy(deep=True)
+def test_series_str_copy():
+    s = cudf.Series(["a", "b", "c", "d", "e"])
+    s1 = s.copy(deep=True)
+    s2 = s.copy(deep=True)
 
-        assert_eq(s, cudf.Series(["a", "b", "c", "d", "e"]))
-        assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
-        assert_eq(s2, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s2, cudf.Series(["a", "b", "c", "d", "e"]))
 
-        s[0:3] = "abc"
+    s[0:3] = "abc"
 
-        assert_eq(s, cudf.Series(["abc", "abc", "abc", "d", "e"]))
-        assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
-        assert_eq(s2, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s, cudf.Series(["abc", "abc", "abc", "d", "e"]))
+    assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s2, cudf.Series(["a", "b", "c", "d", "e"]))
 
-        s2[1:4] = "xyz"
+    s2[1:4] = "xyz"
 
-        assert_eq(s, cudf.Series(["abc", "abc", "abc", "d", "e"]))
-        assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
-        assert_eq(s2, cudf.Series(["a", "xyz", "xyz", "xyz", "e"]))
+    assert_eq(s, cudf.Series(["abc", "abc", "abc", "d", "e"]))
+    assert_eq(s1, cudf.Series(["a", "b", "c", "d", "e"]))
+    assert_eq(s2, cudf.Series(["a", "xyz", "xyz", "xyz", "e"]))
 
 
-@pytest.mark.parametrize("copy_on_write", [True, False])
-def test_series_cat_copy(copy_on_write):
-    with cudf.option_context("copy_on_write", copy_on_write):
-        s = cudf.Series([10, 20, 30, 40, 50], dtype="category")
-        s1 = s.copy(deep=True)
-        s2 = s1.copy(deep=True)
-        s3 = s1.copy(deep=True)
+def test_series_cat_copy():
+    s = cudf.Series([10, 20, 30, 40, 50], dtype="category")
+    s1 = s.copy(deep=True)
+    s2 = s1.copy(deep=True)
+    s3 = s1.copy(deep=True)
 
-        s[0] = 50
-        assert_eq(s, cudf.Series([50, 20, 30, 40, 50], dtype=s.dtype))
-        assert_eq(s1, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
-        assert_eq(s2, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
-        assert_eq(s3, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
+    s[0] = 50
+    assert_eq(s, cudf.Series([50, 20, 30, 40, 50], dtype=s.dtype))
+    assert_eq(s1, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
+    assert_eq(s2, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
+    assert_eq(s3, cudf.Series([10, 20, 30, 40, 50], dtype="category"))
 
-        s2[3] = 10
-        s3[2:5] = 20
-        assert_eq(s, cudf.Series([50, 20, 30, 40, 50], dtype=s.dtype))
-        assert_eq(s1, cudf.Series([10, 20, 30, 40, 50], dtype=s.dtype))
-        assert_eq(s2, cudf.Series([10, 20, 30, 10, 50], dtype=s.dtype))
-        assert_eq(s3, cudf.Series([10, 20, 20, 20, 20], dtype=s.dtype))
+    s2[3] = 10
+    s3[2:5] = 20
+    assert_eq(s, cudf.Series([50, 20, 30, 40, 50], dtype=s.dtype))
+    assert_eq(s1, cudf.Series([10, 20, 30, 40, 50], dtype=s.dtype))
+    assert_eq(s2, cudf.Series([10, 20, 30, 10, 50], dtype=s.dtype))
+    assert_eq(s3, cudf.Series([10, 20, 20, 20, 20], dtype=s.dtype))
 
 
 @pytest.mark.parametrize(
@@ -845,11 +725,11 @@ def test_series_setitem_decimal(data, dtype, item, to, expect):
         assert_eq(data, expect)
 
 
-def test_categorical_setitem_with_nan():
+def test_categorical_setitem_with_na():
     gs = cudf.Series(
         [1, 2, np.nan, 10, np.nan, None], nan_as_null=False
     ).astype("category")
-    gs[[1, 3]] = np.nan
+    gs[[1, 3]] = None
 
     expected_series = cudf.Series(
         [1, np.nan, np.nan, np.nan, np.nan, None], nan_as_null=False
@@ -857,10 +737,6 @@ def test_categorical_setitem_with_nan():
     assert_eq(gs, expected_series)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "key, value",
     [
@@ -871,7 +747,6 @@ def test_categorical_setitem_with_nan():
         (slice(0, 2), [4, 5]),
         (slice(1, None), [4, 5, 6, 7]),
         ([], 1),
-        ([], []),
         (slice(None, None), 1),
         (slice(-1, -3), 7),
     ],
@@ -884,15 +759,18 @@ def test_series_setitem_basics(key, value, nulls):
     elif nulls == "all":
         psr[:] = None
     gsr = cudf.from_pandas(psr)
-    with expect_warning_if(
-        isinstance(value, list) and len(value) == 0 and nulls == "none"
-    ):
-        psr[key] = value
-    with expect_warning_if(
-        isinstance(value, list) and len(value) == 0 and not len(key) == 0
-    ):
-        gsr[key] = value
+    psr[key] = value
+    gsr[key] = value
     assert_eq(psr, gsr, check_dtype=False)
+
+
+def test_series_setitem_empty_list_raises():
+    psr = pd.Series([1, 2, 3, 4, 5])
+    gsr = cudf.Series([1, 2, 3, 4, 5])
+    with pytest.raises(TypeError):
+        psr[[]] = []
+    with pytest.raises(TypeError):
+        gsr[[]] = []
 
 
 def test_series_setitem_null():
@@ -914,26 +792,18 @@ def test_series_setitem_null():
 @pytest.mark.parametrize(
     "key, value",
     [
-        (0, 0.5),
-        ([0, 1], 0.5),
         ([0, 1], [0.5, 2.5]),
         (slice(0, 2), [0.5, 0.25]),
     ],
 )
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Fails in older versions of pandas",
-)
-def test_series_setitem_dtype(key, value):
+def test_series_setitem_upcasting_list_like_raises(key, value):
     psr = pd.Series([1, 2, 3], dtype="int32")
     gsr = cudf.from_pandas(psr)
 
-    with pytest.warns(FutureWarning):
+    with pytest.raises(TypeError):
         psr[key] = value
-    with pytest.warns(FutureWarning):
+    with pytest.raises(TypeError):
         gsr[key] = value
-
-    assert_eq(psr, gsr)
 
 
 def test_series_setitem_datetime():
@@ -1023,4 +893,125 @@ def test_out_of_bounds_indexing():
     assert_exceptions_equal(
         lambda: psr.__setitem__([0, 1, -4], 2),
         lambda: gsr.__setitem__([0, 1, -4], 2),
+    )
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["datetime64[ns]", "datetime64[us]", "timedelta64[ns]", "timedelta64[us]"],
+)
+@pytest.mark.parametrize("value", [0, 1, 0.0, 1.5])
+def test_temporal_setitem_numeric_scalar_pandas_compat(dtype, value):
+    # cuDF must reject scalar int/float assignment into datetime/timedelta
+    # columns under pandas-compatible mode (pyarrow would silently coerce
+    # them to epoch values).
+    psr = pd.Series([1, 2, 3], dtype=dtype)
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=psr.__setitem__,
+            rfunc=gsr.__setitem__,
+            lfunc_args_and_kwargs=([0, value], {}),
+            rfunc_args_and_kwargs=([0, value], {}),
+        )
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    ["datetime64[ns]", "datetime64[us]", "timedelta64[ns]", "timedelta64[us]"],
+)
+def test_temporal_setitem_numeric_array_pandas_compat(dtype):
+    # cuDF must reject numeric array assignment into temporal columns
+    # under pandas-compatible mode.
+    psr = pd.Series([1, 2, 3], dtype=dtype)
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=psr.__setitem__,
+            rfunc=gsr.__setitem__,
+            lfunc_args_and_kwargs=([[0, 1], pd.Series([0, 1])], {}),
+            rfunc_args_and_kwargs=([[0, 1], cudf.Series([0, 1])], {}),
+        )
+
+
+@pytest.mark.parametrize("value", [None, np.nan, pd.NA])
+def test_bool_setitem_null_pandas_compat(value):
+    # bool dtype cannot hold NA without dtype change; pandas raises
+    # TypeError when assigning a null-like into a bool column.
+    psr = pd.Series([True, False, True])
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=psr.__setitem__,
+            rfunc=gsr.__setitem__,
+            lfunc_args_and_kwargs=([0, value], {}),
+            rfunc_args_and_kwargs=([0, value], {}),
+        )
+
+
+@pytest.mark.parametrize("value", [1, 1.5, True, [1, 2]])
+def test_string_setitem_non_string_pandas_compat(value):
+    # pandas string dtype rejects non-string values (int/float/bool/etc.)
+    # cuDF must raise TypeError to match.
+    psr = pd.Series(["a", "b", "c"], dtype="str")
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        if isinstance(value, list):
+            assert_exceptions_equal(
+                lfunc=psr.__setitem__,
+                rfunc=gsr.__setitem__,
+                lfunc_args_and_kwargs=([[0, 1], value], {}),
+                rfunc_args_and_kwargs=([[0, 1], value], {}),
+            )
+        else:
+            assert_exceptions_equal(
+                lfunc=psr.__setitem__,
+                rfunc=gsr.__setitem__,
+                lfunc_args_and_kwargs=([0, value], {}),
+                rfunc_args_and_kwargs=([0, value], {}),
+            )
+
+
+@pytest.mark.parametrize("dtype", ["int8", "int16", "int32", "int64"])
+def test_int_setitem_lossy_float_array_pandas_compat(dtype):
+    # pandas rejects float→int array assignment when values can't be
+    # losslessly cast (have non-zero fractional parts).
+    psr = pd.Series([10, 11, 12], dtype=dtype)
+    gsr = cudf.from_pandas(psr)
+    with cudf.option_context("mode.pandas_compatible", True):
+        assert_exceptions_equal(
+            lfunc=psr.__setitem__,
+            rfunc=gsr.__setitem__,
+            lfunc_args_and_kwargs=(
+                [[0, 1], pd.Series([0.5, 1.5], index=[0, 1])],
+                {},
+            ),
+            rfunc_args_and_kwargs=(
+                [[0, 1], cudf.Series([0.5, 1.5], index=[0, 1])],
+                {},
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        np.datetime64("NaT", "ns"),
+        np.timedelta64("NaT", "ns"),
+        [np.timedelta64("NaT", "ns"), np.timedelta64("NaT", "ns")],
+        [np.datetime64("2020-01-01", "ns")] * 2,
+    ],
+)
+def test_series_setitem_temporal_into_numeric_raises(value):
+    # Assigning a datetime64/timedelta64 scalar or array into a numeric
+    # Series is invalid (exercises both the scalar and array branches of
+    # NumericalColumn._cast_setitem_value).
+    key = slice(0, 2) if isinstance(value, list) else 0
+    ps = pd.Series([1, 2, 3])
+    gs = cudf.from_pandas(ps)
+    assert_exceptions_equal(
+        lfunc=operator.setitem,
+        rfunc=operator.setitem,
+        lfunc_args_and_kwargs=([ps, key, value],),
+        rfunc_args_and_kwargs=([gs, key, value],),
     )

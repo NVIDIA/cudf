@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -16,10 +16,12 @@ import pylibcudf as plc
 import cudf
 from cudf.core.column.column import (
     ColumnBase,
+    ColumnList,
     PylibcudfFunction,
     as_column,
     column_empty,
     int32_same_kind_policy,
+    same_dtype_policy,
 )
 from cudf.core.dtype.conversions import element_type_from_list_dtype
 from cudf.core.dtype.validators import is_dtype_obj_list
@@ -43,12 +45,29 @@ if TYPE_CHECKING:
 class ListColumn(ColumnBase):
     _VALID_BINARY_OPERATIONS = {"__add__", "__radd__", "__eq__", "__ne__"}
 
+    def _plc_memory_usage(self, col: plc.Column) -> int:
+        n = self._plc_memory_usage_buffers(col)
+        if col.size() == 0 or col.num_children() == 0:
+            return n
+
+        offsets = col.list_view().offsets()
+        offsets_typestr: str = offsets.type().typestr  # type: ignore[assignment]
+        n += (col.size() + 1) * np.dtype(offsets_typestr).itemsize
+
+        sliced_child = col.list_view().get_sliced_child()
+        child = ColumnBase.create(
+            sliced_child, self.element_type, validate=False
+        )
+        return n + child._plc_memory_usage(sliced_child)
+
     def _get_sliced_child(self) -> ColumnBase:
         """Get a child column properly sliced to match the parent's view."""
         sliced_plc_col = self.plc_column.list_view().get_sliced_child()
         return ColumnBase.create(sliced_plc_col, self.element_type)
 
-    def _prep_pandas_compat_repr(self) -> StringColumn | Self:
+    def _prep_pandas_compat_repr(
+        self, nan_rep: str | None = None
+    ) -> StringColumn | Self:
         """
         Preprocess Column to be compatible with pandas repr, namely handling nulls.
 
@@ -73,7 +92,7 @@ class ListColumn(ColumnBase):
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
         # Lists only support __add__, which concatenates lists.
-        reflect, op = self._check_reflected_op(op)
+        _reflect, op = self._check_reflected_op(op)
         if not isinstance(other, type(self)):
             return NotImplemented
         if is_dtype_obj_list(other.dtype):
@@ -162,6 +181,8 @@ class ListColumn(ColumnBase):
                 raise TypeError(
                     f"Cannot cast a list from {self.dtype} to {dtype}"
                 )
+        if isinstance(dtype, np.dtype) and dtype.kind == "U":
+            dtype = np.dtype("object")
         lc = self._transform_leaves(
             lambda col, dtype: col.as_string_column(dtype), dtype
         )
@@ -174,6 +195,14 @@ class ListColumn(ColumnBase):
                 ),
                 self._string_separators,
             )
+            # format_list_column converts top-level nulls to the na_rep
+            # string ("None"). Re-apply the original null mask so that
+            # top-level nulls remain as actual nulls, matching pandas.
+            if self.null_count > 0:
+                plc_column = plc_column.with_mask(
+                    self.plc_column.null_mask(),
+                    self.null_count,
+                )
             return cast(
                 "cudf.core.column.string.StringColumn",
                 ColumnBase.create(plc_column, dtype),
@@ -381,18 +410,12 @@ class ListColumn(ColumnBase):
             )
 
     def concatenate_rows(self, other_columns: list[ColumnBase]) -> ColumnBase:
-        with self.access(mode="read", scope="internal"):
-            return ColumnBase.create(
-                plc.lists.concatenate_rows(
-                    plc.Table(
-                        [
-                            col.plc_column
-                            for col in itertools.chain([self], other_columns)
-                        ]
-                    )
-                ),
-                self.dtype,
-            )
+        return PylibcudfFunction(
+            plc.lists.concatenate_rows,
+            same_dtype_policy,
+        ).execute_with_args(
+            ColumnList(*itertools.chain([self], other_columns))
+        )
 
     def concatenate_list_elements(self, dropna: bool) -> ColumnBase:
         with self.access(mode="read", scope="internal"):

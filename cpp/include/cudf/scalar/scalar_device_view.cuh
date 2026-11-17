@@ -1,9 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/detail/utilities/assert.cuh>
+#include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
@@ -239,6 +241,8 @@ class numeric_scalar_device_view : public detail::fixed_width_scalar_device_view
 
 /**
  * @brief A type of scalar_device_view that stores a pointer to a fixed_point value
+ *
+ * @tparam T The fixed-point value type
  */
 template <typename T>
 class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
@@ -259,11 +263,54 @@ class fixed_point_scalar_device_view : public detail::scalar_device_view_base {
   }
 
   /**
-   * @brief Stores the value in scalar
+   * @brief Returns the fixed-point value as type `T`
    *
-   * @param value The value to store in scalar
+   * Unlike `fixed_point_scalar<T>::value()`, this returns the fixed-point value rather than its
+   * underlying representation.
+   *
+   * @return The fixed-point value as type `T`
    */
-  __device__ void set_value(rep_type value) { *_data = value; }
+  [[nodiscard]] __device__ T value() const noexcept
+  {
+    return T{numeric::scaled_integer<rep_type>{*_data, numeric::scale_type{this->type().scale()}}};
+  }
+
+  /**
+   * @brief Stores the underlying representation in the scalar
+   *
+   * The scalar's scale and validity are unchanged.
+   *
+   * @param value The representation to store in the scalar
+   */
+  __device__ void set_rep(rep_type value) { *_data = value; }
+
+  /**
+   * @brief Stores the underlying representation in the scalar
+   *
+   * @deprecated Deprecated in release 27.02 and will be removed in a future release.
+   * Use `set_rep()` instead.
+   *
+   * Equivalent to `set_rep(value)`.
+   *
+   * @param value The representation to store in the scalar
+   */
+  [[deprecated("Use set_rep() instead.")]] __device__ void set_value(rep_type value)
+  {
+    set_rep(value);
+  }
+
+  /**
+   * @brief Stores the fixed-point value in the scalar
+   *
+   * @pre `value.scale()` must equal the scalar's scale.
+   *
+   * @param value The fixed-point value to store in the scalar
+   */
+  __device__ void set_value(T value)
+  {
+    cudf_assert(value.scale() == this->type().scale() && "fixed_point scale mismatch");
+    set_rep(value.value());
+  }
 
   /**
    * @brief Get the value of the scalar, as a `rep_type`.

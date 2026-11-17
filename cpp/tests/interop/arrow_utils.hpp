@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,6 +20,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
+
+#include <cuda/std/concepts>
 
 #include <arrow/api.h>
 #include <arrow/util/bitmap_builders.h>
@@ -81,16 +84,17 @@ std::shared_ptr<arrow::Array> to_arrow_array(cudf::type_id id, Ts&&... args)
   }
 }
 
-template <typename T>
+template <cudf::concepts::fixed_width T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<T> const& data,
                                               std::vector<uint8_t> const& mask = {})
-  requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
+  requires(not cudf::concepts::boolean<T>)
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(data.data(), sizeof(T) * data.size()).ok(),
-               "Failed to append values");
-  CUDF_EXPECTS(buff_builder.Finish(&data_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(data.data(), sizeof(T) * data.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values");
+  auto const finish_status = buff_builder.Finish(&data_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   std::shared_ptr<arrow::Buffer> mask_buffer =
     mask.empty() ? nullptr : arrow::internal::BytesToBits(mask).ValueOrDie();
@@ -98,10 +102,10 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::vector<T> const& data,
   return to_arrow_array(cudf::type_to_id<T>(), data.size(), data_buffer, mask_buffer);
 }
 
-template <typename T>
+template <cudf::concepts::fixed_width T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<T> elements,
                                               std::initializer_list<uint8_t> validity = {})
-  requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
+  requires(not cudf::concepts::boolean<T>)
 {
   std::vector<T> data(elements);
   std::vector<uint8_t> mask(validity);
@@ -109,30 +113,29 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<T> elements,
   return get_arrow_array<T>(data, mask);
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<bool> const& data,
                                               std::vector<bool> const& mask = {})
-  requires(std::is_same_v<T, bool>)
 {
   std::shared_ptr<arrow::BooleanArray> boolean_array;
   arrow::BooleanBuilder boolean_builder;
 
   if (mask.empty()) {
-    CUDF_EXPECTS(boolean_builder.AppendValues(data).ok(),
-                 "Failed to append values to boolean builder");
+    auto const append_status = boolean_builder.AppendValues(data);
+    CUDF_EXPECTS(append_status.ok(), "Failed to append values to boolean builder");
   } else {
-    CUDF_EXPECTS(boolean_builder.AppendValues(data, mask).ok(),
-                 "Failed to append values to boolean builder");
+    auto const append_status = boolean_builder.AppendValues(data, mask);
+    CUDF_EXPECTS(append_status.ok(), "Failed to append values to boolean builder");
   }
-  CUDF_EXPECTS(boolean_builder.Finish(&boolean_array).ok(), "Failed to create arrow boolean array");
+  auto const finish_status = boolean_builder.Finish(&boolean_array);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to create arrow boolean array");
 
   return boolean_array;
 }
 
-template <typename T>
+template <cudf::concepts::boolean T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<bool> elements,
                                               std::initializer_list<bool> validity = {})
-  requires(std::is_same_v<T, bool>)
 {
   std::vector<bool> mask(validity);
   std::vector<bool> data(elements);
@@ -140,25 +143,24 @@ std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<bool> elemen
   return get_arrow_array<T>(data, mask);
 }
 
-template <typename T>
+template <cudf::concepts::string_view T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::vector<std::string> const& data,
                                               std::vector<uint8_t> const& mask = {})
-  requires(std::is_same_v<T, cudf::string_view>)
 {
   std::shared_ptr<arrow::StringArray> string_array;
   arrow::StringBuilder string_builder;
 
-  CUDF_EXPECTS(string_builder.AppendValues(data, mask.data()).ok(),
-               "Failed to append values to string builder");
-  CUDF_EXPECTS(string_builder.Finish(&string_array).ok(), "Failed to create arrow string array");
+  auto const append_status = string_builder.AppendValues(data, mask.data());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to string builder");
+  auto const finish_status = string_builder.Finish(&string_array);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to create arrow string array");
 
   return string_array;
 }
 
-template <typename T>
+template <cudf::concepts::string_view T>
 std::shared_ptr<arrow::Array> get_arrow_array(std::initializer_list<std::string> elements,
                                               std::initializer_list<uint8_t> validity = {})
-  requires(std::is_same_v<T, cudf::string_view>)
 {
   std::vector<uint8_t> mask(validity);
   std::vector<std::string> data(elements);
@@ -200,9 +202,10 @@ std::shared_ptr<arrow::Array> get_arrow_list_array(std::vector<T> data,
   auto data_array = get_arrow_array<T>(data, data_validity);
   std::shared_ptr<arrow::Buffer> offset_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(offsets.data(), sizeof(int32_t) * offsets.size()).ok(),
-               "Failed to append values to buffer builder");
-  CUDF_EXPECTS(buff_builder.Finish(&offset_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(offsets.data(), sizeof(int32_t) * offsets.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to buffer builder");
+  auto const finish_status = buff_builder.Finish(&offset_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   return std::make_shared<arrow::ListArray>(
     arrow::list(arrow::field("element", data_array->type(), data_array->null_count() > 0)),
@@ -235,15 +238,15 @@ std::shared_ptr<arrow::Array> get_decimal_arrow_array(
   std::optional<std::vector<uint8_t>> const& validity,
   int32_t precision,
   int32_t scale)
-  requires(std::disjunction_v<std::is_same<T, int32_t>,
-                              std::is_same<T, int64_t>,
-                              std::is_same<T, __int128_t>>)
+  requires(cuda::std::same_as<T, int32_t> or cuda::std::same_as<T, int64_t> or
+           cuda::std::same_as<T, __int128_t>)
 {
   std::shared_ptr<arrow::Buffer> data_buffer;
   arrow::BufferBuilder buff_builder;
-  CUDF_EXPECTS(buff_builder.Append(data.data(), sizeof(T) * data.size()).ok(),
-               "Failed to append values to buffer builder");
-  CUDF_EXPECTS(buff_builder.Finish(&data_buffer).ok(), "Failed to allocate buffer");
+  auto const append_status = buff_builder.Append(data.data(), sizeof(T) * data.size());
+  CUDF_EXPECTS(append_status.ok(), "Failed to append values to buffer builder");
+  auto const finish_status = buff_builder.Finish(&data_buffer);
+  CUDF_EXPECTS(finish_status.ok(), "Failed to allocate buffer");
 
   std::shared_ptr<arrow::Buffer> mask_buffer =
     !validity.has_value() ? nullptr : arrow::internal::BytesToBits(validity.value()).ValueOrDie();

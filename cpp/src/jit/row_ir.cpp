@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,26 +8,491 @@
 #include "runtime/context.hpp"
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/strings.hpp>
+#include <cudf/hashing/detail/hashing.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/std/inplace_vector>
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <iostream>
 #include <iterator>
 #include <numeric>
+#include <set>
 #include <span>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
-namespace cudf {
+namespace cudf::detail::row_ir {
 
-namespace detail {
+/**
+ * @brief Indicates how an operator propagates null values
+ */
+enum class [[nodiscard]] null_output : uint8_t {
+  PROPAGATE       = 0,
+  ALWAYS_VALID    = 1,
+  ALWAYS_NULLABLE = 2,
+};
 
-namespace row_ir {
-
-std::string cuda_type(cudf::data_type type, bool nullable)
+/**
+ * @brief Get the output scale for a given operator and input scales
+ * This function returns the output scale for a given operator based on the input scales and the
+ * target scale (if applicable). The output scale is used for decimal operators to determine the
+ * scale of the result based on the scales of the inputs and the operator being performed.
+ */
+[[nodiscard]] int32_t get_op_output_scale(opcode op,
+                                          std::span<int32_t const> arg_scales,
+                                          std::optional<int32_t> target_scale)
 {
-  auto name = type_to_name(type);
-  return nullable ? std::format("cuda::std::optional<{}>", name) : name;
+  // this implementation must be kept in sync with the implementation of
+  // `cudf::ast::detail::operator_functor::fixed_point_result_scale`
+  switch (op) {
+    // pseudo-opcode with no argument
+    case opcode::GET_INPUT: return 0;
+    // divisions
+    case opcode::FLOOR_DIV:
+    case opcode::DIV_OVERFLOW:
+    case opcode::DIV: return arg_scales[0] - arg_scales[1];
+    // add/sub/mod
+    case opcode::ADD:
+    case opcode::SUB:
+    case opcode::ADD_OVERFLOW:
+    case opcode::SUB_OVERFLOW:
+    case opcode::MOD:
+    case opcode::MOD_OVERFLOW:
+    case opcode::PYMOD: return std::min(arg_scales[0], arg_scales[1]);
+    case opcode::MUL:
+    case opcode::MUL_OVERFLOW: return arg_scales[0] + arg_scales[1];
+    case opcode::RESCALE: return target_scale.value();
+    default: return arg_scales[0];
+  }
+}
+
+/**
+ * @brief A type mask used to indicate the types of the arguments and output of an operator.
+ */
+enum class [[nodiscard]] types : uint64_t {
+  NONE                   = 0x0,
+  BOOL8                  = 0x1,
+  INT8                   = 0x2,
+  INT16                  = 0x4,
+  INT32                  = 0x8,
+  INT64                  = 0x10,
+  UINT8                  = 0x20,
+  UINT16                 = 0x40,
+  UINT32                 = 0x80,
+  UINT64                 = 0x100,
+  FLOAT32                = 0x200,
+  FLOAT64                = 0x400,
+  DECIMAL32              = 0x800,
+  DECIMAL64              = 0x1000,
+  DECIMAL128             = 0x2000,
+  TIMESTAMP_DAYS         = 0x4000,
+  TIMESTAMP_SECONDS      = 0x8000,
+  TIMESTAMP_MILLISECONDS = 0x10000,
+  TIMESTAMP_MICROSECONDS = 0x20000,
+  TIMESTAMP_NANOSECONDS  = 0x40000,
+  DURATION_DAYS          = 0x80000,
+  DURATION_SECONDS       = 0x100000,
+  DURATION_MILLISECONDS  = 0x200000,
+  DURATION_MICROSECONDS  = 0x400000,
+  DURATION_NANOSECONDS   = 0x800000,
+  STRING                 = 0x1000000,
+  SIGNED_INTEGERS        = INT8 | INT16 | INT32 | INT64,
+  UNSIGNED_INTEGERS      = UINT8 | UINT16 | UINT32 | UINT64,
+  INTEGERS               = SIGNED_INTEGERS | UNSIGNED_INTEGERS,
+  INTEGRALS              = INTEGERS | BOOL8,
+  FLOATS                 = FLOAT32 | FLOAT64,
+  DECIMALS               = DECIMAL32 | DECIMAL64 | DECIMAL128,
+  ARITHMETIC             = INTEGERS | FLOATS | DECIMALS,
+  SIGNED_ARITHMETIC      = SIGNED_INTEGERS | FLOATS | DECIMALS,
+  ALL                    = 0x0FFFFFFF,
+  INPUT                  = 0x20000000,
+};
+
+/**
+ * @brief A reference to an argument of an operator. Used to indicate that an argument is the same
+ * type as a previous argument.
+ */
+enum class arg_ref : uint8_t { ARG0 = 0, ARG1 = 1, ARG2 = 2, ARG3 = 3 };
+
+constexpr types operator|(types lhs, types rhs)
+{
+  return static_cast<types>(static_cast<uint64_t>(lhs) | static_cast<uint64_t>(rhs));
+}
+
+constexpr types operator&(types lhs, types rhs)
+{
+  return static_cast<types>(static_cast<uint64_t>(lhs) & static_cast<uint64_t>(rhs));
+}
+
+constexpr types operator~(types t) { return static_cast<types>(~static_cast<uint64_t>(t)); }
+
+struct [[nodiscard]] opcode_info {
+  std::string_view name                                                = "";
+  null_output null_policy                                              = null_output::PROPAGATE;
+  bool is_null_dependent                                               = false;
+  bool is_fallible                                                     = false;
+  cuda::std::inplace_vector<std::variant<types, arg_ref>, 4> arg_types = {};
+  std::variant<types, arg_ref> output_type                             = types::NONE;
+};
+
+/**
+ * @brief Get the opcode information for a given operator
+ */
+[[nodiscard]] opcode_info get_op_info(opcode op, error_policy error_policy)
+{
+  using enum null_output;
+  using enum types;
+  using enum arg_ref;
+
+  static opcode_info const map[] =  // NOLINT(modernize-avoid-c-arrays)
+    {
+      {"GET_INPUT", PROPAGATE, false, false, {}, INPUT},
+      {"SET_OUTPUT", PROPAGATE, false, false, {ALL}, NONE},
+      {"IDENTITY", PROPAGATE, false, false, {ALL}, ARG0},
+      {"IS_NULL", ALWAYS_VALID, true, false, {ALL}, BOOL8},
+      {"COALESCE", PROPAGATE, true, false, {ALL, ARG0}, ARG0},
+      {"PREDICATE", ALWAYS_VALID, true, false, {BOOL8}, ARG0},
+      {"ADD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"SUB", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"MUL", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"DIV", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"NEG", PROPAGATE, false, false, {ARITHMETIC}, ARG0},
+      {"ABS", PROPAGATE, false, false, {ARITHMETIC}, ARG0},
+      {"MOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"PYMOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
+      {"TRUE_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, FLOAT64},
+      {"FLOOR_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0},
+      {"ADD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
+      {"SUB_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
+      {"MUL_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
+      {"DIV_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
+      {"NEG_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0},
+      {"ABS_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0},
+      {"MOD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
+      {"CHECK_PRECISION", PROPAGATE, false, true, {DECIMALS, INT32}, ARG0},
+      {"BITWISE_AND", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
+      {"BITWISE_INVERT", PROPAGATE, false, false, {INTEGERS}, ARG0},
+      {"BITWISE_OR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
+      {"BITWISE_XOR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
+      {"BITWISE_SHIFT_LEFT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
+      {"BITWISE_SHIFT_RIGHT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
+      {"CAST_TO_BOOL8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8},
+      {"CAST_TO_INT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT8},
+      {"CAST_TO_INT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT16},
+      {"CAST_TO_INT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT32},
+      {"CAST_TO_INT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT64},
+      {"CAST_TO_UINT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT8},
+      {"CAST_TO_UINT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT16},
+      {"CAST_TO_UINT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT32},
+      {"CAST_TO_UINT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT64},
+      {"CAST_TO_FLOAT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT32},
+      {"CAST_TO_FLOAT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT64},
+      {"CAST_TO_DECIMAL32", PROPAGATE, false, false, {DECIMALS}, DECIMAL32},
+      {"CAST_TO_DECIMAL64", PROPAGATE, false, false, {DECIMALS}, DECIMAL64},
+      {"CAST_TO_DECIMAL128", PROPAGATE, false, false, {DECIMALS}, DECIMAL128},
+      {"RESCALE", PROPAGATE, false, false, {DECIMALS, INT32}, ARG0},
+      {"EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"NOT_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"GREATER", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"GREATER_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"LESS", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"LESS_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
+      {"NULL_EQUAL", ALWAYS_VALID, true, false, {ALL, ARG0}, BOOL8},
+      {"NULL_LOGICAL_AND", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
+      {"NULL_LOGICAL_OR", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
+      {"LOGICAL_AND", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
+      {"LOGICAL_OR", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
+      {"LOGICAL_NOT", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8},
+      {"IF_ELSE", PROPAGATE, true, false, {ALL, ARG0, INTEGRALS}, ARG0},
+      {"CBRT", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"CEIL", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"FLOOR", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"RINT", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"SQRT", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"POW", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0},
+      {"EXP", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"LOG", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCCOS", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCCOSH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCSIN", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCSINH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCTAN", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"ARCTANH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"COS", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"COSH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"SIN", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"SINH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"TAN", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"TANH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      // Placeholder that keeps the table aligned with the opcodes: a UDF_CALL node takes its
+      // arity, null behaviour and types from its function declaration, never from this row.
+      {"UDF_CALL", PROPAGATE, false, false, {}, NONE},
+    };
+
+  auto index = static_cast<size_t>(op);
+  CUDF_EXPECTS(index < std::size(map),
+               std::format("Invalid opcode: {}", static_cast<int>(op)),
+               std::runtime_error);
+
+  auto info = map[index];
+  if (error_policy == cudf::error_policy::NULLIFY && info.is_fallible) {
+    info.is_fallible = false;
+    info.null_policy = null_output::ALWAYS_NULLABLE;
+  }
+
+  return info;
+}
+
+opcode as_opcode(ast::ast_operator op)
+{
+  switch (op) {
+    case ast::ast_operator::ADD: return opcode::ADD;
+    case ast::ast_operator::SUB: return opcode::SUB;
+    case ast::ast_operator::MUL: return opcode::MUL;
+    case ast::ast_operator::DIV: return opcode::DIV;
+    case ast::ast_operator::TRUE_DIV: return opcode::TRUE_DIV;
+    case ast::ast_operator::FLOOR_DIV: return opcode::FLOOR_DIV;
+    case ast::ast_operator::MOD: return opcode::MOD;
+    case ast::ast_operator::PYMOD: return opcode::PYMOD;
+    case ast::ast_operator::POW: return opcode::POW;
+    case ast::ast_operator::EQUAL: return opcode::EQUAL;
+    case ast::ast_operator::NULL_EQUAL: return opcode::NULL_EQUAL;
+    case ast::ast_operator::NOT_EQUAL: return opcode::NOT_EQUAL;
+    case ast::ast_operator::LESS: return opcode::LESS;
+    case ast::ast_operator::GREATER: return opcode::GREATER;
+    case ast::ast_operator::LESS_EQUAL: return opcode::LESS_EQUAL;
+    case ast::ast_operator::GREATER_EQUAL: return opcode::GREATER_EQUAL;
+    case ast::ast_operator::BITWISE_AND: return opcode::BITWISE_AND;
+    case ast::ast_operator::BITWISE_OR: return opcode::BITWISE_OR;
+    case ast::ast_operator::BITWISE_XOR: return opcode::BITWISE_XOR;
+    case ast::ast_operator::LOGICAL_AND: return opcode::LOGICAL_AND;
+    case ast::ast_operator::NULL_LOGICAL_AND: return opcode::NULL_LOGICAL_AND;
+    case ast::ast_operator::LOGICAL_OR: return opcode::LOGICAL_OR;
+    case ast::ast_operator::NULL_LOGICAL_OR: return opcode::NULL_LOGICAL_OR;
+    case ast::ast_operator::IDENTITY: return opcode::IDENTITY;
+    case ast::ast_operator::IS_NULL: return opcode::IS_NULL;
+    case ast::ast_operator::SIN: return opcode::SIN;
+    case ast::ast_operator::COS: return opcode::COS;
+    case ast::ast_operator::TAN: return opcode::TAN;
+    case ast::ast_operator::ARCSIN: return opcode::ARCSIN;
+    case ast::ast_operator::ARCCOS: return opcode::ARCCOS;
+    case ast::ast_operator::ARCTAN: return opcode::ARCTAN;
+    case ast::ast_operator::SINH: return opcode::SINH;
+    case ast::ast_operator::COSH: return opcode::COSH;
+    case ast::ast_operator::TANH: return opcode::TANH;
+    case ast::ast_operator::ARCSINH: return opcode::ARCSINH;
+    case ast::ast_operator::ARCCOSH: return opcode::ARCCOSH;
+    case ast::ast_operator::ARCTANH: return opcode::ARCTANH;
+    case ast::ast_operator::EXP: return opcode::EXP;
+    case ast::ast_operator::LOG: return opcode::LOG;
+    case ast::ast_operator::SQRT: return opcode::SQRT;
+    case ast::ast_operator::CBRT: return opcode::CBRT;
+    case ast::ast_operator::CEIL: return opcode::CEIL;
+    case ast::ast_operator::FLOOR: return opcode::FLOOR;
+    case ast::ast_operator::ABS: return opcode::ABS;
+    case ast::ast_operator::RINT: return opcode::RINT;
+    case ast::ast_operator::BIT_INVERT: return opcode::BITWISE_INVERT;
+    case ast::ast_operator::NOT: return opcode::LOGICAL_NOT;
+    case ast::ast_operator::CAST_TO_INT64: return opcode::CAST_TO_INT64;
+    case ast::ast_operator::CAST_TO_UINT64: return opcode::CAST_TO_UINT64;
+    case ast::ast_operator::CAST_TO_FLOAT64: return opcode::CAST_TO_FLOAT64;
+    default:
+      CUDF_FAIL(std::format("Unrecognized operator type: {}.", static_cast<int>(op)),
+                std::runtime_error);
+  }
+}
+
+row_ir::types as_type(data_type type)
+{
+  switch (type.id()) {
+    case type_id::BOOL8: return types::BOOL8;
+    case type_id::INT8: return types::INT8;
+    case type_id::INT16: return types::INT16;
+    case type_id::INT32: return types::INT32;
+    case type_id::INT64: return types::INT64;
+    case type_id::UINT8: return types::UINT8;
+    case type_id::UINT16: return types::UINT16;
+    case type_id::UINT32: return types::UINT32;
+    case type_id::UINT64: return types::UINT64;
+    case type_id::FLOAT32: return types::FLOAT32;
+    case type_id::FLOAT64: return types::FLOAT64;
+    case type_id::DECIMAL32: return types::DECIMAL32;
+    case type_id::DECIMAL64: return types::DECIMAL64;
+    case type_id::DECIMAL128: return types::DECIMAL128;
+    case type_id::TIMESTAMP_DAYS: return types::TIMESTAMP_DAYS;
+    case type_id::TIMESTAMP_SECONDS: return types::TIMESTAMP_SECONDS;
+    case type_id::TIMESTAMP_MILLISECONDS: return types::TIMESTAMP_MILLISECONDS;
+    case type_id::TIMESTAMP_MICROSECONDS: return types::TIMESTAMP_MICROSECONDS;
+    case type_id::TIMESTAMP_NANOSECONDS: return types::TIMESTAMP_NANOSECONDS;
+    case type_id::DURATION_DAYS: return types::DURATION_DAYS;
+    case type_id::DURATION_SECONDS: return types::DURATION_SECONDS;
+    case type_id::DURATION_MILLISECONDS: return types::DURATION_MILLISECONDS;
+    case type_id::DURATION_MICROSECONDS: return types::DURATION_MICROSECONDS;
+    case type_id::DURATION_NANOSECONDS: return types::DURATION_NANOSECONDS;
+    case type_id::STRING: return types::STRING;
+    default:
+      CUDF_FAIL(std::format("Unsupported data type for Row IR: {}", type_to_name(type)),
+                std::invalid_argument);
+  }
+}
+
+type_id as_type_id(types type)
+{
+  switch (type) {
+    case types::BOOL8: return type_id::BOOL8;
+    case types::INT8: return type_id::INT8;
+    case types::INT16: return type_id::INT16;
+    case types::INT32: return type_id::INT32;
+    case types::INT64: return type_id::INT64;
+    case types::UINT8: return type_id::UINT8;
+    case types::UINT16: return type_id::UINT16;
+    case types::UINT32: return type_id::UINT32;
+    case types::UINT64: return type_id::UINT64;
+    case types::FLOAT32: return type_id::FLOAT32;
+    case types::FLOAT64: return type_id::FLOAT64;
+    case types::DECIMAL32: return type_id::DECIMAL32;
+    case types::DECIMAL64: return type_id::DECIMAL64;
+    case types::DECIMAL128: return type_id::DECIMAL128;
+    case types::TIMESTAMP_DAYS: return type_id::TIMESTAMP_DAYS;
+    case types::TIMESTAMP_SECONDS: return type_id::TIMESTAMP_SECONDS;
+    case types::TIMESTAMP_MILLISECONDS: return type_id::TIMESTAMP_MILLISECONDS;
+    case types::TIMESTAMP_MICROSECONDS: return type_id::TIMESTAMP_MICROSECONDS;
+    case types::TIMESTAMP_NANOSECONDS: return type_id::TIMESTAMP_NANOSECONDS;
+    case types::DURATION_DAYS: return type_id::DURATION_DAYS;
+    case types::DURATION_SECONDS: return type_id::DURATION_SECONDS;
+    case types::DURATION_MILLISECONDS: return type_id::DURATION_MILLISECONDS;
+    case types::DURATION_MICROSECONDS: return type_id::DURATION_MICROSECONDS;
+    case types::DURATION_NANOSECONDS: return type_id::DURATION_NANOSECONDS;
+    case types::STRING: return type_id::STRING;
+    default:
+      CUDF_FAIL(std::format("Invalid typing for {}: {}", __FUNCTION__, static_cast<int>(type)),
+                std::invalid_argument);
+  }
+}
+
+data_type get_return_type(opcode op,
+                          std::span<data_type const> args,
+                          std::optional<int32_t> target_scale)
+{
+  std::vector<row_ir::types> arg_types;
+  std::vector<int32_t> arg_scales;
+
+  for (auto& type : args) {
+    arg_types.emplace_back(as_type(type));
+    arg_scales.emplace_back(type.scale());
+  }
+
+  auto op_info  = get_op_info(op, error_policy::PROPAGATE);
+  auto rescaled = get_op_output_scale(op, arg_scales, target_scale);
+
+  for (size_t i = 0; i < args.size(); ++i) {
+    auto spec     = op_info.arg_types[i];
+    auto arg_type = arg_types[i];
+
+    if (auto* ref = std::get_if<arg_ref>(&spec)) {
+      auto src_index = static_cast<size_t>(*ref);
+      CUDF_EXPECTS(
+        src_index < i,
+        std::format("Invalid type match rule for operator `{}` at argument #{}", op_info.name, i),
+        std::runtime_error);
+      CUDF_EXPECTS(args[i].id() == args[src_index].id(),
+                   std::format("Argument #{} of operator `{}` does not match type of argument "
+                               "#{}. Got `{}`, expected `{}`",
+                               i,
+                               op_info.name,
+                               src_index,
+                               type_to_name(args[i]),
+                               type_to_name(args[src_index])));
+    } else {
+      auto required_type = std::get<types>(spec);
+      CUDF_EXPECTS(
+        (arg_type & required_type) != types::NONE,
+        std::format("Argument #{} of operator `{}` does not match expected types. Got {}",
+                    i,
+                    op_info.name,
+                    type_to_name(args[i])));
+    }
+  }
+
+  auto type = [&] {
+    if (auto* ref = std::get_if<arg_ref>(&op_info.output_type)) {
+      auto arg_index = static_cast<size_t>(*ref);
+      return args[arg_index].id();
+    } else {
+      auto required_type = std::get<types>(op_info.output_type);
+      CUDF_EXPECTS(
+        required_type != types::NONE,
+        std::format("Invalid type match rule for operator `{}` return type", op_info.name),
+        std::runtime_error);
+      return as_type_id(required_type);
+    }
+  }();
+  return is_fixed_point(data_type{type}) ? data_type{type, numeric::scale_type{rescaled}}
+                                         : data_type{type};
+}
+
+int32_t instance_context::add_output()
+{
+  auto id     = static_cast<int32_t>(output_vars_.size());
+  auto id_str = std::format("out_{}", id);
+  output_vars_.emplace_back(std::move(id_str));
+  return id;
+}
+
+int32_t instance_context::add_input(input in)
+{
+  if (auto* column = std::get_if<column_input>(&in);
+      column != nullptr && column->table_source.has_value() && column->column_index.has_value()) {
+    auto existing = std::ranges::find_if(inputs_, [&](auto const& input) {
+      auto* in = std::get_if<column_input>(&input);
+      return in != nullptr && in->table_source == column->table_source &&
+             in->column_index == column->column_index;
+    });
+    if (existing != inputs_.end()) {
+      return static_cast<int32_t>(std::distance(inputs_.begin(), existing));
+    }
+  }
+
+  // TODO: deduplication for scalar inputs once they use scalar_column_view instead of a column type
+  // Alternatively, use an inlined literal value type that is host-device accessible and hashable
+  //
+
+  auto id     = static_cast<int32_t>(inputs_.size());
+  auto id_str = std::format("in_{}", id);
+
+  data_type const type = [&in] {
+    if (auto* col = std::get_if<column_input>(&in)) {
+      return col->column.type();
+    } else {
+      auto& scalar = std::get<scalar_input>(in);
+      if (auto* s = std::get_if<std::unique_ptr<column>>(&scalar)) {
+        return (*s)->type();
+      } else {
+        return std::get<scalar_column_view>(scalar).type();
+      }
+    }
+  }();
+  inputs_.emplace_back(std::move(in));
+  input_vars_.emplace_back(std::move(id_str), type);
+  return id;
+}
+
+node const* instance_context::find_equivalent(node const& candidate) const
+{
+  auto [first, last] = cse_nodes_.equal_range(candidate.hash());
+  auto found =
+    std::find_if(first, last, [&](auto& entry) { return candidate.is_equivalent(*entry.second); });
+  return found == last ? nullptr : found->second;
+}
+
+void instance_context::add_cse_node(node const& candidate)
+{
+  cse_nodes_.emplace(candidate.hash(), &candidate);
 }
 
 std::string instance_context::make_tmp_id()
@@ -39,641 +504,675 @@ bool instance_context::has_nulls() const { return has_nulls_; }
 
 void instance_context::set_has_nulls(bool has_nulls) { has_nulls_ = has_nulls; }
 
-get_input::get_input(int32_t input) : id_(), input_(input), type_() {}
+std::span<input const> instance_context::get_inputs() const { return inputs_; }
 
-std::string_view get_input::get_id() { return id_; }
+std::span<var_info const> instance_context::get_input_vars() const { return input_vars_; }
 
-data_type get_input::get_type() { return type_; }
+std::span<untyped_var_info const> instance_context::get_output_vars() const { return output_vars_; }
 
-bool get_input::is_null_aware() { return false; }
-
-bool get_input::is_always_valid() { return false; }
-
-void get_input::instantiate(instance_context& ctx, instance_info const& info)
+size_t node::compute_hash() const
 {
-  id_               = ctx.make_tmp_id();
-  auto const& input = info.inputs[input_];
-  type_             = input.type;
-}
-
-std::string get_input::generate_code(instance_context& ctx,
-                                     target_info const& info,
-                                     instance_info const& instance)
-{
-  switch (info.id) {
-    case target::CUDA: {
-      return std::format(
-        "{} {} = {};", cuda_type(type_, ctx.has_nulls()), id_, instance.inputs[input_].id);
-    }
-    default:
-      CUDF_FAIL("Unsupported target: " + std::to_string(static_cast<int>(info.id)),
-                std::invalid_argument);
-  }
-}
-
-set_output::set_output(int32_t output, std::unique_ptr<node> source)
-  : id_(), output_(output), source_(std::move(source)), type_(), output_id_()
-{
-}
-
-std::string_view set_output::get_id() { return id_; }
-
-data_type set_output::get_type() { return type_; }
-
-bool set_output::is_null_aware() { return source_->is_null_aware(); }
-
-bool set_output::is_always_valid() { return source_->is_always_valid(); }
-
-node& set_output::get_source() { return *source_; }
-
-void set_output::instantiate(instance_context& ctx, instance_info const& info)
-{
-  source_->instantiate(ctx, info);
-  id_              = ctx.make_tmp_id();
-  auto source_type = source_->get_type();
-  type_            = source_type;
-  output_id_       = info.outputs[output_].id;
-}
-
-std::string set_output::generate_code(instance_context& ctx,
-                                      target_info const& info,
-                                      instance_info const& instance)
-{
-  switch (info.id) {
-    case target::CUDA: {
-      auto source_code = source_->generate_code(ctx, info, instance);
-      return std::format(
-        "{}\n"
-        "{} {} = {};\n"
-        "*{} = {};",
-        source_code,
-        cuda_type(type_, ctx.has_nulls()),
-        id_,
-        source_->get_id(),
-        output_id_,
-        id_);
-    }
-    default:
-      CUDF_FAIL("Unsupported target: " + std::to_string(static_cast<int>(info.id)),
-                std::invalid_argument);
-  }
-}
-
-operation::operation(opcode op, std::unique_ptr<node>* move_begin, std::unique_ptr<node>* move_end)
-  : id_(), op_(op), operands_(), type_()
-{
-  operands_.insert(
-    operands_.begin(), std::make_move_iterator(move_begin), std::make_move_iterator(move_end));
-  CUDF_EXPECTS(static_cast<size_type>(operands_.size()) == ast::detail::ast_operator_arity(op),
-               "Invalid number of arguments for operator.",
-               std::invalid_argument);
-  CUDF_EXPECTS(
-    operands_.size() > 0, "Operator must have at least one operand", std::invalid_argument);
-}
-
-operation::operation(opcode op, std::vector<std::unique_ptr<node>> operands)
-  : operation(op, operands.data(), operands.data() + operands.size())
-{
-}
-
-std::string_view operation::get_id() { return id_; }
-
-data_type operation::get_type() { return type_; }
-
-inline bool is_operator_null_aware(opcode op)
-{
-  switch (op) {
-    case ast::ast_operator::IS_NULL:
-    case ast::ast_operator::NULL_EQUAL:
-    case ast::ast_operator::NULL_LOGICAL_AND:
-    case ast::ast_operator::NULL_LOGICAL_OR: return true;
-
-    case ast::ast_operator::ADD:
-    case ast::ast_operator::SUB:
-    case ast::ast_operator::MUL:
-    case ast::ast_operator::DIV:
-    case ast::ast_operator::TRUE_DIV:
-    case ast::ast_operator::FLOOR_DIV:
-    case ast::ast_operator::MOD:
-    case ast::ast_operator::PYMOD:
-    case ast::ast_operator::POW:
-    case ast::ast_operator::NOT_EQUAL:
-    case ast::ast_operator::EQUAL:
-    case ast::ast_operator::LESS:
-    case ast::ast_operator::GREATER:
-    case ast::ast_operator::LESS_EQUAL:
-    case ast::ast_operator::GREATER_EQUAL:
-    case ast::ast_operator::BITWISE_AND:
-    case ast::ast_operator::BITWISE_OR:
-    case ast::ast_operator::BITWISE_XOR:
-    case ast::ast_operator::LOGICAL_AND:
-    case ast::ast_operator::LOGICAL_OR:
-    case ast::ast_operator::IDENTITY:
-    case ast::ast_operator::SIN:
-    case ast::ast_operator::COS:
-    case ast::ast_operator::TAN:
-    case ast::ast_operator::ARCSIN:
-    case ast::ast_operator::ARCCOS:
-    case ast::ast_operator::ARCTAN:
-    case ast::ast_operator::SINH:
-    case ast::ast_operator::COSH:
-    case ast::ast_operator::TANH:
-    case ast::ast_operator::ARCSINH:
-    case ast::ast_operator::ARCCOSH:
-    case ast::ast_operator::ARCTANH:
-    case ast::ast_operator::EXP:
-    case ast::ast_operator::LOG:
-    case ast::ast_operator::SQRT:
-    case ast::ast_operator::CBRT:
-    case ast::ast_operator::CEIL:
-    case ast::ast_operator::FLOOR:
-    case ast::ast_operator::ABS:
-    case ast::ast_operator::RINT:
-    case ast::ast_operator::BIT_INVERT:
-    case ast::ast_operator::NOT:
-    case ast::ast_operator::CAST_TO_INT64:
-    case ast::ast_operator::CAST_TO_UINT64:
-    case ast::ast_operator::CAST_TO_FLOAT64: return false;
-
-    default: CUDF_UNREACHABLE("Unrecognized operator type.");
-  }
-}
-
-bool operation::is_null_aware()
-{
-  return is_operator_null_aware(op_) ||
-         std::any_of(
-           operands_.begin(), operands_.end(), [](auto& op) { return op->is_null_aware(); });
-}
-
-inline bool is_operator_always_valid(opcode op)
-{
-  switch (op) {
-    case ast::ast_operator::IS_NULL:
-    case ast::ast_operator::NULL_EQUAL: return true;
-
-    case ast::ast_operator::NULL_LOGICAL_AND:
-    case ast::ast_operator::NULL_LOGICAL_OR:
-    case ast::ast_operator::ADD:
-    case ast::ast_operator::SUB:
-    case ast::ast_operator::MUL:
-    case ast::ast_operator::DIV:
-    case ast::ast_operator::TRUE_DIV:
-    case ast::ast_operator::FLOOR_DIV:
-    case ast::ast_operator::MOD:
-    case ast::ast_operator::PYMOD:
-    case ast::ast_operator::POW:
-    case ast::ast_operator::NOT_EQUAL:
-    case ast::ast_operator::EQUAL:
-    case ast::ast_operator::LESS:
-    case ast::ast_operator::GREATER:
-    case ast::ast_operator::LESS_EQUAL:
-    case ast::ast_operator::GREATER_EQUAL:
-    case ast::ast_operator::BITWISE_AND:
-    case ast::ast_operator::BITWISE_OR:
-    case ast::ast_operator::BITWISE_XOR:
-    case ast::ast_operator::LOGICAL_AND:
-    case ast::ast_operator::LOGICAL_OR:
-    case ast::ast_operator::IDENTITY:
-    case ast::ast_operator::SIN:
-    case ast::ast_operator::COS:
-    case ast::ast_operator::TAN:
-    case ast::ast_operator::ARCSIN:
-    case ast::ast_operator::ARCCOS:
-    case ast::ast_operator::ARCTAN:
-    case ast::ast_operator::SINH:
-    case ast::ast_operator::COSH:
-    case ast::ast_operator::TANH:
-    case ast::ast_operator::ARCSINH:
-    case ast::ast_operator::ARCCOSH:
-    case ast::ast_operator::ARCTANH:
-    case ast::ast_operator::EXP:
-    case ast::ast_operator::LOG:
-    case ast::ast_operator::SQRT:
-    case ast::ast_operator::CBRT:
-    case ast::ast_operator::CEIL:
-    case ast::ast_operator::FLOOR:
-    case ast::ast_operator::ABS:
-    case ast::ast_operator::RINT:
-    case ast::ast_operator::BIT_INVERT:
-    case ast::ast_operator::NOT:
-    case ast::ast_operator::CAST_TO_INT64:
-    case ast::ast_operator::CAST_TO_UINT64:
-    case ast::ast_operator::CAST_TO_FLOAT64: return false;
-
-    default: CUDF_UNREACHABLE("Unrecognized operator type.");
-  }
-}
-
-bool operation::is_always_valid()
-{
-  return is_operator_always_valid(op_) ||
-         std::all_of(
-           operands_.begin(), operands_.end(), [](auto& op) { return op->is_always_valid(); });
-}
-
-opcode operation::get_opcode() const { return op_; }
-
-std::span<std::unique_ptr<node> const> operation::get_operands() const { return operands_; }
-
-void operation::instantiate(instance_context& ctx, instance_info const& info)
-{
-  for (auto& arg : operands_) {
-    arg->instantiate(ctx, info);
-  }
-
-  id_ = ctx.make_tmp_id();
-  std::vector<data_type> operand_types;
-
-  for (auto& arg : operands_) {
-    operand_types.emplace_back(arg->get_type());
-  }
-
-  type_ = ast::detail::ast_operator_return_type(op_, operand_types);
-}
-
-std::string operation::generate_code(instance_context& ctx,
-                                     target_info const& info,
-                                     instance_info const& instance)
-{
-  std::string operands_code;
-
-  for (auto& arg : operands_) {
-    operands_code =
-      std::format("{}{}{}", operands_code, arg->generate_code(ctx, info, instance), "\n");
-  }
-
-  auto operation_code = [&]() {
-    switch (info.id) {
-      case target::CUDA: {
-        auto first_operand = operands_[0]->get_id();
-        auto operands_str  = (operands_.size() == 1)
-                               ? std::string{first_operand}
-                               : std::accumulate(operands_.begin() + 1,
-                                                operands_.end(),
-                                                std::string{first_operand},
-                                                [](auto const& a, auto& node) {
-                                                  return std::format("{}, {}", a, node->get_id());
-                                                });
-
-        auto cuda = std::format(
-          "{} {} = cudf::ast::detail::operator_functor<cudf::ast::ast_operator::{}, "
-          "{}>{{}}({});",
-          cuda_type(type_, ctx.has_nulls()),
-          id_,
-          ast::detail::ast_operator_string(op_),
-          ctx.has_nulls(),
-          operands_str);
-        return cuda;
+  auto h =
+    std::hash<std::underlying_type_t<opcode>>{}(static_cast<std::underlying_type_t<opcode>>(op_));
+  h = cudf::hashing::detail::hash_combine(
+    h,
+    std::hash<std::underlying_type_t<error_policy>>{}(
+      static_cast<std::underlying_type_t<error_policy>>(error_policy_)));
+  h = cudf::hashing::detail::hash_combine(h, std::hash<size_t>{}(reference_.index()));
+  std::visit(
+    [&](auto& r) {
+      using reference_type = std::decay_t<decltype(r)>;
+      if constexpr (!std::is_same_v<reference_type, std::monostate>) {
+        h = cudf::hashing::detail::hash_combine(h, std::hash<size_t>{}(r.index));
       }
-      default:
-        CUDF_FAIL("Unsupported target: " + std::to_string(static_cast<int>(info.id)),
-                  std::invalid_argument);
+    },
+    reference_);
+  h = cudf::hashing::detail::hash_combine(
+    h, target_scale_.has_value() ? std::hash<int32_t>{}(*target_scale_) : 0);
+  if (udf_.has_value()) {
+    h = cudf::hashing::detail::hash_combine(h, std::hash<std::string>{}(udf_->symbol));
+  }
+  for (auto& arg : args_) {
+    h = cudf::hashing::detail::hash_combine(h, arg->hash());
+  }
+  return h;
+}
+
+node::node(opcode op,
+           std::optional<int32_t> target_scale,
+           error_policy error_policy,
+           std::vector<std::unique_ptr<node>> args)
+  : op_{op}, target_scale_{target_scale}, error_policy_{error_policy}, args_{std::move(args)}
+{
+  auto op_info = get_op_info(op_, error_policy_);
+  CUDF_EXPECTS(op_ != opcode::GET_INPUT && op_ != opcode::SET_OUTPUT,
+               std::format("Invalid opcode `{}` for operation node.", op_info.name),
+               std::runtime_error);
+
+  if (!get_op_info(op_, error_policy::PROPAGATE).is_fallible) {
+    CUDF_EXPECTS(error_policy_ != error_policy::NULLIFY,
+                 std::format("Invalid error policy `NULLIFY` for operator `{}`. Only operators "
+                             "that are fallible can use the NULLIFY error policy.",
+                             op_info.name),
+                 std::runtime_error);
+  }
+
+  if (op != opcode::RESCALE) {
+    auto op_info        = get_op_info(op_, error_policy_);
+    auto expected_arity = op_info.arg_types.size();
+    auto actual_arity   = args_.size();
+    CUDF_EXPECTS(actual_arity == expected_arity,
+                 std::format("Invalid number of arguments for operator `{}`. Expected {}, Got {}.",
+                             op_info.name,
+                             expected_arity,
+                             actual_arity),
+                 std::runtime_error);
+  } else {
+    CUDF_EXPECTS(args_.size() == 1,
+                 std::format("RESCALE operator expects exactly 1 argument. Got {}.", args_.size()));
+    CUDF_EXPECTS(
+      target_scale_.has_value(),
+      std::format("Target scale must be provided for RESCALE operator and must be nullopt "
+                  "for other operators."));
+  }
+
+  hash_ = compute_hash();
+}
+
+node::node(input_reference input)
+  : reference_{input}, op_{opcode::GET_INPUT}  // NOLINT(modernize-use-default-member-init)
+{
+  hash_ = compute_hash();
+}
+
+node::node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
+  : op_{opcode::UDF_CALL}, error_policy_{error_policy}, args_{std::move(args)}, udf_{std::move(udf)}
+{
+  hash_ = compute_hash();
+}
+
+node::node(repeated_reference reference)
+  : op_{reference.first->op_},
+    error_policy_{reference.first->error_policy_},
+    hash_{reference.first->hash_},
+    udf_{reference.first->udf_},
+    alias_{reference.first}
+{
+}
+
+node::node(output_reference reference, std::unique_ptr<node> arg)
+  : reference_{reference}, op_{opcode::SET_OUTPUT}
+{
+  args_.emplace_back(std::move(arg));
+  hash_ = compute_hash();
+}
+
+node::node(output_reference reference, node arg)
+  : node{reference, std::make_unique<node>(std::move(arg))}
+{
+  hash_ = compute_hash();
+}
+
+size_t node::hash() const { return hash_; }
+
+bool node::is_equivalent(node const& other) const
+{
+  // A node that aliases another, such as a repeated reference to an AST call, has its value.
+  if (alias_ != nullptr) { return alias_->is_equivalent(other); }
+  if (other.alias_ != nullptr) { return is_equivalent(*other.alias_); }
+  if (this == &other) { return true; }
+  if (udf_.has_value() || other.udf_.has_value()) {
+    // Calls of impure functions never merge.
+    if (!udf_.has_value() || !other.udf_.has_value() || !udf_->is_pure || *udf_ != *other.udf_) {
+      return false;
     }
-  }();
-
-  return operands_code + operation_code;
+  }
+  return hash_ == other.hash_ && op_ == other.op_ && target_scale_ == other.target_scale_ &&
+         error_policy_ == other.error_policy_ && reference_ == other.reference_ &&
+         args_.size() == other.args_.size() &&
+         std::equal(
+           args_.begin(), args_.end(), other.args_.begin(), [](auto const& lhs, auto const& rhs) {
+             return lhs->is_equivalent(*rhs);
+           });
 }
 
-filter_predicate::filter_predicate(std::unique_ptr<node> source) : id_(), source_(std::move(source))
+std::string_view node::get_id() const { return id_; }
+
+data_type node::get_type() const { return type_; }
+
+std::optional<int32_t> node::get_target_scale() const { return target_scale_; }
+
+opcode node::get_opcode() const { return op_; }
+
+std::span<std::unique_ptr<node> const> node::get_args() const { return args_; }
+
+std::optional<ast::jit::udf> node::get_udf() const { return udf_; }
+
+bool node::is_null_aware() const
 {
+  if (alias_ != nullptr) { return alias_->is_null_aware(); }
+  if (op_ == opcode::GET_INPUT) { return false; }
+
+  // A NULLIFY call emits nulls for failing rows, so like an always-nullable operator it needs the
+  // nullable form of the generated code.
+  if (op_ == opcode::UDF_CALL) {
+    return udf_->is_null_aware == null_aware::YES || error_policy_ == cudf::error_policy::NULLIFY ||
+           std::ranges::any_of(args_, [](auto& a) { return a->is_null_aware(); });
+  }
+
+  // to emit nulls for always-nullable operators, we  need to mark them as null-aware
+  auto op_info = get_op_info(op_, error_policy_);
+
+  if (op_info.null_policy == null_output::ALWAYS_NULLABLE) { return true; }
+
+  if (op_info.is_null_dependent) { return true; }
+
+  CUDF_EXPECTS(!args_.empty(),
+               "Unexpectedly found an operator node with no arguments. All operator nodes should "
+               "have at least one argument.",
+               std::runtime_error);
+
+  return std::ranges::any_of(args_, [](auto& a) { return a->is_null_aware(); });
 }
 
-std::string_view filter_predicate::get_id() { return id_; }
-
-data_type filter_predicate::get_type() { return data_type{type_id::BOOL8}; }
-
-bool filter_predicate::is_null_aware() { return source_->is_null_aware(); }
-
-bool filter_predicate::is_always_valid() { return true; }
-
-node& filter_predicate::get_source() { return *source_; }
-
-void filter_predicate::instantiate(instance_context& ctx, instance_info const& info)
+bool node::is_always_valid() const
 {
-  source_->instantiate(ctx, info);
-  CUDF_EXPECTS(source_->get_type().id() == type_id::BOOL8,
-               "Filter predicate source must be boolean.",
-               std::invalid_argument);
+  if (alias_ != nullptr) { return alias_->is_always_valid(); }
+  if (op_ == opcode::GET_INPUT) { return false; }
+
+  if (op_ == opcode::UDF_CALL) {
+    if (udf_->is_null_aware == null_aware::YES || error_policy_ == cudf::error_policy::NULLIFY) {
+      return false;
+    }
+    return std::ranges::all_of(args_, [](auto& a) { return a->is_always_valid(); });
+  }
+
+  auto null_policy = get_op_info(op_, error_policy_).null_policy;
+
+  switch (null_policy) {
+    case null_output::ALWAYS_NULLABLE: {
+      return false;
+    }
+    case null_output::ALWAYS_VALID: {
+      return true;
+    }
+    case null_output::PROPAGATE:
+    default: break;
+  }
+
+  CUDF_EXPECTS(!args_.empty(),
+               "Unexpectedly found an operator node with no arguments. All operator nodes should "
+               "have at least one argument.",
+               std::runtime_error);
+
+  return std::ranges::all_of(args_, [](auto& a) { return a->is_always_valid(); });
+}
+
+std::string to_cuda_type(cudf::data_type type, bool nullable)
+{
+  auto name = type_to_name(type);
+  return nullable ? std::format("cuda::std::optional<{}>", name) : name;
+}
+
+void node::instantiate(instance_context& ctx)
+{
+  for (auto& arg : args_) {
+    arg->instantiate(ctx);
+  }
+
+  // check if an equivalent node has already been instantiated in this context. If so, alias the
+  // node.
+  if (auto equivalent = ctx.find_equivalent(*this)) {
+    id_              = equivalent->id_;
+    type_            = equivalent->type_;
+    scale_reference_ = equivalent->scale_reference_;
+    alias_           = equivalent;
+    return;
+  }
+
   id_ = ctx.make_tmp_id();
+
+  switch (op_) {
+    case opcode::GET_INPUT: {
+      type_ = ctx.get_input_vars()[std::get<input_reference>(reference_).index].type;
+    } break;
+    case opcode::SET_OUTPUT: {
+      type_ = args_[0]->get_type();
+    } break;
+    case opcode::UDF_CALL: {
+      CUDF_EXPECTS(args_.size() == udf_->input_types.size(),
+                   "UDF argument count does not match its declaration",
+                   std::invalid_argument);
+      for (size_t i = 0; i < args_.size(); ++i) {
+        CUDF_EXPECTS(args_[i]->get_type() == udf_->input_types[i],
+                     "UDF argument type does not match its declaration",
+                     std::invalid_argument);
+      }
+      type_ = udf_->output_type;
+    } break;
+    default: {
+      std::vector<data_type> arg_types;
+      for (auto& arg : args_) {
+        arg_types.emplace_back(arg->get_type());
+      }
+
+      if (op_ == opcode::RESCALE) {
+        scale_reference_ = input_reference{ctx.add_input(cudf::numeric_scalar<int32_t>{
+          target_scale_.value_or(0), true, ctx.get_stream(), ctx.get_mr()})};
+        arg_types.emplace_back(cudf::type_id::INT32);
+      }
+
+      type_ = get_return_type(op_, arg_types, target_scale_);
+    } break;
+  }
+
+  // add this node to the context's CSE map so that future equivalent nodes can reuse it.
+  ctx.add_cse_node(*this);
 }
 
-[[nodiscard]] std::string filter_predicate::generate_code(instance_context& ctx,
-                                                          target_info const& info,
-                                                          instance_info const& instance)
+void node::emit_code(instance_context& instance, target_info const& info, code_sink& sink)
 {
+  for (auto& arg : args_) {
+    arg->emit_code(instance, info, sink);
+  }
+
+  if (alias_ != nullptr) {
+    CUDF_EXPECTS(alias_->emitted_,
+                 "Alias node has not been emitted yet. This should never happen.",
+                 std::runtime_error);
+    return;
+  }
+
   switch (info.id) {
     case target::CUDA: {
-      auto source_code = source_->generate_code(ctx, info, instance);
-      return std::format(
-        "{}\n"
-        "bool {} = cudf::ast::detail::flatten_predicate({});\n",
-        source_code,
-        id_,
-        source_->get_id());
+      auto type = to_cuda_type(type_, instance.has_nulls());
+
+      auto emit_call = [&](std::string const& call, bool is_fallible) {
+        if (is_fallible && error_policy_ != cudf::error_policy::NULLIFY) {
+          sink.emit(std::format("CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {});\n", type, id_, call));
+        } else {
+          sink.emit(std::format("{} {} = {};\n", type, id_, call));
+        }
+      };
+
+      switch (op_) {
+        case opcode::GET_INPUT: {
+          sink.emit(std::format(
+            R"***({} {} = {};
+)***",
+            type,
+            id_,
+            instance.get_input_vars()[std::get<input_reference>(reference_).index].id));
+        } break;
+
+        case opcode::SET_OUTPUT: {
+          sink.emit(std::format(
+            R"***({} {} = {};
+*{} = {};
+)***",
+            type,
+            id_,
+            args_[0]->get_id(),
+            instance.get_output_vars()[std::get<output_reference>(reference_).index].id,
+            id_));
+        } break;
+
+        case opcode::UDF_CALL: {
+          emit_call(std::format("cudf::detail::row_ir::invoke_udf<{}, {}, {}, &::{}, {}>({})",
+                                instance.has_nulls(),
+                                udf_->is_null_aware == null_aware::YES,
+                                error_policy_ == cudf::error_policy::NULLIFY
+                                  ? "cudf::error_policy::NULLIFY"
+                                  : "cudf::error_policy::PROPAGATE",
+                                udf_->symbol,
+                                to_cuda_type(udf_->output_type, false),
+                                cudf::detail::string_join(
+                                  args_, [](auto const& arg) { return arg->get_id(); }, ", ")),
+                    true);
+        } break;
+
+        default: {
+          auto op_info = get_op_info(op_, error_policy_);
+          auto args_str =
+            cudf::detail::string_join(args_, [](auto const& arg) { return arg->get_id(); }, ", ");
+          if (op_ == opcode::RESCALE) {
+            args_str =
+              std::format("{}, {}", args_str, instance.get_input_vars()[scale_reference_.index].id);
+          }
+          emit_call(
+            std::format("cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::{}, {}>({})",
+                        op_info.name,
+                        error_policy_ == cudf::error_policy::NULLIFY
+                          ? "cudf::error_policy::NULLIFY"
+                          : "cudf::error_policy::PROPAGATE",
+                        args_str),
+            op_info.is_fallible);
+        }
+      }
+      break;
     }
+
     default:
-      CUDF_FAIL("Unsupported target: " + std::to_string(static_cast<int>(info.id)),
+      CUDF_FAIL(std::format("Unsupported target: {}", static_cast<int>(info.id)),
                 std::invalid_argument);
   }
-}
 
-std::span<ast_input_spec const> ast_converter::get_input_specs() const { return input_specs_; }
-
-int32_t ast_converter::add_ast_input(ast_input_spec in)
-{
-  auto id = static_cast<int32_t>(input_specs_.size());
-  input_specs_.push_back(std::move(in));
-  return id;
+  emitted_ = true;
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::literal const& expr)
 {
-  auto index = add_ast_input(
-    ast_scalar_input_spec{expr.get_scalar(),
-                          expr.get_value(),
-                          make_column_from_scalar(expr.get_scalar(), 1, stream_, mr_)});
-  return std::make_unique<row_ir::get_input>(index);
+  auto id = expr.is_scalar_column_view() ? instance_.add_input(expr.get_scalar_column_view())
+                                         : instance_.add_input(expr.get_scalar());
+  return std::make_unique<row_ir::node>(input_reference{id});
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::column_reference const& expr)
 {
-  auto index =
-    add_ast_input(ast_column_input_spec{expr.get_table_source(), expr.get_column_index()});
-  return std::make_unique<row_ir::get_input>(index);
+  // resolve the table for a column input spec, preferring left_table/right_table for join cases,
+  // falling back to args.table for the single-table case.
+  auto resolve = [&](ast::table_reference ref) {
+    CUDF_EXPECTS(ref == ast::table_reference::LEFT || ref == ast::table_reference::RIGHT,
+                 "Invalid table reference in column expression",
+                 std::invalid_argument);
+    return ref == ast::table_reference::LEFT ? left_table_ : right_table_;
+  };
+
+  auto table = resolve(expr.get_table_source());
+  auto id    = instance_.add_input(
+    column_input{.column       = table.column(expr.get_column_index()),
+                    .table_source = (expr.get_table_source() == ast::table_reference::LEFT ? 0 : 1),
+                    .column_index = static_cast<int32_t>(expr.get_column_index())});
+  return std::make_unique<row_ir::node>(input_reference{id});
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& expr)
 {
-  std::vector<std::unique_ptr<row_ir::node>> operands;
-  for (auto const& operand : expr.get_operands()) {
-    operands.push_back(operand.get().accept(*this));
+  std::vector<std::unique_ptr<row_ir::node>> args;
+  for (auto& operand : expr.get_operands()) {
+    args.emplace_back(operand.get().accept(*this));
   }
-  return std::make_unique<row_ir::operation>(expr.get_operator(), std::move(operands));
+  return std::make_unique<row_ir::node>(
+    as_opcode(expr.get_operator()), std::nullopt, error_policy::PROPAGATE, std::move(args));
 }
 
-std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::filter_predicate const& expr)
+std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::predicate const& expr)
 {
-  auto operand = expr.get_operand().accept(*this);
-  return std::make_unique<row_ir::filter_predicate>(std::move(operand));
+  return std::make_unique<row_ir::node>(row_ir::opcode::PREDICATE,
+                                        std::nullopt,
+                                        error_policy::PROPAGATE,
+                                        expr.get_operand().accept(*this));
 }
 
-// Resolve the table for a column input spec, preferring left_table/right_table for join cases,
-// falling back to args.table for the single-table case.
-table_view const& resolve_table(ast_column_input_spec const& in, ast_args const& args)
+std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::operation const& expr)
 {
-  if (in.table == ast::table_reference::LEFT) {
-    return args.left_table.num_columns() > 0 ? args.left_table : args.table;
+  std::vector<std::unique_ptr<row_ir::node>> args;
+  for (auto& arg : expr.get_arguments()) {
+    args.emplace_back(arg.get().accept(*this));
   }
-  return args.right_table;
+  return std::make_unique<row_ir::node>(
+    expr.get_opcode(), expr.get_target_scale(), expr.get_error_policy(), std::move(args));
 }
 
-void ast_converter::add_input_var(ast_column_input_spec const& in, ast_args const& args)
+std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
 {
-  // TODO(lamarrr): consider mangling column name to make debugging easier
-  auto id   = std::format("in_{}", input_vars_.size());
-  auto type = resolve_table(in, args).column(in.column).type();
-  input_vars_.emplace_back(std::move(id), type);
+  // A call that the tree refers to more than once is evaluated once per row, so its references
+  // agree even when the function is impure. A later reference becomes a node that merges with the
+  // first one, without converting the arguments again.
+  if (auto first = calls_.find(&expr); first != calls_.end()) {
+    return std::make_unique<row_ir::node>(row_ir::repeated_reference{first->second});
+  }
+  std::vector<std::unique_ptr<row_ir::node>> args;
+  for (auto& arg : expr.get_arguments()) {
+    args.emplace_back(arg.get().accept(*this));
+  }
+  auto call =
+    std::make_unique<row_ir::node>(expr.get_function(), expr.get_error_policy(), std::move(args));
+  calls_.emplace(&expr, call.get());
+  return call;
 }
 
-void ast_converter::add_input_var(ast_scalar_input_spec const& in,
-                                  [[maybe_unused]] ast_args const& args)
-{
-  auto id   = std::format("in_{}", input_vars_.size());
-  auto type = in.ref.get().type();
-  input_vars_.emplace_back(std::move(id), type);
-}
+namespace {
 
-void ast_converter::add_output_var()
+bool is_nullable(scalar_input const& in)
 {
-  auto id = std::format("out_{}", output_vars_.size());
-  output_vars_.emplace_back(std::move(id));
-}
-
-template <typename Fn, typename... Args>
-decltype(auto) dispatch_input_spec(ast_input_spec const& in, Fn&& fn, Args&&... args)
-{
-  if (std::holds_alternative<ast_column_input_spec>(in)) {
-    return fn(std::get<ast_column_input_spec>(in), std::forward<Args>(args)...);
-  } else if (std::holds_alternative<ast_scalar_input_spec>(in)) {
-    return fn(std::get<ast_scalar_input_spec>(in), std::forward<Args>(args)...);
+  if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
+    return (*s)->nullable();
   } else {
-    CUDF_FAIL("Unsupported input type");
+    return std::get<scalar_column_view>(in).nullable();
   }
 }
 
-std::variant<column_view, scalar_column_view> get_column_view(ast_column_input_spec const& spec,
-                                                              ast_args const& args)
-{
-  return resolve_table(spec, args).column(spec.column);
-}
+bool is_nullable(column_input const& in) { return in.column.nullable(); }
 
-std::variant<column_view, scalar_column_view> get_column_view(ast_scalar_input_spec const& spec,
-                                                              ast_args const& args)
+void declare_udfs(std::span<std::unique_ptr<node> const> output_irs, code_sink& sink)
 {
-  return scalar_column_view{spec.broadcast_column->view()};
-}
-
-std::tuple<null_aware, output_nullability> ast_converter::generate_code(target target_id,
-                                                                        ast::expression const& expr,
-                                                                        ast_args const& args)
-{
-  auto output_expr_ir = expr.accept(*this);
-  output_irs_.emplace_back(std::make_unique<row_ir::set_output>(0, std::move(output_expr_ir)));
-
-  // resolve the flattened input references into IR input variables
-  for (auto const& input : input_specs_) {
-    dispatch_input_spec(input, [this](auto&... args) { add_input_var(args...); }, args);
+  auto by_symbol = [](ast::jit::udf const& lhs, ast::jit::udf const& rhs) {
+    return lhs.symbol < rhs.symbol;
+  };
+  std::set<ast::jit::udf, decltype(by_symbol)> udfs{by_symbol};
+  auto collect_udfs = [&](auto const& self, node const& ir) -> void {
+    for (auto const& arg : ir.get_args()) {
+      self(self, *arg);
+    }
+    if (auto udf = ir.get_udf()) {
+      // Only one declaration is emitted for each symbol. Decimal scales may differ between calls,
+      // since the declared device types do not carry them.
+      auto const same_type      = [](data_type lhs, data_type rhs) { return lhs.id() == rhs.id(); };
+      auto const [it, inserted] = udfs.insert(*udf);
+      CUDF_EXPECTS(inserted || (same_type(it->output_type, udf->output_type) &&
+                                std::ranges::equal(it->input_types, udf->input_types, same_type) &&
+                                it->is_null_aware == udf->is_null_aware),
+                   "Calls of one UDF symbol must use one signature",
+                   std::invalid_argument);
+    }
+  };
+  for (auto const& ir : output_irs) {
+    collect_udfs(collect_udfs, *ir);
   }
 
-  bool has_nullable_inputs =
-    std::any_of(input_specs_.begin(), input_specs_.end(), [&](auto const& input) {
-      return dispatch_input_spec(
-        input,
-        [](auto&... args) {
-          auto col = get_column_view(args...);
-          return std::visit([](auto& view) { return view.nullable(); }, col);
-        },
-        args);
-    });
+  for (auto const& udf : udfs) {
+    auto params =
+      std::format("{}* out", to_cuda_type(udf.output_type, udf.is_null_aware == null_aware::YES));
+    params +=
+      cudf::detail::string_join(udf.input_types, [&, index = 0](data_type input_type) mutable {
+        return std::format(
+          ", {} in_{}", to_cuda_type(input_type, udf.is_null_aware == null_aware::YES), index++);
+      });
+    sink.emit(std::format("extern \"C\" __device__ cudf::errc {}({});\n", udf.symbol, params));
+  }
+}
 
-  // add 1 auto-deduced output variable
-  add_output_var();
+}  // namespace
 
-  instance_context instance_ctx;
-  instance_info instance{input_vars_, output_vars_};
+std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_converter::generate_code(
+  target target_id,
+  std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  std::string_view function_name)
+{
+  CUDF_EXPECTS(!expressions.empty(), "At least one output expression is required");
 
-  auto is_null_aware =
-    std::any_of(
-      output_irs_.cbegin(), output_irs_.cend(), [](auto& ir) { return ir->is_null_aware(); })
-      ? null_aware::YES
-      : null_aware::NO;
+  for (auto& expression : expressions) {
+    auto output_id = instance_.add_output();
+    output_irs_.emplace_back(
+      std::make_unique<row_ir::node>(output_reference{output_id}, expression.get().accept(*this)));
+  }
 
-  bool output_is_always_valid = std::all_of(
-    output_irs_.cbegin(), output_irs_.cend(), [](auto& ir) { return ir->is_always_valid(); });
+  bool has_nullable_inputs = std::ranges::any_of(instance_.inputs_, [&](auto& in) {
+    return std::visit([](auto& c) { return is_nullable(c); }, in);
+  });
 
-  bool may_evaluate_null = !output_is_always_valid && has_nullable_inputs;
-  auto null_policy =
-    may_evaluate_null ? output_nullability::PRESERVE : output_nullability::ALL_VALID;
+  bool is_null_aware =
+    std::ranges::any_of(output_irs_, [](auto& ir) { return ir->is_null_aware(); });
 
-  instance_ctx.set_has_nulls(is_null_aware == null_aware::YES);
+  std::vector<output_nullability> null_policies;
+  std::ranges::transform(output_irs_, std::back_inserter(null_policies), [&](auto& ir) {
+    auto may_evaluate_null = !ir->is_always_valid() && (has_nullable_inputs || ir->is_null_aware());
+    return may_evaluate_null ? output_nullability::PRESERVE : output_nullability::ALL_VALID;
+  });
+
+  // In a multi-output UDF, if any input is nullable, we need to generate a null mask for each
+  // output.
+  // Instead of generating a single null mask or multiple null masks, we make the UDF
+  // null-aware and let the UDF handle null propagation for each output.
+  auto needs_per_output_nullmask = output_irs_.size() > 1 && has_nullable_inputs;
+  auto generate_null_aware_udf   = is_null_aware || needs_per_output_nullmask;
+
+  instance_.set_has_nulls(generate_null_aware_udf);
 
   // instantiate the IR nodes
   for (auto& ir : output_irs_) {
-    ir->instantiate(instance_ctx, instance);
+    ir->instantiate(instance_);
   }
 
   target_info target{target_id};
 
-  std::string body;
+  CUDF_EXPECTS(
+    target.id == target::CUDA, "Unsupported target for code generation", std::invalid_argument);
 
-  for (auto& ir : output_irs_) {
-    body = std::format("{}{}{}", body, ir->generate_code(instance_ctx, target, instance), "\n");
+  auto output_decl = [&](auto i) {
+    auto& var = instance_.output_vars_[i];
+    auto& ir  = output_irs_[i];
+    return std::format("{}* {}", to_cuda_type(ir->get_type(), instance_.has_nulls()), var.id);
+  };
+
+  auto input_decl = [&](auto i) {
+    auto& var = instance_.input_vars_[i];
+    return std::format("{} {}", to_cuda_type(var.type, instance_.has_nulls()), var.id);
+  };
+
+  std::vector<std::string> arg_decls;
+
+  for (size_t i = 0; i < instance_.output_vars_.size(); ++i) {
+    arg_decls.emplace_back(output_decl(i));
   }
 
-  switch (target.id) {
-    case target::CUDA: {
-      {
-        auto output_decl = [&](size_t i) {
-          auto const& var  = output_vars_[i];
-          auto const& ir   = output_irs_[i];
-          auto output_type = ir->get_type();
-          return std::format("{}* {}", cuda_type(output_type, instance_ctx.has_nulls()), var.id);
-        };
+  for (size_t i = 0; i < instance_.input_vars_.size(); ++i) {
+    arg_decls.emplace_back(input_decl(i));
+  }
 
-        auto input_decl = [&](size_t i) {
-          auto const& var = input_vars_[i];
-          return std::format("{} {}", cuda_type(var.type, instance_ctx.has_nulls()), var.id);
-        };
-
-        std::vector<std::string> params_decls;
-
-        for (size_t i = 0; i < output_vars_.size(); ++i) {
-          params_decls.push_back(output_decl(i));
-        }
-
-        for (size_t i = 0; i < input_vars_.size(); ++i) {
-          params_decls.push_back(input_decl(i));
-        }
-
-        auto params_decl = [&] {
-          if (params_decls.empty()) {
-            return std::string{};
-          } else if (params_decls.size() == 1) {
-            return params_decls[0];
-          } else {
-            return std::accumulate(
-              params_decls.begin() + 1,
-              params_decls.end(),
-              params_decls[0],
-              [](auto const& a, auto const& b) { return std::format("{}, {}", a, b); });
-          }
-        }();
-
-        code_ = std::format(
-          R"***(
-__device__ void expression({})
-{{
-{}
-return;
-}}
-)***",
-          params_decl,
-          body);
-
-        return {is_null_aware, null_policy};
-      }
-      break;
+  auto args_decl = [&] {
+    if (arg_decls.empty()) {
+      return std::string{};
+    } else if (arg_decls.size() == 1) {
+      return arg_decls[0];
+    } else {
+      return std::accumulate(
+        arg_decls.begin() + 1, arg_decls.end(), arg_decls[0], [](auto const& a, auto const& b) {
+          return std::format("{}, {}", a, b);
+        });
     }
-    default:
-      CUDF_FAIL("Unsupported target: " + std::to_string(static_cast<int>(target.id)),
-                std::invalid_argument);
+  }();
+
+  code_sink sink;
+  declare_udfs(output_irs_, sink);
+  sink.emit(std::format("__device__ cudf::errc {}(", function_name));
+  sink.emit(args_decl);
+  sink.emit(")\n{\n");
+  for (auto& ir : output_irs_) {
+    ir->emit_code(instance_, target, sink);
   }
+  sink.emit("return cudf::errc::SUCCESS;\n}");
+  return {
+    sink.get_code(), generate_null_aware_udf ? null_aware::YES : null_aware::NO, null_policies};
+}
+
+std::variant<column_view, scalar_column_view> get_column_view(scalar_input const& in)
+{
+  if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
+    return scalar_column_view{**s};
+  } else {
+    return std::get<scalar_column_view>(in);
+  }
+}
+
+std::variant<column_view, scalar_column_view> get_column_view(column_input const& in)
+{
+  return column_view{in.column};
 }
 
 // Due to the AST expression tree structure, we can't generate the IR without the target
 // tables
-transform_args ast_converter::compute_column(target target_id,
-                                             ast::expression const& expr,
-                                             ast_args const& args,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+transform_args ast_converter::compute_table(
+  target target_id,
+  std::span<std::reference_wrapper<ast::expression const> const> expressions,
+  cudf::lto_fragments fragments,
+  table_view const& left_table,
+  table_view const& right_table,
+  std::string_view function_name,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  ast_converter converter{stream, mr};
+  ast_converter converter{stream, mr, left_table, right_table};
 
   // TODO(lamarrr): consider deduplicating ast expression's input column references. See
   // TransformTest/1.DeeplyNestedArithmeticLogicalExpression for reference
 
-  auto [is_null_aware, output_nullability] = converter.generate_code(target_id, expr, args);
-
-  std::vector<std::variant<column_view, scalar_column_view>> inputs;
+  auto [code, is_null_aware, output_nullabilities] =
+    converter.generate_code(target_id, expressions, function_name);
+  std::vector<transform_input> inputs;
   std::vector<std::unique_ptr<column>> scalar_columns;
+  std::vector<std::optional<int32_t>> table_sources;
+  std::vector<std::optional<int32_t>> column_indices;
 
-  for (auto& input : converter.input_specs_) {
-    auto column_view =
-      dispatch_input_spec(input, [](auto&... args) { return get_column_view(args...); }, args);
-    inputs.emplace_back(column_view);
+  for (auto& input : converter.instance_.inputs_) {
+    if (auto* col = std::get_if<column_input>(&input)) {
+      table_sources.emplace_back(col->table_source);
+      column_indices.emplace_back(col->column_index);
+    } else {
+      table_sources.emplace_back(std::nullopt);
+      column_indices.emplace_back(std::nullopt);
+    }
 
-    if (std::holds_alternative<ast_scalar_input_spec>(input)) {
-      auto& scalar_input = std::get<ast_scalar_input_spec>(input);
-      scalar_columns.push_back(std::move(scalar_input.broadcast_column));
+    auto view = std::visit([](auto& in) { return get_column_view(in); }, input);
+    inputs.emplace_back(view);
+
+    if (auto* scalar = std::get_if<scalar_input>(&input)) {
+      if (auto* c = std::get_if<std::unique_ptr<column>>(scalar)) {
+        scalar_columns.emplace_back(std::move(*c));
+      }
     }
   }
 
-  auto& out               = converter.output_irs_[0];
-  auto output_column_type = out->get_type();
-
-  auto result = transform_args{.scalar_columns = std::move(scalar_columns),
-                               .inputs         = inputs,
-                               .udf            = std::move(converter.code_),
-                               .output_type    = output_column_type,
-                               .source_type    = cudf::udf_source_type::CUDA,
-                               .user_data      = std::nullopt,
-                               .is_null_aware  = is_null_aware,
-                               .null_policy    = output_nullability,
-                               .row_size       = args.table.num_rows(),
-                               .input_specs    = std::move(converter.input_specs_)};
-
+  std::vector<transform_output> outputs;
+  for (size_t i = 0; i < converter.output_irs_.size(); ++i) {
+    outputs.push_back(transform_output{.type        = converter.output_irs_[i]->get_type(),
+                                       .nullability = output_nullabilities[i]});
+  }
+  auto row_size = std::max({left_table.num_rows(), right_table.num_rows()});
+  auto result   = transform_args{.scalar_columns       = std::move(scalar_columns),
+                                 .input_table_sources  = std::move(table_sources),
+                                 .input_column_indices = std::move(column_indices),
+                                 .udf                  = std::move(code),
+                                 .source_type          = cudf::udf_source_type::CUDA,
+                                 .is_null_aware        = is_null_aware,
+                                 .user_data            = std::nullopt,
+                                 .inputs               = inputs,
+                                 .outputs              = std::move(outputs),
+                                 .string_offsets{},
+                                 .row_size       = row_size,
+                                 .udf_expression = std::string{function_name},
+                                 .lto_fragments  = fragments};
   if (get_context().dump_codegen()) {
-    std::cout << "Generated code for transform: " << result.udf << std::endl;
+    std::cout << "Generated code for transform: \n" << result.udf << std::endl;
   }
 
   return result;
 }
 
-filter_args ast_converter::filter(target target_id,
-                                  ast::expression const& expr,
-                                  ast_args const& args,
-                                  table_view const& filter_table,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+transform_args ast_converter::filter(target target_id,
+                                     ast::expression const& expr,
+                                     cudf::lto_fragments fragments,
+                                     table_view const& left_table,
+                                     table_view const& right_table,
+                                     std::string_view function_name,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
-  auto filter    = ast::detail::filter_predicate{expr};
-  auto transform = compute_column(target_id, filter, args, stream, mr);
-
-  CUDF_EXPECTS(transform.output_type.id() == type_id::BOOL8,
-               "Filter expression must return a boolean type.",
-               std::invalid_argument);
-
-  std::vector<column_view> filter_columns;
-  std::transform(filter_table.begin(),
-                 filter_table.end(),
-                 std::back_inserter(filter_columns),
-                 [](auto const& col) { return col; });
-
-  auto result = filter_args{.scalar_columns        = std::move(transform.scalar_columns),
-                            .inputs                = std::move(transform.inputs),
-                            .filter_columns        = std::move(filter_columns),
-                            .udf                   = std::move(transform.udf),
-                            .source_type           = transform.source_type,
-                            .user_data             = transform.user_data,
-                            .is_null_aware         = transform.is_null_aware,
-                            .predicate_nullability = transform.null_policy,
-                            .input_specs           = std::move(transform.input_specs)};
-
-  return result;
+  auto filter = ast::detail::predicate{expr};
+  std::array<std::reference_wrapper<ast::expression const>, 1> expressions{filter};
+  return compute_table(
+    target_id, expressions, fragments, left_table, right_table, function_name, stream, mr);
 }
 
-}  // namespace row_ir
-}  // namespace detail
-}  // namespace cudf
+}  // namespace cudf::detail::row_ir

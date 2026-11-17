@@ -1,22 +1,27 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
+#include <cudf/column/column_factories.hpp>
+#include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
 
-#include <array>
-#include <cstddef>
+#include <cuda/stream>
+
+#include <ast/jit/expressions.hpp>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -25,6 +30,8 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -60,19 +67,46 @@ struct untyped_var_info {
 };
 
 /**
- * @brief The information needed to instantiate the IR nodes
- */
-struct instance_info {
-  std::span<var_info const> inputs;           ///< The input variables
-  std::span<untyped_var_info const> outputs;  ///< The output variables
-};
-
-/**
  * @brief The information about the target for which the IR is generated.
  */
 struct target_info {
   target id = target::CUDA;  ///< The target identifier
 };
+
+///< The scalar value represented as a column with a single element or a prepared scalar column
+///< view.
+using scalar_input = std::variant<std::unique_ptr<column>, scalar_column_view>;
+
+struct column_input {
+  column_view column                  = {};  ///< The column input
+  std::optional<int32_t> table_source = std::nullopt;
+  std::optional<int32_t> column_index = std::nullopt;
+};
+
+using input = std::variant<scalar_input, column_input>;
+
+/**
+ * @brief The arguments needed to invoke a `cudf::transform`
+ */
+struct [[nodiscard]] transform_args {
+  // Keeps materialized scalar inputs alive; borrowed scalar_column_views retain external owners.
+  std::vector<std::unique_ptr<column>> scalar_columns      = {};
+  std::vector<std::optional<int32_t>> input_table_sources  = {};
+  std::vector<std::optional<int32_t>> input_column_indices = {};
+  std::string udf                                          = {};
+  udf_source_type source_type                              = cudf::udf_source_type::CUDA;
+  null_aware is_null_aware                                 = null_aware::NO;
+  std::optional<void*> user_data                           = std::nullopt;
+  std::vector<transform_input> inputs                      = {};
+  std::vector<transform_output> outputs                    = {};
+  std::vector<std::unique_ptr<column>> string_offsets      = {};
+  std::optional<size_type> row_size                        = std::nullopt;
+  std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
+  // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
+  cudf::lto_fragments lto_fragments = {};
+};
+
+struct node;
 
 /**
  * @brief The context within which the IR is instantiated.
@@ -81,12 +115,25 @@ struct target_info {
  */
 struct [[nodiscard]] instance_context {
  private:
-  int32_t num_tmp_vars_   = 0;       ///< The number of temporary variables generated
-  std::string tmp_prefix_ = "tmp_";  ///< The prefix for temporary variable identifiers
-  bool has_nulls_         = false;   ///< If expressions involve null values
+  int32_t num_tmp_vars_   = 0;                 ///< The number of temporary variables generated
+  std::string tmp_prefix_ = "tmp_";            ///< The prefix for temporary variable identifiers
+  bool has_nulls_         = false;             ///< If expressions involve null values
+  std::vector<input> inputs_;                  ///< The inputs for the IR
+  std::vector<var_info> input_vars_;           ///< The input variables for the IR
+  std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
+  std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
+  cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
+  cudf::memory_resources
+    mr_;  ///< The device memory resource for any device memory allocation during IR generation
 
  public:
-  instance_context() = default;  ///< Default constructor
+  friend struct ast_converter;
+  friend struct node;
+
+  instance_context(cuda::stream_ref stream, cudf::memory_resources mr)
+    : stream_(stream), mr_(std::move(mr))
+  {
+  }
 
   instance_context(instance_context const&) = delete;
 
@@ -97,6 +144,57 @@ struct [[nodiscard]] instance_context {
   instance_context& operator=(instance_context&&) = default;  ///< Move assignment operator
 
   ~instance_context() = default;  ///< Destructor
+
+  /**
+   * @brief Adds an output variable to the generated transform.
+   *
+   * @return Index of the newly added output
+   */
+  [[nodiscard]] int32_t add_output();
+
+  /**
+   * @brief Adds an input to the generated transform.
+   *
+   * Column inputs that identify the same source table and column reuse the existing input.
+   *
+   * @param in Input to add
+   * @return Index of the new or reused input
+   */
+  [[nodiscard]] int32_t add_input(input in);
+
+  [[nodiscard]] int32_t add_input(scalar const& scalar)
+  {
+    return add_input(scalar_input{make_column_from_scalar(scalar, 1, stream_, mr_)});
+  }
+
+  [[nodiscard]] int32_t add_input(scalar_column_view const& column)
+  {
+    return add_input(scalar_input{column});
+  }
+
+  [[nodiscard]] int32_t add_input(column_view const& column)
+  {
+    return add_input(column_input{.column = column});
+  }
+
+  /**
+   * @brief Finds a structurally equivalent node belonging to a previously completed output.
+   *
+   * Calls of impure functions are never equivalent to another call, but a repeated reference to
+   * an AST call is equivalent to its first reference. Calls of pure functions are equivalent when
+   * their declarations, error policies, and arguments are equivalent.
+   *
+   * @param candidate Node for which to find an equivalent common subexpression
+   * @return Equivalent node, or `nullptr` if none exists
+   */
+  [[nodiscard]] node const* find_equivalent(node const& candidate) const;
+
+  /**
+   * @brief Stages a newly instantiated node for registration after its output is completed.
+   *
+   * @param candidate Newly instantiated node
+   */
+  void add_cse_node(node const& candidate);
 
   /**
    * @brief Generate a globally unique temporary variable identifier
@@ -114,265 +212,249 @@ struct [[nodiscard]] instance_context {
    * @param has_nulls True if expressions involve null values
    */
   void set_has_nulls(bool has_nulls);
+
+  /**
+   * @brief Get the input values for the IR
+   * @return A span of input values for the IR
+   */
+  [[nodiscard]] std::span<input const> get_inputs() const;
+
+  /**
+   * @brief Get the input variables for the IR
+   * @return A span of input variable information
+   */
+  [[nodiscard]] std::span<var_info const> get_input_vars() const;
+
+  /**
+   * @brief Get the output variables for the IR
+   * @return A span of output variable information
+   */
+  [[nodiscard]] std::span<untyped_var_info const> get_output_vars() const;
+
+  /**
+   * @brief Get the CUDA stream for device operations during IR generation
+   * @return The CUDA stream for device operations during IR generation
+   */
+  [[nodiscard]] cuda::stream_ref get_stream() const { return stream_; }
+
+  /**
+   * @brief Get the device memory resource for device memory allocation during IR generation
+   * @return The device memory resource for device memory allocation during IR generation
+   */
+  [[nodiscard]] cudf::memory_resources get_mr() const { return mr_; }
+};
+
+struct [[nodiscard]] code_sink {
+ private:
+  std::string code_;
+
+ public:
+  void emit(std::string_view code) { code_ += code; }
+
+  [[nodiscard]] std::string const& get_code() const { return code_; }
+};
+
+struct [[nodiscard]] input_reference {
+  int32_t index = 0;  ///< The index of the input variable
+
+  constexpr bool operator==(input_reference const& other) const { return index == other.index; }
+
+  constexpr bool operator!=(input_reference const& other) const { return index != other.index; }
+};
+
+struct [[nodiscard]] output_reference {
+  int32_t index = 0;  ///< The index of the output variable
+
+  constexpr bool operator==(output_reference const& other) const { return index == other.index; }
+
+  constexpr bool operator!=(output_reference const& other) const { return index != other.index; }
+};
+
+struct [[nodiscard]] repeated_reference {
+  node const* first = nullptr;  ///< The node converted from the first reference to an AST call
 };
 
 struct [[nodiscard]] node {
-  /**
-   * @brief Get the identifier of the IR node
-   * @return The identifier of the IR node
-   */
-  virtual std::string_view get_id() = 0;
-
-  /**
-   * @brief Get the type info of the IR node
-   * @return The type information of the IR node
-   */
-  [[nodiscard]] virtual data_type get_type() = 0;
-
-  /**
-   * @brief Returns `false` if this node forwards nulls from its inputs to its output.
-   * e.g., `ADD` operator is not null-aware because if any of its inputs is null, the output is
-   * null. but `NULL_EQUAL` operator is null-aware because it can produce a non-null output even if
-   * its inputs are null.
-   */
-  [[nodiscard]] virtual bool is_null_aware() = 0;
-
-  /**
-   * @brief Returns `true` if this node always produces a valid output even if its inputs are
-   * nullable, e.g., `IS_NULL` operator produces a valid boolean output regardless of the
-   * nullability of its input.
-   */
-  [[nodiscard]] virtual bool is_always_valid() = 0;
-
-  /**
-   * @brief Instantiate the IR node with the given context and instance information, setting up any
-   * necessary state and preprocessing needed for code generation.
-   * @param ctx The context within which the IR is instantiated
-   * @param info The instance information
-   */
-  virtual void instantiate(instance_context& ctx, instance_info const& info) = 0;
-
-  /**
-   * @brief Generate the code for the IR node based on the instance context and target information.
-   * @param ctx The context within which the IR is instantiated
-   * @param info The target information
-   * @param instance The instance information
-   * @return The generated code for the IR node
-   */
-  [[nodiscard]] virtual std::string generate_code(instance_context& ctx,
-                                                  target_info const& info,
-                                                  instance_info const& instance) = 0;
-
-  virtual ~node() = default;
-};
-
-/**
- * @brief The operation code used in the IR nodes.
- */
-using opcode = ast::ast_operator;
-
-/**
- * @brief An IR node that retrieves an input variable by its index.
- * This node is used to access input variables in the IR.
- */
-struct [[nodiscard]] get_input final : node {
  private:
-  std::string id_;  ///< The identifier of the IR node
-  int32_t input_;   ///< The index of the input variable
-  data_type type_;  ///< The type information of the IR node
+  std::variant<std::monostate, input_reference, output_reference> reference_ =
+    std::monostate{};  ///< The index of the input/output variable
 
- public:
+  opcode op_ = opcode::GET_INPUT;  ///< The operation code
+
+  std::optional<int32_t> target_scale_ = std::nullopt;  ///< The target scale for decimal
+
+  error_policy error_policy_ =
+    cudf::error_policy::PROPAGATE;  ///< The error policy for the operation
+
+  std::vector<std::unique_ptr<node>> args_ = {};  ///< The arguments of the operation
+
+  size_t hash_ = 0;  ///< The structural hash of the IR node
+
+  std::string id_ = {};  ///< The identifier of the IR node
+
+  data_type type_ = {};  ///< The resolved type information of the IR node
+
+  input_reference scale_reference_ = {};  ///< The index of the target scale as an IR input
+
+  std::optional<ast::jit::udf> udf_ = std::nullopt;  ///< The callee of a `UDF_CALL` node
+
+  bool emitted_ = false;  ///< Whether the IR node has been emitted into the generated function
+
+  node const* alias_ = nullptr;  ///< The equivalent IR node that this IR aliases, if any. This is
+                                 ///< used to avoid emitting duplicate code for equivalent IR nodes.
+                                 ///< A repeated reference to an AST call aliases its first
+                                 ///< reference from construction.
+
   /**
-   * @brief Construct a new get_input IR node
-   * @param input The index of the input variable
+   * @brief Computes the structural hash of this node and its arguments.
+   *
+   * @return The structural hash
    */
-  get_input(int32_t input);
-
-  get_input(get_input const&) = delete;
-
-  get_input& operator=(get_input const&) = delete;
-
-  get_input(get_input&&) = default;  ///< Move constructor
-
-  get_input& operator=(get_input&&) = default;  ///< Move assignment operator
-
-  ~get_input() override = default;  ///< Destructor
+  [[nodiscard]] size_t compute_hash() const;
 
   /**
-   * @copydoc node::get_id
-   */
-  [[nodiscard]] std::string_view get_id() override;
-
-  /**
-   * @copydoc node::get_type
-   */
-  [[nodiscard]] data_type get_type() override;
-
-  /**
-   * @copydoc node::is_null_aware
-   */
-  [[nodiscard]] bool is_null_aware() override;
-
-  /**
-   * @copydoc node::is_always_valid
-   */
-  [[nodiscard]] bool is_always_valid() override;
-
-  /**
-   * @copydoc node::instantiate
-   */
-  void instantiate(instance_context& ctx, instance_info const& info) override;
-
-  /**
-   * @copydoc node::generate_code
-   */
-  [[nodiscard]] std::string generate_code(instance_context& ctx,
-                                          target_info const& info,
-                                          instance_info const& instance) override;
-};
-
-/**
- * @brief An IR node that sets the output variable to the value of a source IR node.
- */
-struct [[nodiscard]] set_output final : node {
- private:
-  std::string id_;                ///< The identifier of the IR node
-  int32_t output_;                ///< The index of the output variable
-  std::unique_ptr<node> source_;  ///< The source IR node from which the value is taken
-  data_type type_;                ///< The type information of the IR node
-  std::string output_id_;         ///< The identifier of the output variable
-
- public:
-  /**
-   * @brief Construct a new set_output IR node
-   * @param output The index of the output variable
-   * @param source The source IR node from which the value is taken
-   */
-  set_output(int32_t output, std::unique_ptr<node> source);
-
-  set_output(set_output const&) = delete;
-
-  set_output& operator=(set_output const&) = delete;
-
-  set_output(set_output&&) = default;  ///< Move constructor
-
-  set_output& operator=(set_output&&) = default;  ///< Move assignment operator
-
-  ~set_output() override = default;  ///< Destructor
-
-  /**
-   * @copydoc node::get_id
-   */
-  [[nodiscard]] std::string_view get_id() override;
-
-  /**
-   * @copydoc node::get_type
-   */
-  [[nodiscard]] data_type get_type() override;
-
-  /**
-   * @copydoc node::is_null_aware
-   */
-  [[nodiscard]] bool is_null_aware() override;
-
-  /**
-   * @copydoc node::is_always_valid
-   */
-  [[nodiscard]] bool is_always_valid() override;
-
-  /**
-   * @brief Get the source IR node from which the value is taken
-   */
-  [[nodiscard]] node& get_source();
-
-  /**
-   * @copydoc node::instantiate
-   */
-  void instantiate(instance_context& ctx, instance_info const& info) override;
-
-  /**
-   * @copydoc node::generate_code
-   */
-  [[nodiscard]] std::string generate_code(instance_context& ctx,
-                                          target_info const& info,
-                                          instance_info const& instance) override;
-};
-
-/**
- * @brief An IR node that represents an operation with zero or more operands.
- */
-struct [[nodiscard]] operation final : node {
- private:
-  std::string id_;                               ///< The identifier of the IR node
-  opcode op_;                                    ///< The operation code
-  std::vector<std::unique_ptr<node>> operands_;  ///< The operands of the operation
-  data_type type_;                               ///< The type information of the IR node
-
-  operation(opcode op, std::unique_ptr<node>* move_begin, std::unique_ptr<node>* move_end);
-
- public:
-  /**
-   * @brief Create a set of operand IR nodes
+   * @brief Create a set of argument IR nodes
    */
   template <typename... T>
-    requires(std::is_base_of_v<node, T> && ...)
-  static std::array<std::unique_ptr<node>, sizeof...(T)> operands(T&&... args)
+    requires(std::is_same_v<node, T> && ...)
+  static std::vector<std::unique_ptr<node>> arguments(T... args)
   {
-    return {std::make_unique<T>(std::forward<T>(args))...};
+    std::vector<std::unique_ptr<node>> result;
+    (result.emplace_back(std::make_unique<node>(std::move(args))), ...);
+    return result;
   }
 
   /**
-   * @brief Create a set of operand IR nodes from existing unique pointers
+   * @brief Create a set of argument IR nodes
    */
   template <typename... T>
-    requires(std::is_base_of_v<node, T> && ...)
-  static std::array<std::unique_ptr<node>, sizeof...(T)> operands(std::unique_ptr<T>&&... args)
+    requires(std::is_same_v<std::unique_ptr<node>, T> && ...)
+  static std::vector<std::unique_ptr<node>> arguments(T... args)
   {
-    return {std::move(args)...};
+    std::vector<std::unique_ptr<node>> result;
+    (result.emplace_back(std::move(args)), ...);
+    return result;
+  }
+
+ public:
+  /**
+   * @brief Construct a new operation IR node
+   * @param op The operation code
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
+   * @param args The arguments of the operation
+   */
+  node(opcode op,
+       std::optional<int32_t> target_scale,
+       error_policy error_policy,
+       std::vector<std::unique_ptr<node>> args);
+
+  /**
+   * @brief Construct a new operation IR node
+   * @param op The operation code
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
+   * @param args The arguments of the operation
+   */
+  template <typename... T>
+    requires(std::is_same_v<node, T> && ...)
+  node(opcode op, std::optional<int32_t> target_scale, error_policy error_policy, T... args)
+    : node(op, target_scale, error_policy, arguments(std::move(args)...))
+  {
   }
 
   /**
    * @brief Construct a new operation IR node
    * @param op The operation code
-   * @param operands The operands of the operation
+   * @param target_scale The target scale for decimal rescaling if applicable
+   * @param error_policy The error policy for the operation
+   * @param args The arguments of the operation
    */
-  operation(opcode op, std::vector<std::unique_ptr<node>> operands);
-
-  template <size_t N>
-  operation(opcode op, std::array<std::unique_ptr<node>, N> operands)
-    : operation{op, operands.data(), operands.data() + N}
+  template <typename... T>
+    requires(std::is_same_v<node, T> && ...)
+  node(opcode op,
+       std::optional<int32_t> target_scale,
+       error_policy error_policy,
+       std::unique_ptr<T>... args)
+    : node(op, target_scale, error_policy, arguments(std::move(args)...))
   {
   }
 
-  operation(operation const&) = delete;
-
-  operation& operator=(operation const&) = delete;
-
-  operation(operation&&) = default;  ///< Move constructor
-
-  operation& operator=(operation&&) = default;  ///< Move assignment operator
-
-  ~operation() override = default;  ///< Destructor
+  /**
+   * @brief Construct a new input reference IR node
+   * @param input The index of the input variable
+   */
+  node(input_reference input);
 
   /**
-   * @copydoc node::get_id
+   * @brief Construct a node that calls a consumer-supplied device function.
+   *
+   * @param udf The function to call
+   * @param error_policy How a row whose call fails is handled
+   * @param args The arguments of the call
    */
-  [[nodiscard]] std::string_view get_id() override;
+  node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
 
   /**
-   * @copydoc node::get_type
+   * @brief Construct a node for a repeated reference to an AST call, which reuses the evaluation
+   * of its first reference.
+   *
+   * @param reference The node converted from the first reference
    */
-  [[nodiscard]] data_type get_type() override;
+  explicit node(repeated_reference reference);
 
   /**
-   * @copydoc node::is_null_aware
+   * @brief Construct a new output reference IR node
+   * @param reference The output variable reference
+   * @param arg The argument node that produces the value to be set to the output variable
    */
-  [[nodiscard]] bool is_null_aware() override;
+  node(output_reference reference, std::unique_ptr<node> arg);
 
   /**
-   * @copydoc node::is_always_valid
+   * @brief Construct a new output reference IR node
+   * @param reference The output variable reference
+   * @param arg The argument node that produces the value to be set to the output variable
    */
-  [[nodiscard]] bool is_always_valid() override;
+  node(output_reference reference, node arg);
+
+  node(node const& other)            = delete;
+  node(node&& other)                 = default;  ///< Move constructor
+  node& operator=(node const& other) = delete;
+  node& operator=(node&& other)      = default;  ///< Move assignment operator
+  ~node()                            = default;  ///< Destructor
+
+  /**
+   * @brief Gets the cached structural hash of the IR node.
+   *
+   * @return The structural hash
+   */
+  [[nodiscard]] size_t hash() const;
+
+  /**
+   * @brief Checks whether another node represents the same expression.
+   *
+   * @param other Node to compare with this node
+   * @return `true` if the nodes are structurally equivalent
+   */
+  [[nodiscard]] bool is_equivalent(node const& other) const;
+
+  /**
+   * @brief Get the identifier of the IR node
+   * @return The identifier of the IR node
+   */
+  [[nodiscard]] std::string_view get_id() const;
+
+  /**
+   * @brief Get the type info of the IR node
+   * @return The type information of the IR node
+   */
+  [[nodiscard]] data_type get_type() const;
+
+  /**
+   * @brief Get the target scale for decimal rescaling if applicable
+   * @return The target scale for decimal rescaling if applicable, std::nullopt otherwise
+   */
+  [[nodiscard]] std::optional<int32_t> get_target_scale() const;
 
   /**
    * @brief Get the operation code of the operation
@@ -380,140 +462,47 @@ struct [[nodiscard]] operation final : node {
    */
   [[nodiscard]] opcode get_opcode() const;
 
-  /** @brief Get the operands of the operation
-   * @return A span of unique pointers to the operands of the operation
+  /** @brief Get the arguments of the operation
+   * @return A span of unique pointers to the arguments of the operation
    */
-  [[nodiscard]] std::span<std::unique_ptr<node> const> get_operands() const;
+  [[nodiscard]] std::span<std::unique_ptr<node> const> get_args() const;
 
   /**
-   * @copydoc node::instantiate
+   * @brief Get the function a `UDF_CALL` node calls.
+   *
+   * @return The callee, or std::nullopt for any other node
    */
-  void instantiate(instance_context& ctx, instance_info const& info) override;
+  [[nodiscard]] std::optional<ast::jit::udf> get_udf() const;
 
   /**
-   * @copydoc node::generate_code
+   * @brief Returns `false` if this node forwards nulls from its inputs to its output.
+   * e.g., `ADD` operator is not null-aware because if any of its inputs is null, the output is
+   * null. but `NULL_EQUAL` operator is null-aware because it can produce a non-null output even if
+   * its inputs are null.
    */
-  [[nodiscard]] std::string generate_code(instance_context& ctx,
-                                          target_info const& info,
-                                          instance_info const& instance) override;
-};
-
-/**
- * @brief An IR node that flattens a boolean predicate to be used in a filter operation.
- * This node replaces null values with false.
- */
-struct [[nodiscard]] filter_predicate final : node {
- private:
-  std::string id_;                ///< The identifier of the IR node
-  std::unique_ptr<node> source_;  ///< The source IR node from which the predicate value is taken
-
- public:
-  filter_predicate(std::unique_ptr<node> source);
+  [[nodiscard]] bool is_null_aware() const;
 
   /**
-   * @copydoc node::get_id
+   * @brief Returns `true` if this node always produces a valid output even if its inputs are
+   * nullable, e.g., `IS_NULL` operator produces a valid boolean output regardless of the
+   * nullability of its input.
    */
-  [[nodiscard]] std::string_view get_id() override;
+  [[nodiscard]] bool is_always_valid() const;
 
   /**
-   * @copydoc node::get_type
+   * @brief Instantiate the IR node with the given context and instance information, setting up any
+   * necessary state and preprocessing needed for code generation.
+   * @param ctx The context within which the IR is instantiated
    */
-  [[nodiscard]] data_type get_type() override;
+  void instantiate(instance_context& ctx);
 
   /**
-   * @copydoc node::is_null_aware
+   * @brief Generate the code for the IR node based on the instance context and target information.
+   * @param ctx The context within which the IR is instantiated
+   * @param info The target information
+   * @param sink The code sink to which the generated code is emitted
    */
-  [[nodiscard]] bool is_null_aware() override;
-
-  /**
-   * @copydoc node::is_always_valid
-   */
-  [[nodiscard]] bool is_always_valid() override;
-
-  /**
-   * @brief Get the source IR node from which the value is taken
-   */
-  [[nodiscard]] node& get_source();
-
-  /**
-   * @copydoc node::instantiate
-   */
-  void instantiate(instance_context& ctx, instance_info const& info) override;
-
-  /**
-   * @copydoc node::generate_code
-   */
-  [[nodiscard]] std::string generate_code(instance_context& ctx,
-                                          target_info const& info,
-                                          instance_info const& instance) override;
-};
-
-/**
- * @brief A specification of an input column to the AST
- */
-struct ast_column_input_spec {
-  ast::table_reference table = {};  ///< The table reference (LEFT or RIGHT)
-  int32_t column             = 0;   ///< The column index in the referenced table
-};
-
-/**
- * @brief A specification of an input scalar to the AST
- */
-struct ast_scalar_input_spec {
-  std::reference_wrapper<scalar const> ref;  ///< The scalar value
-  ast::generic_scalar_device_view view;      ///< The device view of the scalar value
-  std::unique_ptr<column> broadcast_column =
-    nullptr;  ///< The broadcasted column, a column of size 1
-};
-
-/**
- * @brief An input specification for the AST
- */
-using ast_input_spec = std::variant<ast_column_input_spec, ast_scalar_input_spec>;
-
-/**
- * @brief The arguments needed to invoke a `cudf::transform`
- */
-struct [[nodiscard]] transform_args {
-  std::vector<std::unique_ptr<column>> scalar_columns =
-    {};  ///< The scalar columns created during the expression conversion
-  std::vector<std::variant<column_view, scalar_column_view>> inputs =
-    {};                                               ///< The input columns to the transform UDF
-  std::string udf       = {};                         ///< The user-defined function to apply
-  data_type output_type = data_type{type_id::EMPTY};  ///< The output type of the transform
-  cudf::udf_source_type source_type = cudf::udf_source_type::CUDA;  ///< The source type of the UDF
-  std::optional<void*> user_data    = std::nullopt;    ///< User data to pass to the transform
-  null_aware is_null_aware          = null_aware::NO;  ///< Whether the transform is null-aware
-  output_nullability null_policy    = output_nullability::PRESERVE;  ///< Null-transformation policy
-  std::optional<size_type> row_size = std::nullopt;  ///< The row size of the transform operation
-  std::vector<ast_input_spec> input_specs = {};      ///< The input specs (table ref + column index)
-};
-
-/**
- * @brief The arguments needed to invoke a `cudf::filter`
- */
-struct [[nodiscard]] filter_args {
-  std::vector<std::unique_ptr<column>> scalar_columns =
-    {};  ///< The scalar columns created during the expression conversion
-  std::vector<std::variant<column_view, scalar_column_view>> inputs =
-    {};                                          ///< The input columns to the transform UDF
-  std::vector<column_view> filter_columns = {};  ///< The input columns to the filter
-  std::string udf                   = {};  ///< The user-defined function to apply as a predicate
-  cudf::udf_source_type source_type = cudf::udf_source_type::CUDA;  ///< The source type of the UDF
-  std::optional<void*> user_data    = std::nullopt;    ///< User data to pass to the filter
-  null_aware is_null_aware          = null_aware::NO;  ///< Whether the filter is null-aware
-  output_nullability predicate_nullability =
-    output_nullability::PRESERVE;  ///< Null-transformation policy for the predicate output
-  std::vector<ast_input_spec> input_specs = {};  ///< The input specs (table ref + column index)
-};
-
-/**
- * @brief The AST input column arguments used to resolve the column expressions
- */
-struct ast_args {
-  table_view table       = {};  ///< The table view containing the columns (single-table case)
-  table_view left_table  = {};  ///< The left table for join predicates
-  table_view right_table = {};  ///< The right table for join predicates
+  void emit_code(instance_context& ctx, target_info const& info, code_sink& sink);
 };
 
 /**
@@ -521,24 +510,33 @@ struct ast_args {
  */
 struct [[nodiscard]] ast_converter {
  private:
-  std::vector<ast_input_spec> input_specs_;              ///< The input specs for the AST
-  std::vector<var_info> input_vars_;                     ///< The input variables for the IR
-  std::vector<untyped_var_info> output_vars_;            ///< The output variables for the IR
-  std::vector<std::unique_ptr<set_output>> output_irs_;  ///< The output IR nodes
-  std::string code_;                                     ///< The generated code for the IR
-  rmm::cuda_stream_view
-    stream_;  ///< CUDA stream used for device memory operations and kernel launches.
-  rmm::device_async_resource_ref
+  std::vector<std::unique_ptr<row_ir::node>> output_irs_;  ///< The output IR nodes
+  cuda::stream_ref stream_;  ///< CUDA stream used for device memory operations and kernel launches.
+  cudf::memory_resources
     mr_;  ///< Device memory resource used to allocate the returned table's device memory
+  instance_context instance_;  ///< The instance context used during the IR generation
+  table_view left_table_;      ///< The left input table for the expression
+  table_view right_table_;     ///< The right input table for the expression
+  std::unordered_map<ast::jit::detail::udf_call const*, row_ir::node const*>
+    calls_;  ///< The node converted from the first reference to each AST call
 
  public:
   /**
    * @brief Construct a new AST Converter object
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
+   * @param left_table Left input table referenced by expressions
+   * @param right_table Right input table referenced by expressions
    */
-  ast_converter(rmm::cuda_stream_view stream, rmm::device_async_resource_ref mr)
-    : stream_(std::move(stream)), mr_(std::move(mr))
+  ast_converter(cuda::stream_ref stream,
+                cudf::memory_resources mr,
+                table_view left_table,
+                table_view right_table)
+    : stream_(std::move(stream)),
+      mr_(std::move(mr)),
+      instance_(stream_, mr_),
+      left_table_(std::move(left_table)),
+      right_table_(std::move(right_table))
   {
   }
 
@@ -551,70 +549,79 @@ struct [[nodiscard]] ast_converter {
 
   ~ast_converter() = default;  ///< Destructor
 
- private:
-  friend class ast::literal;
-  friend class ast::column_reference;
-  friend class ast::operation;
-  friend class ast::column_name_reference;
-  friend class ast::detail::filter_predicate;
-
+ public:
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::literal const& expr);
 
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::column_reference const& expr);
 
   [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::operation const& expr);
 
-  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(
-    ast::detail::filter_predicate const& expr);
+  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::detail::predicate const& expr);
 
-  [[nodiscard]] std::span<ast_input_spec const> get_input_specs() const;
+  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::jit::detail::operation const& expr);
+
+  [[nodiscard]] std::unique_ptr<row_ir::node> add_ir_node(ast::jit::detail::udf_call const& expr);
 
   /**
-   * @brief add an AST input/input_reference and return its reference index
+   * @brief Converts multiple AST expressions into one generated transform function.
+   *
+   * @pre `expressions` is not empty
+   *
+   * @param target Code generation target
+   * @param expressions AST expressions, one for each output column
+   * @param function_name Name of the generated transform function. Declarations of the LTO
+   * callees it calls precede it, so kernels call it by this name instead of having the source
+   * parser rename the first function it finds
+   * @return Generated source, function null-awareness, and nullability policy for each output
    */
-  [[nodiscard]] int32_t add_ast_input(ast_input_spec in);
+  [[nodiscard]] std::tuple<std::string, null_aware, std::vector<output_nullability>> generate_code(
+    target target,
+    std::span<std::reference_wrapper<ast::expression const> const> expressions,
+    std::string_view function_name);
 
-  void add_input_var(ast_column_input_spec const& in, ast_args const& args);
-
-  void add_input_var(ast_scalar_input_spec const& in, ast_args const& args);
-
-  void add_output_var();
-
-  [[nodiscard]] std::tuple<null_aware, output_nullability> generate_code(
-    target target, ast::expression const& expr, ast_args const& args);
-
- public:
   /**
-   * @brief Convert an AST `compute_column` expression to a `cudf::transform`
+   * @brief Converts AST expressions to arguments for a multi-output `cudf::transform`.
    * @param target The target for which the IR is generated
-   * @param expr The AST expression to convert
-   * @param args The arguments needed to resolve the AST expression
+   * @param expressions AST expressions, one for each output column
+   * @param fragments Device modules to link into the generated kernel
+   * @param left_table The left input table for the expression
+   * @param right_table The right input table for the expression
+   * @param function_name The name of the generated function, which kernels call it by (see
+   * `generate_code`)
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
    * @return The result of the conversion, containing the transform arguments and scalar columns
    */
-  static transform_args compute_column(target target,
-                                       ast::expression const& expr,
-                                       ast_args const& args,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr);
+  static transform_args compute_table(
+    target target,
+    std::span<std::reference_wrapper<ast::expression const> const> expressions,
+    cudf::lto_fragments fragments,
+    table_view const& left_table,
+    table_view const& right_table,
+    std::string_view function_name,
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @brief Convert an AST `filter` expression to a `cudf::filter`
    * @param target The target for which the IR is generated
    * @param expr The AST expression to convert
-   * @param args The arguments needed to resolve the AST expression
-   * @param filter_table The table to be filtered
+   * @param left_table The left input table for the expression
+   * @param right_table The right input table for the expression
+   * @param function_name The name of the generated function, which kernels call it by (see
+   * `generate_code`)
    * @param stream CUDA stream used for device memory operations and kernel launches.
    * @param mr Device memory resource used to allocate the returned table's device memory
    * @return The result of the conversion, containing the filter arguments and scalar columns
    */
-  static filter_args filter(target target,
-                            ast::expression const& expr,
-                            ast_args const& args,
-                            table_view const& filter_table,
-                            rmm::cuda_stream_view stream,
-                            rmm::device_async_resource_ref mr);
+  static transform_args filter(target target,
+                               ast::expression const& expr,
+                               cudf::lto_fragments fragments,
+                               table_view const& left_table,
+                               table_view const& right_table,
+                               std::string_view function_name,
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr);
 };
 
 }  // namespace row_ir

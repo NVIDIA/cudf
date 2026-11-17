@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
 import numpy as np
+import pandas as pd
 import pytest
 
 import cudf
@@ -33,3 +34,20 @@ def test_timedelta_series_to_numpy(data, timedelta_types_as_str):
     actual = gsr.dropna().to_numpy()
 
     np.testing.assert_array_equal(expected, actual)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [1, 2, 4],
+        [],
+        [5.0, 7.0, 8.0],
+        pd.Categorical(["a", "b", "c"]),
+        ["m", "a", "d", "v"],
+    ],
+)
+def test_series_to_numpy(data):
+    pds = pd.Series(data=data, dtype=None if data else float)
+    gds = cudf.Series(data=data, dtype=None if data else float)
+
+    np.testing.assert_array_equal(pds.values, gds.to_numpy())

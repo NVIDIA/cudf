@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,9 +14,8 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <thread>
@@ -55,7 +54,7 @@ std::unique_ptr<cudf::table> hybrid_scan(
   std::optional<cudf::ast::operation const> filter_expression,
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   bool verbose,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 /**
@@ -74,8 +73,8 @@ void inline hybrid_scan_multifile(cudf::size_type num_threads, Functor const& hy
   threads.reserve(num_threads);
 
   // Create and launch threads
-  std::for_each(thrust::counting_iterator(0),
-                thrust::counting_iterator(num_threads),
+  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                cuda::counting_iterator{num_threads},
                 [&](auto tid) { threads.emplace_back(hybrid_scan_fn, tid); });
 
   // Wait for all threads to complete

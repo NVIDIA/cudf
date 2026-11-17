@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import io
@@ -30,7 +30,7 @@ def test_dataframe_info_basic():
      8   8       10 non-null     float64
      9   9       10 non-null     float64
     dtypes: float64(10)
-    memory usage: 859.0+ bytes
+    memory usage: 903.0 bytes
     """
     )
     rng = np.random.default_rng(seed=0)
@@ -54,9 +54,9 @@ def test_dataframe_info_verbose_mem_usage():
      #   Column  Non-Null Count  Dtype
     ---  ------  --------------  -----
      0   a       3 non-null      int64
-     1   b       3 non-null      object
-    dtypes: int64(1), object(1)
-    memory usage: 56.0+ bytes
+     1   b       3 non-null      str
+    dtypes: int64(1), str(1)
+    memory usage: 72.0 bytes
     """
     )
     cudf.from_pandas(df).info(buf=buffer, verbose=True)
@@ -71,8 +71,8 @@ def test_dataframe_info_verbose_mem_usage():
     <class 'cudf.core.dataframe.DataFrame'>
     RangeIndex: 3 entries, 0 to 2
     Columns: 2 entries, a to b
-    dtypes: int64(1), object(1)
-    memory usage: 56.0+ bytes
+    dtypes: int64(1), str(1)
+    memory usage: 72.0 bytes
     """
     )
     cudf.from_pandas(df).info(buf=buffer, verbose=False)
@@ -94,9 +94,9 @@ def test_dataframe_info_verbose_mem_usage():
      #   Column  Non-Null Count  Dtype
     ---  ------  --------------  -----
      0   a       3 non-null      int64
-     1   b       3 non-null      object
-    dtypes: int64(1), object(1)
-    memory usage: 91.0 bytes
+     1   b       3 non-null      str
+    dtypes: int64(1), str(1)
+    memory usage: 123.0 bytes
     """
     )
     cudf.from_pandas(df).info(buf=buffer, verbose=True, memory_usage="deep")
@@ -125,9 +125,9 @@ def test_dataframe_info_verbose_mem_usage():
      #   Column     Non-Null Count  Dtype
     ---  ------     --------------  -----
      0   int_col    5 non-null      int64
-     1   text_col   5 non-null      object
+     1   text_col   5 non-null      str
      2   float_col  5 non-null      float64
-    dtypes: float64(1), int64(1), object(1)
+    dtypes: float64(1), int64(1), str(1)
     memory usage: 130.0 bytes
     """
     )
@@ -160,10 +160,10 @@ def test_dataframe_info_null_counts():
      #   Column     Dtype
     ---  ------     -----
      0   int_col    int64
-     1   text_col   object
+     1   text_col   str
      2   float_col  float64
-    dtypes: float64(1), int64(1), object(1)
-    memory usage: 130.0+ bytes
+    dtypes: float64(1), int64(1), str(1)
+    memory usage: 130.0 bytes
     """
     )
     df.info(buf=buffer, verbose=True, null_counts=False)
@@ -210,9 +210,9 @@ def test_dataframe_info_null_counts():
      #   Column  Dtype
     ---  ------  -----
      0   a       int64
-     1   b       object
-    dtypes: int64(1), object(1)
-    memory usage: 238.0+ bytes
+     1   b       str
+    dtypes: int64(1), str(1)
+    memory usage: 238.0 bytes
     """
     )
     with pd.option_context("display.max_info_rows", 2):
@@ -231,9 +231,9 @@ def test_dataframe_info_null_counts():
      #   Column  Non-Null Count  Dtype
     ---  ------  --------------  -----
      0   a       6 non-null      int64
-     1   b       6 non-null      object
-    dtypes: int64(1), object(1)
-    memory usage: 238.0+ bytes
+     1   b       6 non-null      str
+    dtypes: int64(1), str(1)
+    memory usage: 238.0 bytes
     """
     )
 

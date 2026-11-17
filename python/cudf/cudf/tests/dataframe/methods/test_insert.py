@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -60,4 +60,7 @@ def test_insert_NA():
 
     pdf["C"] = pd.NA
     gdf["C"] = cudf.NA
+    # As of pandas 3.0, "C" becomes an object column broadcasting NA,
+    # cuDF doesn't support object type.
+    pdf["C"] = pdf["C"].astype(gdf["C"].dtype)
     assert_eq(pdf, gdf)

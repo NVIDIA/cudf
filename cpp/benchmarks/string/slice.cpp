@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvbench_utilities.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
@@ -37,22 +38,29 @@ static void bench_slice(nvbench::state& state)
     cudf::test::fixed_width_column_wrapper<cudf::size_type>(stops_itr, stops_itr + num_rows);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   // gather some throughput statistics as well
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);  // all bytes are read
   auto output_size = (row_width / 3 - row_width / 4) * num_rows;
   state.add_global_memory_writes<nvbench::int8_t>(output_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   if (stype == "multi") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::strings::slice_strings(input, starts, stops, stream);
     });
   } else {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      cudf::strings::slice_strings(input, row_width / 4, row_width / 3, 1, stream);
+      cudf::strings::slice_strings(input,
+                                   std::optional<cudf::size_type>(row_width / 4),
+                                   std::optional<cudf::size_type>(row_width / 3),
+                                   std::optional<cudf::size_type>(1),
+                                   stream);
     });
   }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 
   set_throughputs(state);
 }

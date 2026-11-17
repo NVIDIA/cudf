@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -6,15 +6,7 @@ import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_GE_220,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
-from cudf.testing._utils import (
-    expect_warning_if,
-)
 
 
 @pytest.mark.parametrize("nulls", ["none", "some"])
@@ -71,10 +63,6 @@ def test_df_stack_reset_index():
     assert_eq(expected, actual)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Need pandas-2.1.0+ to match `stack` api",
-)
 @pytest.mark.parametrize(
     "tuples",
     [
@@ -124,7 +112,7 @@ def test_df_stack_multiindex_column_axis(tuples, index, level, dropna):
 
     with pytest.warns(FutureWarning):
         got = gdf.stack(level=level, dropna=dropna, future_stack=False)
-    with expect_warning_if(PANDAS_GE_220, FutureWarning):
+    with pytest.warns(pd.errors.Pandas4Warning):
         expect = pdf.stack(level=level, dropna=dropna, future_stack=False)
 
     assert_eq(expect, got, check_dtype=False)
@@ -151,10 +139,6 @@ def test_df_stack_mixed_dtypes():
     assert_eq(expect, got, check_dtype=False)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="Need pandas-2.1.0+ to match `stack` api",
-)
 @pytest.mark.parametrize("level", [["animal", "hair_length"], [1, 2]])
 def test_df_stack_multiindex_column_axis_pd_example(level):
     columns = pd.MultiIndex.from_tuples(
@@ -169,7 +153,7 @@ def test_df_stack_multiindex_column_axis_pd_example(level):
     rng = np.random.default_rng(seed=0)
     df = pd.DataFrame(rng.standard_normal(size=(4, 4)), columns=columns)
 
-    with expect_warning_if(PANDAS_GE_220, FutureWarning):
+    with pytest.warns(pd.errors.Pandas4Warning):
         expect = df.stack(level=level, future_stack=False)
     gdf = cudf.from_pandas(df)
     with pytest.warns(FutureWarning):
@@ -181,3 +165,48 @@ def test_df_stack_multiindex_column_axis_pd_example(level):
     got = gdf.stack(level=level, future_stack=True)
 
     assert_eq(expect, got)
+
+
+def test_df_stack_int_level_names_resolved_positionally():
+    # integer level *names* must not hijack positional level lookup
+    # (pandas' get_level_values resolves integer arguments by name first)
+    columns = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")], names=[1, 0])
+    pdf = pd.DataFrame([[1, 2], [3, 4]], columns=columns)
+    gdf = cudf.from_pandas(pdf)
+    for level in (0, 1):
+        assert_eq(
+            pdf.stack(level=level, future_stack=True),
+            gdf.stack(level=level, future_stack=True),
+        )
+
+
+@pytest.mark.parametrize("level", [2, -3])
+def test_df_stack_out_of_bounds_level_raises(level):
+    columns = pd.MultiIndex.from_tuples([("a", "x"), ("b", "y")])
+    gdf = cudf.DataFrame([[1, 2]], columns=columns)
+    with pytest.raises(IndexError, match="Too many levels"):
+        gdf.stack(level=level)
+
+
+def test_df_stack_duplicate_level_name_raises():
+    columns = pd.MultiIndex.from_tuples(
+        [("a", "x"), ("b", "y")], names=["c", "c"]
+    )
+    gdf = cudf.DataFrame([[1, 2]], columns=columns)
+    with pytest.raises(ValueError, match="occurs multiple times"):
+        gdf.stack(level="c")
+
+
+def test_df_stack_unsorted_column_permutation_appearance_order():
+    # a 3-cycle column permutation: the previous argsort-based reordering
+    # misaligned column data for non-involution permutations; stacked keys
+    # are emitted in appearance order like pandas
+    columns = pd.MultiIndex.from_tuples(
+        [("b", 1), ("c", 2), ("a", 3)], names=["l0", "l1"]
+    )
+    pdf = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=columns)
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(
+        pdf.stack("l0", future_stack=True),
+        gdf.stack("l0", future_stack=True),
+    )

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -8,6 +8,7 @@ import pytest
 
 import cudf
 from cudf.testing import assert_eq
+from cudf.testing._utils import assert_exceptions_equal
 
 
 @pytest.mark.parametrize(
@@ -72,6 +73,25 @@ def test_dt_index(field):
     assert_eq(getattr(gdf_data, field), getattr(data, field), exact=False)
 
 
+def test_dti_microsecond_includes_milliseconds():
+    # DatetimeIndex.microsecond must include the whole-millisecond component
+    # like pandas: 0.001002s -> 1002 microseconds (not 2). Values >= 1000
+    # exercise the millisecond fold that plain sub-millisecond data misses.
+    data = [
+        "2010-01-01 00:00:00.001002",
+        "2010-01-01 00:00:00.123456",
+        "2010-01-01 00:00:00.000999",
+        "2010-01-01 00:00:00.000000",
+    ]
+    pidx = pd.DatetimeIndex(data)
+    gidx = cudf.from_pandas(pidx)
+
+    expect = pidx.microsecond
+    got = gidx.microsecond
+    assert_eq(expect, got)
+    assert got.dtype == np.dtype("int32")
+
+
 @pytest.mark.parametrize(
     "attr",
     [
@@ -121,6 +141,82 @@ def test_dti_properties(attr):
     result = getattr(cudf_dti, attr)
     expected = getattr(pd_dti, attr)
     assert result == expected
+
+
+@pytest.mark.parametrize(
+    "data,freq",
+    [
+        (["2020-01-31"], "ME"),
+        (["2020-01-01", "2020-01-02", "2020-01-03"], "D"),
+        (["2020-01-01", "2020-01-02"], "D"),
+        (["2020-01-01", "2020-01-08", "2020-01-15"], "7D"),
+        ([], "D"),
+    ],
+)
+def test_dti_freq_setter(data, freq):
+    pd_dti = pd.DatetimeIndex(data)
+    cudf_dti = cudf.DatetimeIndex(data)
+    pd_dti.freq = freq
+    cudf_dti.freq = freq
+    assert_eq(cudf_dti, pd_dti)
+    assert cudf_dti.freq == pd_dti.freq
+
+
+def test_dti_freq_setter_none_clears():
+    pd_dti = pd.date_range("2020-01-01", periods=3, freq="D")
+    cudf_dti = cudf.from_pandas(pd_dti)
+    assert cudf_dti.freq is not None
+    pd_dti.freq = None
+    cudf_dti.freq = None
+    assert cudf_dti.freq is None
+    assert pd_dti.freq is None
+    assert_eq(cudf_dti, pd_dti)
+
+
+def test_dti_freq_setter_via_cudf_dateoffset():
+    data = ["2020-01-01", "2020-01-02", "2020-01-03"]
+    cudf_dti = cudf.DatetimeIndex(data)
+    cudf_dti.freq = cudf.DateOffset(days=1)
+    pd_dti = pd.DatetimeIndex(data)
+    pd_dti.freq = "D"
+    assert_eq(cudf_dti, pd_dti)
+
+
+@pytest.mark.parametrize(
+    "data,freq",
+    [
+        (["2020-01-01", "2020-01-02", "2020-01-03"], "ME"),
+        (["2020-01-01", "2020-01-02"], "2D"),
+        (["2020-01-01", "2020-01-03", "2020-01-05"], "D"),
+    ],
+)
+def test_dti_freq_setter_invalid_raises(data, freq):
+    def _set(idx_cls, freq_val):
+        idx = idx_cls(data)
+        idx.freq = freq_val
+
+    assert_exceptions_equal(
+        lfunc=_set,
+        rfunc=_set,
+        lfunc_args_and_kwargs=([pd.DatetimeIndex, freq], {}),
+        rfunc_args_and_kwargs=([cudf.DatetimeIndex, freq], {}),
+    )
+
+
+@pytest.mark.parametrize("freq", ["asdfgh", "not_a_freq"])
+def test_dti_freq_setter_unparseable_raises(freq):
+    data = ["2020-01-01", "2020-01-02"]
+
+    def _set(idx_cls, freq_val):
+        idx = idx_cls(data)
+        idx.freq = freq_val
+
+    assert_exceptions_equal(
+        lfunc=_set,
+        rfunc=_set,
+        lfunc_args_and_kwargs=([pd.DatetimeIndex, freq], {}),
+        rfunc_args_and_kwargs=([cudf.DatetimeIndex, freq], {}),
+    )
 
 
 def test_writable_numpy_array():

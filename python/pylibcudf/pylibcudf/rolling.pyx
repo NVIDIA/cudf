@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -10,7 +10,9 @@ from libcpp.vector cimport vector
 from pylibcudf.libcudf cimport rolling as cpp_rolling
 from pylibcudf.libcudf.aggregation cimport rolling_aggregation
 from pylibcudf.libcudf.column.column cimport column
+from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
+from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -20,6 +22,11 @@ from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
 from .utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 
 __all__ = [
@@ -61,7 +68,7 @@ cdef class BoundedClosed:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_closed](dereference(delta.get()))
@@ -78,7 +85,7 @@ cdef class BoundedOpen:
     delta
         Offset from current row, must be valid. If floating point must not be inf/nan.
     """
-    def __cinit__(self, Scalar delta not None):
+    def __cinit__(self, Scalar delta not None) -> None:
         self.delta = delta
         self.c_obj = move(
             make_unique[cpp_rolling.bounded_open](dereference(delta.get()))
@@ -124,8 +131,8 @@ cpdef Table grouped_range_rolling_window(
     null_order null_order,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
-    list requests,
-    Stream stream=None,
+    list requests: list[RollingRequest],
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -164,22 +171,25 @@ cpdef Table grouped_range_rolling_window(
     for req in requests:
         crequests.push_back(move((<RollingRequest?>req).view()))
 
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_group_keys = group_keys.view()
+    cdef column_view c_orderby = orderby.view()
     with nogil:
         result = cpp_rolling.grouped_range_rolling_window(
-            group_keys.view(),
-            orderby.view(),
+            c_group_keys,
+            c_orderby,
             order,
             null_order,
             dereference(preceding.c_obj.get()),
             dereference(following.c_obj.get()),
             crequests,
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
-    return Table.from_libcudf(move(result), stream, mr)
+    return Table.from_libcudf(move(result), _stream, mr)
 
 
 cpdef Column rolling_window(
@@ -188,7 +198,7 @@ cpdef Column rolling_window(
     WindowType following_window,
     size_type min_periods,
     Aggregation agg,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Perform a rolling window operation on a column
@@ -224,33 +234,39 @@ cpdef Column rolling_window(
     # reclaim the GIL internally for just the necessary scope like column.view()
     cdef const rolling_aggregation *c_agg = agg.view_underlying_as_rolling()
 
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_source = source.view()
+    cdef column_view c_preceding_window
+    cdef column_view c_following_window
     if WindowType is Column:
+        c_preceding_window = preceding_window.view()
+        c_following_window = following_window.view()
         with nogil:
             result = cpp_rolling.rolling_window(
-                source.view(),
-                preceding_window.view(),
-                following_window.view(),
+                c_source,
+                c_preceding_window,
+                c_following_window,
                 min_periods,
                 dereference(c_agg),
-                stream.view(),
+                _cs,
                 mr.get_mr()
             )
     else:
         with nogil:
             result = cpp_rolling.rolling_window(
-                source.view(),
+                c_source,
                 preceding_window,
                 following_window,
                 min_periods,
                 dereference(c_agg),
-                stream.view(),
+                _cs,
                 mr.get_mr()
             )
 
-    return Column.from_libcudf(move(result), stream, mr)
+    return Column.from_libcudf(move(result), _stream, mr)
 
 
 cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
@@ -271,14 +287,14 @@ cpdef bool is_valid_rolling_aggregation(DataType source, Aggregation agg):
     return cpp_rolling.is_valid_rolling_aggregation(source.c_obj, agg.kind())
 
 
-cpdef tuple make_range_windows(
+cpdef tuple[Column, Column] make_range_windows(
     Table group_keys,
     Column orderby,
     order order,
     null_order null_order,
     PrecedingRangeWindowType preceding,
     FollowingRangeWindowType following,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -308,21 +324,24 @@ cpdef tuple make_range_windows(
     """
     cdef pair[unique_ptr[column], unique_ptr[column]] result
 
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef table_view c_group_keys = group_keys.view()
+    cdef column_view c_orderby = orderby.view()
     with nogil:
         result = cpp_rolling.make_range_windows(
-            group_keys.view(),
-            orderby.view(),
+            c_group_keys,
+            c_orderby,
             order,
             null_order,
             dereference(preceding.c_obj.get()),
             dereference(following.c_obj.get()),
-            stream.view(),
+            _cs,
             mr.get_mr()
         )
     return (
-        Column.from_libcudf(move(result.first), stream, mr),
-        Column.from_libcudf(move(result.second), stream, mr)
+        Column.from_libcudf(move(result.first), _stream, mr),
+        Column.from_libcudf(move(result.second), _stream, mr)
     )

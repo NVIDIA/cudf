@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # Common setup steps shared by Python test jobs
@@ -12,28 +12,40 @@ rapids-logger "Configuring conda strict channel priority"
 conda config --set channel_priority strict
 
 rapids-logger "Downloading artifacts from previous jobs"
-CPP_CHANNEL=$(rapids-download-conda-from-github cpp)
-PYTHON_CHANNEL=$(rapids-download-from-github "$(rapids-package-name conda_python cudf --stable --cuda)")
-PYTHON_NOARCH_CHANNEL=$(rapids-download-from-github "$(rapids-package-name conda_python cudf --pure --cuda "${RAPIDS_CUDA_VERSION}")")
+CPP_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
+PYTHON_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+PYTHON_NOARCH_CHANNEL=$(rapids-download-from-github "$(rapids-artifact-name conda_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 rapids-logger "Generate Python testing dependencies"
 
 ENV_YAML_DIR="$(mktemp -d)"
 
-CMD="rapids-dependency-file-generator --output conda"
+CMD=(rapids-dependency-file-generator --output conda)
 
 # Add file-key options for each argument
 for KEY in "$@"; do
-  CMD="${CMD} --file-key \"${KEY}\""
+  CMD+=(--file-key "${KEY}")
 done
 
-CMD="${CMD} \
-  --prepend-channel \"${CPP_CHANNEL}\" \
-  --prepend-channel \"${PYTHON_CHANNEL}\" \
-  --prepend-channel \"${PYTHON_NOARCH_CHANNEL}\" \
-  --matrix \"cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};dependencies=${RAPIDS_DEPENDENCIES}\""
+DEPENDENCY_MATRIX="cuda=${RAPIDS_CUDA_VERSION%.*};arch=$(arch);py=${RAPIDS_PY_VERSION};dependencies=${RAPIDS_DEPENDENCIES}"
+if [[ -n "${CUDF_EXTRA_DEPENDENCY_MATRIX:-}" ]]; then
+  DEPENDENCY_MATRIX="${DEPENDENCY_MATRIX};${CUDF_EXTRA_DEPENDENCY_MATRIX}"
+fi
 
-eval ${CMD} | tee "${ENV_YAML_DIR}/env.yaml"
+CMD+=(
+  --prepend-channel "${CPP_CHANNEL}"
+  --prepend-channel "${PYTHON_CHANNEL}"
+  --prepend-channel "${PYTHON_NOARCH_CHANNEL}"
+)
+
+# Only set by jobs that downloaded the cudf-polars-quent package.
+if [[ -n "${CUDF_POLARS_QUENT_CHANNEL:-}" ]]; then
+  CMD+=(--prepend-channel "${CUDF_POLARS_QUENT_CHANNEL}")
+fi
+
+CMD+=(--matrix "${DEPENDENCY_MATRIX}")
+
+"${CMD[@]}" | tee "${ENV_YAML_DIR}/env.yaml"
 
 rapids-mamba-retry env create --yes -f "${ENV_YAML_DIR}/env.yaml" -n test
 

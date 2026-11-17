@@ -1,14 +1,19 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/scalar_column_view.hpp>
 #include <cudf/scalar/scalar.hpp>
 
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -16,45 +21,96 @@ namespace cudf {
 namespace jni {
 namespace ast {
 
-/**
- * A class to capture all of the resources associated with a compiled AST expression.
- * AST nodes do not own their child nodes, so every node in the expression tree
- * must be explicitly tracked in order to free the underlying resources for each node.
- *
- * This should be cleaned up a bit after the libcudf AST refactoring in
- * https://github.com/rapidsai/cudf/pull/8815 when a virtual destructor is added to the
- * base AST node type. Then we do not have to track every AST node type separately.
- */
-class compiled_expr {
-  /** All expression nodes within the expression tree */
-  std::vector<std::unique_ptr<cudf::ast::expression>> expressions;
+enum class compilation_mode { DEFAULT, JIT };
 
+/** A class to capture all resources associated with a compiled AST expression. */
+class compiled_expr {
+  compilation_mode const mode;
+
+  // Keep literal owners before the tree so its non-owning nodes are destroyed first.
   /** GPU scalar instances that correspond to literal nodes */
   std::vector<std::unique_ptr<cudf::scalar>> scalars;
 
+  /** One-row columns backing literals in a JIT expression tree */
+  std::vector<std::unique_ptr<cudf::column>> scalar_columns;
+
+  /** All expression nodes within the expression tree */
+  cudf::ast::tree expressions;
+
  public:
-  cudf::ast::literal& add_literal(std::unique_ptr<cudf::ast::literal> literal_ptr,
-                                  std::unique_ptr<cudf::scalar> scalar_ptr)
+  explicit compiled_expr(compilation_mode mode) : mode{mode} {}
+
+  template <typename ScalarType>
+  cudf::ast::literal const& add_literal(ScalarType& scalar,
+                                        std::unique_ptr<cudf::scalar> scalar_ptr)
   {
-    expressions.push_back(std::move(literal_ptr));
     scalars.push_back(std::move(scalar_ptr));
-    return static_cast<cudf::ast::literal&>(*expressions.back());
+    if (!is_jit()) { return expressions.emplace<cudf::ast::literal>(scalar); }
+    scalar_columns.push_back(cudf::make_column_from_scalar(scalar, 1));
+    return expressions.emplace<cudf::ast::literal>(
+      cudf::scalar_column_view{scalar_columns.back()->view()});
   }
 
-  cudf::ast::column_reference& add_column_ref(std::unique_ptr<cudf::ast::column_reference> ref_ptr)
+  cudf::ast::column_reference const& add_column_ref(cudf::size_type column_index,
+                                                    cudf::ast::table_reference table_ref)
   {
-    expressions.push_back(std::move(ref_ptr));
-    return static_cast<cudf::ast::column_reference&>(*expressions.back());
+    return expressions.emplace<cudf::ast::column_reference>(column_index, table_ref);
   }
 
-  cudf::ast::operation& add_operation(std::unique_ptr<cudf::ast::operation> expr_ptr)
+  cudf::ast::column_name_reference const& add_column_name_ref(std::string column_name)
   {
-    expressions.push_back(std::move(expr_ptr));
-    return static_cast<cudf::ast::operation&>(*expressions.back());
+    return expressions.emplace<cudf::ast::column_name_reference>(std::move(column_name));
   }
 
-  /** Return the expression node at the top of the tree */
-  cudf::ast::expression& get_top_expression() const { return *expressions.back(); }
+  cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
+                                            cudf::ast::expression const& child)
+  {
+    return expressions.emplace<cudf::ast::operation>(op, child);
+  }
+
+  cudf::ast::operation const& add_operation(cudf::ast::ast_operator op,
+                                            cudf::ast::expression const& left,
+                                            cudf::ast::expression const& right)
+  {
+    return expressions.emplace<cudf::ast::operation>(op, left, right);
+  }
+
+  template <typename F>
+  cudf::ast::expression const& add_jit_expression(F&& factory)
+  {
+    // Defensively enforce the precondition even though compile_jit_expression checks it first.
+    if (!is_jit()) {
+      throw std::invalid_argument("JIT operations require an expression compiled for JIT");
+    }
+    return factory(expressions);
+  }
+
+  [[nodiscard]] bool has_literals() const { return !scalars.empty(); }
+
+  [[nodiscard]] bool has_jit_literals() const { return !scalar_columns.empty(); }
+
+  [[nodiscard]] bool is_jit() const { return mode == compilation_mode::JIT; }
+
+  void release_jit_staging_scalars()
+  {
+    if (is_jit()) { scalars.clear(); }
+  }
+
+  /** Return the expression node at the top of a default-compatible tree */
+  cudf::ast::expression const& get_top_expression() const
+  {
+    if (is_jit()) {
+      throw std::logic_error("JIT-compiled expressions cannot be used by a default AST consumer");
+    }
+    return expressions.back();
+  }
+
+  /** Return the expression node at the top of the JIT tree */
+  cudf::ast::expression const& get_jit_top_expression() const
+  {
+    if (!is_jit()) { throw std::logic_error("Expression was not compiled for JIT"); }
+    return expressions.back();
+  }
 };
 
 }  // namespace ast

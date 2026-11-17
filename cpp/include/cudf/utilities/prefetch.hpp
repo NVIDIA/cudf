@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -30,7 +30,7 @@ std::atomic_bool& debug();
  */
 void prefetch(void const* ptr,
               std::size_t size,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               rmm::cuda_device_id device_id = rmm::get_current_cuda_device());
 
 /**
@@ -50,7 +50,7 @@ void prefetch(void const* ptr,
 cudaError_t prefetch_noexcept(
   void const* ptr,
   std::size_t size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::cuda_device_id device_id = rmm::get_current_cuda_device()) noexcept;
 
 /**
@@ -65,7 +65,7 @@ cudaError_t prefetch_noexcept(
  */
 template <typename T>
 void prefetch(rmm::device_uvector<T> const& v,
-              rmm::cuda_stream_view stream,
+              cuda::stream_ref stream,
               rmm::cuda_device_id device_id = rmm::get_current_cuda_device())
 {
   if (v.is_empty()) { return; }

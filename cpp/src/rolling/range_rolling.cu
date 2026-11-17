@@ -1,41 +1,45 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "detail/range_utils.cuh"
+#include "detail/range_rolling.hpp"
+#include "detail/rolling.hpp"
 
-#include <cudf/aggregation.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
-#include <cudf/column/column_factories.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/column/column_view.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/rolling.hpp>
-#include <cudf/reduction.hpp>
 #include <cudf/rolling.hpp>
-#include <cudf/rolling/range_window_bounds.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
-#include <cudf/utilities/type_checks.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
+#include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
-#include <thrust/reduce.h>
+#include <cuda/stream>
 
+#include <cstddef>
+#include <memory>
 #include <optional>
+#include <utility>
+#include <variant>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
 
-rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
-                                                     rmm::device_uvector<size_type> const& offsets,
-                                                     rmm::cuda_stream_view stream)
+cuda::device_buffer<cudf::size_type> nulls_per_group(column_view const& orderby,
+                                                     device_span<size_type const> offsets,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto d_orderby        = column_device_view::create(orderby, stream);
@@ -47,7 +51,8 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
       [orderby = *d_orderby] __device__(size_type i) -> size_type {
         return static_cast<size_type>(orderby.is_null_nocheck(i));
       }));
-  rmm::device_uvector<cudf::size_type> null_counts{num_groups, stream};
+  cuda::device_buffer<cudf::size_type> null_counts{
+    stream, mr.get_output_mr(), num_groups, cuda::no_init};
   cub::DeviceSegmentedReduce::Sum(nullptr,
                                   bytes,
                                   is_null_it,
@@ -55,8 +60,8 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
-  auto tmp = rmm::device_buffer(bytes, stream);
+                                  stream.get());
+  auto tmp = cuda::device_buffer<std::byte>(stream, mr.get_temporary_mr(), bytes, cuda::no_init);
   cub::DeviceSegmentedReduce::Sum(tmp.data(),
                                   bytes,
                                   is_null_it,
@@ -64,7 +69,7 @@ rmm::device_uvector<cudf::size_type> nulls_per_group(column_view const& orderby,
                                   num_groups,
                                   offsets.begin(),
                                   offsets.begin() + 1,
-                                  stream.value());
+                                  stream.get());
   return null_counts;
 }
 
@@ -75,29 +80,26 @@ std::unique_ptr<column> make_range_window(
   order order,
   null_order null_order,
   range_window_type window,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   bool const nulls_at_start = (order == order::ASCENDING && null_order == null_order::BEFORE) ||
                               (order == order::DESCENDING && null_order == null_order::AFTER);
 
-  auto dispatch = [&](auto&& clamper, scalar const* row_delta) {
-    return type_dispatcher(orderby.type(),
-                           clamper,
-                           orderby,
-                           direction,
-                           order,
-                           grouping,
-                           nulls_at_start,
-                           row_delta,
-                           stream,
-                           mr);
-  };
   return std::visit(
-    [&](auto&& window) -> std::unique_ptr<column> {
-      using WindowType = cuda::std::decay_t<decltype(window)>;
-      return dispatch(rolling::range_window_clamper<WindowType>{}, window.delta());
+    [&](auto const& window_bound) -> std::unique_ptr<column> {
+      auto const delta = normalize_delta(window_bound);
+      // Type-independent invariants for a per-row delta column are enforced once here, regardless
+      // of the orderby type. The orderby-type-specific type relationship is checked per-type in
+      // range_window_clamper::operator().
+      if (auto const* delta_col = std::get_if<column_view>(&delta)) {
+        CUDF_EXPECTS(delta_col->size() == orderby.size(),
+                     "Delta column must have the same number of rows as the orderby column.");
+        CUDF_EXPECTS(!delta_col->has_nulls(), "Delta column must not contain nulls.");
+      }
+      return dispatch_range_window(
+        window_bound, orderby, direction, order, grouping, nulls_at_start, delta, stream, mr);
     },
     window);
 }
@@ -109,16 +111,19 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   if (group_keys.num_columns() > 0) {
-    using sort_helper = cudf::groupby::detail::sort::sort_groupby_helper;
-    sort_helper helper{group_keys, null_policy::INCLUDE, sorted::YES, {}};
-    auto const& labels   = helper.group_labels(stream);
-    auto const& offsets  = helper.group_offsets(stream);
-    auto per_group_nulls = orderby.has_nulls() ? nulls_per_group(orderby, offsets, stream)
-                                               : rmm::device_uvector<size_type>{0, stream};
+    using cudf::groupby::detail::groupby_helper;
+    groupby_helper helper{group_keys, null_policy::INCLUDE, sorted::YES};
+    auto const& labels  = helper.group_labels(stream, cudf::get_current_device_resource_ref());
+    auto const& offsets = helper.group_offsets(stream, cudf::get_current_device_resource_ref());
+    auto per_group_nulls =
+      orderby.has_nulls()
+        ? nulls_per_group(orderby, offsets, stream, cudf::get_current_device_resource_ref())
+        : cuda::device_buffer<size_type>{
+            stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
     auto grouping = detail::rolling::preprocessed_group_info{labels, offsets, per_group_nulls};
     return {
       make_range_window(
@@ -150,6 +155,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
                               mr)};
   }
 }
+
 }  // namespace detail
 
 std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
@@ -159,8 +165,8 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   null_order null_order,
   range_window_type preceding,
   range_window_type following,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from math import floor
@@ -53,9 +53,9 @@ def test_series_map_callable_numeric_random():
     pdsr = pd.Series(data)
 
     # Call map
-    got = sr.map(lambda x: (floor(x) + 1 if x - floor(x) >= 0.5 else floor(x)))
+    got = sr.map(lambda x: floor(x) + 1 if x - floor(x) >= 0.5 else floor(x))
     expect = pdsr.map(
-        lambda x: (floor(x) + 1 if x - floor(x) >= 0.5 else floor(x))
+        lambda x: floor(x) + 1 if x - floor(x) >= 0.5 else floor(x)
     )
 
     # Check

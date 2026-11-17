@@ -5,9 +5,11 @@ ARG PYTHON_PACKAGE_MANAGER=conda
 
 FROM ${BASE} as pip-base
 
+# libnuma-dev is required for pip devcontainers for cucascade from rapidsmpf
 RUN apt update -y \
  && DEBIAN_FRONTEND=noninteractive apt install -y \
     librdkafka-dev \
+    libnuma-dev \
  && rm -rf /tmp/* /var/tmp/* /var/cache/apt/* /var/lib/apt/lists/*;
 
 ENV DEFAULT_VIRTUAL_ENV=rapids
@@ -32,12 +34,13 @@ ENV PYTHONUNBUFFERED="1"
 ENV PYTHONDONTWRITEBYTECODE="1"
 
 ENV HISTFILE="/home/coder/.cache/._bash_history"
-ENV LIBCUDF_KERNEL_CACHE_PATH="/home/coder/cudf/cpp/build/${PYTHON_PACKAGE_MANAGER}/cuda-${CUDA_VERSION}/latest/jitify_cache"
+ENV LIBCUDF_KERNEL_CACHE_PATH="/home/coder/cudf/cpp/build/${PYTHON_PACKAGE_MANAGER}/cuda-${CUDA_VERSION}/latest/libcudf_kernel_cache"
 
 ###
 # sccache configuration
 ###
-ENV AWS_ROLE_ARN="arn:aws:iam::279114543810:role/nv-gha-token-sccache-devs"
+ENV AWS_IDP_URL="https://token.rapids.nvidia.com"
+ENV AWS_ROLE_ARN="arn:aws:iam::279114543810:role/rapids-token-sccache-devs"
 ENV SCCACHE_REGION="us-east-2"
 ENV SCCACHE_BUCKET="rapids-sccache-devs"
 ENV SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -50,7 +50,8 @@ bool config_default_pinned_memory_resource(pinned_mr_options const& opts);
  *
  * @param threshold The threshold size in bytes. If the size of the copy is less than this
  * threshold, the copy will be done using kernels. If the size is greater than or equal to this
- * threshold, the copy will be done using cudaMemcpyAsync.
+ * threshold, the copy will be done by calling a CUDA runtime API (cudaMemcpyAsync or
+ * cudaMemcpyBatchAsync).
  */
 void set_kernel_pinned_copy_threshold(size_t threshold);
 

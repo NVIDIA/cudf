@@ -1,22 +1,26 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/tdigest_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/filling.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <functional>
 
@@ -26,9 +30,8 @@ namespace {
  *
  */
 struct tdigest_gen_grouped {
-  template <
-    typename T,
-    typename std::enable_if_t<cudf::is_numeric<T>() || cudf::is_fixed_point<T>()>* = nullptr>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& keys,
                                            cudf::column_view const& values,
                                            int delta)
@@ -39,13 +42,13 @@ struct tdigest_gen_grouped {
     std::vector<std::unique_ptr<cudf::groupby_aggregation>> aggregations;
     aggregations.push_back(cudf::make_tdigest_aggregation<cudf::groupby_aggregation>(delta));
     requests.push_back({values, std::move(aggregations)});
-    auto result = gb.aggregate(requests);
-    return std::move(result.second[0].results[0]);
+    auto result      = gb.aggregate(requests);
+    auto const order = cudf::sorted_order(result.first->view());
+    return std::move(
+      cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *order)->release()[0]);
   }
 
-  template <
-    typename T,
-    typename std::enable_if_t<!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>()>* = nullptr>
+  template <typename T>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& keys,
                                            cudf::column_view const& values,
                                            int delta)
@@ -132,7 +135,7 @@ TYPED_TEST(TDigestAllTypes, LargeGroups)
   // generate a random set of keys
   std::vector<int> h_keys;
   h_keys.reserve(_values->size());
-  auto iter = thrust::make_counting_iterator(0);
+  auto iter = cuda::counting_iterator<int>{0};
   std::transform(iter, iter + _values->size(), std::back_inserter(h_keys), [](int i) {
     return static_cast<int>(round(cudf::test::rand_range(0, 8)));
   });
@@ -216,7 +219,10 @@ TEST_F(TDigestTest, EmptyMixed)
                                               {FCW{50.0, 60.0}, FCW{1.0, 1.0}, 50.0, 60.0},
                                               {FCW{}, FCW{}, 0, 0}});
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result.second[0].results[0], *expected);
+  auto const order = cudf::sorted_order(result.first->view());
+  auto const ordered =
+    cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered->get_column(0), *expected);
 }
 
 template <typename Func>
@@ -442,6 +448,48 @@ TEST_F(TDigestMergeTest, Simple)
   cudf::test::tdigest_merge_simple(tdigest_groupby_simple_op{}, tdigest_groupby_simple_merge_op{});
 }
 
+TEST_F(TDigestMergeTest, EqualMeansPreserveInputOrder)
+{
+  using doubles = cudf::test::fixed_width_column_wrapper<double>;
+  auto const parts =
+    cudf::test::make_expected_tdigest_column({{doubles{0, 1, 2, 3}, doubles{1, 31, 2, 5}, 0, 3},
+                                              {doubles{0, 1, 2, 3}, doubles{17, 1, 23, 2}, 0, 3},
+                                              {doubles{0, 1, 2, 3}, doubles{3, 19, 1, 11}, 0, 3},
+                                              {doubles{0, 1, 2, 3}, doubles{29, 2, 7, 1}, 0, 3}});
+  constexpr cudf::size_type num_rows = 4096;
+  auto const index =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 4; });
+  cudf::test::fixed_width_column_wrapper<int32_t> indices(index, index + num_rows);
+  auto const values = cudf::gather(cudf::table_view{{*parts}}, indices);
+  auto const key = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3; });
+  cudf::test::fixed_width_column_wrapper<int32_t> keys(key, key + num_rows);
+  auto const ordered = cudf::stable_sort_by_key(cudf::table_view{{keys, values->view().column(0)}},
+                                                cudf::table_view{{keys}});
+  auto const merge   = [](cudf::table_view input, cudf::sorted sorted, bool sort_values_first) {
+    cudf::groupby::groupby gb(input.select({0}), cudf::null_policy::EXCLUDE, sorted);
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = input.column(1);
+    if (sort_values_first) {
+      // NUNIQUE caches a value-sorted layout. MERGE_TDIGEST must still use input order
+      // for equal centroid means, whose different weights affect cluster boundaries.
+      requests[0].aggregations.push_back(
+        cudf::make_nunique_aggregation<cudf::groupby_aggregation>());
+    }
+    requests[0].aggregations.push_back(
+      cudf::make_merge_tdigest_aggregation<cudf::groupby_aggregation>(5));
+    auto const [result_keys, result] = gb.aggregate(requests);
+    return cudf::sort_by_key(cudf::table_view{{*result[0].results.back()}}, result_keys->view());
+  };
+  auto const expected = merge(ordered->view(), cudf::sorted::YES, false);
+  for (auto const sort_values_first : {false, true}) {
+    for (int repeat = 0; repeat < 3; ++repeat) {
+      auto const actual = merge(
+        cudf::table_view{{keys, values->view().column(0)}}, cudf::sorted::NO, sort_values_first);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), actual->view());
+    }
+  }
+}
+
 TEST_F(TDigestMergeTest, Grouped)
 {
   auto values = cudf::test::generate_standardized_percentile_distribution(
@@ -460,7 +508,7 @@ TEST_F(TDigestMergeTest, Grouped)
 
   // generate separate digests
   std::vector<std::unique_ptr<cudf::column>> parts;
-  auto iter = thrust::make_counting_iterator(0);
+  auto iter = cuda::counting_iterator<int>{0};
   std::transform(
     iter,
     iter + split_values.size(),
@@ -528,7 +576,7 @@ TEST_F(TDigestMergeTest, Grouped)
 
     // verify min/max
     auto split_results = cudf::split(*result.second[0].results[0], {1});
-    auto iter          = thrust::make_counting_iterator(0);
+    auto iter          = cuda::counting_iterator<cudf::size_type>{0};
     std::for_each(iter, iter + split_results.size(), [&](cudf::size_type i) {
       auto copied = std::make_unique<cudf::column>(split_results[i]);
       cudf::test::tdigest_minmax_compare<double>(cudf::tdigest::tdigest_column_view(*copied),
@@ -575,7 +623,7 @@ TEST_F(TDigestMergeTest, Grouped)
 
     // verify min/max
     auto split_results = cudf::split(*result.second[0].results[0], {1});
-    auto iter          = thrust::make_counting_iterator(0);
+    auto iter          = cuda::counting_iterator<cudf::size_type>{0};
     std::for_each(iter, iter + split_results.size(), [&](cudf::size_type i) {
       auto copied = std::make_unique<cudf::column>(split_results[i]);
       cudf::test::tdigest_minmax_compare<double>(cudf::tdigest::tdigest_column_view(*copied),
@@ -621,7 +669,7 @@ TEST_F(TDigestMergeTest, Grouped)
 
     // verify min/max
     auto split_results = cudf::split(*result.second[0].results[0], {1});
-    auto iter          = thrust::make_counting_iterator(0);
+    auto iter          = cuda::counting_iterator<cudf::size_type>{0};
     std::for_each(iter, iter + split_results.size(), [&](cudf::size_type i) {
       auto copied = std::make_unique<cudf::column>(split_results[i]);
       cudf::test::tdigest_minmax_compare<double>(cudf::tdigest::tdigest_column_view(*copied),
@@ -711,7 +759,9 @@ std::unique_ptr<cudf::table> do_agg(
   EXPECT_EQ(result.second[0].results.size(), 1);
   result_columns.push_back(std::move(result.second[0].results[0]));
 
-  return std::make_unique<cudf::table>(std::move(result_columns));
+  auto output      = cudf::table{std::move(result_columns)};
+  auto const order = cudf::sorted_order(cudf::table_view{{output.view().column(0)}});
+  return cudf::gather(output.view(), *order);
 }
 }  // namespace
 
@@ -721,12 +771,9 @@ TEST_F(TDigestMergeTest, AllValuesAreNull)
   // See `aggregate_result_functor::operator()<aggregation::TDIGEST>` for details.
   auto const keys      = cudf::test::fixed_width_column_wrapper<int32_t>{{0, 0, 1, 1, 2}};
   auto const keys_view = cudf::column_view(keys);
-  auto val_elems  = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
-  auto val_valids = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
-    // All values are null
-    return false;
-  });
-  auto const vals = cudf::test::fixed_width_column_wrapper<int32_t>{
+  auto val_elems       = cuda::counting_iterator(0);
+  auto val_valids      = cudf::test::iterators::all_nulls();
+  auto const vals      = cudf::test::fixed_width_column_wrapper<int32_t>{
     val_elems, val_elems + keys_view.size(), val_valids};
 
   auto const delta = 1000;

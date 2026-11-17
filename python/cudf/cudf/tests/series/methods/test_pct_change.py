@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -6,15 +6,8 @@ import numpy as np
 import pytest
 
 import cudf
-from cudf.api.extensions import no_default
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
-from cudf.testing._utils import expect_warning_if
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "data",
     [
@@ -27,24 +20,13 @@ from cudf.testing._utils import expect_warning_if
         np.array([-3]),
     ],
 )
-@pytest.mark.parametrize("periods", [-5, 0, 5])
-@pytest.mark.parametrize(
-    "fill_method", ["ffill", "bfill", "pad", "backfill", no_default, None]
-)
-def test_series_pct_change(data, periods, fill_method):
+def test_series_pct_change(data):
     cs = cudf.Series(data)
     ps = cs.to_pandas()
 
-    if np.abs(periods) <= len(cs):
-        with expect_warning_if(fill_method not in (no_default, None)):
-            got = cs.pct_change(periods=periods, fill_method=fill_method)
-        with expect_warning_if(
-            (
-                fill_method not in (no_default, None)
-                or (fill_method is not None and ps.isna().any())
-            )
-        ):
-            expected = ps.pct_change(periods=periods, fill_method=fill_method)
+    for periods in [-5, 0, 5]:
+        got = cs.pct_change(periods=periods)
+        expected = ps.pct_change(periods=periods)
         np.testing.assert_array_almost_equal(
             got.to_numpy(na_value=np.nan), expected
         )

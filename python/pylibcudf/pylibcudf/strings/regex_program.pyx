@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -25,7 +25,7 @@ cdef class RegexProgram:
     __hash__ = None
 
     @staticmethod
-    def create(str pattern, regex_flags flags):
+    def create(str pattern, regex_flags flags) -> RegexProgram:
         """Create a program from a pattern.
 
         For detils, see :cpp:func:`create`.

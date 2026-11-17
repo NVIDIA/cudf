@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -28,7 +28,7 @@ void nonull_pair_iterator(IteratorTest<T>& testFixture)
   });
 
   // GPU test
-  auto it_dev = d_col->pair_begin<T, false>();
+  auto it_dev = d_col->template pair_begin<T, false>();
   testFixture.iterator_test_thrust(replaced_array, it_dev, host_values.size());
 }
 
@@ -59,10 +59,10 @@ void null_pair_iterator(IteratorTest<T>& testFixture)
                  [](auto s, auto b) { return cuda::std::pair<T, bool>{s, true}; });
 
   // GPU test
-  auto it_dev = d_col->pair_begin<T, true>();
+  auto it_dev = d_col->template pair_begin<T, true>();
   testFixture.iterator_test_thrust(value_and_validity, it_dev, host_values.size());
 
-  auto it_hasnonull_dev = d_col->pair_begin<T, false>();
+  auto it_hasnonull_dev = d_col->template pair_begin<T, false>();
   testFixture.iterator_test_thrust(value_all_valid, it_hasnonull_dev, host_values.size());
 
   auto itb_dev = cudf::detail::make_validity_iterator(*d_col);

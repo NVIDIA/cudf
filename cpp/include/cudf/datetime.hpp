@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -24,7 +24,6 @@ namespace datetime {
 /**
  * @addtogroup datetime_extract
  * @{
- * @file
  */
 
 /**
@@ -58,14 +57,13 @@ enum class datetime_component : uint8_t {
 std::unique_ptr<cudf::column> extract_datetime_component(
   cudf::column_view const& column,
   datetime_component component,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 /**
  * @addtogroup datetime_compute
  * @{
- * @file
  */
 
 /**
@@ -81,8 +79,8 @@ std::unique_ptr<cudf::column> extract_datetime_component(
  */
 std::unique_ptr<cudf::column> last_day_of_month(
   cudf::column_view const& column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Computes the day number since the start of the year from the datetime and
@@ -97,8 +95,8 @@ std::unique_ptr<cudf::column> last_day_of_month(
  */
 std::unique_ptr<cudf::column> day_of_year(
   cudf::column_view const& column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Adds or subtracts a number of months from the datetime type and returns a
@@ -134,8 +132,8 @@ std::unique_ptr<cudf::column> day_of_year(
 std::unique_ptr<cudf::column> add_calendrical_months(
   cudf::column_view const& timestamps,
   cudf::column_view const& months,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Adds or subtracts a number of months from the datetime type and returns a
@@ -171,15 +169,15 @@ std::unique_ptr<cudf::column> add_calendrical_months(
 std::unique_ptr<cudf::column> add_calendrical_months(
   cudf::column_view const& timestamps,
   cudf::scalar const& months,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Check if the year of the given date is a leap year
  *
- * `output[i] == true` if year of `column[i]` is a leap year
- * `output[i] == false` if year of `column[i]` is not a leap year
- * `output[i] is null` if `column[i]` is null
+ * `output[i] == true` if year of `column[i]` is a leap year, otherwise `output[i] == false`.
+ *
+ * Any null input rows return corresponding null entries in the output columns.
  *
  * @param column cudf::column_view of the input datetime values
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -190,14 +188,15 @@ std::unique_ptr<cudf::column> add_calendrical_months(
  */
 std::unique_ptr<cudf::column> is_leap_year(
   cudf::column_view const& column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Extract the number of days in the month
  *
- * output[i] contains the number of days in the month of date `column[i]`
- * output[i] is null if `column[i]` is null
+ * `output[i]` contains the number of days in the month of date `column[i]`.
+ *
+ * Any null input rows return corresponding null entries in the output columns.
  *
  * @throw cudf::logic_error if input column datatype is not a TIMESTAMP
  *
@@ -208,14 +207,16 @@ std::unique_ptr<cudf::column> is_leap_year(
  */
 std::unique_ptr<cudf::column> days_in_month(
   cudf::column_view const& column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Returns the quarter of the date
  *
- * `output[i]` will be a value from {1, 2, 3, 4} corresponding to the quarter of month given by
- * `column[i]`. It will be null if the input row at `column[i]` is null.
+ * `output[i]` will be a value from `{1, 2, 3, 4}` corresponding to the quarter of month given by
+ * `column[i]`.
+ *
+ * Any null input rows return corresponding null entries in the output columns.
  *
  * @throw cudf::logic_error if input column datatype is not a TIMESTAMP
  *
@@ -226,8 +227,8 @@ std::unique_ptr<cudf::column> days_in_month(
  */
 std::unique_ptr<cudf::column> extract_quarter(
   cudf::column_view const& column,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Fixed frequencies supported by datetime rounding functions ceil, floor, round.
@@ -257,8 +258,8 @@ enum class rounding_frequency : int32_t {
 std::unique_ptr<cudf::column> ceil_datetimes(
   cudf::column_view const& column,
   rounding_frequency freq,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Round datetimes down to the nearest multiple of the given frequency.
@@ -274,8 +275,8 @@ std::unique_ptr<cudf::column> ceil_datetimes(
 std::unique_ptr<cudf::column> floor_datetimes(
   cudf::column_view const& column,
   rounding_frequency freq,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Round datetimes to the nearest multiple of the given frequency.
@@ -291,8 +292,8 @@ std::unique_ptr<cudf::column> floor_datetimes(
 std::unique_ptr<cudf::column> round_datetimes(
   cudf::column_view const& column,
   rounding_frequency freq,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

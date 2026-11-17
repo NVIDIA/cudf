@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -79,10 +79,7 @@ def test_factorize_series_index(index):
     result_unique, result_labels = ser.factorize()
     expected_unique, expected_labels = pser.factorize()
     assert_eq(result_unique.get(), expected_unique)
-    assert_eq(
-        result_labels.to_pandas().values,
-        expected_labels.values,
-    )
+    assert_eq(result_labels, expected_labels)
 
 
 def test_cudf_factorize_series():

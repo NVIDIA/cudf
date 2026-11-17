@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -10,6 +10,7 @@ set(cython_sources
     binaryop.pyx
     column.pyx
     column_factories.pyx
+    context.pyx
     contiguous_split.pyx
     concatenate.pyx
     copying.pyx
@@ -40,6 +41,7 @@ set(cython_sources
     stream_compaction.pyx
     sorting.pyx
     table.pyx
+    table_equality.pyx
     traits.pyx
     transform.pyx
     transpose.pyx

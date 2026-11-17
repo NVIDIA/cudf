@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -86,7 +86,7 @@ class strings_column_view : private column_view {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Number of bytes in the chars child column
    */
-  [[nodiscard]] int64_t chars_size(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] int64_t chars_size(cuda::stream_ref stream) const;
 
   /**
    * @brief Return an iterator for the chars child column.
@@ -99,7 +99,7 @@ class strings_column_view : private column_view {
    *
    * @return Iterator pointing to the first char byte.
    */
-  [[nodiscard]] chars_iterator chars_begin(rmm::cuda_stream_view) const noexcept;
+  [[nodiscard]] chars_iterator chars_begin(cuda::stream_ref) const noexcept;
 
   /**
    * @brief Return an end iterator for the offsets child column.
@@ -110,7 +110,7 @@ class strings_column_view : private column_view {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @return Iterator pointing 1 past the last char byte.
    */
-  [[nodiscard]] chars_iterator chars_end(rmm::cuda_stream_view stream) const;
+  [[nodiscard]] chars_iterator chars_end(cuda::stream_ref stream) const;
 };
 
 //! Strings column APIs.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,6 +37,24 @@ namespace io::detail {
 [[nodiscard]] size_t max_compressed_size(compression_type compression, size_t uncompressed_size);
 
 /**
+ * @brief Gets the size of the scratch buffer the device engine needs to compress a batch.
+ *
+ * Covers the codec's scratch only, not the per-chunk bookkeeping that `compress()` allocates.
+ *
+ * @param compression Compression type
+ * @param num_chunks Number of chunks in the batch
+ * @param max_uncomp_chunk_size Size of the largest uncompressed chunk in the batch
+ * @param total_uncomp_size Total uncompressed size of the batch
+ * @param stream CUDA stream the batch will be compressed on
+ * @returns scratch size in bytes
+ */
+[[nodiscard]] size_t get_compression_scratch_size(compression_type compression,
+                                                  size_t num_chunks,
+                                                  size_t max_uncomp_chunk_size,
+                                                  size_t total_uncomp_size,
+                                                  cuda::stream_ref stream);
+
+/**
  * @brief Aggregate results of compression into a single statistics object.
  *
  * @param inputs List of uncompressed input buffers
@@ -47,7 +65,7 @@ namespace io::detail {
 [[nodiscard]] writer_compression_statistics collect_compression_statistics(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<codec_exec_result const> results,
-  rmm::cuda_stream_view stream);
+  cuda::stream_ref stream);
 
 }  // namespace io::detail
 }  // namespace CUDF_EXPORT cudf

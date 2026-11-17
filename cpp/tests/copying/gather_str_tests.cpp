@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
@@ -9,7 +9,6 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/gather.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -75,12 +74,10 @@ TEST_F(GatherTestStr, Gather)
 
   std::vector<int32_t> h_map{4, 1, 5, 2, 7};
   cudf::test::fixed_width_column_wrapper<int32_t> gather_map(h_map.begin(), h_map.end());
-  auto results = cudf::detail::gather(source_table,
-                                      gather_map,
-                                      cudf::out_of_bounds_policy::NULLIFY,
-                                      cudf::detail::negative_index_policy::NOT_ALLOWED,
-                                      cudf::get_default_stream(),
-                                      cudf::get_current_device_resource_ref());
+  auto results = cudf::gather(source_table,
+                              gather_map,
+                              cudf::out_of_bounds_policy::NULLIFY,
+                              cudf::negative_index_policy::NOT_ALLOWED);
 
   std::vector<char const*> h_expected;
   std::vector<int32_t> expected_validity;
@@ -106,12 +103,10 @@ TEST_F(GatherTestStr, GatherDontCheckOutOfBounds)
 
   std::vector<int32_t> h_map{3, 4, 0, 0};
   cudf::test::fixed_width_column_wrapper<int32_t> gather_map(h_map.begin(), h_map.end());
-  auto results = cudf::detail::gather(source_table,
-                                      gather_map,
-                                      cudf::out_of_bounds_policy::DONT_CHECK,
-                                      cudf::detail::negative_index_policy::NOT_ALLOWED,
-                                      cudf::get_default_stream(),
-                                      cudf::get_current_device_resource_ref());
+  auto results = cudf::gather(source_table,
+                              gather_map,
+                              cudf::out_of_bounds_policy::DONT_CHECK,
+                              cudf::negative_index_policy::NOT_ALLOWED);
 
   std::vector<char const*> h_expected;
   for (int itr : h_map) {
@@ -125,12 +120,10 @@ TEST_F(GatherTestStr, GatherEmptyMapStringsColumn)
 {
   auto const zero_size_strings_column = cudf::make_empty_column(cudf::type_id::STRING);
   cudf::test::fixed_width_column_wrapper<cudf::size_type> gather_map;
-  auto results = cudf::detail::gather(cudf::table_view({zero_size_strings_column->view()}),
-                                      gather_map,
-                                      cudf::out_of_bounds_policy::NULLIFY,
-                                      cudf::detail::negative_index_policy::NOT_ALLOWED,
-                                      cudf::get_default_stream(),
-                                      cudf::get_current_device_resource_ref());
+  auto results = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
+                              gather_map,
+                              cudf::out_of_bounds_policy::NULLIFY,
+                              cudf::negative_index_policy::NOT_ALLOWED);
   cudf::test::expect_column_empty(results->get_column(0).view());
 }
 
@@ -139,12 +132,10 @@ TEST_F(GatherTestStr, GatherZeroSizeStringsColumn)
   auto const zero_size_strings_column = cudf::make_empty_column(cudf::type_id::STRING);
   cudf::test::fixed_width_column_wrapper<int32_t> gather_map({0});
   cudf::test::strings_column_wrapper expected{std::pair<std::string, bool>{"", false}};
-  auto results = cudf::detail::gather(cudf::table_view({zero_size_strings_column->view()}),
-                                      gather_map,
-                                      cudf::out_of_bounds_policy::NULLIFY,
-                                      cudf::detail::negative_index_policy::NOT_ALLOWED,
-                                      cudf::get_default_stream(),
-                                      cudf::get_current_device_resource_ref());
+  auto results = cudf::gather(cudf::table_view({zero_size_strings_column->view()}),
+                              gather_map,
+                              cudf::out_of_bounds_policy::NULLIFY,
+                              cudf::negative_index_policy::NOT_ALLOWED);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results->get_column(0).view());
 }
 

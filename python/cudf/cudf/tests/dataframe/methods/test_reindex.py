@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -96,11 +96,9 @@ def test_dataframe_reindex_change_dtype(copy):
     pdf = gdf.to_pandas()
     # Validate reindexes both labels and column names when
     # index=index_labels and columns=column_labels
-    assert_eq(
-        pdf.reindex(index=index, columns=columns, copy=True),
-        gdf.reindex(index=index, columns=columns, copy=copy),
-        check_freq=False,
-    )
+    expected = pdf.reindex(index=index, columns=columns)
+    result = gdf.reindex(index=index, columns=columns, copy=copy)
+    assert_eq(result, expected, check_freq=False)
 
 
 @pytest.mark.parametrize("copy", [True, False])
@@ -108,12 +106,10 @@ def test_series_categorical_reindex(copy):
     index = [-3, 0, 3, 0, -2, 1, 3, 4, 6]
     gdf = cudf.datasets.randomdata(nrows=6, dtypes={"a": "category"})
     pdf = gdf.to_pandas()
-    assert_eq(pdf["a"].reindex(copy=True), gdf["a"].reindex(copy=copy))
+    assert_eq(pdf["a"].reindex(), gdf["a"].reindex(copy=copy))
+    assert_eq(pdf["a"].reindex(index), gdf["a"].reindex(index, copy=copy))
     assert_eq(
-        pdf["a"].reindex(index, copy=True), gdf["a"].reindex(index, copy=copy)
-    )
-    assert_eq(
-        pdf["a"].reindex(index=index, copy=True),
+        pdf["a"].reindex(index=index),
         gdf["a"].reindex(index=index, copy=copy),
     )
 
@@ -123,12 +119,10 @@ def test_series_float_reindex(copy):
     index = [-3, 0, 3, 0, -2, 1, 3, 4, 6]
     gdf = cudf.datasets.randomdata(nrows=6, dtypes={"c": float})
     pdf = gdf.to_pandas()
-    assert_eq(pdf["c"].reindex(copy=True), gdf["c"].reindex(copy=copy))
+    assert_eq(pdf["c"].reindex(), gdf["c"].reindex(copy=copy))
+    assert_eq(pdf["c"].reindex(index), gdf["c"].reindex(index, copy=copy))
     assert_eq(
-        pdf["c"].reindex(index, copy=True), gdf["c"].reindex(index, copy=copy)
-    )
-    assert_eq(
-        pdf["c"].reindex(index=index, copy=True),
+        pdf["c"].reindex(index=index),
         gdf["c"].reindex(index=index, copy=copy),
     )
 
@@ -138,12 +132,10 @@ def test_series_string_reindex(copy):
     index = [-3, 0, 3, 0, -2, 1, 3, 4, 6]
     gdf = cudf.datasets.randomdata(nrows=6, dtypes={"d": str})
     pdf = gdf.to_pandas()
-    assert_eq(pdf["d"].reindex(copy=True), gdf["d"].reindex(copy=copy))
+    assert_eq(pdf["d"].reindex(), gdf["d"].reindex(copy=copy))
+    assert_eq(pdf["d"].reindex(index), gdf["d"].reindex(index, copy=copy))
     assert_eq(
-        pdf["d"].reindex(index, copy=True), gdf["d"].reindex(index, copy=copy)
-    )
-    assert_eq(
-        pdf["d"].reindex(index=index, copy=True),
+        pdf["d"].reindex(index=index),
         gdf["d"].reindex(index=index, copy=copy),
     )
 
@@ -159,10 +151,10 @@ def test_reindex_multiindex_col_to_multiindex(names, klass):
     gdf = cudf.from_pandas(df)
     midx = klass.from_tuples([("A", "one"), ("A", "three")], names=names)
     result = gdf.reindex(columns=midx)
-    expected = cudf.DataFrame([[1, None]], columns=midx)
-    # (pandas2.0): check_dtype=False won't be needed
-    # as None col will return object instead of float
-    assert_eq(result, expected, check_dtype=False)
+    expected = gdf.to_pandas().reindex(
+        columns=midx.to_pandas() if isinstance(midx, cudf.MultiIndex) else midx
+    )
+    assert_eq(result, expected)
 
 
 @pytest.mark.parametrize("names", [None, ["a", "b"]])
@@ -240,3 +232,12 @@ def test_dataframe_reindex_with_index_names(index_data, name):
     expected = pdf.reindex(index_data)
 
     assert_eq(actual, expected)
+
+
+@pytest.mark.parametrize("labels", [[4, 5], [4.0, 5.0]])
+def test_reindex_numeric_index_int_float(labels):
+    # Reindexing a float-labelled index with int labels (or vice versa)
+    # matches by numeric equality instead of bailing to an all-null frame.
+    pdf = pd.DataFrame({"a": range(5)}, index=[1.5, 2.0, 3.0, 4.0, 5.0])
+    gdf = cudf.from_pandas(pdf)
+    assert_eq(pdf.reindex(labels), gdf.reindex(labels), check_index_type=False)

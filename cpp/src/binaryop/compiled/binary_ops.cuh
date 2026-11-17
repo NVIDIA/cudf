@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,10 +14,11 @@
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/unary.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/iterator>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
 
 namespace cudf {
 namespace binops {
@@ -99,14 +100,26 @@ struct ops_wrapper {
   column_device_view const& rhs;
   bool const& is_lhs_scalar;
   bool const& is_rhs_scalar;
+  // With bit_width, nvcc 13.3 can outline decimal128 conversions and add local memory setup
+  // before type dispatch, slowing float ADD. Keep this wrapper inline to avoid that setup.
   template <typename TypeCommon>
-  __device__ void operator()(size_type i)
+  __forceinline__ __device__ void operator()(size_type i)
   {
     if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
       TypeCommon x =
         type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
       TypeCommon y =
         type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+      if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
+                    cuda::std::is_same_v<TypeCommon, float>) {
+        // TrueDiv divides in double. When the result is stored as float anyway, a float division
+        // is bit-identical (double rounding is innocuous for division because 53 >= 2 * 24 + 2)
+        // and avoids the low-throughput fp64 division sequence.
+        if (out.type().id() == type_id::FLOAT32) {
+          out.element<float>(i) = x / y;
+          return;
+        }
+      }
       auto result = [&]() {
         if constexpr (cuda::std::is_same_v<BinaryOperator, ops::NullEquals> or
                       cuda::std::is_same_v<BinaryOperator, ops::NullNotEquals> or
@@ -243,7 +256,7 @@ void apply_binary_op(mutable_column_view& out,
                      column_view const& rhs,
                      bool is_lhs_scalar,
                      bool is_rhs_scalar,
-                     rmm::cuda_stream_view stream)
+                     cuda::stream_ref stream)
 {
   auto common_dtype = get_common_type(out.type(), lhs.type(), rhs.type());
 
@@ -253,15 +266,15 @@ void apply_binary_op(mutable_column_view& out,
   // Create binop functor instance
   if (common_dtype) {
     // Execute it on every element
-    thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                       thrust::counting_iterator<size_type>(0),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{0},
                        out.size(),
                        binary_op_device_dispatcher<BinaryOperator>{
                          *common_dtype, *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar});
   } else {
     // Execute it on every element
-    thrust::for_each_n(rmm::exec_policy_nosync(stream),
-                       thrust::counting_iterator<size_type>(0),
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                       cuda::counting_iterator<size_type>{0},
                        out.size(),
                        binary_op_double_device_dispatcher<BinaryOperator>{
                          *outd, *lhsd, *rhsd, is_lhs_scalar, is_rhs_scalar});

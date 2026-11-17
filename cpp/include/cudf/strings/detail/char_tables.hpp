@@ -1,13 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
+#include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <cstdint>
 
@@ -28,20 +29,23 @@ using character_flags_table_type = std::uint8_t;
  * @return Device memory pointer to character flags table.
  */
 character_flags_table_type const* get_character_flags_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 // utilities to dissect a character-table flag
-constexpr uint8_t IS_DECIMAL(uint8_t x) { return ((x) & (1 << 0)); }
-constexpr uint8_t IS_NUMERIC(uint8_t x) { return ((x) & (1 << 1)); }
-constexpr uint8_t IS_DIGIT(uint8_t x) { return ((x) & (1 << 2)); }
-constexpr uint8_t IS_ALPHA(uint8_t x) { return ((x) & (1 << 3)); }
-constexpr uint8_t IS_SPACE(uint8_t x) { return ((x) & (1 << 4)); }
-constexpr uint8_t IS_UPPER(uint8_t x) { return ((x) & (1 << 5)); }
-constexpr uint8_t IS_LOWER(uint8_t x) { return ((x) & (1 << 6)); }
-constexpr uint8_t IS_SPECIAL(uint8_t x) { return ((x) & (1 << 7)); }
-constexpr uint8_t IS_ALPHANUM(uint8_t x) { return ((x) & (0x0F)); }
-constexpr uint8_t IS_UPPER_OR_LOWER(uint8_t x) { return ((x) & ((1 << 5) | (1 << 6))); }
-constexpr uint8_t ALL_FLAGS = 0xFF;
+CUDF_HOST_DEVICE constexpr uint8_t IS_DECIMAL(uint8_t x) { return ((x) & (1 << 0)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_NUMERIC(uint8_t x) { return ((x) & (1 << 1)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_DIGIT(uint8_t x) { return ((x) & (1 << 2)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_ALPHA(uint8_t x) { return ((x) & (1 << 3)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_SPACE(uint8_t x) { return ((x) & (1 << 4)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_UPPER(uint8_t x) { return ((x) & (1 << 5)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_LOWER(uint8_t x) { return ((x) & (1 << 6)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_SPECIAL(uint8_t x) { return ((x) & (1 << 7)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_ALPHANUM(uint8_t x) { return ((x) & (0x0F)); }
+CUDF_HOST_DEVICE constexpr uint8_t IS_UPPER_OR_LOWER(uint8_t x)
+{
+  return ((x) & ((1 << 5) | (1 << 6)));
+}
+__device__ constexpr uint8_t ALL_FLAGS = 0xFF;
 
 // Type for the character cases table.
 using character_cases_table_type = uint16_t;
@@ -58,7 +62,7 @@ using character_cases_table_type = uint16_t;
  * @return Device memory pointer to character cases table.
  */
 character_cases_table_type const* get_character_cases_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Case mapping structure for special characters.
@@ -87,14 +91,14 @@ struct special_case_mapping {
  * @return Device memory pointer to the special case mapping table
  */
 special_case_mapping const* get_special_case_mapping_table(
-  rmm::cuda_stream_view stream = cudf::get_default_stream());
+  cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Get the special mapping table index for a given code-point.
  *
- * @see cpp/src/strings/char_types/char_cases.h
+ * See cpp/scripts/char_cases.cpp
  */
-constexpr uint16_t get_special_case_hash_index(uint32_t code_point)
+CUDF_HOST_DEVICE constexpr uint16_t get_special_case_hash_index(uint32_t code_point)
 {
   constexpr uint16_t special_case_prime = 499;  // computed from generate_special_mapping_hash_table
   return static_cast<uint16_t>(code_point % special_case_prime);

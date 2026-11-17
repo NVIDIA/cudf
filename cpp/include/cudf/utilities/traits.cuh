@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -16,6 +16,7 @@ namespace CUDF_EXPORT cudf {
  * @addtogroup utility_types
  * @{
  * @file
+ * @brief Device-side type traits for querying atomic operation support on cudf column types.
  */
 
 /**

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 import cupy as cp
 import numpy as np
-from numba import cuda
+from numba_cuda_mlir import cuda
 
 from cudf.core._internals import binaryop
 from cudf.core.column import as_column
@@ -52,7 +52,7 @@ class _NameExtractor(ast.NodeVisitor):
 def query_parser(text):
     """The query expression parser.
 
-    See https://pandas.pydata.org/pandas-docs/version/2.3.3/generated/pandas.DataFrame.query.html
+    See https://pandas.pydata.org/pandas-docs/stable/generated/pandas.DataFrame.query.html
 
     * names with '@' prefix are global reference.
     * other names must be column names of the dataframe.

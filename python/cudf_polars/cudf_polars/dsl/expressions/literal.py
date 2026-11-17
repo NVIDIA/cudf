@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # TODO: remove need for this
 # ruff: noqa: D101
@@ -12,15 +12,29 @@ import polars as pl
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
 
-    from cudf_polars.containers import DataFrame
+    from cudf_polars.containers import DataFrame, DataType
 
 __all__ = ["Literal", "LiteralColumn"]
+
+
+def _freeze_for_hash(value: Any) -> Hashable:
+    """
+    Convert ``value`` into a process-independent hashable form.
+
+    Nested ``list`` / ``dict`` values (e.g. list/struct literals) are frozen
+    into tuples so they can appear in :meth:`Node.get_hashable` results.
+    """
+    if isinstance(value, dict):
+        return tuple(sorted((k, _freeze_for_hash(v)) for k, v in value.items()))
+    if isinstance(value, list):
+        return tuple(_freeze_for_hash(v) for v in value)
+    return value
 
 
 class Literal(Expr):
@@ -29,10 +43,6 @@ class Literal(Expr):
     value: Any  # Python scalar
 
     def __init__(self, dtype: DataType, value: Any) -> None:
-        if value is None and dtype.id() == plc.TypeId.EMPTY:
-            # TypeId.EMPTY not supported by libcudf
-            # cuDF Python also maps EMPTY to INT8
-            dtype = DataType(pl.datatypes.Int8())
         self.dtype = dtype
         self.value = value
         self.children = ()
@@ -57,9 +67,8 @@ class Literal(Expr):
             "Not expecting to require agg request of literal"
         )  # pragma: no cover
 
-    def get_hashable(self) -> Hashable:
-        """Get the hash of the literal."""
-        return (type(self), self.dtype.plc_type, id(self.value))
+    def get_hashable(self) -> Hashable:  # noqa: D102
+        return (type(self), self.dtype.plc_type, _freeze_for_hash(self.value))
 
     def astype(self, dtype: DataType) -> Literal:
         """Cast self to dtype."""
@@ -98,9 +107,11 @@ class LiteralColumn(Expr):
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
-        return Column(
-            plc.Column.from_arrow(self.value, stream=df.stream), dtype=self.dtype
-        )
+        value = self.value
+        if isinstance(value.dtype, pl.Null):
+            # Null columns are stored as all-null INT8 (see DataType).
+            value = value.cast(pl.Int8())
+        return Column(plc.Column.from_arrow(value, stream=df.stream), dtype=self.dtype)
 
     @property
     def agg_request(self) -> NoReturn:  # noqa: D102

@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -17,7 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 /**
- * This is the JNI interface to a rmm::pool_memory_resource<rmm::pinned_host_memory_resource>.
+ * This is the JNI interface to an RMM pool backed by pinned host memory.
  */
 public final class PinnedMemoryPool implements AutoCloseable {
   private static final Logger log = LoggerFactory.getLogger(PinnedMemoryPool.class);
@@ -25,7 +25,7 @@ public final class PinnedMemoryPool implements AutoCloseable {
   // These static fields should only ever be accessed when class-synchronized.
   // Do NOT use singleton_ directly!  Use the getSingleton accessor instead.
   private static volatile PinnedMemoryPool singleton_ = null;
-  private static Future<PinnedMemoryPool> initFuture = null;
+  private static volatile Future<PinnedMemoryPool> initFuture = null;
   private long poolHandle;
   private long poolSize;
 
@@ -68,19 +68,23 @@ public final class PinnedMemoryPool implements AutoCloseable {
   }
 
   private static PinnedMemoryPool getSingleton() {
-    if (singleton_ == null) {
-      if (initFuture == null) {
-        return null;
-      }
-
+    if (singleton_ == null && initFuture != null) {
+      // There is an initFuture whose result is not yet retrieved.
       synchronized (PinnedMemoryPool.class) {
-        if (singleton_ == null) {
+        if (singleton_ == null && initFuture != null) {
           try {
             singleton_ = initFuture.get();
+            initFuture = null;
+          } catch (InterruptedException e) {
+            // Interruption does not cancel initialization; keep the future.
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted initializing pinned memory pool", e);
           } catch (Exception e) {
-            throw new RuntimeException("Error initializing pinned memory pool", e);
+            // Null the future so this and subsequent callers can fall back or retry initialization.
+            initFuture = null;
+            log.error("Error initializing pinned memory pool",
+                e.getCause() != null ? e.getCause() : e);
           }
-          initFuture = null;
         }
       }
     }
@@ -120,15 +124,39 @@ public final class PinnedMemoryPool implements AutoCloseable {
    * @param setCudfPinnedPoolMemoryResource true if this pinned pool should be used by cuDF for pinned memory
    */
   public static synchronized void initialize(long poolSize, int gpuId, boolean setCudfPinnedPoolMemoryResource) {
+    initialize(poolSize, gpuId, setCudfPinnedPoolMemoryResource, 1);
+  }
+
+  /**
+   * Initialize the pool.
+   *
+   * @param poolSize size of the pool to initialize.
+   * @param gpuId gpu id to set to get memory pool from, -1 means to use default
+   * @param setCudfPinnedPoolMemoryResource true if this pinned pool should be used by cuDF for pinned memory
+   * @param initializationThreads requested number of threads used to initialize the pool's backing memory,
+   *                              capped at reported hardware concurrency. A value of 1 initializes the
+   *                              backing memory using {@code cudaHostAlloc}. Values greater than 1 instead
+   *                              request huge pages and pre-touch pages concurrently before pinning for
+   *                              faster initialization. This does not affect subsequent suballocator behavior.
+   * @note on multi-NUMA systems, multithreaded initialization may scatter pages across nodes if placement
+   *       is not constrained in advance. Pages cannot be migrated once pinned.
+   */
+  public static synchronized void initialize(long poolSize, int gpuId, boolean setCudfPinnedPoolMemoryResource,
+      int initializationThreads) {
+    if (initializationThreads <= 0) {
+      throw new IllegalArgumentException("Initialization thread count must be positive");
+    }
     if (isInitialized()) {
-      throw new IllegalStateException("Can only initialize the pool once.");
+      throw new IllegalStateException("Pinned memory pool is already initialized.");
     }
     ExecutorService initService = Executors.newSingleThreadExecutor(runnable -> {
       Thread t = new Thread(runnable, "pinned pool init");
       t.setDaemon(true);
       return t;
     });
-    initFuture = initService.submit(() -> new PinnedMemoryPool(poolSize, gpuId, setCudfPinnedPoolMemoryResource));
+    initFuture = initService.submit(() ->
+        new PinnedMemoryPool(poolSize, gpuId, setCudfPinnedPoolMemoryResource,
+            initializationThreads));
     initService.shutdown();
   }
 
@@ -205,13 +233,18 @@ public final class PinnedMemoryPool implements AutoCloseable {
     return 0;
   }
 
-  private PinnedMemoryPool(long poolSize, int gpuId, boolean setCudfPinnedPoolMemoryResource) {
+  private PinnedMemoryPool(long poolSize, int gpuId, boolean setCudfPinnedPoolMemoryResource,
+      int initializationThreads) {
     if (gpuId > -1) {
       // set the gpu device to use
       Cuda.setDevice(gpuId);
       Cuda.freeZero();
     }
-    this.poolHandle = Rmm.newPinnedPoolMemoryResource(poolSize, poolSize);
+    if (initializationThreads == 1) {
+      this.poolHandle = Rmm.newPinnedPoolMemoryResource(poolSize, poolSize);
+    } else {
+      this.poolHandle = Rmm.newParallelPinnedPoolMemoryResource(poolSize, initializationThreads);
+    }
     if (setCudfPinnedPoolMemoryResource) {
       Rmm.setCudfPinnedPoolMemoryResource(this.poolHandle);
     }

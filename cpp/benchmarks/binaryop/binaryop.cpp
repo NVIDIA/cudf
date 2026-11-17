@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column.hpp>
@@ -11,7 +12,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -39,8 +40,9 @@ static void BM_binaryop_transform(nvbench::state& state)
   cudf::table_view table{*source_table};
 
   // Use the number of bytes read from global memory
-  state.add_global_memory_reads<key_type>(static_cast<size_t>(num_rows) * (tree_levels + 1));
+  state.add_global_memory_reads<key_type>(static_cast<std::size_t>(num_rows) * (tree_levels + 1));
   state.add_global_memory_writes<key_type>(num_rows);
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
     // Execute tree that chains additions like (((a + b) + c) + d)
@@ -58,6 +60,9 @@ static void BM_binaryop_transform(nvbench::state& state)
       });
     }
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 template <cudf::binary_operator cmp_op, cudf::binary_operator reduce_op>
@@ -73,10 +78,11 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
   // Create table data
   auto const num_cols = tree_levels * 2;
   std::vector<std::unique_ptr<cudf::column>> columns;
-  std::for_each(
-    thrust::make_counting_iterator(0), thrust::make_counting_iterator(num_cols), [&](size_t) {
-      columns.emplace_back(create_string_column(num_rows, string_width, hit_rate));
-    });
+  std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                cuda::counting_iterator{num_cols},
+                [&](cudf::size_type) {
+                  columns.emplace_back(create_string_column(num_rows, string_width, hit_rate));
+                });
 
   cudf::table table{std::move(columns)};
   cudf::table_view const table_view = table.view();
@@ -94,24 +100,28 @@ static void BM_string_compare_binaryop_transform(nvbench::state& state)
   state.add_global_memory_writes<nvbench::int32_t>(num_rows);
 
   // Construct binary operations (a == b && c == d && e == f && ...)
-  auto constexpr bool_type = cudf::data_type{cudf::type_id::BOOL8};
+  auto constexpr bool_type    = cudf::data_type{cudf::type_id::BOOL8};
+  auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    rmm::cuda_stream_view stream{launch.get_stream().get_stream()};
+    cuda::stream_ref stream{launch.get_stream().get_stream()};
     std::unique_ptr<cudf::column> reduction =
       cudf::binary_operation(table.get_column(0), table.get_column(1), cmp_op, bool_type, stream);
     std::for_each(
-      thrust::make_counting_iterator(1),
-      thrust::make_counting_iterator(tree_levels),
-      [&](size_t idx) {
+      cuda::counting_iterator<cudf::size_type>{1},
+      cuda::counting_iterator{tree_levels},
+      [&](std::size_t idx) {
         std::unique_ptr<cudf::column> comparison = cudf::binary_operation(
           table.get_column(idx * 2), table.get_column(idx * 2 + 1), cmp_op, bool_type, stream);
         std::unique_ptr<cudf::column> reduced =
           cudf::binary_operation(*comparison, *reduction, reduce_op, bool_type, stream);
-        stream.synchronize();
+        stream.sync();
         reduction = std::move(reduced);
       });
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define BINARYOP_TRANSFORM_BENCHMARK_DEFINE(name, key_type, tree_type, reuse_columns) \

@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -10,6 +10,8 @@ package ai.rapids.cudf;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.IntStream;
+import java.util.stream.LongStream;
 
 /**
  * Provides JNI wrappers for reading Parquet files with deletion vector support.
@@ -44,6 +46,8 @@ public class DeletionVector {
      */
     public final HostMemoryBuffer serializedBitmap;
 
+    public final boolean isRetention;
+
     /**
      * Row index offsets for each row group to read. Can be null to read all row groups.
      */
@@ -59,8 +63,9 @@ public class DeletionVector {
      */
     public final int totalNumRows;
 
-    public DeletionVectorInfo(HostMemoryBuffer serializedBitmap, long[] rowGroupOffsets, int[] rowGroupNumRows) {
+    public DeletionVectorInfo(HostMemoryBuffer serializedBitmap, boolean isRetention, long[] rowGroupOffsets, int[] rowGroupNumRows) {
       this.serializedBitmap = serializedBitmap;
+      this.isRetention = isRetention;
       this.rowGroupOffsets = rowGroupOffsets;
       this.rowGroupNumRows = rowGroupNumRows;
       this.totalNumRows = computeTotalNumRows();
@@ -79,6 +84,101 @@ public class DeletionVector {
       }
       return Arrays.stream(rowGroupNumRows).reduce(Math::addExact).orElse(0);
     }
+  }
+
+  private static boolean getDeletionVectorTypes(DeletionVectorInfo[] deletionVectorInfos) {
+    boolean isRetention = deletionVectorInfos[0].isRetention;
+    for (DeletionVectorInfo info : deletionVectorInfos) {
+      if (info.isRetention != isRetention) {
+        throw new IllegalArgumentException("All DeletionVectorInfo objects must have the same isRetention value.");
+      }
+    }
+    return isRetention;
+  }
+
+  /**
+   * Computes (on the GPU) the number of rows deleted by a serialized deletion vector.
+   *
+   * @param deletionVectorInfo deletion vector and row-group metadata
+   * @param maxChunkRows maximum number of row indexes to process at once
+   * @return number of deleted rows in the specified row groups
+   * @throws NullPointerException if {@code deletionVectorInfo} is null
+   * @throws IllegalArgumentException if row-group metadata is missing, empty, or contains a
+   *     negative value, or if {@code maxChunkRows} is not positive
+   */
+  public static long computeNumDeletedRows(
+      DeletionVectorInfo deletionVectorInfo, int maxChunkRows) {
+    if (deletionVectorInfo == null) {
+      throw new NullPointerException("Expected non-null deletionVectorInfo");
+    }
+    return computeNumDeletedRows(new DeletionVectorInfo[] {deletionVectorInfo}, maxChunkRows);
+  }
+
+  /**
+   * Computes (on the GPU) the total number of rows deleted by serialized deletion vectors.
+   *
+   * @param deletionVectorInfos deletion vectors and row-group metadata
+   * @param maxChunkRows maximum number of row indexes to process at once
+   * @return total number of deleted rows in the specified row groups across all deletion vectors.
+   * @throws NullPointerException if {@code deletionVectorInfos} or one of its elements is null
+   * @throws IllegalArgumentException if no deletion vectors are supplied, row-group metadata is
+   *     missing, empty, or contains a negative value, deletion and retention vectors are mixed,
+   *     or {@code maxChunkRows} is not positive
+   */
+  public static long computeNumDeletedRows(
+      DeletionVectorInfo[] deletionVectorInfos, int maxChunkRows) {
+    if (deletionVectorInfos == null) {
+      throw new NullPointerException("Expected non-null deletionVectorInfos");
+    }
+    if (deletionVectorInfos.length == 0) {
+      throw new IllegalArgumentException("deletionVectorInfos must be non-empty");
+    }
+    if (maxChunkRows <= 0) {
+      throw new IllegalArgumentException("maxChunkRows must be positive");
+    }
+    long[] bitmapAddrsSizes = new long[deletionVectorInfos.length * 2];
+    int[] deletionVectorRowCounts = new int[deletionVectorInfos.length];
+    LongStream.Builder rowGroupOffsets = LongStream.builder();
+    IntStream.Builder rowGroupNumRows = IntStream.builder();
+    boolean areRetentionVectors = false;
+    for (int i = 0; i < deletionVectorInfos.length; i++) {
+      DeletionVectorInfo info = deletionVectorInfos[i];
+      if (info == null) {
+        throw new NullPointerException("Expected non-null deletionVectorInfo");
+      }
+      if (info.rowGroupOffsets == null || info.rowGroupOffsets.length == 0) {
+        throw new IllegalArgumentException("row-group metadata must be non-empty");
+      }
+      if (i == 0) {
+        areRetentionVectors = info.isRetention;
+      } else if (info.isRetention != areRetentionVectors) {
+        throw new IllegalArgumentException(
+            "All DeletionVectorInfo objects must have the same isRetention value.");
+      }
+      bitmapAddrsSizes[i * 2] = info.serializedBitmap.getAddress();
+      bitmapAddrsSizes[(i * 2) + 1] = info.serializedBitmap.getLength();
+      deletionVectorRowCounts[i] = info.totalNumRows;
+      for (int rowGroupIndex = 0;
+           rowGroupIndex < info.rowGroupOffsets.length;
+           rowGroupIndex++) {
+        long offset = info.rowGroupOffsets[rowGroupIndex];
+        int numRows = info.rowGroupNumRows[rowGroupIndex];
+        if (offset < 0 || numRows < 0) {
+          throw new IllegalArgumentException(
+              "row-group metadata values must be non-negative");
+        }
+        rowGroupOffsets.add(offset);
+        rowGroupNumRows.add(numRows);
+      }
+    }
+
+    return computeNumDeletedRows(
+        bitmapAddrsSizes,
+        deletionVectorRowCounts,
+        rowGroupOffsets.build().toArray(),
+        rowGroupNumRows.build().toArray(),
+        areRetentionVectors,
+        maxChunkRows);
   }
 
   /**
@@ -174,6 +274,7 @@ public class DeletionVector {
     List<Integer> deletionVectorRowCountsList = new ArrayList<>(deletionVectorInfos.length);
     List<Long> rowGroupOffsetsList = new ArrayList<>(deletionVectorInfos.length);
     List<Integer> rowGroupNumRowsList = new ArrayList<>(deletionVectorInfos.length);
+    boolean areRetentionVectors = getDeletionVectorTypes(deletionVectorInfos);
     if (deletionVectorInfos != null) {
       for (DeletionVectorInfo info : deletionVectorInfos) {
         serializedBitmapList.add(info.serializedBitmap);
@@ -202,7 +303,8 @@ public class DeletionVector {
                                             bitmapAddrsSizes,
                                             deletionVectorRowCounts,
                                             rowGroupOffsets,
-                                            rowGroupNumRows);
+                                            rowGroupNumRows,
+                                            areRetentionVectors);
     return new Table(columnHandles);
   }
 
@@ -325,6 +427,7 @@ public class DeletionVector {
       List<Integer> deletionVectorRowCountsList = new ArrayList<>(deletionVectorInfos.length);
       List<Long> rowGroupOffsetsList = new ArrayList<>(deletionVectorInfos.length);
       List<Integer> rowGroupNumRowsList = new ArrayList<>(deletionVectorInfos.length);
+      boolean areRetentionVectors = getDeletionVectorTypes(deletionVectorInfos);
       if (deletionVectorInfos != null) {
         for (DeletionVectorInfo info : deletionVectorInfos) {
           serializedBitmapList.add(info.serializedBitmap);
@@ -347,7 +450,7 @@ public class DeletionVector {
       long[] handles = createParquetChunkedReader(chunkSizeByteLimit, passReadLimit,
         opts.getIncludeColumnNames(), opts.getReadBinaryAsString(), inputFilePaths,
           dataBufferAddrsSizes, rowGroups, opts.timeUnit().typeId.getNativeId(),
-          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows);
+          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows, areRetentionVectors);
       readerHandle = handles[0];
       if (readerHandle == 0) {
         throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -422,6 +525,14 @@ public class DeletionVector {
 
   // Native methods
 
+  private static native long computeNumDeletedRows(
+      long[] serializedRoaring64,
+      int[] deletionVectorRowCounts,
+      long[] rowGroupOffsets,
+      int[] rowGroupNumRows,
+      boolean areRetentionVectors,
+      int maxChunkRows) throws CudfException;
+
   private static native long[] readParquet(String[] filterColumnNames,
                                                 boolean[] binaryToString,
                                                 String[] inputFilePaths,
@@ -431,7 +542,8 @@ public class DeletionVector {
                                                 long[] serializedRoaring64,
                                                 int[] deletionVectorRowCounts,
                                                 long[] rowGroupOffsets,
-                                                int[] rowGroupNumRows)
+                                                int[] rowGroupNumRows,
+                                                boolean areRetentionVectors)
     throws CudfException;
 
   private static native long[] createParquetChunkedReader(long chunkReadLimit,
@@ -445,7 +557,8 @@ public class DeletionVector {
                                                                long[] serializedRoaringBitmaps,
                                                                int[] deletionVectorRowCounts,
                                                                long[] rowGroupOffsets,
-                                                               int[] rowGroupNumRows)
+                                                               int[] rowGroupNumRows,
+                                                               boolean areRetentionVectors)
     throws CudfException;
 
   private static native boolean parquetChunkedReaderHasNext(long readerHandle) throws CudfException;

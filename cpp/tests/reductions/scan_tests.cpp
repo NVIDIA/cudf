@@ -473,7 +473,72 @@ TEST_F(ScanStringTest, MinMaxInclusiveWithNullsExclude)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, result_max->view());
 }
 
-TEST_F(ScanStringTest, ExclusiveThrows)
+// ============== Scan Count ==============
+struct ScanCountTest : public cudf::test::BaseFixture {};
+
+TEST_F(ScanCountTest, InclusiveNoNulls)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> col({5, 4, 6, 0, 1, 6, 5, 3});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({1, 2, 3, 4, 5, 6, 7, 8});
+
+  auto result = cudf::scan(
+    col, *cudf::make_count_aggregation<cudf::scan_aggregation>(), cudf::scan_type::INCLUSIVE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+
+  result =
+    cudf::scan(col,
+               *cudf::make_count_aggregation<cudf::scan_aggregation>(cudf::null_policy::INCLUDE),
+               cudf::scan_type::INCLUSIVE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TEST_F(ScanCountTest, InclusiveWithNullsExclude)
+{
+  cudf::test::strings_column_wrapper col({"5", "4", "6", "", "1", "6", "5", "3"},
+                                         {1, 1, 1, 0, 1, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({1, 2, 3, 4, 4, 5, 6, 7},
+                                                                   {1, 1, 1, 0, 1, 1, 1, 1});
+
+  auto result = cudf::scan(col,
+                           *cudf::make_count_aggregation<cudf::scan_aggregation>(),
+                           cudf::scan_type::INCLUSIVE,
+                           cudf::null_policy::EXCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TEST_F(ScanCountTest, InclusiveWithNullsInclude)
+{
+  cudf::test::strings_column_wrapper col({"5", "4", "6", "", "1", "6", "5", "3"},
+                                         {1, 1, 1, 0, 1, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({1, 2, 3, 0, 0, 0, 0, 0},
+                                                                   {1, 1, 1, 0, 0, 0, 0, 0});
+
+  auto result =
+    cudf::scan(col,
+               *cudf::make_count_aggregation<cudf::scan_aggregation>(cudf::null_policy::INCLUDE),
+               cudf::scan_type::INCLUSIVE,
+               cudf::null_policy::INCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TEST_F(ScanCountTest, InclusiveWithOffset)
+{
+  cudf::test::strings_column_wrapper col({"5", "4", "6", "", "1", "6", "5", "3"},
+                                         {1, 1, 1, 0, 1, 1, 1, 1});
+  auto input = cudf::slice(col, {1, 7}).front();
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({1, 2, 3, 3, 4, 5},
+                                                                   {1, 1, 0, 1, 1, 1});
+
+  auto result = cudf::scan(input,
+                           *cudf::make_count_aggregation<cudf::scan_aggregation>(),
+                           cudf::scan_type::INCLUSIVE,
+                           cudf::null_policy::EXCLUDE);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+struct ScanExclusiveErrorTest : public cudf::test::BaseFixture {};
+
+TEST_F(ScanExclusiveErrorTest, ExclusiveThrows)
 {
   cudf::test::strings_column_wrapper col({"a", "b", "c"});
   EXPECT_THROW(
@@ -483,6 +548,10 @@ TEST_F(ScanStringTest, ExclusiveThrows)
   EXPECT_THROW(
     cudf::scan(
       col, *cudf::make_max_aggregation<cudf::scan_aggregation>(), cudf::scan_type::EXCLUSIVE),
+    cudf::logic_error);
+  EXPECT_THROW(
+    cudf::scan(
+      col, *cudf::make_count_aggregation<cudf::scan_aggregation>(), cudf::scan_type::EXCLUSIVE),
     cudf::logic_error);
 }
 

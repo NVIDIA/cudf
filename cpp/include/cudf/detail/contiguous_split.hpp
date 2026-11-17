@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,29 +10,49 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
-namespace CUDF_EXPORT cudf {
+#include <cstdint>
+#include <optional>
+#include <span>
+
+namespace cudf {
 namespace detail {
 
 /**
  * @copydoc cudf::contiguous_split
- *
- * @param stream CUDA stream used for device memory operations and kernel launches.
  **/
 std::vector<packed_table> contiguous_split(cudf::table_view const& input,
-                                           std::vector<size_type> const& splits,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr);
+                                           std::span<size_type const> splits,
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::pack
- *
- * @param stream Optional CUDA stream on which to execute kernels
  **/
 packed_columns pack(cudf::table_view const& input,
-                    rmm::cuda_stream_view stream,
-                    rmm::device_async_resource_ref mr);
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr);
+
+/**
+ * @copydoc cudf::unpack(std::span<uint8_t const>, uint8_t const*)
+ **/
+table_view unpack(std::span<uint8_t const> metadata, uint8_t const* gpu_data);
+
+/// Reads the payload offsets that `packed_metadata_view::column_view` keeps private.
+struct packed_metadata_access {
+  /// Byte offset of the column's data in the uncompressed payload, or -1 if it has none.
+  [[nodiscard]] static int64_t data_offset(packed_metadata_view::column_view const& column)
+  {
+    return column._data_offset;
+  }
+
+  /// Byte offset of the column's validity mask in the uncompressed payload, or -1 if it has none.
+  [[nodiscard]] static int64_t null_mask_offset(packed_metadata_view::column_view const& column)
+  {
+    return column._null_mask_offset;
+  }
+};
 
 // opaque implementation of `metadata_builder` since it needs to use
 // `serialized_column`, which is only defined in pack.cpp
@@ -50,8 +70,14 @@ class metadata_builder {
    * @brief Construct a new metadata_builder.
    *
    * @param num_root_columns is the number of top-level columns
+   * @param num_rows the table row count to record, or std::nullopt to not record
+   *        one. A row count is only needed to preserve the rows of a zero-column
+   *        table; for a table with one or more columns the row count is derived
+   *        from the columns, so std::nullopt should be passed. If set, num_rows
+   *        must match the size of the table's columns (if any).
    */
-  explicit metadata_builder(size_type const num_root_columns);
+  explicit metadata_builder(size_type const num_root_columns,
+                            std::optional<size_type> const num_rows);
 
   /**
    * @brief Destructor that will be implemented as default, required because metadata_builder_impl
@@ -71,6 +97,9 @@ class metadata_builder {
    *   2) add_column_info_to_meta(col_a_child_1)
    *   3) add_column_info_to_meta(col_a_child_2)
    *   4) add_column_info_to_meta(col_b)
+   *
+   * @throws std::invalid_argument if a num_rows was passed to the constructor
+   *         and does not match col_size of the first (top-level) column added
    *
    * @param col_type column data type
    * @param col_size column row count
@@ -113,5 +142,10 @@ std::vector<uint8_t> pack_metadata(table_view const& table,
                                    size_t buffer_size,
                                    metadata_builder& builder);
 
+/**
+ * @brief Version of the packed metadata layout produced by `pack`/`pack_metadata`.
+ */
+constexpr std::int32_t packed_metadata_version = 2;
+
 }  // namespace detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

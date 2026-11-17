@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import operator
@@ -6,21 +6,17 @@ from functools import reduce
 
 import cupy as cp
 import numpy as np
+import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
-from cudf.testing._utils import expect_warning_if, set_random_null_mask_inplace
-
-
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
+from cudf.testing._utils import (
+    gen_rand_ufunc_input,
+    set_random_null_mask_inplace,
 )
+
+
 @pytest.mark.parametrize("has_nulls", [True, False])
 @pytest.mark.parametrize("indexed", [True, False])
 def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
@@ -48,15 +44,6 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
             reason="Can't call cupy on column with nulls",
         )
     )
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=numpy_ufunc.__name__.startswith("bitwise")
-            and numpy_ufunc != np.bitwise_count
-            and indexed
-            and has_nulls,
-            reason="https://github.com/pandas-dev/pandas/issues/52500",
-        )
-    )
 
     N = 100
     # Avoid zeros in either array to skip division by 0 errors. Also limit the
@@ -65,7 +52,7 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
     rng = np.random.default_rng(0)
     pandas_args = args = [
         cudf.Series(
-            rng.integers(low=1, high=10, size=N),
+            gen_rand_ufunc_input(numpy_ufunc, rng, N),
             index=rng.choice(range(N), N, False) if indexed else None,
         )
         for _ in range(numpy_ufunc.nin)
@@ -88,6 +75,16 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
             else args
         )
         mask = reduce(operator.or_, (a.isna() for a in aligned)).to_pandas()
+        if numpy_ufunc in (np.power, np.float_power):
+            # pandas honors 1 ** x == 1 and x ** 0 == 1 even when x is
+            # missing, and cudf matches, so those positions are valid in the
+            # result. The 0-filled pandas args already compute 1 there
+            # (1 ** 0 and 0 ** 0), so just unmask them.
+            base, exponent = aligned
+            identity = ((base == 1).fillna(False) & exponent.isna()) | (
+                (exponent == 0).fillna(False) & base.isna()
+            )
+            mask &= ~identity.to_pandas()
 
     got = numpy_ufunc(*args)
 
@@ -100,25 +97,26 @@ def test_ufunc_series(request, numpy_ufunc, has_nulls, indexed):
             assert_eq(g, e, check_exact=False)
     else:
         if has_nulls:
-            with expect_warning_if(
-                numpy_ufunc
-                in (
-                    np.isfinite,
-                    np.isinf,
-                    np.isnan,
-                    np.logical_and,
-                    np.logical_not,
-                    np.logical_or,
-                    np.logical_xor,
-                    np.signbit,
-                    np.equal,
-                    np.greater,
-                    np.greater_equal,
-                    np.less,
-                    np.less_equal,
-                    np.not_equal,
-                )
+            if numpy_ufunc in (
+                np.isfinite,
+                np.isinf,
+                np.isnan,
+                np.logical_and,
+                np.logical_not,
+                np.logical_or,
+                np.logical_xor,
+                np.signbit,
+                np.equal,
+                np.greater,
+                np.greater_equal,
+                np.less,
+                np.less_equal,
+                np.not_equal,
             ):
+                # cuDF .to_pandas for bools with nulls represents missing as None,
+                # should this be np.nan?
+                expect = expect.astype(object).mask(mask, None)
+            else:
                 expect[mask] = np.nan
             assert_eq(got, expect, check_exact=False)
 
@@ -212,6 +210,94 @@ def test_ufunc_cudf_series_error_with_out_kwarg():
     cudf_s3 = cudf.Series(data=[0, 0, 0, 0])
     with pytest.raises(TypeError):
         np.add(x1=cudf_s1, x2=cudf_s2, out=cudf_s3)
+
+
+@pytest.mark.parametrize(
+    "ufunc", [np.cos, np.sin, np.exp, np.log, np.sqrt, np.sign, np.abs]
+)
+@pytest.mark.parametrize(
+    "input_dtype",
+    [
+        "Float32",
+        "Float64",
+        "Int8",
+        "Int16",
+        "Int32",
+        "Int64",
+        "UInt8",
+        "UInt16",
+        "UInt32",
+        "UInt64",
+    ],
+)
+def test_unary_ufunc_preserves_pandas_nullable_dtype(
+    request, ufunc, input_dtype
+):
+    # Match pandas behavior: a unary ufunc on a Series with a pandas-nullable
+    # dtype should return a Series whose dtype is the corresponding
+    # pandas-nullable dtype (Float64 for transcendental ops on integers, same
+    # dtype family for sign/abs, etc.).
+    request.applymarker(
+        pytest.mark.xfail(
+            condition=(
+                input_dtype in {"Int8", "UInt8"}
+                and ufunc in {np.cos, np.sin, np.exp, np.log, np.sqrt}
+            ),
+            reason=(
+                "cupy promotes 8-bit ints to float16 for transcendental ops, "
+                "which cudf does not support."
+            ),
+        )
+    )
+    psr = pd.Series([1, 2, 3, pd.NA], dtype=input_dtype)
+    gsr = cudf.from_pandas(psr)
+
+    with np.errstate(invalid="ignore"):
+        expected = ufunc(psr)
+        got = ufunc(gsr)
+
+    assert expected.dtype == got.dtype
+    assert_eq(expected, got, check_dtype=True)
+
+
+@pytest.mark.parametrize("ufunc", [np.add, np.subtract, np.multiply])
+@pytest.mark.parametrize(
+    "left_dtype, right_dtype",
+    [
+        ("Float64", "Float64"),
+        ("Int64", "Int64"),
+        ("Float64", "Int64"),
+        ("Int32", "Float32"),
+    ],
+)
+def test_binary_ufunc_preserves_pandas_nullable_dtype(
+    ufunc, left_dtype, right_dtype
+):
+    pa = pd.Series([1, 2, 3, pd.NA], dtype=left_dtype)
+    pb = pd.Series([4, 5, pd.NA, 7], dtype=right_dtype)
+    ga = cudf.from_pandas(pa)
+    gb = cudf.from_pandas(pb)
+
+    expected = ufunc(pa, pb)
+    got = ufunc(ga, gb)
+
+    assert expected.dtype == got.dtype
+    assert_eq(expected, got, check_dtype=True)
+
+
+@pytest.mark.parametrize("ufunc", [np.cos, np.sqrt, np.sign])
+def test_unary_ufunc_plain_numpy_dtype_unchanged(ufunc):
+    # Sanity check: plain numpy dtypes still produce plain numpy dtype outputs
+    # (no accidental upcast to pandas-nullable).
+    psr = pd.Series([1.0, 2.0, 3.0])
+    gsr = cudf.from_pandas(psr)
+
+    with np.errstate(invalid="ignore"):
+        expected = ufunc(psr)
+        got = ufunc(gsr)
+
+    assert expected.dtype == got.dtype
+    assert_eq(expected, got, check_dtype=True)
 
 
 @pytest.mark.parametrize(

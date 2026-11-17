@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -7,7 +7,9 @@
 #include "cudf_jni_apis.hpp"
 #include "error.hpp"
 
-#include <rmm/device_uvector.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 #include <nvcomp.h>
 #include <nvcomp/lz4.h>
@@ -51,8 +53,13 @@ void check_nvcomp_status(JNIEnv* env, nvcompStatus_t status)
 extern "C" {
 
 // methods for lz4
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_max_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressGetTempSize(JNIEnv* env,
+                                                                   jclass,
+                                                                   jlong j_batch_size,
+                                                                   jlong j_max_chunk_size,
+                                                                   jlong j_max_total_size,
+                                                                   jlong j_stream)
 {
   JNI_TRY
   {
@@ -60,9 +67,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressG
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto max_chunk_size   = static_cast<std::size_t>(j_max_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedLZ4CompressGetTempSizeAsync(
-      batch_size, max_chunk_size, nvcompBatchedLZ4CompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedLZ4CompressGetTempSize(batch_size,
+                                                      max_chunk_size,
+                                                      nvcompBatchedLZ4CompressDefaultOpts,
+                                                      &temp_size,
+                                                      total_size,
+                                                      stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -114,8 +126,9 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressAsync(JNIEnv* env,
     auto stream               = reinterpret_cast<cudaStream_t>(j_stream);
     // FIXME how to use these statuses ? They are not used either in the corresponding
     // decompressor.
-    auto comp_statuses = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
-    auto status        = nvcompBatchedLZ4CompressAsync(in_ptrs,
+    auto comp_statuses = cuda::device_buffer<nvcompStatus_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto status = nvcompBatchedLZ4CompressAsync(in_ptrs,
                                                 in_sizes,
                                                 chunk_size,
                                                 batch_size,
@@ -131,8 +144,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4CompressAsync(JNIEnv* env,
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressGetTempSize(JNIEnv* env,
+                                                                     jclass,
+                                                                     jlong j_batch_size,
+                                                                     jlong j_chunk_size,
+                                                                     jlong j_max_total_size,
+                                                                     jlong j_stream)
 {
   JNI_TRY
   {
@@ -140,9 +158,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4Decompres
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto chunk_size       = static_cast<std::size_t>(j_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedLZ4DecompressGetTempSizeAsync(
-      batch_size, chunk_size, nvcompBatchedLZ4DecompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedLZ4DecompressGetTempSize(batch_size,
+                                                        chunk_size,
+                                                        nvcompBatchedLZ4DecompressDefaultOpts,
+                                                        &temp_size,
+                                                        total_size,
+                                                        stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -164,17 +187,19 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4DecompressAsync(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto compressed_ptrs           = reinterpret_cast<void const* const*>(j_in_ptrs);
-    auto compressed_sizes          = reinterpret_cast<std::size_t const*>(j_in_sizes);
-    auto uncompressed_sizes        = reinterpret_cast<std::size_t const*>(j_out_sizes);
-    auto batch_size                = static_cast<std::size_t>(j_batch_size);
-    auto temp_ptr                  = reinterpret_cast<void*>(j_temp_ptr);
-    auto temp_size                 = static_cast<std::size_t>(j_temp_size);
-    auto uncompressed_ptrs         = reinterpret_cast<void* const*>(j_out_ptrs);
-    auto stream                    = reinterpret_cast<cudaStream_t>(j_stream);
-    auto uncompressed_statuses     = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
-    auto actual_uncompressed_sizes = rmm::device_uvector<std::size_t>(batch_size, stream);
-    auto status                    = nvcompBatchedLZ4DecompressAsync(compressed_ptrs,
+    auto compressed_ptrs       = reinterpret_cast<void const* const*>(j_in_ptrs);
+    auto compressed_sizes      = reinterpret_cast<std::size_t const*>(j_in_sizes);
+    auto uncompressed_sizes    = reinterpret_cast<std::size_t const*>(j_out_sizes);
+    auto batch_size            = static_cast<std::size_t>(j_batch_size);
+    auto temp_ptr              = reinterpret_cast<void*>(j_temp_ptr);
+    auto temp_size             = static_cast<std::size_t>(j_temp_size);
+    auto uncompressed_ptrs     = reinterpret_cast<void* const*>(j_out_ptrs);
+    auto stream                = reinterpret_cast<cudaStream_t>(j_stream);
+    auto uncompressed_statuses = cuda::device_buffer<nvcompStatus_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto actual_uncompressed_sizes = cuda::device_buffer<std::size_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto status = nvcompBatchedLZ4DecompressAsync(compressed_ptrs,
                                                   compressed_sizes,
                                                   uncompressed_sizes,
                                                   actual_uncompressed_sizes.data(),
@@ -220,8 +245,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedLZ4GetDecompressSizeAsync(JNIEnv* en
 }
 
 // methods for zstd
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_max_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressGetTempSize(JNIEnv* env,
+                                                                    jclass,
+                                                                    jlong j_batch_size,
+                                                                    jlong j_max_chunk_size,
+                                                                    jlong j_max_total_size,
+                                                                    jlong j_stream)
 {
   JNI_TRY
   {
@@ -229,9 +259,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompress
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto max_chunk_size   = static_cast<std::size_t>(j_max_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedZstdCompressGetTempSizeAsync(
-      batch_size, max_chunk_size, nvcompBatchedZstdCompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedZstdCompressGetTempSize(batch_size,
+                                                       max_chunk_size,
+                                                       nvcompBatchedZstdCompressDefaultOpts,
+                                                       &temp_size,
+                                                       total_size,
+                                                       stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -282,8 +317,9 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressAsync(JNIEnv* env,
     auto stream               = reinterpret_cast<cudaStream_t>(j_stream);
     // FIXME how to use these statuses ? They are not used either in the corresponding
     // decompressor.
-    auto comp_statuses = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
-    auto status        = nvcompBatchedZstdCompressAsync(in_ptrs,
+    auto comp_statuses = cuda::device_buffer<nvcompStatus_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto status = nvcompBatchedZstdCompressAsync(in_ptrs,
                                                  in_sizes,
                                                  chunk_size,
                                                  batch_size,
@@ -299,8 +335,13 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdCompressAsync(JNIEnv* env,
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressGetTempSize(
-  JNIEnv* env, jclass, jlong j_batch_size, jlong j_chunk_size, jlong j_max_total_size)
+JNIEXPORT jlong JNICALL
+Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressGetTempSize(JNIEnv* env,
+                                                                      jclass,
+                                                                      jlong j_batch_size,
+                                                                      jlong j_chunk_size,
+                                                                      jlong j_max_total_size,
+                                                                      jlong j_stream)
 {
   JNI_TRY
   {
@@ -308,9 +349,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompre
     auto batch_size       = static_cast<std::size_t>(j_batch_size);
     auto chunk_size       = static_cast<std::size_t>(j_chunk_size);
     auto total_size       = static_cast<std::size_t>(j_max_total_size);
+    auto stream           = reinterpret_cast<cudaStream_t>(j_stream);
     std::size_t temp_size = 0;
-    auto status           = nvcompBatchedZstdDecompressGetTempSizeAsync(
-      batch_size, chunk_size, nvcompBatchedZstdDecompressDefaultOpts, &temp_size, total_size);
+    auto status           = nvcompBatchedZstdDecompressGetTempSize(batch_size,
+                                                         chunk_size,
+                                                         nvcompBatchedZstdDecompressDefaultOpts,
+                                                         &temp_size,
+                                                         total_size,
+                                                         stream);
     check_nvcomp_status(env, status);
     return static_cast<jlong>(temp_size);
   }
@@ -332,17 +378,19 @@ Java_ai_rapids_cudf_nvcomp_NvcompJni_batchedZstdDecompressAsync(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    auto compressed_ptrs           = reinterpret_cast<void const* const*>(j_in_ptrs);
-    auto compressed_sizes          = reinterpret_cast<std::size_t const*>(j_in_sizes);
-    auto uncompressed_sizes        = reinterpret_cast<std::size_t const*>(j_out_sizes);
-    auto batch_size                = static_cast<std::size_t>(j_batch_size);
-    auto temp_ptr                  = reinterpret_cast<void*>(j_temp_ptr);
-    auto temp_size                 = static_cast<std::size_t>(j_temp_size);
-    auto uncompressed_ptrs         = reinterpret_cast<void* const*>(j_out_ptrs);
-    auto stream                    = reinterpret_cast<cudaStream_t>(j_stream);
-    auto uncompressed_statuses     = rmm::device_uvector<nvcompStatus_t>(batch_size, stream);
-    auto actual_uncompressed_sizes = rmm::device_uvector<std::size_t>(batch_size, stream);
-    auto status                    = nvcompBatchedZstdDecompressAsync(compressed_ptrs,
+    auto compressed_ptrs       = reinterpret_cast<void const* const*>(j_in_ptrs);
+    auto compressed_sizes      = reinterpret_cast<std::size_t const*>(j_in_sizes);
+    auto uncompressed_sizes    = reinterpret_cast<std::size_t const*>(j_out_sizes);
+    auto batch_size            = static_cast<std::size_t>(j_batch_size);
+    auto temp_ptr              = reinterpret_cast<void*>(j_temp_ptr);
+    auto temp_size             = static_cast<std::size_t>(j_temp_size);
+    auto uncompressed_ptrs     = reinterpret_cast<void* const*>(j_out_ptrs);
+    auto stream                = reinterpret_cast<cudaStream_t>(j_stream);
+    auto uncompressed_statuses = cuda::device_buffer<nvcompStatus_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto actual_uncompressed_sizes = cuda::device_buffer<std::size_t>(
+      stream, cudf::get_current_device_resource_ref(), batch_size, cuda::no_init);
+    auto status = nvcompBatchedZstdDecompressAsync(compressed_ptrs,
                                                    compressed_sizes,
                                                    uncompressed_sizes,
                                                    actual_uncompressed_sizes.data(),

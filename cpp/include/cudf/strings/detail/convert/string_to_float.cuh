@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,8 @@
 #include <cudf/strings/detail/convert/is_float.cuh>
 #include <cudf/strings/string_view.cuh>
 
-#include <cmath>
-#include <limits>
+#include <cuda/std/cmath>
+#include <cuda/std/limits>
 
 namespace cudf {
 namespace strings {
@@ -35,13 +35,8 @@ __device__ inline double stod(string_view const& d_str)
     ++in_ptr;
   }
 
-#ifndef CUDF_RUNTIME_JIT
-  constexpr double infinity      = std::numeric_limits<double>::infinity();
-  constexpr uint64_t max_holding = (std::numeric_limits<uint64_t>::max() - 9L) / 10L;
-#else
-  constexpr double infinity      = (1.0 / 0.0);
-  constexpr uint64_t max_holding = (18446744073709551615UL - 9UL) / 10UL;
-#endif
+  constexpr double infinity      = cuda::std::numeric_limits<double>::infinity();
+  constexpr uint64_t max_holding = (cuda::std::numeric_limits<uint64_t>::max() - 9L) / 10L;
 
   // special strings: NaN, Inf
   if ((in_ptr < end) && *in_ptr > '9') {
@@ -105,7 +100,7 @@ __device__ inline double stod(string_view const& d_str)
   exp_ten *= exp_sign;
   exp_ten += exp_off;
   exp_ten += num_digits - 1;
-  if (exp_ten > std::numeric_limits<double>::max_exponent10) {
+  if (exp_ten > cuda::std::numeric_limits<double>::max_exponent10) {
     return sign > 0 ? infinity : -infinity;
   }
 
@@ -114,7 +109,7 @@ __device__ inline double stod(string_view const& d_str)
   exp_ten += 1 - num_digits;
   // If 10^exp_ten would result in a subnormal value, the base and
   // exponent should be adjusted so that 10^exp_ten is a normal value
-  auto const subnormal_shift = std::numeric_limits<double>::min_exponent10 - exp_ten;
+  auto const subnormal_shift = cuda::std::numeric_limits<double>::min_exponent10 - exp_ten;
   if (subnormal_shift > 0) {
     // Handle subnormal values. Ensure that both base and exponent are
     // normal values before computing their product.
@@ -124,7 +119,7 @@ __device__ inline double stod(string_view const& d_str)
     return base * exponent;
   }
 
-  double const exponent = exp10(static_cast<double>(std::abs(exp_ten)));
+  double const exponent = exp10(static_cast<double>(cuda::std::abs(exp_ten)));
   return exp_ten < 0 ? base / exponent : base * exponent;
 }
 

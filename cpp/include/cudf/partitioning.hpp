@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,17 +10,20 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 #include <vector>
+
+/**
+ * @file
+ * @brief Column partitioning APIs
+ */
 
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup reorder_partition
  * @{
- * @file
- * @brief Column partitioning APIs
  */
 
 /**
@@ -69,8 +72,8 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
   table_view const& t,
   column_view const& partition_map,
   size_type num_partitions,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Partitions rows from the input table into multiple output tables.
@@ -81,6 +84,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
  * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
+ *
+ * An empty `columns_to_hash` is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
  *
  * @throw std::out_of_range if index is `columns_to_hash` is invalid
  *
@@ -98,10 +104,45 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
   table_view const& input,
   std::vector<size_type> const& columns_to_hash,
   int num_partitions,
-  hash_id hash_function             = hash_id::HASH_MURMUR3,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  hash_id hash_function     = hash_id::HASH_MURMUR3,
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Partitions rows from the input table into multiple output tables.
+ *
+ * Partitions rows of `input` into `num_partitions` bins based on the hash
+ * value of the rows specified by the `keys` table. Rows partitioned into
+ * the same bin are grouped consecutively in the output table. Returns a vector
+ * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
+ * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
+ * number of rows in the output table.
+ *
+ * A zero-column `keys` table is treated as empty, producing an empty result even when `input` has a
+ * non-zero row count.
+ *
+ * @throw std::invalid_argument if `keys` is not empty and does not have the same number of rows as
+ * `input`.
+ *
+ * @param input The table to partition
+ * @param keys The table of keys to hash defining the partitioning
+ * @param num_partitions The number of partitions to use
+ * @param hash_function Optional hash id that chooses the hash function to use
+ * @param seed Optional seed value to the hash function
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned table's device memory
+ *
+ * @returns An output table and a vector of `num_partitions + 1` row offsets to each partition
+ */
+std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
+  table_view const& input,
+  table_view const& keys,
+  int num_partitions,
+  hash_id hash_function     = hash_id::HASH_MURMUR3,
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Round-robin partition.
@@ -245,9 +286,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
 std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> round_robin_partition(
   table_view const& input,
   cudf::size_type num_partitions,
-  cudf::size_type start_partition   = 0,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::size_type start_partition = 0,
+  cuda::stream_ref stream         = cudf::get_default_stream(),
+  cudf::memory_resources mr       = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

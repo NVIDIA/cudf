@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def df(*, with_nulls: bool) -> pl.LazyFrame:
     return pl.LazyFrame({"a": values})
 
 
-def test_expr_distinct(df, op):
+def test_expr_distinct(engine: pl.GPUEngine, df, op):
     expr = getattr(pl.col("a"), op)()
     query = df.select(expr)
-    assert_gpu_result_equal(query)
+    assert_gpu_result_equal(query, engine=engine)

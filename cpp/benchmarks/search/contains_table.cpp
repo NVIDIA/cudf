@@ -1,13 +1,13 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
-#include <cudf/detail/search.hpp>
 #include <cudf/lists/list_view.hpp>
+#include <cudf/search.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -39,14 +39,9 @@ static void nvbench_contains_table(nvbench::state& state, nvbench::type_list<Typ
   auto mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    auto const stream_view = rmm::cuda_stream_view{launch.get_stream()};
+    auto const stream_view = cuda::stream_ref{launch.get_stream()};
     [[maybe_unused]] auto const result =
-      cudf::detail::contains(haystack->view(),
-                             needles->view(),
-                             cudf::null_equality::EQUAL,
-                             cudf::nan_equality::ALL_EQUAL,
-                             stream_view,
-                             cudf::get_current_device_resource_ref());
+      cudf::contains(haystack->view().column(0), needles->view().column(0), stream_view);
   });
 
   state.add_buffer_size(

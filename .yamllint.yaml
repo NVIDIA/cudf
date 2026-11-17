@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+extends: default
+
+rules:
+  anchors:
+    forbid-undeclared-aliases: true
+    forbid-duplicated-anchors: true
+    forbid-unused-anchors: true
+  braces:
+    forbid: false
+    min-spaces-inside: 0
+    # allow 1 space for jinja templating in conda recipes
+    max-spaces-inside: 1
+    min-spaces-inside-empty: -1
+    max-spaces-inside-empty: -1
+  brackets: enable
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1
+  commas:
+    max-spaces-before: 0
+    min-spaces-after: 1
+    max-spaces-after: 1
+  comments: disable
+  comments-indentation: disable
+  document-end: disable
+  document-start: disable
+  key-duplicates:
+    forbid-duplicated-merge-keys: true
+  line-length: disable
+  truthy:
+    allowed-values: ['false', 'true']
+    # having problematic value in keys is rare... and also
+    # GitHub Actions' choice of 'on:' triggers this check
+    # ref: https://github.com/adrienverge/yamllint/issues/430
+    check-keys: false

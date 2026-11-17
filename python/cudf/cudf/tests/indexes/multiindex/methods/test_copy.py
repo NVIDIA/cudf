@@ -60,54 +60,50 @@ def test_multiindex_copy_sem():
         ),
     ],
 )
-@pytest.mark.parametrize("copy_on_write", [True, False])
 @pytest.mark.parametrize("deep", [True, False])
-def test_multiindex_copy_deep(data, copy_on_write, deep):
+def test_multiindex_copy_deep(data, deep):
     """Test memory identity for deep copy
     Case1: Constructed from arrays, StringColumns
     Case2: Constructed from MultiIndex, NumericColumns
     """
-    with cudf.option_context("copy_on_write", copy_on_write):
-        if isinstance(data, list):
-            mi1 = cudf.MultiIndex.from_arrays(data)
-            mi2 = mi1.copy(deep=deep)
-            for col1, col2 in zip(mi1._columns, mi2._columns, strict=True):
-                if not deep or (copy_on_write and not deep):
-                    assert_column_memory_eq(col1, col2)
-                else:
-                    assert_column_memory_ne(col1, col2)
-        elif isinstance(data, pd.MultiIndex):
-            data = cudf.MultiIndex(
-                levels=data.levels,
-                codes=data.codes,
-                names=data.names,
-            )
-            same_ref = (not deep) or (
-                cudf.get_option("copy_on_write") and not deep
-            )
-            mi1 = data
-            mi2 = mi1.copy(deep=deep)
+    if isinstance(data, list):
+        mi1 = cudf.MultiIndex.from_arrays(data)
+        mi2 = mi1.copy(deep=deep)
+        for col1, col2 in zip(mi1._columns, mi2._columns, strict=True):
+            if not deep:
+                assert_column_memory_eq(col1, col2)
+            else:
+                assert_column_memory_ne(col1, col2)
+    elif isinstance(data, pd.MultiIndex):
+        data = cudf.MultiIndex(
+            levels=data.levels,
+            codes=data.codes,
+            names=data.names,
+        )
+        same_ref = not deep
+        mi1 = data
+        mi2 = mi1.copy(deep=deep)
 
-            # Assert ._levels identity
-            lptrs = [lv._column.data.ptr for lv in mi1._levels]
-            rptrs = [lv._column.data.ptr for lv in mi2._levels]
+        # Assert ._levels identity
+        lptrs = [lv._column.data.ptr for lv in mi1._levels]
+        rptrs = [lv._column.data.ptr for lv in mi2._levels]
 
-            assert all(
-                (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
-            )
+        assert all(
+            (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
+        )
 
-            # Assert ._codes identity
-            lptrs = [c.data.ptr for c in mi1._codes]
-            rptrs = [c.data.ptr for c in mi2._codes]
+        # Assert ._codes identity
+        lptrs = [c.data.ptr for c in mi1._codes]
+        rptrs = [c.data.ptr for c in mi2._codes]
 
-            assert all(
-                (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
-            )
+        assert all(
+            (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
+        )
 
-            # Assert ._data identity
-            lptrs = [d.data.ptr for d in mi1._columns]
-            rptrs = [d.data.ptr for d in mi2._columns]
+        # Assert ._data identity
+        lptrs = [d.data.ptr for d in mi1._columns]
+        rptrs = [d.data.ptr for d in mi2._columns]
 
-            assert all(
-                (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
-            )
+        assert all(
+            (x == y) == same_ref for x, y in zip(lptrs, rptrs, strict=True)
+        )

@@ -1,48 +1,48 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/context.hpp>
+#include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 
 #include <gtest/gtest.h>
 
-struct ContextTest : public cudf::test::BaseFixture {
-  ~ContextTest() override
-  {
-    try {
-      cudf::teardown();
-    } catch (...) {
-    }
-  }
-};
+struct ContextTest : public cudf::test::BaseFixture {};
 
 TEST_F(ContextTest, MultipleInitializeCalls)
 {
-  cudf::initialize(cudf::init_flags::INIT_JIT_CACHE);
+  cudf::detail::initialize(cudf::detail::init_flags::DEFAULT);
 
-  EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::LOAD_NVCOMP));
-  EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::ALL));
+  EXPECT_NO_THROW(cudf::detail::initialize(cudf::detail::init_flags::LOAD_NVCOMP));
+  EXPECT_NO_THROW(cudf::detail::initialize(cudf::detail::init_flags::ALL));
 }
 
-TEST_F(ContextTest, InitializeAfterTeardown)
+TEST_F(ContextTest, JitCacheUse)
 {
-  cudf::initialize(cudf::init_flags::ALL);
-  cudf::teardown();
+  auto compute_column = [] {
+    auto c_0        = cudf::test::fixed_width_column_wrapper<cudf::size_type>{3, 20, 1, 50};
+    auto c_1        = cudf::test::fixed_width_column_wrapper<cudf::size_type>{10, 7, 20, 0};
+    auto table      = cudf::table_view{{c_0, c_1}};
+    auto col_ref_0  = cudf::ast::column_reference(0);
+    auto col_ref_1  = cudf::ast::column_reference(1);
+    auto expression = cudf::ast::operation(cudf::ast::ast_operator::ADD, col_ref_0, col_ref_1);
 
-  EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::INIT_JIT_CACHE));
-}
+    auto result = cudf::compute_column_jit(table, expression);
+    EXPECT_EQ(result->size(), cudf::size_type{4});
+  };
 
-TEST_F(ContextTest, TeardownWithoutInitialize) { EXPECT_NO_THROW(cudf::teardown()); }
+  cudf::detail::initialize(cudf::detail::init_flags::DEFAULT);
+  ASSERT_NO_THROW(compute_column());
 
-TEST_F(ContextTest, MultipleTeardownCalls)
-{
-  cudf::initialize(cudf::init_flags::ALL);
-  cudf::teardown();
-
-  EXPECT_NO_THROW(cudf::teardown());
+  cudf::detail::initialize(cudf::detail::init_flags::DEFAULT);
+  ASSERT_NO_THROW(compute_column());
 }
 
 template <typename Lambda>
@@ -65,11 +65,11 @@ TEST_F(ContextTest, MultipleInitializeCallsMultiThreaded)
   auto init_task = [](size_t thread_id) {
     auto role = thread_id % 3;
     if (role == 0) {
-      EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::INIT_JIT_CACHE));
+      EXPECT_NO_THROW(cudf::detail::initialize(cudf::detail::init_flags::NONE));
     } else if (role == 1) {
-      EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::LOAD_NVCOMP));
+      EXPECT_NO_THROW(cudf::detail::initialize(cudf::detail::init_flags::LOAD_NVCOMP));
     } else {
-      EXPECT_NO_THROW(cudf::initialize(cudf::init_flags::ALL));
+      EXPECT_NO_THROW(cudf::detail::initialize(cudf::detail::init_flags::ALL));
     }
   };
   EXPECT_NO_FATAL_FAILURE(run_multithreaded(init_task));

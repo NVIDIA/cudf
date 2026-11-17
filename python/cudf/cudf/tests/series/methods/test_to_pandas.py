@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import datetime
@@ -11,7 +11,7 @@ import pyarrow as pa
 import pytest
 
 import cudf
-from cudf.testing import assert_eq
+from cudf.testing import _object_array_equal_nan, assert_eq
 
 
 def test_to_pandas_index_true_timezone():
@@ -107,7 +107,7 @@ def test_to_pandas_index_true_timezone():
                     None,
                     "rapids ai",
                 ],
-                dtype=pd.StringDtype(),
+                dtype=pd.StringDtype(na_value=np.nan),
             ),
         ),
         (
@@ -145,7 +145,7 @@ def test_series_to_pandas_nullable_dtypes(sr_data, expected_psr):
 def test_series_to_pandas_arrow_type_nullable_raises(scalar):
     pa_array = pa.array([scalar, None])
     ser = cudf.Series(pa_array)
-    with pytest.raises(ValueError, match=".* cannot both be set"):
+    with pytest.raises(ValueError, match=r".* cannot both be set"):
         ser.to_pandas(nullable=True, arrow_type=True)
 
 
@@ -262,9 +262,12 @@ def test_string_export(data):
 
     expect = np.array(ps)
     got = gs.to_numpy()
-    assert_eq(expect, got)
+
+    try:
+        assert_eq(expect, got)
+    except AssertionError:
+        _object_array_equal_nan(expect, got)
 
     expect = pa.Array.from_pandas(ps)
     got = gs.to_arrow()
-
     assert pa.Array.equals(expect, got)

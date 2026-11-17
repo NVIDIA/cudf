@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint8_t
 from libc.stddef cimport size_t
@@ -10,8 +10,8 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span
 from rmm.librmm.device_buffer cimport device_buffer
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/contiguous_split.hpp" namespace "cudf" nogil:
@@ -32,8 +32,8 @@ cdef extern from "cudf/contiguous_split.hpp" namespace "cudf" nogil:
         unique_ptr[chunked_pack] create(
             const table_view & input,
             size_t user_buffer_size,
-            cuda_stream_view stream,
-            device_memory_resource *temp_mr,
+            cudaStream_t stream,
+            device_async_resource_ref temp_mr,
         ) except +libcudf_exception_handler
 
     cdef struct contiguous_split_result:
@@ -43,14 +43,14 @@ cdef extern from "cudf/contiguous_split.hpp" namespace "cudf" nogil:
     cdef vector[contiguous_split_result] contiguous_split (
         table_view input_table,
         vector[size_type] splits,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef packed_columns pack (
         const table_view& input,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef table_view unpack (

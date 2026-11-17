@@ -1,17 +1,23 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
+#include <cudf/aggregation.hpp>
 #include <cudf/column/column.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 
+#include <cstddef>
+#include <functional>
+#include <memory>
 #include <unordered_map>
+#include <utility>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace detail {
 struct pair_column_aggregation_equal_to {
   bool operator()(std::pair<column_view, aggregation const&> const& lhs,
@@ -54,4 +60,4 @@ class result_cache {
 };
 
 }  // namespace detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

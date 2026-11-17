@@ -1,21 +1,23 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
+#include <benchmarks/common/nvtx_ranges.hpp>
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
+#include <array>
 #include <random>
 
 template <typename key_type>
@@ -38,8 +40,8 @@ static void BM_transform_polynomials(nvbench::state& state)
   std::vector<std::unique_ptr<cudf::column>> constants;
 
   std::transform(
-    thrust::make_counting_iterator(0),
-    thrust::make_counting_iterator(order + 1),
+    cuda::counting_iterator<cudf::size_type>{0},
+    cuda::counting_iterator{order + 1},
     std::back_inserter(constants),
     [&](int) { return create_random_column(cudf::type_to_id<key_type>(), row_count{1}, profile); });
 
@@ -53,10 +55,12 @@ static void BM_transform_polynomials(nvbench::state& state)
                  std::back_inserter(inputs),
                  [](auto& col) -> cudf::transform_input { return cudf::scalar_column_view(*col); });
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     // computes polynomials: (((ax + b)x + c)x + d)x + e... = ax**4 + bx**3 + cx**2 + dx + e....
 
-    cudf::scoped_range range{"benchmark_iteration"};
+    cudf::benchmark::scoped_range range{"benchmark_iteration"};
 
     std::string type = cudf::type_to_name(cudf::data_type{cudf::type_to_id<key_type>()});
 
@@ -79,16 +83,20 @@ static void BM_transform_polynomials(nvbench::state& state)
 
     // clang-format on
 
-    cudf::transform_extended(inputs,
-                             udf,
-                             cudf::data_type{cudf::type_to_id<key_type>()},
-                             cudf::udf_source_type::CUDA,
-                             std::nullopt,
-                             cudf::null_aware::NO,
-                             std::nullopt,
-                             cudf::output_nullability::PRESERVE,
-                             launch.get_stream().get_stream());
+    cudf::transform(udf,
+                    cudf::udf_source_type::CUDA,
+                    cudf::null_aware::NO,
+                    std::nullopt,
+                    inputs,
+                    std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
+                                                      cudf::output_nullability::PRESERVE}},
+                    {},
+                    std::nullopt,
+                    launch.get_stream().get_stream());
   });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define TRANSFORM_POLYNOMIALS_BENCHMARK_DEFINE(name, key_type)                         \

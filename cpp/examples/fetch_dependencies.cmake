@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -19,7 +19,7 @@ include(${CMAKE_BINARY_DIR}/cmake/get_cpm.cmake)
 CPMFindPackage(
   NAME cudf
   FIND_PACKAGE_ARGUMENTS "PATHS ${cudf_ROOT} ${cudf_ROOT}/latest" GIT_REPOSITORY
-                         https://github.com/rapidsai/cudf
+                         https://github.com/NVIDIA/cudf
   GIT_TAG ${CUDF_TAG}
   GIT_SHALLOW
     TRUE

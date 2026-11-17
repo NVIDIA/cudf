@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 """IO testing utilities."""
@@ -54,9 +54,10 @@ def make_partitioned_source(
             case "ndjson":
                 part.write_ndjson(file_path, **write_kwargs)
             case "parquet" | "chunked_parquet":
+                part_row_group_size = max(row_group_size or (len(part) // 2), 1)
                 part.write_parquet(
                     file_path,
-                    row_group_size=row_group_size or (len(part) // 2),
+                    row_group_size=part_row_group_size,
                     **write_kwargs,
                 )
             case _:
@@ -99,7 +100,7 @@ def make_lazy_frame(
     n_rows : optional, int
         Slice to apply to the final LazyFrame before returning.
     """
-    from cudf_polars.experimental.io import _clear_source_info_cache
+    from cudf_polars.streaming.io import _clear_source_info_cache
 
     _clear_source_info_cache()
 

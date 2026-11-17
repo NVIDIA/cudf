@@ -1,12 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/aggregation.hpp>
-#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/utilities/traits.hpp>
 
 // return true if the aggregation is valid for the specified ColumnType
@@ -14,9 +13,7 @@
 template <typename ColumnType, cudf::aggregation::Kind op>
 static constexpr bool is_rolling_supported()
 {
-  if (!cudf::detail::is_valid_aggregation<ColumnType, op>()) {
-    return false;
-  } else if (cudf::is_numeric<ColumnType>() or cudf::is_duration<ColumnType>()) {
+  if (cudf::is_numeric<ColumnType>() or cudf::is_duration<ColumnType>()) {
     return (op == cudf::aggregation::SUM) or (op == cudf::aggregation::MIN) or
            (op == cudf::aggregation::MAX) or (op == cudf::aggregation::COUNT_VALID) or
            (op == cudf::aggregation::COUNT_ALL) or (op == cudf::aggregation::MEAN) or

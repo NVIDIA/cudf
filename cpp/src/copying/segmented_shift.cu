@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,11 +13,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
+#include <cuda/iterator>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
-#include <thrust/iterator/transform_iterator.h>
 
 namespace cudf {
 namespace detail {
@@ -62,8 +61,8 @@ struct segmented_shift_functor<T, std::enable_if_t<is_rep_layout_compatible<T>()
                                      device_span<size_type const> segment_offsets,
                                      size_type offset,
                                      scalar const& fill_value,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     bool nullable           = not fill_value.is_valid(stream) or segmented_values.nullable();
@@ -91,8 +90,8 @@ struct segmented_shift_functor<string_view> {
                                      device_span<size_type const> segment_offsets,
                                      size_type offset,
                                      scalar const& fill_value,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     auto input_iterator     = make_optional_iterator<cudf::string_view>(
@@ -118,8 +117,8 @@ struct segmented_shift_functor_forwarder {
                                      device_span<size_type const> segment_offsets,
                                      size_type offset,
                                      scalar const& fill_value,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
   {
     segmented_shift_functor<T> shifter;
     return shifter(segmented_values, segment_offsets, offset, fill_value, stream, mr);
@@ -132,8 +131,8 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
                                         device_span<size_type const> segment_offsets,
                                         size_type offset,
                                         scalar const& fill_value,
-                                        rmm::cuda_stream_view stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr)
 {
   if (segmented_values.is_empty()) { return empty_like(segmented_values); }
   if (offset == 0) { return std::make_unique<column>(segmented_values, stream, mr); };

@@ -1,6 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (C) 1996-2002 Julian R Seward.  All rights reserved.
- * SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 AND bzip2-1.0.6
  */
 
@@ -14,7 +14,7 @@
  * https://spdx.org/licenses/bzip2-1.0.6.html
  * https://github.com/asimonov-im/bzip2/blob/master/LICENSE
  * original source code available at
- * http://www.sourceware.org/bzip2/
+ * https://www.sourceware.org/bzip2/
  */
 
 /*--

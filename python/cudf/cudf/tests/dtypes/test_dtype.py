@@ -23,7 +23,7 @@ from cudf.testing import assert_eq
         (int, np.dtype("int64")),
         (float, np.dtype("float64")),
         (cudf.ListDtype("int64"), cudf.ListDtype("int64")),
-        (np.dtype("U"), np.dtype("object")),
+        (np.dtype("U"), np.dtype("U")),
         ("timedelta64[ns]", np.dtype("<m8[ns]")),
         ("timedelta64[ms]", np.dtype("<m8[ms]")),
         ("<m8[s]", np.dtype("<m8[s]")),

@@ -1,23 +1,24 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from cudf.api.types import is_dtype_equal
-from cudf.core.dtype.validators import is_dtype_obj_numeric
+from cudf.core.dtype.validators import (
+    is_dtype_obj_numeric,
+    is_dtype_obj_string,
+)
 from cudf.core.dtypes import (
     CategoricalDtype,
     Decimal32Dtype,
     Decimal64Dtype,
     Decimal128Dtype,
 )
-from cudf.core.reshape import concat
 from cudf.utils.dtypes import (
     find_common_type,
     get_dtype_of_same_kind,
@@ -86,8 +87,17 @@ def _match_join_keys(
         return _match_categorical_dtypes_both(lcol, rcol, how)  # type: ignore[arg-type]
     elif left_is_categorical or right_is_categorical:
         if left_is_categorical:
-            if how in {"left", "leftsemi", "leftanti"}:
-                return lcol, rcol.astype(ltype)
+            if how in {"leftsemi", "leftanti"}:
+                # Decategorize both sides and find a common type
+                # instead of casting right to left's categorical
+                # type, which would introduce spurious nulls for
+                # right values not in the left categories.
+                common_type = find_common_type(
+                    (ltype.categories.dtype, rtype)  # type: ignore[union-attr]
+                )
+                return lcol.astype(common_type), rcol.astype(common_type)
+            # pandas decategorizes the key when only one side is categorical,
+            # regardless of the join type.
             common_type = get_dtype_of_same_kind(rtype, ltype.categories.dtype)  # type: ignore[union-attr]
         else:
             common_type = get_dtype_of_same_kind(ltype, rtype.categories.dtype)  # type: ignore[union-attr]
@@ -109,11 +119,16 @@ def _match_join_keys(
         and is_dtype_obj_numeric(rtype)
         and not (ltype.kind == "m" or rtype.kind == "m")
     ):
-        common_type = (
-            max(ltype, rtype)
-            if ltype.kind == rtype.kind
-            else find_common_type((ltype, rtype))
-        )
+        if ltype.kind == rtype.kind:
+            try:
+                common_type = max(ltype, rtype)
+            except TypeError:
+                # e.g. numpy bool and pandas BooleanDtype both have kind "b"
+                # but are not orderable via ``>``; fall back to the
+                # type-promotion helper that understands extension dtypes.
+                common_type = find_common_type((ltype, rtype))
+        else:
+            common_type = find_common_type((ltype, rtype))
     elif (ltype.kind == "M" and rtype.kind == "M") or (
         ltype.kind == "m" and rtype.kind == "m"
     ):
@@ -132,7 +147,10 @@ def _match_join_keys(
     if how == "left" and rcol.fillna(0).can_cast_safely(ltype):
         return lcol, rcol.astype(ltype)
     if common_type is None:
-        common_type = np.dtype(np.float64)
+        if is_dtype_obj_string(ltype) and is_dtype_obj_string(rtype):
+            common_type = find_common_type((ltype, rtype))
+        else:
+            common_type = np.dtype(np.float64)
     return lcol.astype(common_type), rcol.astype(common_type)
 
 
@@ -164,29 +182,37 @@ def _match_categorical_dtypes_both(
             "neither side is ordered"
         )
 
-    if how == "inner":
-        # cast to category types -- we must cast them back later
+    if how in {"leftsemi", "leftanti"}:
+        # These join types have no pandas equivalent; decategorize both sides
+        # to a common type to compare values.
         return _match_join_keys(
             lcol._get_decategorized_column(),
             rcol._get_decategorized_column(),
             how,
         )
-    elif how in {"left", "leftanti", "leftsemi"}:
-        # always cast to left type
-        return lcol, rcol._get_decategorized_column().astype(ltype)
-    else:
-        # merge categories
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            merged_categories = concat(
-                [ltype.categories, rtype.categories]
-            ).unique()
-        common_type = CategoricalDtype(
-            categories=merged_categories, ordered=False
+
+    if ltype._internal_eq(rtype, strict=False):
+        # Categories match up to permutation (same set, both unordered).
+        # pandas keeps the result categorical; re-encode both to a unified
+        # CategoricalDtype so the join compares by value rather than by code.
+        # Decategorize first: a categorical->categorical astype is a no-op
+        # here because ``CategoricalDtype.__eq__`` treats permuted categories
+        # as equal, which would leave the codes (and thus the join) misaligned.
+        common = find_common_type((ltype, rtype))
+        return (
+            lcol._get_decategorized_column().astype(common),
+            rcol._get_decategorized_column().astype(common),
         )
-        return lcol._get_decategorized_column().astype(
-            common_type
-        ), rcol._get_decategorized_column().astype(common_type)
+
+    # Different category sets: pandas decategorizes both sides to their common
+    # categories dtype (the result is not categorical), for every join type.
+    common_type = find_common_type(
+        (ltype.categories.dtype, rtype.categories.dtype)
+    )
+    return (
+        lcol._get_decategorized_column().astype(common_type),
+        rcol._get_decategorized_column().astype(common_type),
+    )
 
 
 def _coerce_to_tuple(obj):

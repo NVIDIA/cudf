@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/copying.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -30,7 +31,7 @@ static void bench_copy(nvbench::state& state)
   auto const map_view = map_table->view().column(0);
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
 
   if (api == "gather") {
     auto result =
@@ -39,9 +40,13 @@ static void bench_copy(nvbench::state& state)
     state.add_global_memory_reads<nvbench::int8_t>(data_size +
                                                    (map_view.size() * sizeof(cudf::size_type)));
     state.add_global_memory_writes<nvbench::int8_t>(data_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
+
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::gather(source->view(), map_view, cudf::out_of_bounds_policy::NULLIFY, stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   } else if (api == "scatter") {
     auto const target =
       create_random_table({cudf::type_id::STRING}, row_count{num_rows}, table_profile);
@@ -50,9 +55,12 @@ static void bench_copy(nvbench::state& state)
     state.add_global_memory_reads<nvbench::int8_t>(data_size +
                                                    (map_view.size() * sizeof(cudf::size_type)));
     state.add_global_memory_writes<nvbench::int8_t>(data_size);
+    auto const mem_stats_logger = cudf::memory_stats_logger();
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
       cudf::scatter(source->view(), map_view, target->view(), stream);
     });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
   }
 }
 

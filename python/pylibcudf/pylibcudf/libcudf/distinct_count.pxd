@@ -9,7 +9,7 @@ from pylibcudf.libcudf.types cimport (
     null_policy,
     size_type,
 )
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 
 cdef extern from "cudf/reduction/distinct_count.hpp" namespace "cudf" nogil:
@@ -17,9 +17,9 @@ cdef extern from "cudf/reduction/distinct_count.hpp" namespace "cudf" nogil:
         column_view column,
         null_policy null_handling,
         nan_policy nan_handling,
-        cuda_stream_view stream) except +libcudf_exception_handler
+        cudaStream_t stream) except +libcudf_exception_handler
 
     cdef size_type distinct_count(
         table_view source_table,
         null_equality nulls_equal,
-        cuda_stream_view stream) except +libcudf_exception_handler
+        cudaStream_t stream) except +libcudf_exception_handler

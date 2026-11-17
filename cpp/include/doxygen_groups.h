@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -25,6 +25,7 @@
  *   @defgroup column_classes Column
  *   @{
  *      @defgroup column_factories Factories
+ *      @defgroup column_stream Column stream
  *      @defgroup strings_classes Strings
  *      @defgroup dictionary_classes Dictionary
  *      @defgroup timestamp_classes Timestamp
@@ -176,11 +177,13 @@
  *   @defgroup utility_bitmask Bitmask
  *   @defgroup utility_error Exception
  *   @defgroup utility_span Exception
+ *   @defgroup utility_roaring_bitmap Roaring Bitmap
  * @}
  * @defgroup labeling_apis Labeling
  * @{
  *   @defgroup label_bins Bin Labeling
  * @}
  * @defgroup expressions Expression Evaluation
+ * @defgroup udfs User-defined Functions
  * @defgroup tdigest tdigest APIs
  */

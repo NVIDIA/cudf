@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,7 @@
 
 #include <cudf/io/types.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -66,6 +67,9 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
     switch (value) {
       case cudf::io::compression_type::SNAPPY: return "SNAPPY";
       case cudf::io::compression_type::GZIP: return "GZIP";
+      case cudf::io::compression_type::ZSTD: return "ZSTD";
+      case cudf::io::compression_type::ZLIB: return "ZLIB";
+      case cudf::io::compression_type::LZ4: return "LZ4";
       case cudf::io::compression_type::NONE: return "NONE";
       default: return "Unknown";
     }
@@ -128,16 +132,12 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
 
 NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
   cudf::type_id,
-  [](auto value) {
-    switch (value) {
-      case cudf::type_id::EMPTY: return "EMPTY";
-      case cudf::type_id::TIMESTAMP_NANOSECONDS: return "TIMESTAMP_NANOSECONDS";
-      default: return "Unknown";
-    }
-  },
+  [](auto value) { return cudf::type_to_name(cudf::data_type{value}); },
   [](auto) { return std::string{}; })
 
 enum class converts_strings : bool { YES, NO };
+
+enum class output_dict : bool { YES, NO };
 
 enum class uses_pandas_metadata : bool { YES, NO };
 
@@ -147,6 +147,17 @@ NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
     switch (value) {
       case converts_strings::YES: return "YES";
       case converts_strings::NO: return "NO";
+      default: return "Unknown";
+    }
+  },
+  [](auto) { return std::string{}; })
+
+NVBENCH_DECLARE_ENUM_TYPE_STRINGS(
+  output_dict,
+  [](auto value) {
+    switch (value) {
+      case output_dict::YES: return "YES";
+      case output_dict::NO: return "NO";
       default: return "Unknown";
     }
   },

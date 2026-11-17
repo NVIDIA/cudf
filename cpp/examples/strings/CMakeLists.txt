@@ -1,9 +1,9 @@
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../set_cuda_architecture.cmake)
 
@@ -28,29 +28,21 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 list(APPEND CUDF_CUDA_FLAGS --expt-extended-lambda --expt-relaxed-constexpr)
 
-add_executable(libcudf_apis libcudf_apis.cpp)
-target_compile_features(libcudf_apis PRIVATE cxx_std_20)
-target_link_libraries(libcudf_apis PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>)
-install(TARGETS libcudf_apis DESTINATION bin/examples/libcudf/strings)
+# Creates a strings example executable and installs it.
+#
+# Arguments: target_name  - Name of the CMake target and resulting executable source_file  - Source
+# file to compile for the example
+function(add_strings_example target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_compile_features(${target_name} PRIVATE cxx_std_20)
+  target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
+  target_link_libraries(${target_name} PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>)
+  install(TARGETS ${target_name} DESTINATION bin/examples/libcudf/strings)
+endfunction()
 
-add_executable(custom_with_malloc custom_with_malloc.cu)
-target_compile_features(custom_with_malloc PRIVATE cxx_std_20)
-target_compile_options(custom_with_malloc PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
-target_link_libraries(
-  custom_with_malloc PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>
-)
-install(TARGETS custom_with_malloc DESTINATION bin/examples/libcudf/strings)
-
-add_executable(custom_prealloc custom_prealloc.cu)
-target_compile_features(custom_prealloc PRIVATE cxx_std_20)
-target_compile_options(custom_prealloc PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
-target_link_libraries(custom_prealloc PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>)
-install(TARGETS custom_prealloc DESTINATION bin/examples/libcudf/strings)
-
-add_executable(custom_optimized custom_optimized.cu)
-target_compile_features(custom_optimized PRIVATE cxx_std_20)
-target_compile_options(custom_optimized PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>")
-target_link_libraries(custom_optimized PRIVATE cudf::cudf $<BUILD_LOCAL_INTERFACE:nvtx3::nvtx3-cpp>)
-install(TARGETS custom_optimized DESTINATION bin/examples/libcudf/strings)
+add_strings_example(libcudf_apis libcudf_apis.cpp)
+add_strings_example(custom_with_malloc custom_with_malloc.cu)
+add_strings_example(custom_prealloc custom_prealloc.cu)
+add_strings_example(custom_optimized custom_optimized.cu)
 
 install(FILES ${CMAKE_CURRENT_LIST_DIR}/names.csv DESTINATION bin/examples/libcudf/strings)

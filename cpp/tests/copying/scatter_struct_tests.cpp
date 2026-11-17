@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -186,14 +186,14 @@ TYPED_TEST(TypedStructScatterTest, ScatterStructOfListsTest)
   auto lists_col_src =
     lists_col{{{5}, {10, 15}, {20, 25, 30}, {35, 40, 45, 50}, {55, 60, 65}, {70, 75}, {80}, {}, {}},
               // Valid for elements 0, 3, 6,...
-              cudf::detail::make_counting_transform_iterator(0, [](auto i) { return !(i % 3); })};
+              valids_at_multiples_of(3)};
   auto const structs_src = structs_col{{lists_col_src}}.release();
 
   // Target data
   auto lists_col_tgt =
     lists_col{{{1}, {2, 3}, {4, 5, 6}, {7, 8}, {9}, {10, 11, 12, 13}, {}, {14}, {15, 16}},
               // Valid for elements 1, 3, 5, 7,...
-              cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; })};
+              nulls_at_multiples_of(2)};
   auto const structs_tgt = structs_col{{lists_col_tgt}}.release();
 
   // Expected data

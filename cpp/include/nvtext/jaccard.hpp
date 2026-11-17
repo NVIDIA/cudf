@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -14,6 +14,7 @@ namespace CUDF_EXPORT nvtext {
  * @addtogroup nvtext_jaccard
  * @{
  * @file
+ * @brief APIs for computing the Jaccard similarity between strings in two columns.
  */
 
 /**
@@ -56,15 +57,15 @@ namespace CUDF_EXPORT nvtext {
  * @param input2 Strings column to compare with `input1`
  * @param width The character width used for apply substrings
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for temporary allocations and the returned column
  * @return Index calculation values
  */
 std::unique_ptr<cudf::column> jaccard_index(
   cudf::strings_column_view const& input1,
   cudf::strings_column_view const& input2,
   cudf::size_type width,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT nvtext

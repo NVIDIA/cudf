@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ class ListMethods(BaseAccessor):
     def __init__(self, parent: Series | Index):
         if not is_dtype_obj_list(parent.dtype):
             raise AttributeError(
-                "Can only use .list accessor with a 'list' dtype"
+                "Can only use the '.list' accessor with 'list[pyarrow]' "
+                f"dtype, not {parent.dtype}."
             )
         super().__init__(parent=parent)
 

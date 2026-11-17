@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,14 +86,13 @@ void add_column_to_mapping(std::map<size_type, std::vector<size_type>>& selected
  * @brief Create a metadata object from each element in the source vector
  */
 auto metadatas_from_sources(std::vector<std::unique_ptr<datasource>> const& sources,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   std::vector<metadata> metadatas;
   metadatas.reserve(sources.size());
-  std::transform(
-    sources.cbegin(), sources.cend(), std::back_inserter(metadatas), [stream](auto const& source) {
-      return metadata(source.get(), stream);
-    });
+  std::ranges::transform(sources, std::back_inserter(metadatas), [stream](auto const& source) {
+    return metadata(source.get(), stream);
+  });
   return metadatas;
 }
 
@@ -116,7 +115,7 @@ size_type aggregate_orc_metadata::calc_num_stripes() const
 }
 
 aggregate_orc_metadata::aggregate_orc_metadata(
-  std::vector<std::unique_ptr<datasource>> const& sources, rmm::cuda_stream_view stream)
+  std::vector<std::unique_ptr<datasource>> const& sources, cuda::stream_ref stream)
   : per_file_metadata(metadatas_from_sources(sources, stream)),
     num_rows(calc_num_rows()),
     num_stripes(calc_num_stripes())
@@ -149,7 +148,7 @@ aggregate_orc_metadata::select_stripes(
   std::vector<std::vector<size_type>> const& user_specified_stripes,
   int64_t skip_rows,
   std::optional<size_type> const& num_read_rows,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream)
 {
   CUDF_EXPECTS((skip_rows == 0 and not num_read_rows.has_value()) or user_specified_stripes.empty(),
                "Can't use both the row selection and the stripe selection");
@@ -242,18 +241,36 @@ aggregate_orc_metadata::select_stripes(
     per_file_metadata[mapping.source_idx].stripefooters.resize(mapping.stripe_info.size());
 
     for (size_t i = 0; i < mapping.stripe_info.size(); i++) {
-      auto const stripe         = mapping.stripe_info[i].stripe_info;
+      auto const stripe    = mapping.stripe_info[i].stripe_info;
+      auto const file_size = per_file_metadata[mapping.source_idx].source->size();
+      CUDF_EXPECTS(stripe->offset <= file_size,
+                   "Invalid stripe information: offset exceeds file size",
+                   std::out_of_range);
+      auto remaining = file_size - stripe->offset;
+      CUDF_EXPECTS(stripe->indexLength <= remaining,
+                   "Invalid stripe information: indexLength exceeds file size",
+                   std::out_of_range);
+      remaining -= stripe->indexLength;
+      CUDF_EXPECTS(stripe->dataLength <= remaining,
+                   "Invalid stripe information: dataLength exceeds file size",
+                   std::out_of_range);
+      remaining -= stripe->dataLength;
+      CUDF_EXPECTS(stripe->footerLength <= remaining,
+                   "Invalid stripe information: footerLength exceeds file size",
+                   std::out_of_range);
       auto const sf_comp_offset = stripe->offset + stripe->indexLength + stripe->dataLength;
       auto const sf_comp_length = stripe->footerLength;
-      CUDF_EXPECTS(
-        sf_comp_offset + sf_comp_length < per_file_metadata[mapping.source_idx].source->size(),
-        "Invalid stripe information");
       auto const buffer =
         per_file_metadata[mapping.source_idx].source->host_read(sf_comp_offset, sf_comp_length);
       auto sf_data = per_file_metadata[mapping.source_idx].decompressor->decompress_blocks(
         {buffer->data(), buffer->size()});
       protobuf_reader(sf_data.data(), sf_data.size())
         .read(per_file_metadata[mapping.source_idx].stripefooters[i]);
+      auto const& stripe_footer = per_file_metadata[mapping.source_idx].stripefooters[i];
+      auto const num_types      = per_file_metadata[mapping.source_idx].ff.types.size();
+      CUDF_EXPECTS(stripe_footer.columns.size() >= num_types,
+                   "Invalid ColumnEncoding field in a stripe footer.",
+                   std::out_of_range);
       mapping.stripe_info[i].stripe_footer =
         &per_file_metadata[mapping.source_idx].stripefooters[i];
       if (stripe->indexLength == 0) { row_grp_idx_present = false; }

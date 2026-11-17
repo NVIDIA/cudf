@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -151,10 +151,7 @@ class jni_datasource : public cudf::io::datasource {
     return device_read_supported && size >= device_read_cutoff;
   }
 
-  size_t device_read(size_t offset,
-                     size_t size,
-                     uint8_t* dst,
-                     rmm::cuda_stream_view stream) override
+  size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override
   {
     JNIEnv* env = nullptr;
     if (jvm->GetEnv(reinterpret_cast<void**>(&env), cudf::jni::MINIMUM_JNI_VERSION) != JNI_OK) {
@@ -166,7 +163,7 @@ class jni_datasource : public cudf::io::datasource {
                                             offset,
                                             size,
                                             reinterpret_cast<jlong>(dst),
-                                            reinterpret_cast<jlong>(stream.value()));
+                                            reinterpret_cast<jlong>(stream.get()));
     if (env->ExceptionOccurred()) {
       throw cudf::jni::jni_exception("Java exception in deviceRead");
     }
@@ -176,7 +173,7 @@ class jni_datasource : public cudf::io::datasource {
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
-                                        rmm::cuda_stream_view stream) override
+                                        cuda::stream_ref stream) override
   {
     auto amount_read = device_read(offset, size, dst, stream);
     // This is a bit ugly, but we don't have a good way or a need to return
@@ -224,10 +221,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_DataSourceHelper_destroyWrapperDataSo
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    if (handle != 0) {
-      auto source = reinterpret_cast<cudf::jni::jni_datasource*>(handle);
-      delete (source);
-    }
+    cudf::jni::safe_delete<cudf::jni::jni_datasource>(handle);
   }
   JNI_CATCH(env, );
 }

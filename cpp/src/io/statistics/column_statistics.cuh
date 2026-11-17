@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,6 +13,8 @@
 #include "statistics.cuh"
 #include "temp_storage_wrapper.cuh"
 #include "typed_statistics_chunk.cuh"
+
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace io {
@@ -85,10 +87,10 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
+             (IO != detail::io_file_format::PARQUET or !cuda::std::is_same_v<T, list_view>))
   {
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     if constexpr (cudf::is_timestamp<T>() and IO == detail::io_file_format::PARQUET and
                   INT96 == detail::is_int96_timestamp::YES) {
       return;
@@ -105,8 +107,12 @@ struct calculate_group_statistics_functor {
       uint32_t row = r + s.group.start_row;
       if (r < s.group.num_rows) {
         if (s.col.leaf_column->is_valid(row)) {
-          auto converted_value = type_convert::convert(get_element<T>(s, row));
-          chunk.reduce(converted_value);
+          auto const element = get_element<T>(s, row);
+          if constexpr (cuda::std::is_same_v<CT, detail::timestamp_ns128>) {
+            chunk.reduce(detail::to_wall_clock_ns(element, s.col.ut_offsets));
+          } else {
+            chunk.reduce(type_convert::convert(element));
+          }
         } else {
           chunk.null_count++;
         }
@@ -127,7 +133,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
   {
     operator()<statistics::byte_array_view>(s, t);
   }
@@ -151,7 +157,7 @@ struct calculate_group_statistics_functor {
         }
       }
     }
-    cub::BlockReduce<uint32_t, block_size>(storage.template get<uint32_t>()).Sum(chunk.non_nulls);
+    chunk = block_reduce(chunk, storage);
 
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
   }
@@ -189,11 +195,18 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO == detail::io_file_format::ORC or !std::is_same_v<T, list_view>))
+             (IO == detail::io_file_format::ORC or !cuda::std::is_same_v<T, list_view>))
   {
     detail::storage_wrapper<block_size> storage(temp_storage);
 
-    typed_statistics_chunk<T, detail::statistics_type_category<T, IO>::include_aggregate> chunk;
+    // The chunks hold values of the type the gathering kernel converted to, which decides the union
+    // member the extrema live in. Only that type matters here, so the int96 choice is irrelevant:
+    // it changes the unit of a Parquet timestamp, not how it is stored.
+    using type_convert =
+      detail::type_conversion<detail::conversion_map<IO, detail::is_int96_timestamp::NO>>;
+    using CT = typename type_convert::template type<T>;
+
+    typed_statistics_chunk<CT, detail::statistics_type_category<T, IO>::include_aggregate> chunk;
 
     for (uint32_t i = t; i < num_chunks; i += block_size) {
       chunk.reduce(chunks[i]);
@@ -201,6 +214,12 @@ struct merge_group_statistics_functor {
     chunk.has_minmax = (chunk.minimum_value <= chunk.maximum_value);
 
     chunk = block_reduce(chunk, storage);
+
+    // PARQUET-1246: if a float/double column contains any NaN, min/max must be omitted,
+    // else a reader doing NaN predicate pushdown skips the row group. spark-rapids#15004.
+    if constexpr (IO == detail::io_file_format::PARQUET) {
+      if (chunk.has_nan) { chunk.has_minmax = false; }
+    }
 
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
   }
@@ -211,7 +230,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
   {
     operator()<statistics::byte_array_view>(s, chunks, num_chunks, t);
   }
@@ -296,7 +315,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 1)
         threadIdx.x);
     }
     // Temporarily disable stats writing for int96 timestamps
-    // TODO: https://github.com/rapidsai/cudf/issues/10438
+    // TODO: https://github.com/NVIDIA/cudf/issues/10438
     else {
       type_dispatcher(
         state.col.leaf_column->type(),
@@ -325,18 +344,20 @@ namespace detail {
  * @param[in] groups Statistics row groups [num_chunks]
  * @param[in] num_chunks Number of chunks & rowgroups
  * @param[in] stream CUDA stream to use
+ * @param[in] int96_timestamps Whether timestamps are written as INT96
  * @tparam IO File format for which statistics calculation is being done
  */
 template <detail::io_file_format IO>
 void calculate_group_statistics(statistics_chunk* chunks,
                                 statistics_group const* groups,
                                 uint32_t num_chunks,
-                                rmm::cuda_stream_view stream,
+                                cuda::stream_ref stream,
                                 bool const int96_timestamps = false)
 {
   constexpr int block_size = 256;
   gpu_calculate_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks, groups, int96_timestamps);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks, groups, int96_timestamps);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 /**
@@ -386,11 +407,12 @@ void merge_group_statistics(statistics_chunk* chunks_out,
                             statistics_chunk const* chunks_in,
                             statistics_merge_group const* groups,
                             uint32_t num_chunks,
-                            rmm::cuda_stream_view stream)
+                            cuda::stream_ref stream)
 {
   constexpr int block_size = 256;
   gpu_merge_group_statistics<block_size, IO>
-    <<<num_chunks, block_size, 0, stream.value()>>>(chunks_out, chunks_in, groups);
+    <<<num_chunks, block_size, 0, stream.get()>>>(chunks_out, chunks_in, groups);
+  CUDF_CUDA_TRY(cudaGetLastError());
 }
 
 }  // namespace detail

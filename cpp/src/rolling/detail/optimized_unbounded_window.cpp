@@ -1,12 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/gather.hpp>
-#include <cudf/detail/groupby/sort_helper.hpp>
+#include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/reduction/detail/reduction.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -55,8 +55,8 @@ std::unique_ptr<Base> convert_to(cudf::rolling_aggregation const& aggr)
 std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group_keys,
                                                          column_view const& input,
                                                          rolling_aggregation const& aggr,
-                                                         rmm::cuda_stream_view stream,
-                                                         rmm::device_async_resource_ref mr)
+                                                         cuda::stream_ref stream,
+                                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(group_keys.num_columns() > 0,
                "Ungrouped rolling window not supported in aggregation path.");
@@ -67,17 +67,18 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
   agg_requests.front().aggregations.push_back(convert_to<cudf::groupby_aggregation>(aggr));
 
   auto group_by = cudf::groupby::groupby{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
-  auto aggregation_results           = group_by.aggregate(agg_requests, stream);
+  auto aggregation_results =
+    group_by.aggregate(agg_requests, stream, cudf::get_current_device_resource_ref());
   auto const& aggregation_result_col = aggregation_results.second.front().results.front();
 
-  using cudf::groupby::detail::sort::sort_groupby_helper;
-  auto helper = sort_groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES, {}};
-  auto const& group_labels = helper.group_labels(stream);
+  using cudf::groupby::detail::groupby_helper;
+  auto helper = groupby_helper{group_keys, cudf::null_policy::INCLUDE, cudf::sorted::YES};
+  auto const& group_labels = helper.group_labels(stream, cudf::get_current_device_resource_ref());
 
   auto result_columns = cudf::detail::gather(cudf::table_view{{*aggregation_result_col}},
                                              group_labels,
                                              cudf::out_of_bounds_policy::DONT_CHECK,
-                                             cudf::detail::negative_index_policy::NOT_ALLOWED,
+                                             cudf::negative_index_policy::NOT_ALLOWED,
                                              stream,
                                              mr)
                           ->release();
@@ -88,15 +89,17 @@ std::unique_ptr<column> aggregation_based_rolling_window(table_view const& group
 /// Used for input that has no groupby keys. i.e. The window spans the column.
 std::unique_ptr<column> reduction_based_rolling_window(column_view const& input,
                                                        rolling_aggregation const& aggr,
-                                                       rmm::cuda_stream_view stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::stream_ref stream,
+                                                       cudf::memory_resources mr)
 {
   auto const reduce_results = [&] {
     auto const return_dtype = cudf::detail::target_type(input.type(), aggr.kind);
     if (aggr.kind == aggregation::COUNT_ALL) {
-      return cudf::make_fixed_width_scalar(input.size(), stream);
+      return cudf::make_fixed_width_scalar(
+        input.size(), stream, cudf::get_current_device_resource_ref());
     } else if (aggr.kind == aggregation::COUNT_VALID) {
-      return cudf::make_fixed_width_scalar(input.size() - input.null_count(), stream);
+      return cudf::make_fixed_width_scalar(
+        input.size() - input.null_count(), stream, cudf::get_current_device_resource_ref());
     } else {
       return cudf::reduction::detail::reduce(input,
                                              *convert_to<cudf::reduce_aggregation>(aggr),
@@ -140,8 +143,8 @@ bool can_optimize_unbounded_window(bool unbounded_preceding,
 std::unique_ptr<column> optimized_unbounded_window(table_view const& group_keys,
                                                    column_view const& input,
                                                    rolling_aggregation const& aggr,
-                                                   rmm::cuda_stream_view stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr)
 {
   return group_keys.num_columns() > 0
            ? aggregation_based_rolling_window(group_keys, input, aggr, stream, mr)

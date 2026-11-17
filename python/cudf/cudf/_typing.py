@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar, Union
 
 import numpy as np
 import pandas as pd
-from packaging.version import parse
+from pandas.api.typing import NoDefault  # noqa: F401
 
 import pylibcudf as plc
 
@@ -53,8 +53,3 @@ MultiColumnAggType = Union[  # noqa: UP007
 ]
 
 Axis = Literal[0, 1, "index", "columns"]
-
-if parse(pd.__version__) >= parse("3.0.0"):
-    from pandas.api.typing import NoDefault
-else:
-    NoDefault = Any

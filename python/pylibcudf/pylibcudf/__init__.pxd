@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 # TODO: Verify consistent usage of relative/absolute imports in pylibcudf.
@@ -34,6 +34,7 @@ from . cimport (
     sorting,
     stream_compaction,
     strings,
+    table_equality,
     traits,
     transform,
     transpose,
@@ -84,6 +85,7 @@ __all__ = [
     "stream_compaction",
     "strings",
     "sorting",
+    "table_equality",
     "traits",
     "transform",
     "transpose",

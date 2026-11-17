@@ -1,16 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/column/column.hpp>
-#include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
 
-namespace CUDF_EXPORT cudf {
+namespace cudf {
 namespace detail {
 
 /**
@@ -32,9 +32,9 @@ struct dremel_device_view {
  * @see get_dremel_data() for more info.
  */
 struct dremel_data {
-  rmm::device_uvector<size_type> dremel_offsets;
-  rmm::device_uvector<uint8_t> rep_level;
-  rmm::device_uvector<uint8_t> def_level;
+  cuda::device_buffer<size_type> dremel_offsets;
+  cuda::device_buffer<uint8_t> rep_level;
+  cuda::device_buffer<uint8_t> def_level;
 
   size_type leaf_data_size;
   uint8_t max_def_level;
@@ -51,11 +51,12 @@ struct dremel_data {
  *
  * Dremel is a query system created by Google for ad hoc data analysis. The Dremel engine is
  * described in depth in the paper "Dremel: Interactive Analysis of Web-Scale
- * Datasets" (https://research.google/pubs/pub36632/). One of the key components of Dremel
- * is an encoding that converts record-like data into a columnar store for efficient memory
- * accesses. The Parquet file format uses Dremel encoding to handle nested data, so libcudf
- * requires some facilities for working with this encoding. Furthermore, libcudf leverages
- * Dremel encoding as a means for performing lexicographic comparisons of nested columns.
+ * Datasets" (https://research.google/pubs/dremel-interactive-analysis-of-web-scale-datasets-2/).
+ * One of the key components of Dremel is an encoding that converts record-like data into a columnar
+ * store for efficient memory accesses. The Parquet file format uses Dremel encoding to handle
+ * nested data, so libcudf requires some facilities for working with this encoding. Furthermore,
+ * libcudf leverages Dremel encoding as a means for performing lexicographic comparisons of nested
+ * columns.
  *
  * Dremel encoding is built around two concepts, the repetition and definition levels.
  * Since describing them thoroughly is out of scope for this docstring, here are a couple of
@@ -109,6 +110,7 @@ struct dremel_data {
  * ```
  * rep_level.size() = size of leaf column + number of empty lists in level 0
  *                                        + number of empty lists in level 1 ...
+ * number of rep_level values = size of leaf column + number of empty lists in level 0
  * ```
  *
  * We start with finding the empty lists in the penultimate level and merging it with the indices
@@ -181,12 +183,14 @@ struct dremel_data {
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_dremel_data(column_view input,
                             std::vector<uint8_t> nullability,
                             bool output_as_byte_array,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream,
+                            memory_resources mr);
 
 /**
  * @brief Get Dremel offsets, repetition levels, and modified definition levels to be used for
@@ -199,11 +203,13 @@ dremel_data get_dremel_data(column_view input,
  * @param output_as_byte_array if `true`, then any nested list level that has a child of type
  * `uint8_t` will be considered as the last level
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Device memory resources used to allocate the returned and temporary data
  * @return A struct containing dremel data
  */
 dremel_data get_comparator_data(column_view input,
                                 std::vector<uint8_t> nullability,
                                 bool output_as_byte_array,
-                                rmm::cuda_stream_view stream);
+                                cuda::stream_ref stream,
+                                memory_resources mr);
 }  // namespace detail
-}  // namespace CUDF_EXPORT cudf
+}  // namespace cudf

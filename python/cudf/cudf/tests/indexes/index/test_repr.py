@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -28,21 +28,21 @@ def test_numeric_index_repr(length, numeric_types_as_str):
         ),
         (
             lambda: cudf.Index([None, 2.2, 3.324342, None]),
-            "Index([<NA>, 2.2, 3.324342, <NA>], dtype='float64')",
+            "Index([NaN, 2.2, 3.324342, NaN], dtype='float64')",
         ),
         (
             lambda: cudf.Index([None, None, None], name="hello"),
-            "Index([<NA>, <NA>, <NA>], dtype='object', name='hello')",
+            "Index([None, None, None], dtype='object', name='hello')",
         ),
         (
             lambda: cudf.Index(
                 [None, None, None], dtype="float", name="hello"
             ),
-            "Index([<NA>, <NA>, <NA>], dtype='float64', name='hello')",
+            "Index([NaN, NaN, NaN], dtype='float64', name='hello')",
         ),
         (
             lambda: cudf.Index([None], dtype="float64", name="hello"),
-            "Index([<NA>], dtype='float64', name='hello')",
+            "Index([NaN], dtype='float64', name='hello')",
         ),
         (
             lambda: cudf.Index([None], dtype="int8", name="hello"),
@@ -50,12 +50,12 @@ def test_numeric_index_repr(length, numeric_types_as_str):
         ),
         (
             lambda: cudf.Index([None] * 50, dtype="object"),
-            "Index([<NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>"
-            ", <NA>, <NA>,\n       <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, "
-            "<NA>, <NA>, <NA>, <NA>, <NA>,\n       <NA>, <NA>, <NA>, <NA>, "
-            "<NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>,\n       <NA>, "
-            "<NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, <NA>, "
-            "<NA>,\n       <NA>, <NA>],\n      dtype='object')",
+            "Index([None, None, None, None, None, None, None, None, None, None"
+            ", None, None,\n       None, None, None, None, None, None, None, "
+            "None, None, None, None, None,\n       None, None, None, None, "
+            "None, None, None, None, None, None, None, None,\n       None, "
+            "None, None, None, None, None, None, None, None, None, None, "
+            "None,\n       None, None],\n      dtype='object')",
         ),
         (
             lambda: cudf.Index([None] * 20, dtype="uint32"),

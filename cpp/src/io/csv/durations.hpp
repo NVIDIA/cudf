@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <memory>
 
@@ -18,8 +18,8 @@ namespace detail {
 namespace csv {
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
-                                                rmm::cuda_stream_view stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr);
 
 }  // namespace csv
 }  // namespace detail

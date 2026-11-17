@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
 
@@ -21,6 +21,7 @@ def test_join_streams(streams: list[Stream], stream: Stream):
     plc.experimental.join_streams(streams, stream)
 
 
+@pytest.mark.uses_custom_stream
 def test_join_streams_type_error():
     """Test that join_streams raises appropriate errors for invalid inputs."""
     main_stream = Stream()
@@ -29,16 +30,10 @@ def test_join_streams_type_error():
     with pytest.raises(TypeError):
         plc.experimental.join_streams(None, main_stream)
 
-    # Test with non-Stream in list
-    with pytest.raises(
-        TypeError,
-        match="Cannot convert NoneType to rmm.pylibrmm.stream.Stream",
-    ):
-        plc.experimental.join_streams([None], main_stream)
+    # Protocol stream should be accepted
+    class _CudaStreamProto:
+        def __cuda_stream__(self):
+            return (0, 0)
 
-    # Test with non-Stream as main stream
-    with pytest.raises(
-        TypeError,
-        match="Cannot convert NoneType to rmm.pylibrmm.stream.Stream",
-    ):
-        plc.experimental.join_streams([Stream()], None)
+    plc.experimental.join_streams([_CudaStreamProto()], main_stream)
+    plc.experimental.join_streams([Stream()], _CudaStreamProto())

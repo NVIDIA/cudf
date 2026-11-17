@@ -1,0 +1,44 @@
+{#
+  Override PyData Sphinx Theme's sidebar-nav-bs.html component.
+
+  NVIDIA Sphinx Theme inherits PyData's default primary sidebar configuration,
+  which includes this component by template name. Placing a file with the same
+  name in the project's _templates directory makes Sphinx use this version.
+
+  PyData's generate_toctree_html("sidebar", startdepth=1, ...) returns the
+  normal sidebar tree rooted at the currently active top-level toctree item.
+  That is correct for nested pages such as cudf/api_docs/index, where the
+  sidebar should still show the active API reference node and its foldable
+  children. For top-level section landing pages such as cudf_pandas/index,
+  that output duplicates the primary navbar item in the sidebar, so we render
+  only the active section's child <ul> on those landing pages.
+#}
+{% set show_nav_level = meta['html_theme.show_nav_level'] if (meta is defined and meta is not none and 'html_theme.show_nav_level' in meta) else theme_show_nav_level %}
+{% set special_page = pagename == root_doc or pagename in ["genindex", "py-modindex", "search"] %}
+{% if not special_page %}
+  {% set nav_tree = generate_toctree_html(
+    "sidebar",
+    startdepth=1,
+    show_nav_level=show_nav_level | int,
+    maxdepth=theme_navigation_depth | int,
+    collapse=theme_collapse_navigation | tobool,
+    includehidden=theme_sidebar_includehidden | tobool,
+    titles_only=True,
+  ) %}
+  {% set pagename_parts = pagename.split("/") %}
+  {% set top_section_page = pagename_parts | length == 2 and pagename_parts[-1] == "index" %}
+  {% if top_section_page %}
+    {% set active_section = nav_tree.select_one("li.toctree-l1.current") %}
+    {% set active_details = active_section.find("details", recursive=False) if active_section else none %}
+    {% set section_nav = active_details.find("ul", recursive=False) if active_details else nav_tree %}
+  {% else %}
+    {% set section_nav = nav_tree %}
+  {% endif %}
+  <nav class="bd-docs-nav bd-links"
+       aria-label="{{ _('Section Navigation') }}">
+    <p class="bd-links__title" role="heading" aria-level="1">{{ _("Section Navigation") }}</p>
+    <div class="bd-toc-item navbar-nav">
+      {{ section_nav }}
+    </div>
+  </nav>
+{% endif %}

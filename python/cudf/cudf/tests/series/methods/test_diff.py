@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -58,5 +58,17 @@ def test_diff_unsupported_dtypes():
 def test_diff_many_dtypes(data):
     ps = pd.Series(data)
     gs = cudf.from_pandas(ps)
-    assert_eq(ps.diff(), gs.diff())
-    assert_eq(ps.diff(periods=2), gs.diff(periods=2))
+
+    pd_diff = ps.diff()
+    gs_diff = gs.diff()
+    pd_diff2 = ps.diff(periods=2)
+    gs_diff2 = gs.diff(periods=2)
+
+    if pd_diff.dtype == object:
+        # pandas 3 returns object dtype with nan for bool.diff();
+        # cudf returns bool dtype with None - normalize for comparison
+        gs_diff = gs_diff.to_pandas().fillna(value=np.nan)
+        gs_diff2 = gs_diff2.to_pandas().fillna(value=np.nan)
+
+    assert_eq(pd_diff, gs_diff)
+    assert_eq(pd_diff2, gs_diff2)

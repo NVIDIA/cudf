@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ class StructMethods(BaseAccessor):
     def __init__(self, parent: Series | Index):
         if not is_dtype_obj_struct(parent.dtype):
             raise AttributeError(
-                "Can only use .struct accessor with a 'struct' dtype"
+                "Can only use the '.struct' accessor with 'struct[pyarrow]' "
+                f"dtype, not {parent.dtype}."
             )
         super().__init__(parent=parent)
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,11 +15,13 @@
 #include <cudf/strings/detail/convert/fixed_point.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -68,10 +70,10 @@ __device__ __forceinline__ cuda::std::pair<char, char> get_escaped_char(char esc
  * @return uint8_t Numeric value of the character, or `0`
  */
 template <typename T, bool as_hex = false>
-__device__ constexpr uint8_t decode_digit(char c, bool* valid_flag)
+CUDF_HOST_DEVICE constexpr uint8_t decode_digit(char c, bool* valid_flag)
 {
   if (c >= '0' && c <= '9') return c - '0';
-  if constexpr (as_hex and std::is_integral_v<T>) {
+  if constexpr (as_hex and cuda::std::is_integral_v<T>) {
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   }
@@ -114,7 +116,6 @@ CUDF_HOST_DEVICE constexpr bool is_infinity(char const* begin, char const* end)
  * @param begin Pointer to the first element of the string
  * @param end Pointer to the first element after the string
  * @param opts The global parsing behavior options
- * @param error_result Value to return on parse error
  * @tparam base Base (radix) to use for conversion
  *
  * @return The parsed and converted value
@@ -185,10 +186,25 @@ CUDF_HOST_DEVICE cuda::std::optional<T> parse_numeric(char const* begin,
 }
 
 namespace gpu {
+
 /**
- * @brief CUDA kernel iterates over the data until the end of the current field
+ * @brief Advances past a run of delimiter characters at the start of a field.
+ */
+__device__ __inline__ char const* skip_leading_delimiter_run(char const* begin,
+                                                             char const* end,
+                                                             parse_options_view const& opts)
+{
+  if (!opts.multi_delimiter) { return begin; }
+  while (begin < end && *begin == opts.delimiter) {
+    ++begin;
+  }
+  return begin;
+}
+
+/**
+ * @brief Iterate over the data until the end of the current field.
  *
- * Also iterates over (one or more) delimiter characters after the field.
+ * Delimiter runs are skipped by the caller before scanning the next field.
  * Function applies to formats with field delimiters and line terminators.
  *
  * @param begin Pointer to the first element of the string
@@ -197,8 +213,7 @@ namespace gpu {
  * @param escape_char A boolean value to signify whether to consider `\` as escape character or
  * just a character.
  *
- * @return Pointer to the last character in the field, including the
- *  delimiter(s) following the field data
+ * @return Pointer to the first delimiter or record terminator after the field, or `end`.
  */
 __device__ __inline__ char const* seek_field_end(char const* begin,
                                                  char const* end,
@@ -221,9 +236,6 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
       quotation = !quotation;
     } else if (!quotation) {
       if (*current == opts.delimiter) {
-        while (opts.multi_delimiter && (current + 1 < end) && *(current + 1) == opts.delimiter) {
-          ++current;
-        }
         break;
       } else if (*current == opts.terminator) {
         break;
@@ -248,10 +260,20 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
 }
 
 /**
+ * @brief Returns whether the field scan stopped at a delimiter within the record.
+ */
+__device__ __inline__ bool is_field_delimiter(char const* field_end,
+                                              char const* row_end,
+                                              parse_options_view const& opts)
+{
+  return field_end < row_end and *field_end == opts.delimiter;
+}
+
+/**
  * @brief Lexicographically compare digits in input against string
  * representing an integer
  *
- * @param raw_data The pointer to beginning of character string
+ * @param data The pointer to beginning of character string
  * @param golden The pointer to beginning of character string representing
  * the value to be compared against
  * @return bool True if integer represented by character string is less
@@ -273,8 +295,9 @@ __device__ __inline__ bool less_equal_than(char const* data, char const (&golden
  * @brief Determine which counter to increment when a sequence of digits
  * and a parity sign is encountered.
  *
- * @param raw_data The pointer to beginning of character string
- * @param digit_count Total number of digits
+ * @param data_begin The pointer to beginning of character string
+ * @param data_end The pointer to end of character string
+ * @param is_negative Whether the number is negative
  * @param stats Reference to structure with counters
  * @return Pointer to appropriate counter that belong to
  * the interpreted data type
@@ -428,9 +451,7 @@ struct ConvertFunctor {
    *
    * @return bool Whether the parsed value is valid.
    */
-  template <typename T,
-            CUDF_ENABLE_IF(std::is_integral_v<T> and !std::is_same_v<T, bool> and
-                           !cudf::is_fixed_point<T>())>
+  template <cudf::concepts::integral_not_bool T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -457,7 +478,7 @@ struct ConvertFunctor {
    *
    * @return bool Whether the parsed value is valid.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_fixed_point<T>())>
+  template <cudf::concepts::fixed_point T>
   __host__ __device__ __forceinline__ bool operator()(char const* begin,
                                                       char const* end,
                                                       void* out_buffer,
@@ -479,7 +500,7 @@ struct ConvertFunctor {
   /**
    * @brief Dispatch for boolean type types.
    */
-  template <typename T, CUDF_ENABLE_IF(std::is_same_v<T, bool>)>
+  template <cudf::concepts::boolean T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -508,7 +529,7 @@ struct ConvertFunctor {
    * @brief Dispatch for floating points, which are set to NaN if the input
    * is not valid. In such case, the validity mask is set to zero too.
    */
-  template <typename T, CUDF_ENABLE_IF(std::is_floating_point_v<T>)>
+  template <cuda::std::floating_point T>
   __device__ __forceinline__ bool operator()(char const* begin,
                                              char const* end,
                                              void* out_buffer,
@@ -536,9 +557,7 @@ struct ConvertFunctor {
   /**
    * @brief Dispatch for remaining supported types, i.e., timestamp and duration types.
    */
-  template <typename T,
-            CUDF_ENABLE_IF(!std::is_integral_v<T> and !std::is_floating_point_v<T> and
-                           !cudf::is_fixed_point<T>())>
+  template <typename T>
   __host__ __device__ __forceinline__ bool operator()(char const* begin,
                                                       char const* end,
                                                       void* out_buffer,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,9 +12,11 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/rolling.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 namespace cudf {
 
@@ -26,8 +28,8 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type following_window,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rolling_window(
@@ -40,8 +42,8 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type following_window,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto defaults =
@@ -62,8 +64,8 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        column_view const& following_window,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
-                                       rmm::cuda_stream_view stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rolling_window(

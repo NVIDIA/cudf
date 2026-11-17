@@ -1,9 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/io/cuio_common.hpp>
 #include <benchmarks/io/nvbench_helpers.hpp>
 
@@ -11,10 +12,13 @@
 
 #include <cudf/binaryop.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/detail/sequence.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/strings/utilities.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <cuda/std/concepts>
 
 #include <nvbench/nvbench.cuh>
 
@@ -22,8 +26,8 @@ template <typename DataType>
 struct filter_generator;
 
 template <typename DataType>
-  requires(std::is_same_v<DataType, int32_t> || std::is_same_v<DataType, int64_t> ||
-           std::is_same_v<DataType, float> || std::is_same_v<DataType, double>)
+  requires(cuda::std::same_as<DataType, int32_t> or cuda::std::same_as<DataType, int64_t> or
+           cuda::std::same_as<DataType, float> or cuda::std::same_as<DataType, double>)
 struct filter_generator<DataType> {
   decltype(auto) operator()(float selectivity,
                             cudf::size_type num_rows,
@@ -86,8 +90,7 @@ struct filter_generator<DataType> {
   }
 };
 
-template <typename DataType>
-  requires(std::is_same_v<DataType, cudf::string_view>)
+template <cudf::concepts::string_view DataType>
 struct filter_generator<DataType> {
   decltype(auto) operator()(float selectivity,
                             cudf::size_type num_rows,
@@ -132,10 +135,7 @@ struct filter_generator<DataType> {
 
     auto num_selected = static_cast<cudf::size_type>(num_rows * selectivity);
 
-    auto indices = cudf::detail::sequence(num_rows,
-                                          cudf::numeric_scalar<cudf::size_type>{0},
-                                          cudf::get_default_stream(),
-                                          cudf::get_current_device_resource_ref());
+    auto indices = cudf::sequence(num_rows, cudf::numeric_scalar<cudf::size_type>{0});
 
     auto copy_mask = cudf::binary_operation(indices->view(),
                                             cudf::numeric_scalar<cudf::size_type>{num_selected},
@@ -182,7 +182,10 @@ void BM_parquet_read_filter(nvbench::state& state)
   auto const selectivity    = static_cast<float>(state.get_float64("selectivity"));
   auto const nullable       = state.get_string("nullable") == "true";
   auto const use_jit        = state.get_string("executor") == "jit";
+  auto const output_dict    = state.get_string("output_dict") == "true";
   auto const num_input_cols = static_cast<cudf::size_type>(state.get_int64("num_cols"));
+  auto const rg_size_bytes  = state.get_int64("row_group_size_bytes");
+  auto const rg_size_rows   = state.get_int64("row_group_size_rows");
 
   CUDF_EXPECTS(num_input_cols >= 1, "Invalid number of input columns");
   CUDF_EXPECTS(selectivity > 0.0F && selectivity <= 1.0F, "Invalid selectivity");
@@ -193,9 +196,14 @@ void BM_parquet_read_filter(nvbench::state& state)
 
   auto [filter_column, filter_func] =
     filter_generator<DataType>()(selectivity, num_rows, row_width, nullable, predicate_intensity);
-  auto copy_only_dtypes = cycle_dtypes(
-    {cudf::type_id::BOOL8, cudf::type_id::FLOAT32, cudf::type_id::FLOAT64, cudf::type_id::STRING},
-    num_copy_only_cols);
+  // Fraction of the copy-only columns that are STRING; the rest cycle through fixed-width types
+  auto const string_fraction = static_cast<float>(state.get_float64("string_fraction"));
+  CUDF_EXPECTS(string_fraction >= 0.0F && string_fraction <= 1.0F, "Invalid string fraction");
+  auto const num_string_cols = static_cast<cudf::size_type>(num_copy_only_cols * string_fraction);
+  auto copy_only_dtypes =
+    cycle_dtypes({cudf::type_id::BOOL8, cudf::type_id::FLOAT32, cudf::type_id::FLOAT64},
+                 num_copy_only_cols - num_string_cols);
+  copy_only_dtypes.insert(copy_only_dtypes.end(), num_string_cols, cudf::type_id::STRING);
 
   std::vector<std::unique_ptr<cudf::column>> copy_only_cols;
 
@@ -211,7 +219,7 @@ void BM_parquet_read_filter(nvbench::state& state)
   std::vector<cudf::column_view> table_columns;
   table_columns.push_back(filter_column->view());
 
-  for (const auto& col : copy_only_cols) {
+  for (auto const& col : copy_only_cols) {
     table_columns.push_back(col->view());
   }
 
@@ -230,13 +238,17 @@ void BM_parquet_read_filter(nvbench::state& state)
       .compression(cudf::io::compression_type::AUTO)
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
       .stats_level(cudf::io::statistics_freq::STATISTICS_NONE);
+  // Sentinel 0 == use cuDF default (parquet bytes default is size_t::max).
+  if (rg_size_bytes > 0) write_opts.set_row_group_size_bytes(rg_size_bytes);
+  if (rg_size_rows > 0) write_opts.set_row_group_size_rows(rg_size_rows);
   cudf::io::write_parquet(write_opts);
 
   cudf::io::parquet_reader_options read_opts =
     cudf::io::parquet_reader_options::builder(
       cudf::io::source_info{cudf::host_span<char>{parquet_buffer.data(), parquet_buffer.size()}})
       .filter(filter_func())
-      .use_jit_filter(use_jit);
+      .use_jit_filter(use_jit)
+      .output_dict_columns(output_dict);
 
   // pre-warm JIT cache
   if (use_jit) { cudf::io::read_parquet(read_opts); }
@@ -249,7 +261,9 @@ void BM_parquet_read_filter(nvbench::state& state)
     state.add_global_memory_writes<DataType>(static_cast<size_t>(num_rows * selectivity));
   }
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_opts.get_source().filepaths());
@@ -260,6 +274,9 @@ void BM_parquet_read_filter(nvbench::state& state)
 
       CUDF_EXPECTS(result.tbl->num_columns() == num_input_cols, "Unexpected number of columns");
     });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 #define PARQUET_READER_FILTER_BENCHMARK_DEFINE(name, type)                  \
@@ -271,9 +288,27 @@ void BM_parquet_read_filter(nvbench::state& state)
     .add_int64_axis("num_rows", {100'000, 1'000'000, 10'000'000})           \
     .add_float64_axis("selectivity", {0.5, 0.8})                            \
     .add_string_axis("nullable", {"true"})                                  \
-    .add_string_axis("executor", {"jit", "ast"})
+    .add_string_axis("executor", {"jit", "ast"})                            \
+    .add_string_axis("output_dict", {"false"})                              \
+    .add_float64_axis("string_fraction", {0.25})                            \
+    .add_int64_axis("row_group_size_bytes", {0})                            \
+    .add_int64_axis("row_group_size_rows", {0})
 
 PARQUET_READER_FILTER_BENCHMARK_DEFINE(parquet_read_filter_i32, int32_t);
+
+void parquet_read_filter_dict(nvbench::state& state) { BM_parquet_read_filter<int32_t>(state); }
+
+NVBENCH_BENCH(parquet_read_filter_dict)
+  .add_int64_axis("predicate_intensity", {4})
+  .add_int64_axis("num_cols", {32})
+  .add_int64_axis("num_rows", {1'000'000, 10'000'000})
+  .add_float64_axis("selectivity", {0.5})
+  .add_string_axis("nullable", {"true"})
+  .add_string_axis("executor", {"ast"})
+  .add_string_axis("output_dict", {"false", "true"})
+  .add_float64_axis("string_fraction", {0.25, 1.0})
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});
 
 PARQUET_READER_FILTER_BENCHMARK_DEFINE(parquet_read_filter_f32, float);
 

@@ -1,6 +1,5 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
-from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.io.types cimport SourceInfo, TableWithMetadata
@@ -29,5 +28,5 @@ cdef class AvroReaderOptionsBuilder:
     cpdef AvroReaderOptions build(self)
 
 cpdef TableWithMetadata read_avro(
-    AvroReaderOptions options, Stream stream = *, DeviceMemoryResource mr=*
+    AvroReaderOptions options, object stream = *, DeviceMemoryResource mr=*
 )

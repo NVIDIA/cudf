@@ -1,19 +1,16 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import numpy as np
 import pandas as pd
 import pytest
 
 import cudf
-from cudf.core._compat import (
-    PANDAS_CURRENT_SUPPORTED_VERSION,
-    PANDAS_VERSION,
-)
 from cudf.testing import assert_eq
+from cudf.testing._utils import expect_warning_if
 
 
 def test_groups():
-    # https://github.com/rapidsai/cudf/issues/14955
+    # https://github.com/NVIDIA/cudf/issues/14955
     df = cudf.DataFrame({"a": [1, 2] * 2}, index=[0] * 4)
     agg = df.groupby("a")
     pagg = df.to_pandas().groupby("a")
@@ -45,9 +42,16 @@ def test_groupby_groups(by):
     pdg = pdf.groupby(by)
     gdg = gdf.groupby(by)
 
-    for key in pdg.groups:
-        assert key in gdg.groups
-        assert_eq(pdg.groups[key], gdg.groups[key])
+    warns = isinstance(by, list) and len(by) == 1
+
+    with expect_warning_if(warns, pd.errors.Pandas4Warning):
+        pd_groups = pdg.groups
+    with expect_warning_if(warns, FutureWarning):
+        gdf_groups = gdg.groups
+
+    for key in pd_groups:
+        assert key in gdf_groups
+        assert_eq(pd_groups[key], gdf_groups[key])
 
 
 @pytest.mark.parametrize(
@@ -76,9 +80,15 @@ def test_groupby_groups_multi(by):
     pdg = pdf.groupby(by)
     gdg = gdf.groupby(by)
 
-    for key in pdg.groups:
-        assert key in gdg.groups
-        assert_eq(pdg.groups[key], gdg.groups[key])
+    warns = isinstance(by, list) and len(by) == 1
+    with expect_warning_if(warns, pd.errors.Pandas4Warning):
+        pd_groups = pdg.groups
+    with expect_warning_if(warns, FutureWarning):
+        gdf_groups = gdg.groups
+
+    for key in pd_groups:
+        assert key in gdf_groups
+        assert_eq(pd_groups[key], gdf_groups[key])
 
 
 def test_groupby_iterate_groups():
@@ -114,7 +124,8 @@ def test_groupby_iterate_groups():
         ["a", np.array([0, 1, 1, 2, 3, 2])],
     ],
 )
-def test_grouping(grouper):
+@pytest.mark.parametrize("sort", [True, False])
+def test_grouping(grouper, sort):
     pdf = pd.DataFrame(
         {
             "a": [1, 1, 1, 2, 2, 3],
@@ -125,30 +136,12 @@ def test_grouping(grouper):
     gdf = cudf.from_pandas(pdf)
 
     for pdf_group, gdf_group in zip(
-        pdf.groupby(grouper), gdf.groupby(grouper), strict=True
+        pdf.groupby(grouper, sort=sort),
+        gdf.groupby(grouper, sort=sort),
+        strict=True,
     ):
         assert pdf_group[0] == gdf_group[0]
         assert_eq(pdf_group[1], gdf_group[1])
-
-
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
-@pytest.mark.parametrize(
-    "groups", ["a", "b", "c", ["a", "c"], ["a", "b", "c"]]
-)
-def test_groupby_dtypes(groups):
-    df = cudf.DataFrame(
-        {"a": [1, 2, 3, 3], "b": ["x", "y", "z", "a"], "c": [10, 11, 12, 12]}
-    )
-    pdf = df.to_pandas()
-    with pytest.warns(FutureWarning):
-        expected = pdf.groupby(groups).dtypes
-    with pytest.warns(FutureWarning):
-        actual = df.groupby(groups).dtypes
-
-    assert_eq(expected, actual)
 
 
 def test_ngroups():

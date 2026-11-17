@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Utilities for rewriting aggregations."""
@@ -17,7 +17,7 @@ import pylibcudf as plc
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
-from cudf_polars.utils.versions import POLARS_VERSION_LT_134, POLARS_VERSION_LT_1323
+from cudf_polars.dsl.traversal import traversal
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Iterable, Sequence
@@ -25,6 +25,29 @@ if TYPE_CHECKING:
     from cudf_polars.typing import Schema
 
 __all__ = ["apply_pre_evaluation", "decompose_aggs", "decompose_single_agg"]
+
+
+_WINDOW_ONLY_UNARY_FUNCTIONS = frozenset(
+    {"rank", "fill_null_with_strategy", "cum_sum", "diff", "shift", "shift_and_fill"}
+)
+
+
+def _contains_fixed_size_rolling_window(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.FixedSizeRollingWindow) for node in traversal([value])
+    )
+
+
+def _contains_range_rolling_window(value: expr.Expr) -> bool:
+    return any(isinstance(node, expr.RollingWindow) for node in traversal([value]))
+
+
+def _contains_window_only_unary(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.UnaryFunction)
+        and node.name in _WINDOW_ONLY_UNARY_FUNCTIONS
+        for node in traversal([value])
+    )
 
 
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
@@ -95,14 +118,85 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
-    if isinstance(agg, expr.UnaryFunction) and agg.name in {
-        "rank",
-        "fill_null_with_strategy",
-        "cum_sum",
-    }:
+    if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
+        if context != ExecutionContext.GROUPBY:
+            raise NotImplementedError(
+                f"{agg.name} is only supported in groupby context"
+            )
+        val, by = agg.children
+        for child in (val, by):
+            child_aggs, _ = decompose_single_agg(
+                expr.NamedExpr(next(name_generator), child),
+                name_generator,
+                is_top=False,
+                context=context,
+            )
+            if any(nested_agg for _, nested_agg in child_aggs):
+                raise NotImplementedError("Nested aggs in groupby not supported")
+        if any(isinstance(node, expr.LiteralColumn) for node in traversal([val, by])):
+            raise NotImplementedError(
+                f"{agg.name} in groupby not supported with a literal column"
+            )
+        if not any(isinstance(node, expr.Col) for node in traversal([by])):
+            raise NotImplementedError(
+                f"{agg.name} in groupby requires 'by' to reference a column"
+            )
+        is_null = expr.BooleanFunction(
+            DataType(pl.Boolean()),
+            expr.BooleanFunction.Name.IsNull,
+            (),
+            by,
+        )
+        val = expr.Ternary(
+            val.dtype,
+            is_null,
+            expr.Literal(val.dtype, None),
+            val,
+        )
+        descending = agg.name == "max_by"
+        if plc.traits.is_floating_point(by.dtype.plc_type):
+            sorted_agg = expr.SortedAgg(
+                agg.dtype,
+                "first",
+                (False, (True, True), (descending, descending)),
+                val,
+                expr.UnaryFunction(by.dtype, "mask_nans", (), by),
+                by,
+            )
+        else:
+            sorted_agg = expr.SortedAgg(
+                agg.dtype,
+                "first",
+                (False, (True,), (descending,)),
+                val,
+                by,
+            )
+        return [(named_expr.reconstruct(sorted_agg), True)], named_expr.reconstruct(
+            expr.Col(agg.dtype, name)
+        )
+    if isinstance(agg, expr.UnaryFunction) and agg.name in _WINDOW_ONLY_UNARY_FUNCTIONS:
         if context != ExecutionContext.WINDOW:
             raise NotImplementedError(
                 f"{agg.name} is not supported in groupby or rolling context"
+            )
+        if _contains_fixed_size_rolling_window(agg.children[0]):
+            raise NotImplementedError(
+                f"{agg.name} over a window does not support nested fixed-size rolling"
+            )
+        if agg.name in {"diff", "shift", "shift_and_fill"}:
+            if not isinstance(agg.children[1], expr.Literal):
+                raise NotImplementedError(
+                    f"{agg.name} over a window only supports a literal offset"
+                )
+            if agg.name == "shift_and_fill" and not isinstance(
+                agg.children[2], expr.Literal
+            ):
+                raise NotImplementedError(
+                    "shift over a window only supports a literal fill_value"
+                )
+        if agg.name == "diff" and agg.options[0] != "ignore":
+            raise NotImplementedError(
+                "diff over a window only supports null_behavior='ignore'"
             )
         if agg.name == "fill_null_with_strategy" and (
             strategy := agg.options[0]
@@ -118,6 +212,30 @@ def decompose_single_agg(
             post_col = expr.Cast(agg.dtype, True, post_col)  # noqa: FBT003
 
         return [(named_expr, True)], named_expr.reconstruct(post_col)
+    if isinstance(agg, expr.FixedSizeRollingWindow):
+        if context != ExecutionContext.WINDOW:
+            raise NotImplementedError(
+                "Fixed-size rolling is not supported in groupby or rolling context"
+            )
+        if _contains_window_only_unary(agg.children[0]):
+            raise NotImplementedError(
+                "Fixed-size rolling over a window does not support nested "
+                "window-only unary expressions"
+            )
+        return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
+    if isinstance(agg, expr.RollingWindow):
+        if context != ExecutionContext.WINDOW:
+            raise NotImplementedError(
+                "Range rolling is not supported in groupby or rolling context"
+            )
+        if _contains_window_only_unary(agg.children[0]) or (
+            _contains_fixed_size_rolling_window(agg.children[0])
+            or _contains_range_rolling_window(agg.children[0])
+        ):
+            raise NotImplementedError(
+                "Range rolling over a window does not support nested window expressions"
+            )
+        return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, expr.UnaryFunction) and agg.name == "null_count":
         (child,) = agg.children
 
@@ -127,15 +245,60 @@ def decompose_single_agg(
             (),
             child,
         )
-        u32 = DataType(pl.UInt32())
+        dtype = agg.dtype
         sum_name = next(name_generator)
         sum_agg = expr.NamedExpr(
             sum_name,
-            expr.Agg(u32, "sum", (), context, expr.Cast(u32, True, is_null_bool)),  # noqa: FBT003
+            expr.Agg(
+                dtype,
+                "sum",
+                (),
+                context,
+                expr.Cast(dtype, True, is_null_bool),  # noqa: FBT003
+            ),
         )
         return [(sum_agg, True)], named_expr.reconstruct(
-            expr.Cast(u32, True, expr.Col(u32, sum_name))  # noqa: FBT003
+            expr.Cast(dtype, True, expr.Col(dtype, sum_name))  # noqa: FBT003
         )
+    if (
+        isinstance(agg, expr.BooleanFunction)
+        and agg.name == expr.BooleanFunction.Name.HasNulls
+    ):
+        (child,) = agg.children
+
+        is_null_bool = expr.BooleanFunction(
+            DataType(pl.Boolean()),
+            expr.BooleanFunction.Name.IsNull,
+            (),
+            child,
+        )
+        count_dtype = DataType(pl.UInt32())
+        sum_name = next(name_generator)
+        sum_agg = expr.NamedExpr(
+            sum_name,
+            expr.Agg(
+                count_dtype,
+                "sum",
+                (),
+                context,
+                expr.Cast(count_dtype, True, is_null_bool),  # noqa: FBT003
+            ),
+        )
+        # The sum is null for an empty group or window, which has no nulls.
+        null_count = expr.UnaryFunction(
+            count_dtype,
+            "fill_null",
+            (),
+            expr.Cast(count_dtype, True, expr.Col(count_dtype, sum_name)),  # noqa: FBT003
+            expr.Literal(count_dtype, 0),
+        )
+        has_nulls = expr.BinOp(
+            agg.dtype,
+            plc.binaryop.BinaryOperator.GREATER,
+            null_count,
+            expr.Literal(count_dtype, 0),
+        )
+        return [(sum_agg, True)], named_expr.reconstruct(has_nulls)
     if isinstance(agg, expr.Col):
         # TODO: collect_list produces null for empty group in libcudf, empty list in polars.
         # But we need the nested value type, so need to track proper dtypes in our DSL.
@@ -167,6 +330,149 @@ def decompose_single_agg(
             child = agg.children[0]
         else:
             (child,) = agg.children
+        if (
+            context == ExecutionContext.GROUPBY
+            and agg.name in {"first", "last"}
+            and isinstance(child, expr.SortBy)
+        ):
+            for sort_child in child.children:
+                child_aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), sort_child),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(
+                    nested_agg for _, nested_agg in child_aggs
+                ):  # pragma: no cover; polars 2.1 drops scalar sort keys
+                    raise NotImplementedError(
+                        "Nested aggs in sorted groupby aggregation not supported"
+                    )
+            return [
+                (
+                    named_expr.reconstruct(
+                        expr.SortedAgg(
+                            agg.dtype, agg.name, child.options, *child.children
+                        )
+                    ),
+                    True,
+                )
+            ], named_expr.reconstruct(expr.Col(agg.dtype, name))
+        # These reductions ignore nulls, so mask_nans gives the same result.
+        if (
+            context == ExecutionContext.GROUPBY
+            and (
+                agg.name
+                in {
+                    "max",
+                    "mean",
+                    "median",
+                    "min",
+                    "product",
+                    "quantile",
+                    "std",
+                    "sum",
+                    "var",
+                }
+                or (agg.name == "count" and not agg.options)
+            )
+            and isinstance(child, expr.UnaryFunction)
+            and child.name == "drop_nans"
+            and plc.traits.is_floating_point(child.children[0].dtype.plc_type)
+        ):
+            (child,) = child.children
+            child = expr.UnaryFunction(child.dtype, "mask_nans", (), child)
+        # Fuse drop_nulls().n_unique() into nunique(null_handling=EXCLUDE)
+        # rather than materializing a filtered intermediate column.
+        if (
+            agg.name == "n_unique"
+            and isinstance(child, expr.UnaryFunction)
+            and child.name == "drop_nulls"
+        ):
+            (child,) = child.children
+            agg = expr.Agg(agg.dtype, "n_unique", (True,), agg.context, child)
+            named_expr = named_expr.reconstruct(agg)
+        if agg.name == "item":
+            if context != ExecutionContext.GROUPBY:
+                raise NotImplementedError("item is only supported in groupby context")
+
+            count_dtype = DataType(pl.Int32())
+            allow_empty = agg.options
+            assert isinstance(allow_empty, bool)
+            count_name = next(name_generator)
+
+            if isinstance(child, expr.Filter):
+                value, predicate = child.children
+                predicate = expr.UnaryFunction(
+                    predicate.dtype,
+                    "fill_null",
+                    (),
+                    predicate,
+                    expr.Literal(predicate.dtype, value=False),
+                )
+                selected = expr.Ternary(
+                    value.dtype,
+                    predicate,
+                    value,
+                    expr.Literal(value.dtype, None),
+                )
+
+                # item() needs both the selected value and the number of
+                # matching rows. Mask non-matching rows to null so
+                # first_non_null extracts the selected value, and separately
+                # sum the predicate to validate item cardinality.
+                # TODO: Use libcudf predicated aggregations when available:
+                # https://github.com/NVIDIA/cudf/issues/22947
+                aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), selected),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(has_agg for _, has_agg in aggs):
+                    raise NotImplementedError("Nested aggs in groupby not supported")
+
+                item_agg = expr.NamedExpr(
+                    name,
+                    expr.Agg(
+                        agg.dtype,
+                        "first_non_null",
+                        None,
+                        context,
+                        selected,
+                    ),
+                )
+                count_agg = expr.NamedExpr(
+                    count_name,
+                    expr.Agg(
+                        count_dtype,
+                        "sum",
+                        None,
+                        context,
+                        expr.Cast(count_dtype, False, predicate),  # noqa: FBT003
+                    ),
+                )
+            else:
+                aggs, _ = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), child),
+                    name_generator,
+                    is_top=False,
+                    context=context,
+                )
+                if any(has_agg for _, has_agg in aggs):
+                    raise NotImplementedError("Nested aggs in groupby not supported")
+
+                item_agg = named_expr
+                count_agg = expr.NamedExpr(count_name, expr.Len(count_dtype))
+
+            return [(item_agg, True), (count_agg, True)], named_expr.reconstruct(
+                expr.Item(
+                    agg.dtype,
+                    allow_empty,
+                    expr.Col(agg.dtype, name),
+                    expr.Col(count_dtype, count_name),
+                )
+            )
         needs_masking = agg.name in {"min", "max"} and plc.traits.is_floating_point(
             child.dtype.plc_type
         )
@@ -191,7 +497,7 @@ def decompose_single_agg(
         # mean/median on decimal: Polars returns float -> pre-cast
         decimal_unsupported = False
         if plc.traits.is_fixed_point(child_dtype):
-            cast_for_quantile = is_quantile and not POLARS_VERSION_LT_134
+            cast_for_quantile = is_quantile
             cast_for_mean_or_median = (
                 agg.name in {"mean", "median"}
             ) and plc.traits.is_floating_point(agg.dtype.plc_type)
@@ -205,9 +511,6 @@ def decompose_single_agg(
                     child,
                 )
                 child_dtype = child.dtype.plc_type
-            elif is_quantile and POLARS_VERSION_LT_134:  # pragma: no cover
-                decimal_unsupported = True
-
         is_group_quantile_supported = plc.traits.is_integral(
             child_dtype
         ) or plc.traits.is_floating_point(child_dtype)
@@ -228,7 +531,7 @@ def decompose_single_agg(
         new_children = [child] if not is_quantile else [child, agg.children[1]]
         named_expr = named_expr.reconstruct(agg.reconstruct(new_children))
 
-        if agg.name == "sum":
+        if agg.name in {"sum", "product"}:
             col = (
                 expr.Cast(
                     agg.dtype,
@@ -241,46 +544,21 @@ def decompose_single_agg(
                 )
                 else expr.Col(agg.dtype, name)
             )
+            if agg.name == "sum" and agg.options:
+                return [(named_expr, True)], expr.NamedExpr(name, col)
             # Polars semantics for sum differ by context:
             # - GROUPBY: sum(all-null group) => 0; sum(empty group) => 0  (fill-null)
             # - ROLLING: sum(all-null window) => null; sum(empty window) => 0 (fill only if empty)
             #
             # Must post-process because libcudf returns null for both empty and all-null windows/groups
-            if not POLARS_VERSION_LT_1323 or context in {
-                ExecutionContext.GROUPBY,
-                ExecutionContext.WINDOW,
-            }:
-                # GROUPBY: always fill top-level nulls with 0
-                return [(named_expr, True)], expr.NamedExpr(
-                    name, replace_nulls(col, 0, is_top=is_top)
-                )
-            else:  # pragma: no cover
-                # ROLLING:
-                # Add a second rolling agg to compute the window size, then only
-                # replace nulls with 0 when the window size is 0 (ie. empty window).
-                win_len_name = next(name_generator)
-                win_len = expr.NamedExpr(
-                    win_len_name,
-                    expr.Len(DataType(pl.Int32())),
-                )
-
-                win_len_col = expr.Col(DataType(pl.Int32()), win_len_name)
-                win_len_filled = replace_nulls(win_len_col, 0, is_top=True)
-
-                is_empty = expr.BinOp(
-                    DataType(pl.Boolean()),
-                    plc.binaryop.BinaryOperator.EQUAL,
-                    win_len_filled,
-                    expr.Literal(DataType(pl.Int32()), 0),
-                )
-
-                # If empty -> fill 0; else keep libcudf's semantics for all-null windows.
-                filled = replace_nulls(col, 0, is_top=is_top)
-                post_ternary_expr = expr.Ternary(agg.dtype, is_empty, filled, col)
-
-                return [(named_expr, True), (win_len, True)], expr.NamedExpr(
-                    name, post_ternary_expr
-                )
+            # product uses an identity of 1 (empty/all-null product is 1 in polars).
+            identity = 1 if agg.name == "product" else 0
+            return [(named_expr, True)], expr.NamedExpr(
+                name,
+                replace_nulls(
+                    col, identity, is_top=is_top or context == ExecutionContext.GROUPBY
+                ),
+            )
         elif agg.name in {"mean", "median", "quantile", "std", "var"}:
             post_agg_col: expr.Expr = expr.Col(
                 DataType(pl.Float64()), name
@@ -361,6 +639,14 @@ def decompose_single_agg(
                 aggs,
                 named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
             )
+        elif is_top and all(
+            isinstance(node, expr.Literal)
+            for node in traversal([agg])
+            if not node.children
+        ):
+            # An expression built only from scalar literals is itself a
+            # scalar: it yields one value per group rather than a list.
+            return [], named_expr
         else:
             # Or pre-evaluation if inside an aggregation.
             return (

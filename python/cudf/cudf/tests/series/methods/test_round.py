@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import decimal
@@ -126,7 +126,12 @@ def test_series_round_decimal(
     "data",
     [
         [1.2234242333234, 323432.3243423, np.nan],
-        pd.Series([34224, 324324, 324342], dtype="datetime64[ns]"),
+        pytest.param(
+            pd.Series([34224, 324324, 324342], dtype="datetime64[ns]"),
+            marks=pytest.mark.filterwarnings(
+                "ignore:obj.round has no effect:UserWarning"
+            ),
+        ),
         pd.Series([224.242, None, 2424.234324], dtype="category"),
         [
             decimal.Decimal("342.3243234234242"),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,14 +8,16 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/extract.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <vector>
 
@@ -27,9 +29,9 @@ TEST_F(StringsExtractTests, ExtractTest)
     "First Last", "Joe Schmoe", "John Smith", "Jane Smith", "Beyonce", "Sting", nullptr, ""};
 
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   std::vector<char const*> h_expecteds{"First",
@@ -54,12 +56,12 @@ TEST_F(StringsExtractTests, ExtractTest)
   cudf::test::strings_column_wrapper expected1(
     h_expecteds.data(),
     h_expecteds.data() + h_strings.size(),
-    thrust::make_transform_iterator(h_expecteds.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expecteds.begin(), [](auto str) { return str != nullptr; }));
   cudf::test::strings_column_wrapper expected2(
     h_expecteds.data() + h_strings.size(),
     h_expecteds.data() + h_expecteds.size(),
-    thrust::make_transform_iterator(h_expecteds.data() + h_strings.size(),
-                                    [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expecteds.data() + h_strings.size(),
+                             [](auto str) { return str != nullptr; }));
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(expected1.release());
   columns.push_back(expected2.release());
@@ -169,6 +171,28 @@ TEST_F(StringsExtractTests, MultiLine)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
 }
 
+TEST_F(StringsExtractTests, InlineFlags)
+{
+  auto input = cudf::test::strings_column_wrapper({"ABC-123", "abc-456", "xyz\nAbc-789", "abc"});
+  auto view  = cudf::strings_column_view(input);
+
+  auto prog    = cudf::strings::regex_program::create("(?im)^([a-c]+)-(\\d+)");
+  auto results = cudf::strings::extract(view, *prog);
+  cudf::test::strings_column_wrapper expected1({"ABC", "abc", "Abc", ""},
+                                               {true, true, true, false});
+  cudf::test::strings_column_wrapper expected2({"123", "456", "789", ""},
+                                               {true, true, true, false});
+  auto expected = cudf::table_view{{expected1, expected2}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+
+  prog    = cudf::strings::regex_program::create("((?i:a)bc)-(\\d+)");
+  results = cudf::strings::extract(view, *prog);
+  cudf::test::strings_column_wrapper expected3({"", "abc", "Abc", ""}, {false, true, true, false});
+  cudf::test::strings_column_wrapper expected4({"", "456", "789", ""}, {false, true, true, false});
+  expected = cudf::table_view{{expected3, expected4}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+}
+
 TEST_F(StringsExtractTests, DotAll)
 {
   auto input = cudf::test::strings_column_wrapper({"abc\nfa\nef", "fff\nabbc\nfff", "abcdef", ""});
@@ -246,9 +270,9 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
 {
   std::vector<char const*> h_strings{nullptr, "AAA", "AAA_A", "AAA_AAA_", "A__", ""};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto strings_view = cudf::strings_column_view(strings);
 
   auto pattern = std::string("([^_]*)\\Z");
@@ -257,7 +281,7 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
   cudf::test::strings_column_wrapper expected(
     h_expected.data(),
     h_expected.data() + h_strings.size(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.push_back(expected.release());
   cudf::table table_expected(std::move(columns));
@@ -266,12 +290,39 @@ TEST_F(StringsExtractTests, EmptyExtractTest)
   CUDF_TEST_EXPECT_TABLES_EQUAL(*results, table_expected);
 }
 
+TEST_F(StringsExtractTests, NonParticipatingGroup)
+{
+  auto input = cudf::test::strings_column_wrapper({"A1", "B2", "C"});
+  auto sv    = cudf::strings_column_view(input);
+
+  // the optional group does not participate in the match for "C" and must
+  // result in null, not an empty string
+  auto prog    = cudf::strings::regex_program::create("(\\D)(\\d)?");
+  auto results = cudf::strings::extract(sv, *prog);
+
+  std::vector<std::unique_ptr<cudf::column>> columns;
+  columns.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
+  columns.push_back(cudf::test::strings_column_wrapper({"1", "2", ""}, {1, 1, 0}).release());
+  auto expected = cudf::table(std::move(columns));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected);
+
+  // a group that participates with an empty match remains an empty string
+  auto prog2    = cudf::strings::regex_program::create("(\\D)(\\d*)");
+  auto results2 = cudf::strings::extract(sv, *prog2);
+
+  std::vector<std::unique_ptr<cudf::column>> columns2;
+  columns2.push_back(cudf::test::strings_column_wrapper({"A", "B", "C"}).release());
+  columns2.push_back(cudf::test::strings_column_wrapper({"1", "2", ""}).release());
+  auto expected2 = cudf::table(std::move(columns2));
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results2, expected2);
+}
+
 TEST_F(StringsExtractTests, ExtractAllTest)
 {
   std::vector<char const*> h_input(
     {"123 banana 7 eleven", "41 apple", "6 péar 0 pair", nullptr, "", "bees", "4 paré"});
   auto validity =
-    thrust::make_transform_iterator(h_input.begin(), [](auto str) { return str != nullptr; });
+    cuda::transform_iterator(h_input.begin(), [](auto str) { return str != nullptr; });
   cudf::test::strings_column_wrapper input(h_input.begin(), h_input.end(), validity);
   auto sv = cudf::strings_column_view(input);
 
@@ -279,13 +330,13 @@ TEST_F(StringsExtractTests, ExtractAllTest)
 
   std::array valids{true, true, true, false, false, false, true};
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW expected({LCW{"123", "banana", "7", "eleven"},
-                LCW{"41", "apple"},
-                LCW{"6", "péar", "0", "pair"},
-                LCW{},
-                LCW{},
-                LCW{},
-                LCW{"4", "paré"}},
+  LCW expected({{"123", "banana", "7", "eleven"},
+                {"41", "apple"},
+                {"6", "péar", "0", "pair"},
+                {},
+                {},
+                {},
+                {"4", "paré"}},
                valids.data());
   auto prog    = cudf::strings::regex_program::create(pattern);
   auto results = cudf::strings::extract_all_record(sv, *prog);
@@ -361,9 +412,9 @@ TEST_F(StringsExtractTests, MediumRegex)
     "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop"
     "qrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::extract(strings_view, *prog);
@@ -371,7 +422,7 @@ TEST_F(StringsExtractTests, MediumRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
 }
 
@@ -391,9 +442,9 @@ TEST_F(StringsExtractTests, LargeRegex)
     "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnop"
     "qrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto strings_view = cudf::strings_column_view(strings);
   auto results      = cudf::strings::extract(strings_view, *prog);
@@ -401,6 +452,79 @@ TEST_F(StringsExtractTests, LargeRegex)
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
+}
+
+TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
+{
+  // extract group 1 of ([a-z]+)$ at \r\n line ends; null where no match.
+  // Verified vs OpenJDK 17 group(1) of first match.
+  auto input = cudf::test::strings_column_wrapper({"abc\r\n",
+                                                   "abc\n",
+                                                   "abc\r",
+                                                   "abc",
+                                                   "a\r\nb",
+                                                   "abc\r\n\r\n",
+                                                   "",
+                                                   "abc" NEXT_LINE,
+                                                   "a\nb\r\nc",
+                                                   "\r\n",
+                                                   "\r\nabc",
+                                                   "x\n\r",
+                                                   "a\r\rb",
+                                                   "a\n\nb"});
+  auto view  = cudf::strings_column_view(input);
+  auto prog =
+    cudf::strings::regex_program::create("([a-z]+)$", cudf::strings::regex_flags::EXT_NEWLINE);
+  auto results = cudf::strings::extract(view, *prog);
+
+  std::vector<char const*> h_expected{"abc",
+                                      "abc",
+                                      "abc",
+                                      "abc",
+                                      "b",
+                                      nullptr,
+                                      nullptr,
+                                      "abc",
+                                      "c",
+                                      nullptr,
+                                      "abc",
+                                      nullptr,
+                                      "b",
+                                      "b"};
+  cudf::test::strings_column_wrapper expected(
+    h_expected.begin(),
+    h_expected.end(),
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
+}
+
+TEST_F(StringsExtractTests, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+
+  auto const prog = cudf::strings::regex_program::create("([a-z])(\\d+)");
+
+  // input nulls and rows with no match produce nulls
+  auto const no_match  = cudf::test::iterators::nulls_at({0, 2, 3, 5});
+  auto expected_letter = cudf::test::strings_column_wrapper({"", "b", "", "", "d", ""}, no_match);
+  auto expected_digits = cudf::test::strings_column_wrapper({"", "22", "", "", "4", ""}, no_match);
+
+  auto results        = cudf::strings::extract(sv, *prog);
+  auto expected_table = cudf::table_view({expected_letter, expected_digits});
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected_table);
+
+  auto result = cudf::strings::extract_single(sv, *prog, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_digits);
+
+  result    = cudf::strings::extract_all_record(sv, *prog);
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW expected_all({{}, {"b", "22", "c", "333"}, {}, {}, {"d", "4"}, {}}, no_match);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_all);
 }

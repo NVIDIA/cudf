@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,13 +14,13 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/iterator>
 #include <cuda/std/iterator>
+#include <cuda/stream>
 #include <thrust/copy.h>
-#include <thrust/iterator/counting_iterator.h>
 
 namespace cudf {
 namespace detail {
@@ -37,24 +37,25 @@ namespace detail {
  * @param input The table_view to filter
  * @param filter A function object that takes an index and returns a bool
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used for allocating the returned memory
+ * @param mr Memory resources used for temporary allocations and the returned table
  * @return The table generated from filtered `input`
  */
 template <typename Filter>
 std::unique_ptr<table> copy_if(table_view const& input,
                                Filter filter,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
-  if (0 == input.num_rows() || 0 == input.num_columns()) { return empty_like(input); }
+  if (0 == input.num_rows()) { return empty_like(input); }
 
-  auto indices     = rmm::device_uvector<size_type>(input.num_rows(), stream);
-  auto const begin = thrust::counting_iterator<size_type>(0);
-  auto const end   = begin + input.num_rows();
-  auto const indices_end =
-    thrust::copy_if(rmm::exec_policy_nosync(stream), begin, end, indices.begin(), filter);
+  auto indices =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.num_rows(), cuda::no_init);
+  auto const begin       = cuda::counting_iterator<size_type>{0};
+  auto const end         = begin + input.num_rows();
+  auto const indices_end = thrust::copy_if(
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), begin, end, indices.begin(), filter);
 
   auto const output_size =
     static_cast<size_type>(cuda::std::distance(indices.begin(), indices_end));
@@ -62,7 +63,9 @@ std::unique_ptr<table> copy_if(table_view const& input,
   // nothing selected
   if (output_size == 0) { return empty_like(input); }
   // everything selected
-  if (output_size == input.num_rows()) { return std::make_unique<table>(input, stream, mr); }
+  if (output_size == input.num_rows()) {
+    return std::make_unique<table>(input, stream, mr.get_output_mr());
+  }
 
   auto const map = device_span<size_type const>(indices.data(), output_size);
   return cudf::detail::gather(

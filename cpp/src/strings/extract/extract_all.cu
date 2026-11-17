@@ -1,10 +1,10 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "strings/count_matches.hpp"
-#include "strings/regex/regex_program_impl.h"
+#include "strings/regex/regex_program_impl.hpp"
 #include "strings/regex/utilities.cuh"
 
 #include <cudf/column/column_device_view.cuh>
@@ -18,10 +18,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/exec_policy.hpp>
-
-#include <thrust/transform_scan.h>
+#include <cuda/buffer>
+#include <cuda/functional>
+#include <cuda/stream>
 
 namespace cudf {
 namespace strings {
@@ -92,8 +91,8 @@ struct extract_fn {
  */
 std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            regex_program const& prog,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   auto const strings_count = input.size();
   auto const d_strings     = column_device_view::create(input.parent(), stream);
@@ -105,9 +104,10 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "extract_all requires group indicators in the regex pattern.");
 
-  // Get the match counts for each string.
+  // Get the match counts for each string, reusing the device program built above
+  // instead of building a second one.
   // This column will become the output lists child offsets column.
-  auto counts   = count_matches(*d_strings, *d_prog, stream, mr);
+  auto counts   = count_matches(*d_strings, *d_prog, strings_count, stream, mr);
   auto d_counts = counts->mutable_view().data<size_type>();
 
   // Compute null output rows
@@ -129,12 +129,17 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
     cudf::detail::make_offsets_child_column(sizes_itr, sizes_itr + strings_count, stream, mr);
   auto d_offsets = offsets->view().data<size_type>();
 
-  rmm::device_uvector<string_index_pair> indices(total_strings, stream);
+  cuda::device_buffer<string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
 
-  launch_for_each_kernel(
-    extract_fn{*d_strings, d_offsets, indices.data()}, *d_prog, strings_count, stream);
+  launch_for_each_kernel(extract_fn{*d_strings, d_offsets, indices.data()},
+                         *d_prog,
+                         strings_count,
+                         stream,
+                         cudf::get_current_device_resource_ref());
 
-  auto strings_output = make_strings_column(indices.begin(), indices.end(), stream, mr);
+  auto strings_output = cudf::make_strings_column(
+    cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);
 
   // Build the lists column from the offsets and the strings.
   return make_lists_column(
@@ -147,8 +152,8 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
 
 std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            regex_program const& prog,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::extract_all_record(input, prog, stream, mr);

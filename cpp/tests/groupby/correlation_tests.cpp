@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,7 +11,8 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
 
 #include <limits>
 
@@ -29,7 +30,7 @@ using K = int32_t;
 TYPED_TEST(groupby_correlation_test, basic)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -43,13 +44,13 @@ TYPED_TEST(groupby_correlation_test, basic)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, empty_cols)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   cudf::test::fixed_width_column_wrapper<K> keys{};
   cudf::test::fixed_width_column_wrapper<V> member_0{}, member_1{};
@@ -60,13 +61,13 @@ TYPED_TEST(groupby_correlation_test, empty_cols)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, zero_valid_keys)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   cudf::test::fixed_width_column_wrapper<K> keys({1, 2, 3}, all_nulls());
   cudf::test::fixed_width_column_wrapper<V> member_0{3, 4, 5}, member_1{6, 7, 8};
@@ -77,13 +78,13 @@ TYPED_TEST(groupby_correlation_test, zero_valid_keys)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, zero_valid_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   cudf::test::fixed_width_column_wrapper<K> keys{1, 1, 1};
   cudf::test::fixed_width_column_wrapper<V> member_0({3, 4, 5}, all_nulls());
@@ -95,13 +96,13 @@ TYPED_TEST(groupby_correlation_test, zero_valid_values)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, null_keys_and_values)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -119,13 +120,13 @@ TYPED_TEST(groupby_correlation_test, null_keys_and_values)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, null_values_same)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -144,7 +145,7 @@ TYPED_TEST(groupby_correlation_test, null_values_same)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
 // keys=[1, 1, 1, 2, 2, 2, 2,   3, N, 3, 4]
@@ -154,7 +155,7 @@ TYPED_TEST(groupby_correlation_test, null_values_same)
 TYPED_TEST(groupby_correlation_test, null_values_different)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -173,13 +174,44 @@ TYPED_TEST(groupby_correlation_test, null_values_different)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
+}
+
+TYPED_TEST(groupby_correlation_test, sliced)
+{
+  using V = TypeParam;
+  using R = double;
+
+  constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
+
+  // The rows of null_values_different, between two leading rows and one trailing row that are
+  // sliced off.
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys({4, 1, 1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4, 1},
+                                     {true, true, true, true, true, true, true, true, true, false, true, true, true, true});
+  cudf::test::fixed_width_column_wrapper<V> val0({5, 7, 9, 1, 1, 2, 2, 3, 3,-1, 1, 4, 4, 8},
+                                     {1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<V> val1({6, 2, 1, 2, 1, 2,-1, 6, 3,-1, 0, 1, 2, 0},
+                                     {0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1});
+  // clang-format on
+  auto vals = cudf::test::structs_column_wrapper{{val0, val1}};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys({1, 2, 3, 4}, no_nulls());
+  cudf::test::fixed_width_column_wrapper<R> expect_vals({1.0, 0., nan, 0.}, {1, 1, 1, 0});
+
+  auto agg =
+    cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
+  test_single_agg(cudf::slice(keys, {2, 13})[0],
+                  cudf::slice(vals, {2, 13})[0],
+                  expect_keys,
+                  expect_vals,
+                  std::move(agg));
 }
 
 TYPED_TEST(groupby_correlation_test, min_periods)
 {
   using V = TypeParam;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -193,17 +225,17 @@ TYPED_TEST(groupby_correlation_test, min_periods)
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals1{{1.0, 0.6, nan}};
   auto agg1 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 3);
-  test_single_agg(keys, vals, expect_keys, expect_vals1, std::move(agg1), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals1, std::move(agg1));
 
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals2{{1.0, 0.6, nan}, {0, 1, 0}};
   auto agg2 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 4);
-  test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2));
 
   cudf::test::fixed_width_column_wrapper<R, double> expect_vals3{{1.0, 0.6, nan}, {0, 0, 0}};
   auto agg3 = cudf::make_correlation_aggregation<cudf::groupby_aggregation>(
     cudf::correlation_type::PEARSON, 5);
-  test_single_agg(keys, vals, expect_keys, expect_vals3, std::move(agg3), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals3, std::move(agg3));
 }
 
 struct groupby_dictionary_correlation_test : public cudf::test::BaseFixture {};
@@ -211,7 +243,7 @@ struct groupby_dictionary_correlation_test : public cudf::test::BaseFixture {};
 TEST_F(groupby_dictionary_correlation_test, basic)
 {
   using V = int16_t;
-  using R = cudf::detail::target_type_t<V, cudf::aggregation::CORRELATION>;
+  using R = double;
 
   constexpr auto nan = std::numeric_limits<double>::quiet_NaN();
 
@@ -225,5 +257,5 @@ TEST_F(groupby_dictionary_correlation_test, basic)
 
   auto agg =
     cudf::make_correlation_aggregation<cudf::groupby_aggregation>(cudf::correlation_type::PEARSON);
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg), force_use_sort_impl::YES);
+  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }

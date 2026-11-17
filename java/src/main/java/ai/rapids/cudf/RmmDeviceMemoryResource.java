@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 package ai.rapids.cudf;
@@ -11,7 +11,7 @@ package ai.rapids.cudf;
  */
 public interface RmmDeviceMemoryResource extends AutoCloseable {
   /**
-   * Returns a pointer to the underlying C++ class that implements rmm::mr::device_memory_resource
+   * Returns a pointer to the underlying C++ class that implements an RMM device memory resource
    */
   long getHandle();
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -32,6 +32,6 @@ def test_series_digitize_invalid_bins():
     bins = cudf.Series([2, None, None, 50, 90], dtype="int32")
 
     with pytest.raises(
-        ValueError, match="`bins` cannot contain null entries."
+        ValueError, match=r"`bins` cannot contain null entries."
     ):
         s.digitize(bins)

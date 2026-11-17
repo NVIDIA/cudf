@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,7 +10,6 @@
 
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/mr/device_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <filesystem>
@@ -36,7 +35,7 @@ namespace {
  */
 cudf::io::table_with_metadata read_parquet(io_source const& io_source,
                                            cudf::ast::operation const& filter_expression,
-                                           rmm::cuda_stream_view stream)
+                                           cuda::stream_ref stream)
 {
   auto source_info = io_source.get_source_info();
   auto options =
@@ -112,14 +111,13 @@ int main(int argc, char const** argv)
   auto constexpr is_pool_used = false;
   auto stream                 = cudf::get_default_stream();
   auto resource               = create_memory_resource(is_pool_used);
-  auto stats_mr =
-    rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource>(resource.get());
-  rmm::mr::set_current_device_resource(&stats_mr);
+  auto stats_mr               = rmm::mr::statistics_resource_adaptor{resource};
+  rmm::mr::set_current_device_resource(stats_mr);
 
   // Create filter expression
   auto const column_reference = cudf::ast::column_name_reference(column_name);
   auto scalar                 = cudf::string_scalar(literal_value, true, stream);
-  stream.synchronize();
+  stream.sync();
   auto literal = cudf::ast::literal(scalar);
   auto filter_expression =
     cudf::ast::operation(cudf::ast::ast_operator::EQUAL, column_reference, literal);
@@ -144,24 +142,36 @@ int main(int argc, char const** argv)
 
   auto const filter_expression_opt =
     std::make_optional<cudf::ast::operation const>(filter_expression);
+  std::unique_ptr<cudf::table> table_next_gen_reader;
+  std::unique_ptr<cudf::table> table_main_reader;
   {
     std::cout << "Benchmarking " << input_filepath << "read with next-gen parquet reader...\n";
     benchmark(
       [&] {
-        std::ignore = hybrid_scan<single_step_read, use_page_index>(
+        table_next_gen_reader.reset();
+        table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
           data_source, filter_expression_opt, filters, false, stream, stats_mr);
       },
       iterations);
 
     std::cout << "Benchmarking " << input_filepath << "read with main parquet reader...\n";
-    benchmark([&] { std::ignore = read_parquet(data_source, filter_expression, stream); },
-              iterations);
+    benchmark(
+      [&] {
+        table_main_reader.reset();
+        table_main_reader = read_parquet(data_source, filter_expression, stream).tbl;
+      },
+      iterations);
   }
 
-  // Check for validity
-  auto table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
-    data_source, filter_expression_opt, filters, verbose, stream, stats_mr);
-  auto table_main_reader = std::move(read_parquet(data_source, filter_expression, stream).tbl);
+  // Reuse timed results unless diagnostics or zero iterations require a separate read.
+  if (verbose || !table_next_gen_reader) {
+    table_next_gen_reader.reset();
+    table_next_gen_reader = hybrid_scan<single_step_read, use_page_index>(
+      data_source, filter_expression_opt, filters, verbose, stream, stats_mr);
+  }
+  if (!table_main_reader) {
+    table_main_reader = read_parquet(data_source, filter_expression, stream).tbl;
+  }
   check_tables_equal(table_next_gen_reader->view(), table_main_reader->view(), stream);
 
   return 0;

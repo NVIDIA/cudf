@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ import rmm
 
 from cudf.core.abc import Serializable
 from cudf.core.buffer.string import format_bytes
-from cudf.options import get_option
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -254,8 +253,7 @@ class Buffer(Serializable):
         self._access_mode_stack: list[Literal["read", "write"]] = []
         self._access_context = _BufferAccessContext(self)
         # Track this slice for copy-on-write
-        if get_option("copy_on_write"):
-            self._owner._slices.add(self)
+        self._owner._slices.add(self)
 
     @property
     def size(self) -> int:
@@ -281,7 +279,7 @@ class Buffer(Serializable):
         mode = (
             self._access_mode_stack[-1] if self._access_mode_stack else "read"
         )
-        if mode == "write" and get_option("copy_on_write"):
+        if mode == "write":
             self.make_single_owner_inplace()
         return self._owner.ptr + self._offset
 
@@ -318,21 +316,10 @@ class Buffer(Serializable):
         Parameters
         ----------
         deep : bool, default True
-            The semantics when copy-on-write is disabled:
-                - If deep=True, returns a deep copy of the underlying data.
-                - If deep=False, returns a shallow copy of the Buffer pointing
-                  to the same underlying data.
-            The semantics when copy-on-write is enabled:
-                - From the users perspective, always a deep copy of the
-                  underlying data. However, the data isn't actually copied
-                  until someone writes to the returned buffer.
-
-        Returns
-        -------
-        Buffer
-            A new buffer that either refers to either a new or an existing
-            `BufferOwner` depending on the expose status of the owner and the
-            copy-on-write option (see above).
+            If deep=True, returns a deep copy of the underlying data.
+            If deep=False, returns a shallow copy that shares the same
+            underlying data via copy-on-write. The data isn't actually
+            copied until someone writes to the returned buffer.
         """
         # When doing a shallow copy, we just return a new slice
         if not deep:
@@ -474,7 +461,7 @@ def get_ptr_and_size(array_interface: Mapping) -> tuple[int, int]:
     """
 
     shape = array_interface["shape"] or (1,)
-    strides = array_interface["strides"]
+    strides = array_interface.get("strides")
     itemsize = numpy.dtype(array_interface["typestr"]).itemsize
     if strides is None or pylibcudf.column.is_c_contiguous(
         shape, strides, itemsize

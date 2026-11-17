@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,13 +9,16 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/split/partition.hpp
+ * @brief Strings partition APIs
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_split
  * @{
- * @file strings/split/partition.hpp
- * @brief Strings partition APIs
  */
 
 /**
@@ -48,9 +51,9 @@ namespace strings {
  */
 std::unique_ptr<table> partition(
   strings_column_view const& input,
-  string_scalar const& delimiter    = string_scalar(""),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter = string_scalar(""),
+  cuda::stream_ref stream        = cudf::get_default_stream(),
+  cudf::memory_resources mr      = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a set of 3 columns by splitting each string using the
@@ -82,9 +85,9 @@ std::unique_ptr<table> partition(
  */
 std::unique_ptr<table> rpartition(
   strings_column_view const& input,
-  string_scalar const& delimiter    = string_scalar(""),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  string_scalar const& delimiter = string_scalar(""),
+  cuda::stream_ref stream        = cudf::get_default_stream(),
+  cudf::memory_resources mr      = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

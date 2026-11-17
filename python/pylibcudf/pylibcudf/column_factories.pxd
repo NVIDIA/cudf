@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from pylibcudf.libcudf.types cimport mask_state
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
-from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
 from .types cimport DataType, size_type, type_id
@@ -20,7 +19,7 @@ cpdef Column make_numeric_column(
     DataType type_,
     size_type size,
     MaskArg mask,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
@@ -28,7 +27,7 @@ cpdef Column make_fixed_point_column(
     DataType type_,
     size_type size,
     MaskArg mask,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
@@ -36,7 +35,7 @@ cpdef Column make_timestamp_column(
     DataType type_,
     size_type size,
     MaskArg mask,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
@@ -44,7 +43,7 @@ cpdef Column make_duration_column(
     DataType type_,
     size_type size,
     MaskArg mask,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
@@ -52,18 +51,18 @@ cpdef Column make_fixed_width_column(
     DataType type_,
     size_type size,
     MaskArg mask,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
 cpdef Column make_empty_column(
     MakeEmptyColumnOperand type_or_id,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )
 
 cpdef Column make_empty_lists_column(
     DataType child_type,
-    Stream stream = *,
+    object stream = *,
     DeviceMemoryResource mr = *,
 )

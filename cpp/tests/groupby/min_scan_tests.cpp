@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,14 +10,14 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
 
 using key_wrapper = cudf::test::fixed_width_column_wrapper<int32_t>;
 
 template <typename T>
 struct groupby_min_scan_test : public cudf::test::BaseFixture {
   using V              = T;
-  using R              = cudf::detail::target_type_t<V, cudf::aggregation::MIN>;
+  using R              = V;
   using value_wrapper  = cudf::test::fixed_width_column_wrapper<V, int32_t>;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 };

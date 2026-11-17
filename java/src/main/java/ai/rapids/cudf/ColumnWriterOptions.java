@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2021-2022, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -46,6 +46,8 @@ public class ColumnWriterOptions {
     assert(builder.children.size() == 1) : "Lists can only have one child";
     this.columnName = builder.name;
     this.isNullable = builder.isNullable;
+    this.hasParquetFieldId = builder.hasParquetFieldId;
+    this.parquetFieldId = builder.parquetFieldId;
     // we are adding the child twice even though lists have one child only because the way the cudf
     // has implemented this it requires two children to be set for the list, but it drops the
     // first one. This is something that is a lower priority and might be fixed in future
@@ -75,9 +77,9 @@ public class ColumnWriterOptions {
   // This child is needed as the first child of a List column meta due to how cudf has been
   // implemented. Cudf drops the first child from the meta if a column is a LIST. This is done
   // this way due to some complications in the parquet reader. There was change to fix this here:
-  // https://github.com/rapidsai/cudf/pull/7461/commits/5ce33b40abb87cc7b76b5efeb0a3a0215f9ef6fb
+  // https://github.com/NVIDIA/cudf/pull/7461/commits/5ce33b40abb87cc7b76b5efeb0a3a0215f9ef6fb
   // but it was reverted later on here:
-  // https://github.com/rapidsai/cudf/pull/7461/commits/f248eb7265de995a95f998d46d897fb0ae47f53e
+  // https://github.com/NVIDIA/cudf/pull/7461/commits/f248eb7265de995a95f998d46d897fb0ae47f53e
   static ColumnWriterOptions DUMMY_CHILD = new ColumnWriterOptions("DUMMY");
 
   public static abstract class NestedBuilder<T extends NestedBuilder, V extends ColumnWriterOptions> {
@@ -144,10 +146,13 @@ public class ColumnWriterOptions {
     }
 
     protected ColumnWriterOptions withBinary(String name, boolean isNullable, int parquetFieldId) {
-      ColumnWriterOptions opt = listBuilder(name, isNullable)
+      // The parquet field id must be attached to the outer list (the column the writer emits as
+      // BINARY), not to the inner BINARY_DATA child, because the writer drops the inner child when
+      // flattening the list-as-binary into a parquet primitive.
+      ColumnWriterOptions opt = listBuilder(name, isNullable, parquetFieldId)
           // The name here does not matter. It will not be included in the final file
           // This is just to get the metadata to line up properly for the C++ APIs
-          .withColumn(false, "BINARY_DATA", parquetFieldId)
+          .withColumns(false, "BINARY_DATA")
           .build();
       opt.isBinary = true;
       return opt;
@@ -557,6 +562,34 @@ public class ColumnWriterOptions {
   }
 
   /**
+   * Add a Map Column to the schema with a Parquet field ID set on the outer list.
+   * <p>
+   * Maps are List columns with a Struct named 'key_value' with a child named 'key' and a child
+   * named 'value'. The caller of this method doesn't need to worry about this as this method will
+   * take care of this without the knowledge of the caller.
+   *
+   * @param isNullable     is the returned map nullable. Primitive {@code boolean} (not
+   *                       {@code Boolean}) so a {@code null} can't slip through and trigger an
+   *                       unexpected {@link NullPointerException} when forwarded to
+   *                       {@link #listBuilder(String, boolean, int)}.
+   * @param parquetFieldId the Parquet field ID to attach to the outer (list) column.
+   */
+  public static ColumnWriterOptions mapColumn(String name, ColumnWriterOptions key,
+                                              ColumnWriterOptions value, boolean isNullable,
+                                              int parquetFieldId) {
+    if (key.isNullable) {
+      throw new IllegalArgumentException("key column can not be nullable");
+    }
+    StructColumnWriterOptions struct = structBuilder("key_value").build();
+    struct.childColumnOptions = new ColumnWriterOptions[]{key, value};
+    ColumnWriterOptions opt = listBuilder(name, isNullable, parquetFieldId)
+        .withStructColumn(struct)
+        .build();
+    opt.isMap = true;
+    return opt;
+  }
+
+  /**
    * Creates a ListBuilder for column called 'name'
    */
   public static ListBuilder listBuilder(String name) {
@@ -568,6 +601,13 @@ public class ColumnWriterOptions {
    */
   public static ListBuilder listBuilder(String name, boolean isNullable) {
     return new ListBuilder(name, isNullable);
+  }
+
+  /**
+   * Creates a ListBuilder for column called 'name' with a Parquet field ID set on the list itself.
+   */
+  public static ListBuilder listBuilder(String name, boolean isNullable, int parquetFieldId) {
+    return new ListBuilder(name, isNullable, parquetFieldId);
   }
 
   /**
@@ -626,6 +666,28 @@ public class ColumnWriterOptions {
     return childColumnOptions;
   }
 
+  /**
+   * Returns true if this column is a binary (byte array) column in Parquet.
+   */
+  public boolean isBinary() {
+    return isBinary;
+  }
+
+  /**
+   * Returns true if a Parquet field ID was set on this column.
+   */
+  public boolean hasParquetFieldId() {
+    return hasParquetFieldId;
+  }
+
+  /**
+   * Return the Parquet field ID for this column. The value is only meaningful when
+   * {@link #hasParquetFieldId()} returns true.
+   */
+  public int getParquetFieldId() {
+    return parquetFieldId;
+  }
+
   public static class StructColumnWriterOptions extends ColumnWriterOptions {
     protected StructColumnWriterOptions(AbstractStructBuilder builder) {
       super(builder);
@@ -655,6 +717,10 @@ public class ColumnWriterOptions {
   public static class ListBuilder extends NestedBuilder<ListBuilder, ListColumnWriterOptions> {
     public ListBuilder(String name, boolean isNullable) {
       super(name, isNullable);
+    }
+
+    public ListBuilder(String name, boolean isNullable, int parquetFieldId) {
+      super(name, isNullable, parquetFieldId);
     }
 
     public ListColumnWriterOptions build() {

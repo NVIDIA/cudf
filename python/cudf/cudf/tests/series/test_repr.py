@@ -16,7 +16,7 @@ import cudf
 def test_null_series(nrows, all_supported_types_as_str, request):
     request.applymarker(
         pytest.mark.xfail(
-            all_supported_types_as_str in {"bool", "timedelta64[ms]"},
+            all_supported_types_as_str in {"bool"},
             reason=f"cuDF repr doesn't match pandas repr for {all_supported_types_as_str}",
         )
     )
@@ -34,7 +34,9 @@ def test_null_series(nrows, all_supported_types_as_str, request):
         ps = sr.to_pandas()
 
     with pd.option_context("display.max_rows", int(nrows)):
-        psrepr = repr(ps).replace("NaN", "<NA>")
+        psrepr = repr(ps)
+        if "category" in psrepr:
+            psrepr = psrepr.replace("NaN", "<NA>")
         if "UInt" in psrepr:
             psrepr = psrepr.replace("UInt", "uint")
         elif "Int" in psrepr:
@@ -76,7 +78,7 @@ def test_float_series(x):
 
 
 @pytest.mark.parametrize(
-    "sr",
+    "psr",
     [
         pd.Series([1, 2, 3], index=[10, 20, None]),
         pd.Series([1, None, 3], name="a", index=[None, "a", "b"]),
@@ -114,13 +116,11 @@ def test_float_series(x):
         ).set_index(["a", "v"])["p"],
     ],
 )
-def test_series_null_index_repr(sr):
-    psr = sr
+def test_series_null_index_repr(psr):
     gsr = cudf.from_pandas(psr)
 
-    expected_repr = repr(psr).replace("NaN", "<NA>")
+    expected_repr = repr(psr)
     actual_repr = repr(gsr)
-
     assert expected_repr.split() == actual_repr.split()
 
 
@@ -165,322 +165,140 @@ def test_timedelta_series_s_us_repr(data, dtype):
 
 
 @pytest.mark.parametrize(
-    "ser, expected_repr",
+    "ser",
     [
-        (
-            lambda: cudf.Series([], dtype="timedelta64[ns]"),
-            textwrap.dedent(
-                """
-            Series([], dtype: timedelta64[ns])
-            """
-            ),
+        lambda: cudf.Series([], dtype="timedelta64[ns]"),
+        lambda: cudf.Series([], dtype="timedelta64[ms]"),
+        lambda: cudf.Series(
+            [1000000, 200000, 3000000], dtype="timedelta64[ns]"
         ),
-        (
-            lambda: cudf.Series([], dtype="timedelta64[ms]"),
-            textwrap.dedent(
-                """
-            Series([], dtype: timedelta64[ms])
-            """
-            ),
+        lambda: cudf.Series(
+            [1000000, 200000, 3000000], dtype="timedelta64[ms]"
         ),
-        (
-            lambda: cudf.Series(
-                [1000000, 200000, 3000000], dtype="timedelta64[ns]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.001000
-            1    0 days 00:00:00.000200
-            2    0 days 00:00:00.003000
-            dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series([1000000, 200000, None], dtype="timedelta64[ns]"),
+        lambda: cudf.Series([1000000, 200000, None], dtype="timedelta64[ms]"),
+        lambda: cudf.Series(
+            [None, None, None, None, None], dtype="timedelta64[ns]"
         ),
-        (
-            lambda: cudf.Series(
-                [1000000, 200000, 3000000], dtype="timedelta64[ms]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:16:40
-            1    0 days 00:03:20
-            2    0 days 00:50:00
-            dtype: timedelta64[ms]
-            """
-            ),
+        lambda: cudf.Series(
+            [None, None, None, None, None], dtype="timedelta64[ms]"
         ),
-        (
-            lambda: cudf.Series(
-                [1000000, 200000, None], dtype="timedelta64[ns]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.001000000
-            1    0 days 00:00:00.000200000
-            2                          NaT
-            dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series(
+            [12, 12, 22, 343, 4353534, 435342], dtype="timedelta64[ns]"
         ),
-        (
-            lambda: cudf.Series(
-                [1000000, 200000, None], dtype="timedelta64[ms]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:16:40
-            1    0 days 00:03:20
-            2                NaT
-            dtype: timedelta64[ms]
-            """
-            ),
+        lambda: cudf.Series(
+            [12, 12, 22, 343, 4353534, 435342], dtype="timedelta64[ms]"
         ),
-        (
-            lambda: cudf.Series(
-                [None, None, None, None, None], dtype="timedelta64[ns]"
-            ),
-            textwrap.dedent(
-                """
-            0    NaT
-            1    NaT
-            2    NaT
-            3    NaT
-            4    NaT
-            dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series(
+            [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
+            dtype="timedelta64[ns]",
         ),
-        (
-            lambda: cudf.Series(
-                [None, None, None, None, None], dtype="timedelta64[ms]"
-            ),
-            textwrap.dedent(
-                """
-            0    NaT
-            1    NaT
-            2    NaT
-            3    NaT
-            4    NaT
-            dtype: timedelta64[ms]
-            """
-            ),
+        lambda: cudf.Series(
+            [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
+            dtype="timedelta64[ms]",
         ),
-        (
-            lambda: cudf.Series(
-                [12, 12, 22, 343, 4353534, 435342], dtype="timedelta64[ns]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.000000012
-            1    0 days 00:00:00.000000012
-            2    0 days 00:00:00.000000022
-            3    0 days 00:00:00.000000343
-            4    0 days 00:00:00.004353534
-            5    0 days 00:00:00.000435342
-            dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series(
+            [
+                13645765432432,
+                134736784,
+                245345345,
+                223432411,
+                999992343241,
+                3634548734,
+                23234,
+            ],
+            dtype="timedelta64[ms]",
         ),
-        (
-            lambda: cudf.Series(
-                [12, 12, 22, 343, 4353534, 435342], dtype="timedelta64[ms]"
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.012000
-            1    0 days 00:00:00.012000
-            2    0 days 00:00:00.022000
-            3    0 days 00:00:00.343000
-            4    0 days 01:12:33.534000
-            5    0 days 00:07:15.342000
-            dtype: timedelta64[ms]
-            """
-            ),
+        lambda: cudf.Series(
+            [
+                13645765432432,
+                134736784,
+                245345345,
+                223432411,
+                999992343241,
+                3634548734,
+                23234,
+            ],
+            dtype="timedelta64[ns]",
         ),
-        (
-            lambda: cudf.Series(
-                [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
-                dtype="timedelta64[ns]",
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.000000001
-            1    0 days 00:00:00.000001132
-            2    0 days 00:00:00.023223231
-            3    0 days 00:00:00.000000233
-            4              0 days 00:00:00
-            5    0 days 00:00:00.000000332
-            6    0 days 00:00:00.000000323
-            dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series(
+            [
+                13645765432432,
+                134736784,
+                245345345,
+                223432411,
+                999992343241,
+                3634548734,
+                23234,
+            ],
+            dtype="timedelta64[ms]",
+            name="abc",
         ),
-        (
-            lambda: cudf.Series(
-                [1.321, 1132.324, 23223231.11, 233.41, 0.2434, 332, 323],
-                dtype="timedelta64[ms]",
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 00:00:00.001000
-            1    0 days 00:00:01.132000
-            2    0 days 06:27:03.231000
-            3    0 days 00:00:00.233000
-            4           0 days 00:00:00
-            5    0 days 00:00:00.332000
-            6    0 days 00:00:00.323000
-            dtype: timedelta64[ms]
-            """
-            ),
-        ),
-        (
-            lambda: cudf.Series(
-                [
-                    13645765432432,
-                    134736784,
-                    245345345,
-                    223432411,
-                    999992343241,
-                    3634548734,
-                    23234,
-                ],
-                dtype="timedelta64[ms]",
-            ),
-            textwrap.dedent(
-                """
-            0    157937 days 02:23:52.432000
-            1         1 days 13:25:36.784000
-            2         2 days 20:09:05.345000
-            3         2 days 14:03:52.411000
-            4     11573 days 23:39:03.241000
-            5        42 days 01:35:48.734000
-            6         0 days 00:00:23.234000
-            dtype: timedelta64[ms]
-            """
-            ),
-        ),
-        (
-            lambda: cudf.Series(
-                [
-                    13645765432432,
-                    134736784,
-                    245345345,
-                    223432411,
-                    999992343241,
-                    3634548734,
-                    23234,
-                ],
-                dtype="timedelta64[ns]",
-            ),
-            textwrap.dedent(
-                """
-            0    0 days 03:47:25.765432432
-            1    0 days 00:00:00.134736784
-            2    0 days 00:00:00.245345345
-            3    0 days 00:00:00.223432411
-            4    0 days 00:16:39.992343241
-            5    0 days 00:00:03.634548734
-            6    0 days 00:00:00.000023234
-            dtype: timedelta64[ns]
-            """
-            ),
-        ),
-        (
-            lambda: cudf.Series(
-                [
-                    13645765432432,
-                    134736784,
-                    245345345,
-                    223432411,
-                    999992343241,
-                    3634548734,
-                    23234,
-                ],
-                dtype="timedelta64[ms]",
-                name="abc",
-            ),
-            textwrap.dedent(
-                """
-            0    157937 days 02:23:52.432000
-            1         1 days 13:25:36.784000
-            2         2 days 20:09:05.345000
-            3         2 days 14:03:52.411000
-            4     11573 days 23:39:03.241000
-            5        42 days 01:35:48.734000
-            6         0 days 00:00:23.234000
-            Name: abc, dtype: timedelta64[ms]
-            """
-            ),
-        ),
-        (
-            lambda: cudf.Series(
-                [
-                    13645765432432,
-                    134736784,
-                    245345345,
-                    223432411,
-                    999992343241,
-                    3634548734,
-                    23234,
-                ],
-                dtype="timedelta64[ns]",
-                index=["a", "b", "z", "x", "y", "l", "m"],
-                name="hello",
-            ),
-            textwrap.dedent(
-                """
-            a    0 days 03:47:25.765432432
-            b    0 days 00:00:00.134736784
-            z    0 days 00:00:00.245345345
-            x    0 days 00:00:00.223432411
-            y    0 days 00:16:39.992343241
-            l    0 days 00:00:03.634548734
-            m    0 days 00:00:00.000023234
-            Name: hello, dtype: timedelta64[ns]
-            """
-            ),
+        lambda: cudf.Series(
+            [
+                13645765432432,
+                134736784,
+                245345345,
+                223432411,
+                999992343241,
+                3634548734,
+                23234,
+            ],
+            dtype="timedelta64[ns]",
+            index=["a", "b", "z", "x", "y", "l", "m"],
+            name="hello",
         ),
     ],
 )
-def test_timedelta_series_ns_ms_repr(ser, expected_repr):
-    expected = expected_repr
-    actual = repr(ser())
-
-    assert expected.split() == actual.split()
+def test_timedelta_series_ns_ms_repr(ser):
+    gsr = ser()
+    psr = gsr.to_pandas()
+    assert repr(psr).split() == repr(gsr).split()
 
 
 def test_categorical_series_with_nan_repr():
-    series = cudf.Series(
-        [1, 2, np.nan, 10, np.nan, None], nan_as_null=False
-    ).astype("category")
+    series = cudf.Series([1, 2.0, np.nan, 10, np.nan, np.nan]).astype(
+        "category"
+    )
 
     expected_repr = textwrap.dedent(
         """
     0     1.0
     1     2.0
-    2     NaN
+    2    <NA>
     3    10.0
-    4     NaN
+    4    <NA>
     5    <NA>
     dtype: category
-    Categories (4, float64): [1.0, 2.0, 10.0, NaN]
+    Categories (3, float64): [1.0, 2.0, 10.0]
     """
     )
-
     assert repr(series).split() == expected_repr.split()
 
     sliced_expected_repr = textwrap.dedent(
         """
-        2     NaN
+        2    <NA>
         3    10.0
-        4     NaN
+        4    <NA>
         5    <NA>
         dtype: category
-        Categories (4, float64): [1.0, 2.0, 10.0, NaN]
+        Categories (3, float64): [1.0, 2.0, 10.0]
         """
     )
 
     assert repr(series[2:]).split() == sliced_expected_repr.split()
+
+
+@pytest.mark.parametrize("tz", [None, "US/Eastern"])
+@pytest.mark.parametrize("ordered", [False, True])
+def test_categorical_series_repr_datetime_multiline(tz, ordered):
+    idx = pd.date_range(
+        "2011-01-01 09:00", freq="h", periods=5, tz=tz, unit="ns"
+    )
+    cat = pd.Categorical(idx, ordered=ordered)
+    expected = repr(pd.Series(cat))
+    got = repr(cudf.Series(cat))
+    assert got == expected
 
 
 def test_empty_series_name():

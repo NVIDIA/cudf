@@ -1,0 +1,9 @@
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # We require SHA-pinning for all workflows and actions _except_ for those from
+        # rapidsai/shared-workflows and rapidsai/shared-actions
+        "rapidsai/shared-workflows/*": any
+        "rapidsai/shared-actions/*": any
+        "*": hash-pin

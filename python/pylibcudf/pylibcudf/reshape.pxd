@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -6,7 +6,6 @@ from libc.stdint cimport uintptr_t
 
 from pylibcudf.libcudf.types cimport size_type
 
-from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.device_buffer cimport DeviceBuffer
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -17,17 +16,17 @@ from .types cimport DataType
 
 
 cpdef Column interleave_columns(
-    Table source_table, Stream stream=*, DeviceMemoryResource mr=*
+    Table source_table, object stream = *, DeviceMemoryResource mr=*
 )
 cpdef Table tile(
     Table source_table,
     size_type count,
-    Stream stream=*,
+    object stream = *,
     DeviceMemoryResource mr=*
 )
 cpdef void table_to_array(
     Table input_table,
     uintptr_t ptr,
     size_t size,
-    Stream stream=*
+    object stream = *
 )

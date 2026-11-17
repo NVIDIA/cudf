@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -28,15 +28,13 @@ def test_group_by_value_counts(normalize, sort, ascending, dropna, as_index):
     expected = pdf.groupby("gender", as_index=as_index).value_counts(
         normalize=normalize, sort=sort, ascending=ascending, dropna=dropna
     )
-
-    # TODO: Remove `check_names=False` once testing against `pandas>=2.0.0`
+    # Always sort for comparison since row order is
+    # implementation-defined when value_counts(sort=False).
     assert_groupby_results_equal(
         actual,
         expected,
-        check_index_type=False,
         as_index=as_index,
-        by=["gender", "education"],
-        sort=sort,
+        by=["gender", "education", "country"],
     )
 
 

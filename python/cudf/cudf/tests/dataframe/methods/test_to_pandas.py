@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 import datetime
 import decimal
@@ -190,7 +190,6 @@ def test_dataframe_to_pandas_arrow_type_nullable_raises(scalar):
                             None,
                             "rapids ai",
                         ],
-                        dtype="object",
                     ),
                     "c": cudf.Series(
                         [0.1, None, 0.2, None, 3, 4, 1000, None],
@@ -215,7 +214,7 @@ def test_dataframe_to_pandas_arrow_type_nullable_raises(scalar):
                             None,
                             "rapids ai",
                         ],
-                        dtype=pd.StringDtype(),
+                        dtype=pd.StringDtype(na_value=np.nan),
                     ),
                     "c": pd.Series(
                         [0.1, None, 0.2, None, 3, 4, 1000, None],

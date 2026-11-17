@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,7 @@
 #include <cudf/utilities/prefetch.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <numeric>
@@ -135,7 +135,7 @@ column_view_base::column_view_base(data_type type,
 
 size_type column_view_base::null_count(size_type begin,
                                        size_type end,
-                                       rmm::cuda_stream_view stream) const
+                                       cuda::stream_ref stream) const
 {
   CUDF_EXPECTS((begin >= 0) && (end <= size()) && (begin <= end), "Range is out of bounds.");
   return (null_count() == 0)
@@ -195,7 +195,7 @@ mutable_column_view::operator column_view() const
 {
   // Convert children to immutable views
   std::vector<column_view> child_views(num_children());
-  std::copy(std::cbegin(mutable_children), std::cend(mutable_children), std::begin(child_views));
+  std::ranges::copy(mutable_children, std::begin(child_views));
   return column_view{_type, _size, _data, _null_mask, _null_count, _offset, std::move(child_views)};
 }
 
@@ -214,7 +214,7 @@ void const* mutable_column_view::get_data() const noexcept
 size_type count_descendants(column_view parent)
 {
   auto descendants = [](auto const& child) { return count_descendants(child); };
-  auto begin       = thrust::make_transform_iterator(parent.child_begin(), descendants);
+  auto begin       = cuda::transform_iterator(parent.child_begin(), descendants);
   return std::accumulate(begin, begin + parent.num_children(), size_type{parent.num_children()});
 }
 

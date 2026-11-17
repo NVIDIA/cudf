@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def df(dtype, with_nulls):
 
 
 @pytest.mark.parametrize("decimals", [0, 2, 4])
-def test_round(df, decimals):
+def test_round(engine: pl.GPUEngine, df, decimals):
     q = df.select(pl.col("a").round(decimals=decimals))
 
-    assert_gpu_result_equal(q, check_exact=False)
+    assert_gpu_result_equal(q, engine=engine, check_exact=False)

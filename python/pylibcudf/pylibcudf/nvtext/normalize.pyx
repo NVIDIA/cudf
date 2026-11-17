@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -9,12 +9,24 @@ from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext cimport normalize as cpp_normalize
+from pylibcudf.libcudf.nvtext.normalize cimport (
+    normalize_flags,
+    underlying_type_t_normalize_flags,
+)
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
+from cuda.bindings.cyruntime cimport cudaStream_t
+
+from pylibcudf.libcudf.nvtext.normalize import normalize_flags as NormalizeFlags  # no-cython-lint
 
 __all__ = [
-    "CharacterNormalizer"
+    "CharacterNormalizer",
+    "NormalizeFlags",
     "normalize_characters",
     "normalize_spaces",
 ]
@@ -28,18 +40,19 @@ cdef class CharacterNormalizer:
         self,
         bool do_lower_case,
         Column tokens,
-        Stream stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_tokens = tokens.view()
-        stream = _get_stream(stream)
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(
                 cpp_normalize.create_character_normalizer(
                     do_lower_case,
                     c_tokens,
-                    stream.view(),
+                    _cs,
                     mr.get_mr()
                 )
             )
@@ -47,7 +60,7 @@ cdef class CharacterNormalizer:
     __hash__ = None
 
 cpdef Column normalize_spaces(
-    Column input, Stream stream=None, DeviceMemoryResource mr=None
+    Column input, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
 ):
     """
     Returns a new strings column by normalizing the whitespace in
@@ -68,21 +81,24 @@ cpdef Column normalize_spaces(
         New strings columns of normalized strings.
     """
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_normalize.normalize_spaces(
-            input.view(), stream.view(), mr.get_mr()
+            c_input, _cs, mr.get_mr()
         )
 
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
 
 
 cpdef Column normalize_characters(
     Column input,
     CharacterNormalizer normalizer,
-    Stream stream=None,
+    underlying_type_t_normalize_flags flags = <underlying_type_t_normalize_flags>normalize_flags.PAD_PUNCTUATION,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
@@ -96,6 +112,9 @@ cpdef Column normalize_characters(
         Input strings
     normalizer : CharacterNormalizer
         Normalizer object used for modifying the input column text
+    flags : NormalizeFlags, optional
+        Bitmask of :py:class:`NormalizeFlags` values controlling normalization
+        behavior. Default is ``NormalizeFlags.PAD_PUNCTUATION``.
     stream : Stream | None
         CUDA stream on which to perform the operation.
 
@@ -105,15 +124,21 @@ cpdef Column normalize_characters(
         Normalized strings column
     """
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
+    cdef column_view c_input = input.view()
+    cdef normalize_flags c_flags = <normalize_flags>flags
     with nogil:
         c_result = cpp_normalize.normalize_characters(
-            input.view(),
+            c_input,
             dereference(normalizer.c_obj.get()),
-            stream.view(),
+            c_flags,
+            _cs,
             mr.get_mr()
         )
 
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)
+
+NormalizeFlags.__str__ = NormalizeFlags.__repr__

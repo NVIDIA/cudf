@@ -89,7 +89,7 @@ TEST_F(TextEditDistanceTest, ErrorsTest)
   auto tvi     = cudf::strings_column_view(targets);
   EXPECT_THROW(nvtext::edit_distance(svi, tvi), std::invalid_argument);
 
-  auto single = cudf::test::strings_column_wrapper({"pup"}, {0});
+  auto single = cudf::test::strings_column_wrapper({""}, {0});
   auto sv1    = cudf::strings_column_view(single);
   EXPECT_THROW(nvtext::edit_distance(svi, sv1), std::invalid_argument);
 }

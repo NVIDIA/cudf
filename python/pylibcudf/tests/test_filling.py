@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
@@ -102,3 +102,9 @@ def test_calendrical_month_sequence():
     ]
     expect = pa.array(expected_dates, type=pa.timestamp("ms"))
     assert_column_eq(result, expect)
+
+
+def test_repeat_zero_columns_preserves_num_rows():
+    result = plc.filling.repeat(plc.Table([], num_rows=3), 2)
+    assert result.num_columns() == 0
+    assert result.num_rows() == 6

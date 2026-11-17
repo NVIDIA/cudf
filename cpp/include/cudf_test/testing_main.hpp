@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,15 +15,19 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/arena_memory_resource.hpp>
 #include <rmm/mr/binning_memory_resource.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/managed_memory_resource.hpp>
-#include <rmm/mr/owning_wrapper.hpp>
+#include <rmm/mr/per_device_resource.hpp>
+#include <rmm/mr/pinned_host_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
+#include <rmm/resource_ref.hpp>
+
+#include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <iostream>
 
@@ -36,33 +40,70 @@ struct config {
   std::string stream_error_mode;
 };
 
+// Wrapper that adds host_accessible + device_accessible properties to a pool_memory_resource.
+// pool_memory_resource doesn't propagate the host_accessible property from its pinned upstream
+// through its type, so this shim is needed to satisfy the host_device_async_resource_ref
+// required by set_pinned_memory_resource.
+struct pinned_pool {
+  rmm::mr::pinned_host_memory_resource pinned_mr;
+  rmm::mr::pool_memory_resource pool_mr;
+
+  explicit pinned_pool(std::size_t pool_size)
+    : pool_mr{rmm::device_async_resource_ref{pinned_mr}, pool_size}
+  {
+  }
+
+  void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
+  {
+    return pool_mr.allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
+  }
+  void deallocate_sync(void* p,
+                       std::size_t bytes,
+                       std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
+  {
+    pool_mr.deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, p, bytes, alignment);
+  }
+  void* allocate(cuda::stream_ref s,
+                 std::size_t bytes,
+                 std::size_t a = rmm::CUDA_ALLOCATION_ALIGNMENT)
+  {
+    return pool_mr.allocate(s, bytes, a);
+  }
+  void deallocate(cuda::stream_ref s,
+                  void* p,
+                  std::size_t bytes,
+                  std::size_t a = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
+  {
+    pool_mr.deallocate(s, p, bytes, a);
+  }
+  bool operator==(pinned_pool const& o) const noexcept { return &pool_mr == &o.pool_mr; }
+  bool operator!=(pinned_pool const& o) const noexcept { return &pool_mr != &o.pool_mr; }
+  friend void get_property(pinned_pool const&, cuda::mr::device_accessible) noexcept {}
+  friend void get_property(pinned_pool const&, cuda::mr::host_accessible) noexcept {}
+};
+
 /// MR factory functions
-inline auto make_cuda() { return std::make_shared<rmm::mr::cuda_memory_resource>(); }
+inline auto make_cuda() { return rmm::mr::cuda_memory_resource{}; }
 
-inline auto make_async() { return std::make_shared<rmm::mr::cuda_async_memory_resource>(); }
+inline auto make_async() { return rmm::mr::cuda_async_memory_resource{}; }
 
-inline auto make_managed() { return std::make_shared<rmm::mr::managed_memory_resource>(); }
+inline auto make_managed() { return rmm::mr::managed_memory_resource{}; }
 
 inline auto make_pool()
 {
   auto const [free, total] = rmm::available_device_memory();
   auto const min_alloc =
     rmm::align_down(std::min(free, total / 10), rmm::CUDA_ALLOCATION_ALIGNMENT);
-  return rmm::mr::make_owning_wrapper<rmm::mr::pool_memory_resource>(make_cuda(), min_alloc);
+  return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{}, min_alloc};
 }
 
-inline auto make_arena()
-{
-  return rmm::mr::make_owning_wrapper<rmm::mr::arena_memory_resource>(make_cuda());
-}
+inline auto make_arena() { return rmm::mr::arena_memory_resource{rmm::mr::cuda_memory_resource{}}; }
 
 inline auto make_binning()
 {
-  auto pool = make_pool();
   // Add a binning_memory_resource with fixed-size bins of sizes 256, 512, 1024, 2048 and 4096KiB
   // Larger allocations will use the pool resource
-  auto mr = rmm::mr::make_owning_wrapper<rmm::mr::binning_memory_resource>(pool, 18, 22);
-  return mr;
+  return rmm::mr::binning_memory_resource{make_pool(), 18, 22};
 }
 
 /**
@@ -77,10 +118,10 @@ inline auto make_binning()
  * @throw cudf::logic_error if the `allocation_mode` is unsupported.
  *
  * @param allocation_mode String identifies which resource type.
- *        Accepted types are "pool", "cuda", and "managed" only.
+ *        Accepted types are "pool", "cuda", "async", "arena", "binning", and "managed".
  * @return Memory resource instance
  */
-inline std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(
+inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(
   std::string const& allocation_mode)
 {
   if (allocation_mode == "binning") return make_binning();
@@ -99,7 +140,7 @@ inline std::shared_ptr<rmm::mr::device_memory_resource> create_memory_resource(
  * @brief Parses the cuDF test command line options.
  *
  * Currently only supports 'rmm_mode' string parameter, which set the rmm
- * allocation mode. The default value of the parameter is 'pool'.
+ * allocation mode. The default value of the parameter is 'async'.
  * Environment variable 'CUDF_TEST_RMM_MODE' can also be used to set the rmm
  * allocation mode. If both are set, the value of 'rmm_mode' string parameter
  * takes precedence.
@@ -115,7 +156,7 @@ inline auto parse_cudf_test_opts(int argc, char** argv)
       std::getenv("GTEST_CUDF_STREAM_MODE");  // Overridden by CLI options
     char const* env_stream_error_mode =
       std::getenv("GTEST_CUDF_STREAM_ERROR_MODE");  // Overridden by CLI options
-    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "pool";
+    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "async";
     auto default_stream_mode       = env_stream_mode ? env_stream_mode : "default";
     auto default_stream_error_mode = env_stream_error_mode ? env_stream_error_mode : "error";
     options.allow_unrecognised_options().add_options()(
@@ -147,20 +188,14 @@ inline auto parse_cudf_test_opts(int argc, char** argv)
 }
 
 /**
- * @brief Sets up stream mode memory resource adaptor
+ * @brief Sets up the memory resource for the test run.
  *
- * The resource adaptor is only set as the current device resource if the
- * stream mode is enabled.
- *
- * The caller must keep the return object alive for the life of the test runs.
- *
- * @param cmd_opts Command line options returned by parse_cudf_test_opts
- * @return Memory resource adaptor
+ * @param config Command line options returned by parse_cudf_test_opts
  */
 inline auto make_memory_resource_adaptor(cudf::test::config const& config)
 {
   auto resource = cudf::test::create_memory_resource(config.rmm_mode);
-  cudf::set_current_device_resource(resource.get());
+  cudf::set_current_device_resource(resource);
   return resource;
 }
 
@@ -170,33 +205,28 @@ inline auto make_memory_resource_adaptor(cudf::test::config const& config)
  * The resource adaptor is only set as the current device resource if the
  * stream mode is enabled.
  *
- * The caller must keep the return object alive for the life of the test runs.
- *
- * @param cmd_opts Command line options returned by parse_cudf_test_opts
- * @return Memory resource adaptor
+ * @param config Command line options returned by parse_cudf_test_opts
  */
-inline auto make_stream_mode_adaptor(cudf::test::config const& config)
+inline void make_stream_mode_adaptor(cudf::test::config const& config)
 {
-  auto resource                      = cudf::get_current_device_resource_ref();
-  auto const error_on_invalid_stream = (config.stream_error_mode == "error");
-  auto const check_default_stream    = (config.stream_mode == "new_cudf_default");
-  auto adaptor                       = cudf::test::stream_checking_resource_adaptor(
-    resource, error_on_invalid_stream, check_default_stream);
   if ((config.stream_mode == "new_cudf_default") || (config.stream_mode == "new_testing_default")) {
-    cudf::set_current_device_resource(&adaptor);
+    auto const error_on_invalid_stream = (config.stream_error_mode == "error");
+    auto const check_default_stream    = (config.stream_mode == "new_cudf_default");
+    auto resource                      = cudf::reset_current_device_resource();
+    auto adaptor                       = cudf::test::stream_checking_resource_adaptor(
+      resource, error_on_invalid_stream, check_default_stream);
+    cudf::set_current_device_resource(adaptor);
   }
-  return adaptor;
 }
 
 /**
- * @brief Should be called in every test program that uses rmm allocators since it maintains the
- * lifespan of the rmm default memory resource. this function parses the command line to customize
- * test behavior, like the allocation mode used for creating the default memory resource.
+ * @brief Should be called in every test program that uses rmm allocators.
+ * Parses the command line to customize test behavior, like the allocation mode
+ * used for creating the default memory resource.
  *
  */
 inline void init_cudf_test(int argc, char** argv, cudf::test::config const& config_override = {})
 {
-  // static lifetime to keep rmm resource alive till tests end
   auto const cmd_opts       = parse_cudf_test_opts(argc, argv);
   cudf::test::config config = config_override;
   if (config.rmm_mode.empty()) { config.rmm_mode = cmd_opts["rmm_mode"].as<std::string>(); }
@@ -209,8 +239,8 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
     config.stream_error_mode = cmd_opts["stream_error_mode"].as<std::string>();
   }
 
-  [[maybe_unused]] static auto mr      = make_memory_resource_adaptor(config);
-  [[maybe_unused]] static auto adaptor = make_stream_mode_adaptor(config);
+  make_memory_resource_adaptor(config);
+  make_stream_mode_adaptor(config);
 }
 
 /**
@@ -222,20 +252,19 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
 #define CUDF_TEST_PROGRAM_MAIN()                                                                 \
   int main(int argc, char** argv)                                                                \
   {                                                                                              \
-    cudf::initialize();                                                                          \
+    cudf::detail::initialize();                                                                  \
     ::testing::InitGoogleTest(&argc, argv);                                                      \
     init_cudf_test(argc, argv);                                                                  \
     if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {                                                 \
-      auto mr = rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource>(           \
-        cudf::get_current_device_resource_ref());                                                \
-      cudf::set_current_device_resource(&mr);                                                    \
+      auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());   \
+      cudf::set_current_device_resource(mr);                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
       std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl; \
-      cudf::teardown();                                                                          \
+      rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     } else {                                                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
-      cudf::teardown();                                                                          \
+      rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     }                                                                                            \
   }

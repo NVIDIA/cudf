@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,46 +12,72 @@
 
 #include <vector>
 
-struct DictionaryDecodeTest : public cudf::test::BaseFixture {};
+struct DictionaryDecodeTest : public cudf::test::BaseFixtureWithHarness {};
 
 TEST_F(DictionaryDecodeTest, StringColumn)
 {
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
+
   std::vector<char const*> h_strings{"eee", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "eee", "aaa"};
-  cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end());
+  cudf::test::strings_column_wrapper strings(h_strings.begin(), h_strings.end(), stream, mr);
 
-  auto dictionary = cudf::dictionary::encode(strings);
-  auto output     = cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()));
+  auto dictionary =
+    cudf::dictionary::encode(strings, cudf::data_type{cudf::type_id::INT32}, stream, mr);
+  auto output =
+    cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()), stream, mr);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(strings, *output);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    strings, *output, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
 
 TEST_F(DictionaryDecodeTest, FloatColumn)
 {
-  cudf::test::fixed_width_column_wrapper<float> input{4.25, 7.125, 0.5, -11.75, 7.125, 0.5};
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
 
-  auto dictionary = cudf::dictionary::encode(input);
-  auto output     = cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()));
+  cudf::test::fixed_width_column_wrapper<float> input{
+    {4.25, 7.125, 0.5, -11.75, 7.125, 0.5}, stream, mr};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, *output);
+  auto dictionary =
+    cudf::dictionary::encode(input, cudf::data_type{cudf::type_id::INT32}, stream, mr);
+  auto output =
+    cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()), stream, mr);
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    input, *output, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
 
 TEST_F(DictionaryDecodeTest, ColumnWithNull)
 {
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
+
   cudf::test::fixed_width_column_wrapper<int64_t> input{
     {444, 0, 333, 111, 222, 222, 222, 444, 000},
-    {true, true, true, true, true, false, true, true, true}};
+    {true, true, true, true, true, false, true, true, true},
+    stream,
+    mr};
 
-  auto dictionary = cudf::dictionary::encode(input);
-  auto output     = cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()));
+  auto dictionary =
+    cudf::dictionary::encode(input, cudf::data_type{cudf::type_id::INT32}, stream, mr);
+  auto output =
+    cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()), stream, mr);
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, *output);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    input, *output, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
 
 TEST_F(DictionaryDecodeTest, EmptyColumn)
 {
-  cudf::test::fixed_width_column_wrapper<int16_t> input;
-  auto dictionary = cudf::dictionary::encode(input);
-  auto output     = cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()));
+  auto const stream = this->stream();
+  auto const mr     = this->resources();
+
+  cudf::test::fixed_width_column_wrapper<int16_t> input{};
+  auto dictionary =
+    cudf::dictionary::encode(input, cudf::data_type{cudf::type_id::INT32}, stream, mr);
+  auto output =
+    cudf::dictionary::decode(cudf::dictionary_column_view(dictionary->view()), stream, mr);
 
   // check empty
   EXPECT_EQ(output->size(), 0);

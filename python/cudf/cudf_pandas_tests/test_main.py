@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import subprocess
@@ -14,6 +14,7 @@ def _run_python(*, cudf_pandas, command):
         executable + command,
         shell=True,
         text=True,
+        encoding="utf-8",
     )
 
 
@@ -34,6 +35,28 @@ def test_run_cudf_pandas_with_script():
 
     assert res != ""
     assert res == expect
+
+
+def test_run_cudf_pandas_line_profile_preserves_file(tmp_path):
+    # GH #23010: ``--line-profile`` runs an instrumented copy of the script
+    # from a temp file. ``__file__`` must still refer to the original script so
+    # scripts that locate sibling files relative to ``__file__`` keep working.
+    (tmp_path / "sibling.txt").write_text("hello-sibling")
+    script = tmp_path / "script.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            from pathlib import Path
+            sibling = Path(__file__).resolve().parent / "sibling.txt"
+            print("FILE:", __file__)
+            print("CONTENT:", sibling.read_text())
+            """
+        )
+    )
+
+    res = _run_python(cudf_pandas=True, command=f"--line-profile {script}")
+    assert "CONTENT: hello-sibling" in res
+    assert str(script) in res
 
 
 def test_run_cudf_pandas_with_script_with_cmd_args():

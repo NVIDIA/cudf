@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -25,11 +25,23 @@ namespace strings {
  */
 enum regex_flags : uint32_t {
   DEFAULT     = 0,    ///< default
+  IGNORECASE  = 2,    ///< ignore case on matching all literal characters
   MULTILINE   = 8,    ///< the '^' and '$' honor new-line characters
   DOTALL      = 16,   ///< the '.' matching includes new-line characters
   ASCII       = 256,  ///< use only ASCII when matching built-in character classes
   EXT_NEWLINE = 512   ///< new-line matches extended characters
 };
+
+/**
+ * @brief Returns true if the given flags contain IGNORECASE.
+ *
+ * @param f Regex flags to check
+ * @return true if `f` includes IGNORECASE
+ */
+constexpr bool is_ignorecase(regex_flags const f)
+{
+  return (f & regex_flags::IGNORECASE) == regex_flags::IGNORECASE;
+}
 
 /**
  * @brief Returns true if the given flags contain MULTILINE.
@@ -85,6 +97,16 @@ constexpr bool is_ext_newline(regex_flags const f)
 enum class capture_groups : uint32_t {
   EXTRACT,     ///< Capture groups processed normally for extract
   NON_CAPTURE  ///< Convert all capture groups to non-capture groups
+};
+
+/**
+ * @brief Fast-path classification for literal-only patterns
+ */
+enum class literal_fast_path : int8_t {
+  NONE,          ///< pattern is not eligible for any literal fast-path
+  LITERAL_ONLY,  ///< pattern is a simple character sequence (literal)
+  STARTS_WITH,   ///< pattern is a literal preceded by a begin-of-line anchor
+  ENDS_WITH      ///< pattern is a literal followed by an end-of-line anchor
 };
 
 /** @} */  // end of doxygen group

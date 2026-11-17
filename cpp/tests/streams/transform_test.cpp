@@ -1,17 +1,20 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+
+#include <array>
 
 class TransformTest : public cudf::test::BaseFixture {};
 
@@ -21,22 +24,23 @@ void test_udf(char const* udf,
               cudf::size_type size,
               cudf::udf_source_type source_type)
 {
-  auto all_valid = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return true; });
+  auto all_valid = cudf::test::iterators::no_nulls();
   auto data_iter = cudf::detail::make_counting_transform_iterator(0, data_init);
   cudf::test::fixed_width_column_wrapper<dtype, typename decltype(data_iter)::value_type> in(
     data_iter, data_iter + size, all_valid);
 
   cudf::transform_input inputs[] = {in};
 
-  cudf::transform_extended(inputs,
-                           udf,
-                           cudf::data_type(cudf::type_to_id<dtype>()),
-                           source_type,
-                           std::nullopt,
-                           cudf::null_aware::NO,
-                           std::nullopt,
-                           cudf::output_nullability::PRESERVE,
-                           cudf::test::get_default_stream());
+  cudf::transform(udf,
+                  source_type,
+                  cudf::null_aware::NO,
+                  std::nullopt,
+                  inputs,
+                  std::array{cudf::transform_output{cudf::data_type(cudf::type_to_id<dtype>()),
+                                                    cudf::output_nullability::PRESERVE}},
+                  {},
+                  std::nullopt,
+                  cudf::test::get_default_stream());
 }
 
 TEST_F(TransformTest, Transform)
@@ -115,7 +119,7 @@ TEST_F(TransformTest, ComputeColumnJIT)
   auto col_ref_0  = cudf::ast::column_reference(0);
   auto col_ref_1  = cudf::ast::column_reference(1);
   auto expression = cudf::ast::operation(cudf::ast::ast_operator::ADD, col_ref_0, col_ref_1);
-  cudf::compute_column_jit(table, expression, cudf::test::get_default_stream());
+  cudf::compute_column_jit(table, expression, {}, cudf::test::get_default_stream());
 }
 
 TEST_F(TransformTest, BoolsToMask)

@@ -43,7 +43,7 @@ def test_pivot_simple(index, column, data):
 
 def test_pivot_multi_values():
     # from Pandas docs:
-    # https://pandas.pydata.org/pandas-docs/version/2.3.3/reference/api/pandas.DataFrame.pivot.html
+    # https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.pivot.html
     pdf = pd.DataFrame(
         {
             "foo": ["one", "one", "one", "two", "two", "two"],

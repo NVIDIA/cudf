@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -37,9 +37,8 @@ TEST_F(ByteCastTest, int16ValuesWithSplit)
 
 TEST_F(ByteCastTest, int16ValuesWithNulls)
 {
-  using limits = std::numeric_limits<int16_t>;
-  auto odd_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+  using limits      = std::numeric_limits<int16_t>;
+  auto odd_validity = cudf::test::iterators::nulls_at_multiples_of(2);
 
   cudf::test::fixed_width_column_wrapper<int16_t> const int16_col(
     {short(0), short(100), short(-100), limits::min(), limits::max()},
@@ -49,7 +48,7 @@ TEST_F(ByteCastTest, int16ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto int16_expected          = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 2, 2, 4, 4}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 2, 2, 4, 4}.release(),
     int16_data.release(),
     null_count,
     std::move(null_mask));
@@ -83,9 +82,8 @@ TEST_F(ByteCastTest, int32Values)
 
 TEST_F(ByteCastTest, int32ValuesWithNulls)
 {
-  using limits = std::numeric_limits<int32_t>;
-  auto even_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i + 1) % 2; });
+  using limits       = std::numeric_limits<int32_t>;
+  auto even_validity = cudf::test::iterators::valids_at_multiples_of(2);
 
   cudf::test::fixed_width_column_wrapper<int32_t> const int32_col(
     {0, 100, -100, limits::min(), limits::max()}, {true, false, true, false, true});
@@ -97,7 +95,7 @@ TEST_F(ByteCastTest, int32ValuesWithNulls)
 
   auto int32_expected = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 4, 8, 8, 12}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 4, 8, 8, 12}.release(),
     int32_data.release(),
     null_count,
     std::move(null_mask));
@@ -138,9 +136,8 @@ TEST_F(ByteCastTest, int64ValuesWithSplit)
 
 TEST_F(ByteCastTest, int64ValuesWithNulls)
 {
-  using limits = std::numeric_limits<int64_t>;
-  auto odd_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+  using limits      = std::numeric_limits<int64_t>;
+  auto odd_validity = cudf::test::iterators::nulls_at_multiples_of(2);
 
   cudf::test::fixed_width_column_wrapper<int64_t> const int64_col(
     {long(0), long(100), long(-100), limits::min(), limits::max()},
@@ -151,7 +148,7 @@ TEST_F(ByteCastTest, int64ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto int64_expected          = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 8, 16, 16}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 8, 8, 16, 16}.release(),
     int64_data.release(),
     null_count,
     std::move(null_mask));
@@ -199,9 +196,8 @@ TEST_F(ByteCastTest, fp32ValuesWithSplit)
 
 TEST_F(ByteCastTest, fp32ValuesWithNulls)
 {
-  using limits = std::numeric_limits<float>;
-  auto even_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i + 1) % 2; });
+  using limits       = std::numeric_limits<float>;
+  auto even_validity = cudf::test::iterators::valids_at_multiples_of(2);
 
   cudf::test::fixed_width_column_wrapper<float> const fp32_col(
     {float(0.0), float(100.0), float(-100.0), limits::min(), limits::max()},
@@ -213,7 +209,7 @@ TEST_F(ByteCastTest, fp32ValuesWithNulls)
     cudf::test::detail::make_null_mask(even_validity, even_validity + 5);
   auto fp32_expected = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 4, 4, 8, 8, 12}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 4, 4, 8, 8, 12}.release(),
     fp32_data.release(),
     null_count,
     std::move(null_mask));
@@ -271,9 +267,8 @@ TEST_F(ByteCastTest, fp64ValuesWithSplit)
 
 TEST_F(ByteCastTest, fp64ValuesWithNulls)
 {
-  using limits = std::numeric_limits<double>;
-  auto odd_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
+  using limits      = std::numeric_limits<double>;
+  auto odd_validity = cudf::test::iterators::nulls_at_multiples_of(2);
 
   cudf::test::fixed_width_column_wrapper<double> const fp64_col(
     {double(0.0), double(100.0), double(-100.0), limits::min(), limits::max()},
@@ -284,7 +279,7 @@ TEST_F(ByteCastTest, fp64ValuesWithNulls)
   auto [null_mask, null_count] = cudf::test::detail::make_null_mask(odd_validity, odd_validity + 5);
   auto fp64_expected           = cudf::make_lists_column(
     5,
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 0, 8, 8, 16, 16}.release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 0, 8, 8, 16, 16}.release(),
     fp64_data.release(),
     null_count,
     std::move(null_mask));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,12 +8,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for converting to/from integer numeric types.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_convert
  * @{
- * @file
  */
 
 /**
@@ -43,8 +47,8 @@ namespace strings {
 std::unique_ptr<column> to_integers(
   strings_column_view const& input,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column converting the integer values from the
@@ -64,8 +68,8 @@ std::unique_ptr<column> to_integers(
  */
 std::unique_ptr<column> from_integers(
   column_view const& integers,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying strings in which all
@@ -93,8 +97,8 @@ std::unique_ptr<column> from_integers(
  */
 std::unique_ptr<column> is_integer(
   strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying strings in which all
@@ -127,8 +131,8 @@ std::unique_ptr<column> is_integer(
 std::unique_ptr<column> is_integer(
   strings_column_view const& input,
   data_type int_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new integer numeric column parsing hexadecimal values from the
@@ -157,8 +161,8 @@ std::unique_ptr<column> is_integer(
 std::unique_ptr<column> hex_to_integers(
   strings_column_view const& input,
   data_type output_type,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying strings in which all
@@ -182,10 +186,9 @@ std::unique_ptr<column> hex_to_integers(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New column of boolean results for each string
  */
-std::unique_ptr<column> is_hex(
-  strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> is_hex(strings_column_view const& input,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column converting integer columns to hexadecimal
@@ -217,8 +220,8 @@ std::unique_ptr<column> is_hex(
  */
 std::unique_ptr<column> integers_to_hex(
   column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

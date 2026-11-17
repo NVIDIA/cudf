@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -50,7 +50,7 @@ def shape(request):
 
 
 @pytest.fixture(params=CUPY_DTYPES, ids=repr)
-def cp_array(request, shape):
+def cp_array(request, shape, patch_cupy_stream):
     dtype = request.param
     size = np.prod(shape)
     if dtype == np.bool_:
@@ -59,7 +59,8 @@ def cp_array(request, shape):
         ).reshape(shape)
     else:
         np_arr = np.arange(size, dtype=dtype).reshape(shape)
-    return cp.asarray(np_arr), np_arr
+    with patch_cupy_stream:
+        return cp.asarray(np_arr), np_arr
 
 
 @pytest.fixture(params=NUMPY_DTYPES, ids=repr)
@@ -104,16 +105,18 @@ def test_from_numpy_array(np_array):
     assert_column_eq(expected, got)
 
 
-def test_non_c_contiguous_raises(cp_array):
+def test_non_c_contiguous_raises(cp_array, patch_cupy_stream):
     cp_arr = cp_array[0]
     if len(cp_arr.shape) == 1:
         return
 
+    with patch_cupy_stream:
+        fortran_arr = cp.asfortranarray(cp_arr)
     with pytest.raises(
         ValueError,
         match="Data must be C-contiguous",
     ):
-        plc.Column.from_array(cp.asfortranarray(cp_arr))
+        plc.Column.from_array(fortran_arr)
 
 
 def test_row_limit_exceed_raises():
@@ -134,11 +137,12 @@ def test_row_limit_exceed_raises():
         plc.Column.from_array(Foo((SIZE_TYPE_LIMIT, 1)))
 
 
-def test_flat_size_exceeds_size_type_limit():
+def test_flat_size_exceeds_size_type_limit(patch_cupy_stream):
     nrows = 2**16
     ncols = (SIZE_TYPE_LIMIT // nrows) + 1
 
-    arr = cp.zeros((nrows, ncols), dtype=np.int32)
+    with patch_cupy_stream:
+        arr = cp.zeros((nrows, ncols), dtype=np.int32)
 
     with pytest.raises(
         ValueError,
@@ -151,7 +155,7 @@ def test_flat_size_exceeds_size_type_limit():
 def test_from_ndarray_invalid_obj(obj):
     with pytest.raises(
         TypeError,
-        match="Cannot convert object of type .* to a pylibcudf Column",
+        match=r"Cannot convert object of type .* to a pylibcudf Column",
     ):
         plc.Column.from_array(obj)
 
@@ -169,9 +173,25 @@ def test_array_interface_with_data_none():
 
     with pytest.raises(
         ValueError,
-        match="Expected a data field .* the array interface.",
+        match=r"Expected a data field .* the array interface.",
     ):
         plc.Column.from_array(ArrayInterfaceWithNone())
+
+
+def test_array_interface_with_mask_raises():
+    class ArrayInterfaceWithMask:
+        def __init__(self):
+            self.values = np.array([1, 2, 3], dtype=np.int32)
+
+        @property
+        def __array_interface__(self):
+            return {**self.values.__array_interface__, "mask": object()}
+
+    with pytest.raises(
+        NotImplementedError,
+        match="Masked array-interface inputs are not supported",
+    ):
+        plc.Column.from_array_interface(ArrayInterfaceWithMask())
 
 
 def test_from_zero_dimensional_array():
@@ -191,8 +211,9 @@ def test_from_zero_dimensional_array():
         ([[], []], np.int32, pa.array([[], []], type=pa.list_(pa.int32()))),
     ],
 )
-def test_empty_array(np_or_cp_array, arr, dtype, expect):
-    arr = np_or_cp_array(arr, dtype=dtype)
+def test_empty_array(np_or_cp_array, arr, dtype, expect, patch_cupy_stream):
+    with patch_cupy_stream:
+        arr = np_or_cp_array(arr, dtype=dtype)
     col = plc.Column.from_array(arr)
 
     assert_column_eq(expect, col)

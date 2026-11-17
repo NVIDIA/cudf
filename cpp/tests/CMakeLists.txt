@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -12,6 +12,30 @@ enable_testing()
 
 include(rapids-test)
 rapids_test_init()
+rapids_cmake_install_lib_dir(lib_dir)
+
+# ##################################################################################################
+# **Note about test memory usage:**
+#
+# We design the test suite to run in CI with max parallelism on GPUs with 16 GB of memory or more.
+# Tests are assigned GPU memory percentages to enable safe parallel execution. We draw an arbitrary
+# line that tests are allowed to run in parallel if they consume less than 1 GB of peak GPU memory,
+# and are run serially otherwise. This allows up to 14 tests in parallel on a 16 GB GPU with a bit
+# of room for overhead. (14 * 7% is 98%, and we are required to use integer percentages.) Therefore,
+# tests are assigned 7% of the GPU by default, and 100% if they use >=1 GB of memory. ctest won't
+# schedule more than 100% of the GPU, so at most 14 tests in parallel. This means on a 16 GB GPU, we
+# can safely run `ctest -jN` with N>=14.
+#
+# **Guidelines:**
+#
+# * Tests using <=1 GB: Use default (no GPUS/PERCENT parameters, defaults to 7%)
+# * Tests using >1 GB: Mark as "GPUS 1 PERCENT 100" to reserve the entire GPU
+#
+# Marking large tests with PERCENT 100 prevents memory oversubscription and ensures only one large
+# test runs at a time, while smaller tests can still run in parallel.
+#
+# The peak memory usage of all tests can be determined with cpp/scripts/gtest_memory_usage.sh.
+# ##################################################################################################
 
 # This function takes in a test name and test source and handles setting all of the associated
 # properties and linking to build the test
@@ -23,7 +47,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   if(NOT DEFINED _CUDF_TEST_GPUS AND NOT DEFINED _CUDF_TEST_PERCENT)
     set(_CUDF_TEST_GPUS 1)
-    set(_CUDF_TEST_PERCENT 15)
+    set(_CUDF_TEST_PERCENT 7)
   endif()
 
   if(NOT DEFINED _CUDF_TEST_GPUS)
@@ -42,7 +66,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
   set_target_properties(
     ${CMAKE_TEST_NAME}
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${CUDF_BINARY_DIR}/gtests>"
-               INSTALL_RPATH "\$ORIGIN/../../../lib"
+               INSTALL_RPATH "\$ORIGIN/../../../${lib_dir}"
                CXX_STANDARD 20
                CXX_STANDARD_REQUIRED ON
                # For std:: support of __int128_t. Can be removed once using cuda::std
@@ -60,7 +84,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
     ${CMAKE_TEST_NAME} PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
                                $<TARGET_NAME_IF_EXISTS:conda_env> "${_CUDF_TEST_EXTRA_LIBS}"
   )
-  rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ${CUDA_STATIC_RUNTIME})
+  rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)
   rapids_test_add(
     NAME ${CMAKE_TEST_NAME}
     COMMAND ${CMAKE_TEST_NAME}
@@ -84,9 +108,9 @@ endfunction()
 # ##################################################################################################
 
 # No need to install Arrow libs when only the final test executables are shipped.
-set(CUDF_EXCLUDE_ARROW_FROM_ALL ON)
-set(CUDF_ENABLE_ARROW_COMPUTE ON)
-include(../cmake/thirdparty/get_arrow.cmake)
+set(CUDF_INSTALL_LIBRARY_DEPS OFF)
+set(CUDF_EXCLUDE_DEPS_FROM_ALL ON)
+set(CUDF_EXCLUDE_DEPS_FROM_ALL_FLAG EXCLUDE_FROM_ALL)
 
 # ##################################################################################################
 # test sources ##################################################################################
@@ -118,6 +142,7 @@ ConfigureTest(
   GROUPBY_TEST
   groupby/argmin_tests.cpp
   groupby/argmax_tests.cpp
+  groupby/batched_reductions_tests.cpp
   groupby/bitwise_tests.cpp
   groupby/collect_list_tests.cpp
   groupby/collect_set_tests.cpp
@@ -151,32 +176,35 @@ ConfigureTest(
   groupby/replace_nulls_tests.cpp
   groupby/shift_tests.cpp
   groupby/std_tests.cpp
+  groupby/streaming_groupby_test.cpp
   groupby/structs_tests.cpp
   groupby/sum_of_squares_tests.cpp
   groupby/sum_scan_tests.cpp
   groupby/sum_tests.cpp
-  groupby/sum_with_overflow_tests.cpp
+  groupby/sum_overflow_tests.cpp
   groupby/tdigest_tests.cpp
   groupby/topk_tests.cpp
   groupby/var_tests.cpp
-  GPUS 1
-  PERCENT 100
 )
 
 # ##################################################################################################
 # * join tests ------------------------------------------------------------------------------------
 ConfigureTest(
   JOIN_TEST
+  join/asof_join_tests.cpp
   join/join_tests.cpp
   join/conditional_join_tests.cu
   join/cross_join_tests.cpp
   join/semi_anti_join_tests.cpp
-  join/mixed_join_tests.cu
+  join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
+  join/streaming_hash_join_tests.cpp
   GPUS 1
   PERCENT 100
 )
+
+ConfigureTest(MIXED_JOIN_TEST join/mixed_join_tests.cu)
 
 # ##################################################################################################
 # * is_sorted tests -------------------------------------------------------------------------------
@@ -185,6 +213,7 @@ ConfigureTest(IS_SORTED_TEST sort/is_sorted_tests.cpp)
 # ##################################################################################################
 # * datetime tests --------------------------------------------------------------------------------
 ConfigureTest(DATETIME_OPS_TEST datetime/datetime_ops_test.cpp)
+ConfigureTest(TIMEZONE_TEST datetime/timezone_test.cpp)
 
 # ##################################################################################################
 # * hashing tests ---------------------------------------------------------------------------------
@@ -193,6 +222,7 @@ ConfigureTest(
   hashing/md5_test.cpp
   hashing/murmurhash3_x86_32_test.cpp
   hashing/murmurhash3_x64_128_test.cpp
+  hashing/spark_murmurhash3_x86_32_test.cpp
   hashing/sha1_test.cpp
   hashing/sha224_test.cpp
   hashing/sha256_test.cpp
@@ -207,8 +237,6 @@ ConfigureTest(
 ConfigureTest(
   PARTITIONING_TEST partitioning/hash_partition_test.cpp partitioning/round_robin_test.cpp
   partitioning/partition_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -216,8 +244,6 @@ ConfigureTest(
 ConfigureTest(
   QUANTILES_TEST quantiles/percentile_approx_test.cpp quantiles/quantile_test.cpp
   quantiles/quantiles_test.cpp
-  GPUS 1
-  PERCENT 70 EXTRA_LIBS ${ARROW_LIBRARIES}
 )
 
 # ##################################################################################################
@@ -237,8 +263,6 @@ ConfigureTest(
   reductions/segmented_reduction_tests.cpp
   reductions/tdigest_tests.cpp
   reductions/unique_count_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -259,7 +283,10 @@ ConfigureTest(FIXED_POINT_TEST fixed_point/fixed_point_tests.cpp fixed_point/fix
 
 # ##################################################################################################
 # * unary tests -----------------------------------------------------------------------------------
-ConfigureTest(UNARY_TEST unary/math_ops_test.cpp unary/unary_ops_test.cpp unary/cast_tests.cpp)
+ConfigureTest(
+  UNARY_TEST unary/math_ops_test.cpp unary/unary_ops_test.cpp unary/cast_tests.cpp
+  unary/operator_parity_test.cpp
+)
 
 # ##################################################################################################
 # * round tests -----------------------------------------------------------------------------------
@@ -274,6 +301,9 @@ ConfigureTest(
   binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
   binaryop/binop-generic-ptx-test.cpp
+  binaryop/operator_parity_test.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -298,29 +328,24 @@ ConfigureTest(FILTER_TEST filter/filter_test.cpp)
 ConfigureTest(
   INTEROP_TEST
   interop/arrow_data_structures_test.cpp
+  interop/nanoarrow_utils.cpp
   interop/to_arrow_device_test.cpp
-  interop/to_arrow_test.cpp
   interop/to_arrow_host_test.cpp
-  interop/from_arrow_test.cpp
   interop/from_arrow_device_test.cpp
   interop/from_arrow_host_test.cpp
   interop/from_arrow_stream_test.cpp
   interop/dlpack_test.cpp
   EXTRA_LIBS
   nanoarrow::nanoarrow
-  ${ARROW_LIBRARIES}
 )
 
 # ##################################################################################################
 # * io tests --------------------------------------------------------------------------------------
 ConfigureTest(COMPRESSION_TEST io/comp/comp_test.cpp)
 ConfigureTest(ROW_SELECTION_TEST io/row_selection_test.cpp)
+ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 
-ConfigureTest(
-  CSV_TEST io/csv_test.cpp
-  GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
-)
+ConfigureTest(CSV_TEST io/csv_test.cpp)
 ConfigureTest(
   ORC_TEST io/orc_chunked_reader_test.cu io/orc_test.cpp
   GPUS 1
@@ -333,6 +358,7 @@ ConfigureTest(
   io/parquet_chunked_writer_test.cpp
   io/parquet_common.cpp
   io/parquet_misc_test.cpp
+  io/parquet_reader_dict_test.cpp
   io/parquet_reader_test.cpp
   io/parquet_test.cpp
   io/parquet_v2_test.cpp
@@ -340,17 +366,24 @@ ConfigureTest(
   GPUS 1
   PERCENT 100
 )
+ConfigureTest(COMPACT_PROTOCOL_READER_TEST io/compact_protocol_reader_test.cpp)
+ConfigureTest(PARQUET_FOOTER_FACADE_TEST io/experimental/parquet_footer_facade_test.cpp)
 ConfigureTest(
   HYBRID_SCAN_TEST
+  io/experimental/hybrid_scan_common.cpp
   io/experimental/hybrid_scan_composer.cpp
   io/experimental/hybrid_scan_filters_test.cpp
+  io/experimental/hybrid_scan_multifile_composer.cpp
+  io/experimental/hybrid_scan_multifile_filters_test.cpp
+  io/experimental/hybrid_scan_multifile_test.cpp
   io/experimental/hybrid_scan_test.cpp
   io/parquet_common.cpp
   io/parquet_test.cpp
 )
+ConfigureTest(VARIANT_EXTRACT_TEST io/experimental/variant_extract_test.cpp)
 ConfigureTest(
   PARQUET_DELETION_VECTORS_TEST
-  io/parquet_deletion_vectors_test.cu
+  io/parquet_deletion_vectors_test.cpp
   io/parquet_common.cpp
   io/parquet_test.cpp
   EXTRA_LIBS
@@ -364,8 +397,6 @@ ConfigureTest(
 ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
-  GPUS 1
-  PERCENT 30 EXTRA_LIBS ${ARROW_LIBRARIES}
 )
 ConfigureTest(JSON_WRITER_TEST io/json/json_writer.cpp)
 ConfigureTest(NESTED_JSON_TEST io/json/nested_json_test.cpp io/json/json_tree.cpp)
@@ -373,11 +404,7 @@ ConfigureTest(MULTIBYTE_SPLIT_TEST io/text/multibyte_split_test.cpp)
 ConfigureTest(JSON_QUOTE_NORMALIZATION_TEST io/json/json_quote_normalization_test.cpp)
 ConfigureTest(JSON_WHITESPACE_NORMALIZATION_TEST io/json/json_whitespace_normalization_test.cpp)
 ConfigureTest(JSON_TREE_CSR_TEST io/json/json_tree_csr.cu)
-ConfigureTest(
-  DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp
-  GPUS 1
-  PERCENT 100
-)
+ConfigureTest(DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp)
 target_link_libraries(DATA_CHUNK_SOURCE_TEST PRIVATE ZLIB::ZLIB)
 ConfigureTest(LOGICAL_STACK_TEST io/fst/logical_stack_test.cu)
 ConfigureTest(FST_TEST io/fst/fst_test.cu)
@@ -387,10 +414,14 @@ ConfigureTest(TYPE_INFERENCE_TEST io/type_inference_test.cpp)
 # ##################################################################################################
 # * sort tests ------------------------------------------------------------------------------------
 ConfigureTest(
-  SORT_TEST sort/rank_test.cpp sort/segmented_sort_tests.cpp sort/sort_nested_types_tests.cpp
-  sort/sort_test.cpp sort/stable_sort_tests.cpp sort/top_k_tests.cpp
-  GPUS 1
-  PERCENT 70
+  SORT_TEST
+  sort/rank_test.cpp
+  sort/segmented_sort_tests.cpp
+  sort/sort_nested_types_tests.cpp
+  sort/sort_test.cpp
+  sort/stable_sort_tests.cpp
+  sort/string_sort_prefix_test.cpp
+  sort/top_k_tests.cpp
 )
 
 # ##################################################################################################
@@ -401,7 +432,6 @@ ConfigureTest(
   copying/copy_if_else_nested_tests.cpp
   copying/copy_range_tests.cpp
   copying/copy_tests.cpp
-  copying/detail_gather_tests.cu
   copying/gather_list_tests.cpp
   copying/gather_str_tests.cpp
   copying/gather_struct_tests.cpp
@@ -431,6 +461,7 @@ ConfigureTest(
   UTILITIES_TEST
   utilities_tests/batched_memcpy_tests.cu
   utilities_tests/batched_memset_tests.cu
+  utilities_tests/buffer_factories_tests.cpp
   utilities_tests/column_debug_tests.cpp
   utilities_tests/column_utilities_tests.cpp
   utilities_tests/column_wrapper_tests.cpp
@@ -438,7 +469,9 @@ ConfigureTest(
   utilities_tests/default_stream_tests.cpp
   utilities_tests/io_utilities_tests.cpp
   utilities_tests/lists_column_wrapper_tests.cpp
+  utilities_tests/memory_resource_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
+  utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp
   utilities_tests/type_list_tests.cpp
 )
@@ -473,11 +506,7 @@ ConfigureTest(DEVICE_ATOMICS_TEST device_atomics/device_atomics_test.cu)
 
 # ##################################################################################################
 # * transpose tests -------------------------------------------------------------------------------
-ConfigureTest(
-  TRANSPOSE_TEST transpose/transpose_test.cpp
-  GPUS 1
-  PERCENT 70
-)
+ConfigureTest(TRANSPOSE_TEST transpose/transpose_test.cpp)
 
 # ##################################################################################################
 # * table tests -----------------------------------------------------------------------------------
@@ -504,7 +533,7 @@ ConfigureTest(
 # * stream compaction tests -----------------------------------------------------------------------
 ConfigureTest(
   STREAM_COMPACTION_TEST
-  stream_compaction/apply_boolean_mask_tests.cpp
+  stream_compaction/apply_mask_tests.cpp
   stream_compaction/distinct_tests.cpp
   stream_compaction/drop_nans_tests.cpp
   stream_compaction/drop_nulls_tests.cpp
@@ -528,8 +557,6 @@ ConfigureTest(
   rolling/range_window_bounds_test.cpp
   rolling/range_window_type_test.cpp
   rolling/rolling_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -550,6 +577,8 @@ ConfigureTest(
 ConfigureTest(
   RESHAPE_TEST reshape/byte_cast_tests.cpp reshape/interleave_columns_tests.cpp
   reshape/table_to_array_tests.cpp reshape/tile_tests.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -607,11 +636,17 @@ ConfigureTest(
 # ##################################################################################################
 # * large strings test ----------------------------------------------------------------------------
 ConfigureTest(
+  LARGE_STRINGS_CSV_TEST large_strings/csv_tests.cpp large_strings/large_strings_fixture.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
+  large_strings/bpe_tests.cpp
   large_strings/merge_tests.cpp
   large_strings/parquet_tests.cpp
   large_strings/replace_tests.cpp
@@ -635,6 +670,7 @@ ConfigureTest(STRUCTS_TEST structs/structs_column_tests.cpp structs/utilities_te
 ConfigureTest(
   TEXT_TEST
   text/deduplicate_tests.cpp
+  text/bpe_tests.cpp
   text/edit_distance_tests.cpp
   text/jaccard_tests.cpp
   text/minhash_tests.cpp
@@ -645,6 +681,7 @@ ConfigureTest(
   text/stemmer_tests.cpp
   text/subword_tests.cpp
   text/tokenize_tests.cpp
+  text/unicode_normalize_tests.cpp
 )
 
 # ##################################################################################################
@@ -678,7 +715,50 @@ ConfigureTest(ENCODE_TEST encode/encode_tests.cpp)
 
 # ##################################################################################################
 # * ast tests -------------------------------------------------------------------------------------
-ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp)
+ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_expressions_tests.cpp)
+
+# ##################################################################################################
+# * transform LTO tests
+# -------------------------------------------------------------------------------------
+rtcx_add_embed(cudf_test_fragments)
+
+add_fragment(
+  cudf_test_fragments FRAGMENT bankers_rounding SOURCE transform/fragments/bankers_rounding.cu
+)
+
+add_fragment(cudf_test_fragments FRAGMENT distance SOURCE transform/fragments/distance.cu)
+
+add_fragment(cudf_test_fragments FRAGMENT invsqrt SOURCE transform/fragments/invsqrt.cu)
+
+add_fragment(cudf_test_fragments FRAGMENT lehmer_mean SOURCE transform/fragments/lehmer_mean.cu)
+
+add_fragment(
+  cudf_test_fragments FRAGMENT sum_of_squares SOURCE transform/fragments/sum_of_squares.cu
+)
+
+add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
+
+add_fragment(
+  cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
+)
+
+rtcx_embed(
+  cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
+)
+
+ConfigureTest(
+  TRANSFORM_LTO_TEST transform/transform_lto_test.cpp
+  ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
+)
+add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
+target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+
+# AST JIT expressions in these tests call LTO callees from the same fragments.
+foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
+  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+  add_dependencies(${test} cudf_test_fragments)
+  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endforeach()
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------
@@ -697,10 +777,8 @@ ConfigureTest(
   lists/set_operations/intersect_distinct_tests.cpp
   lists/set_operations/union_distinct_tests.cpp
   lists/sort_lists_tests.cpp
-  lists/stream_compaction/apply_boolean_mask_tests.cpp
+  lists/stream_compaction/apply_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -753,6 +831,19 @@ ConfigureTest(STREAM_QUANTILE_TEST streams/quantile_test.cpp STREAM_MODE testing
 ConfigureTest(STREAM_REDUCTION_TEST streams/reduction_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_REPLACE_TEST streams/replace_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_RESHAPE_TEST streams/reshape_test.cpp STREAM_MODE testing)
+ConfigureTest(
+  STREAM_ROARING_BITMAP_TEST
+  streams/roaring_bitmap_test.cpp
+  STREAM_MODE
+  testing
+  EXTRA_LIBS
+  roaring
+  EXTRA_COMPILE_DEFINITIONS
+  DISABLENEON=1
+  ROARING_DISABLE_X64=1
+  ROARING_DISABLE_AVX=1
+  CROARING_COMPILER_SUPPORTS_AVX512=0
+)
 ConfigureTest(STREAM_ROLLING_TEST streams/rolling_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_ROUND_TEST streams/round_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_SCALAR_TEST streams/scalar_test.cpp STREAM_MODE testing)
@@ -777,19 +868,36 @@ ConfigureTest(
   STREAM_MODE
   testing
 )
+ConfigureTest(STREAM_TABLE_EQUALITY_TEST streams/table_equality_test.cpp STREAM_MODE testing)
 ConfigureTest(
   STREAM_TEXT_TEST
+  streams/text/bpe_test.cpp
   streams/text/edit_distance_test.cpp
   streams/text/ngrams_test.cpp
   streams/text/replace_test.cpp
   streams/text/stemmer_test.cpp
   streams/text/tokenize_test.cpp
+  streams/text/unicode_normalize_test.cpp
   STREAM_MODE
   testing
 )
 ConfigureTest(STREAM_TRANSFORM_TEST streams/transform_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_TRANSPOSE_TEST streams/transpose_test.cpp STREAM_MODE testing)
 ConfigureTest(STREAM_UNARY_TEST streams/unary_test.cpp STREAM_MODE testing)
+
+# ##################################################################################################
+# * roaring bitmap tests ---------------------------------------------------------------------------
+ConfigureTest(
+  ROARING_BITMAP_TEST
+  utilities/roaring_bitmap_test.cpp
+  EXTRA_LIBS
+  roaring
+  EXTRA_COMPILE_DEFINITIONS
+  DISABLENEON=1
+  ROARING_DISABLE_X64=1
+  ROARING_DISABLE_AVX=1
+  CROARING_COMPILER_SUPPORTS_AVX512=0
+)
 
 # ##################################################################################################
 # Install tests ####################################################################################

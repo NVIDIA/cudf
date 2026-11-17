@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ import pylibcudf as plc
 from pylibcudf import expressions as plc_expr
 
 from cudf.api.types import is_list_like
+from cudf.core._compat import PYARROW_GE_26
 from cudf.core.column import (
     ColumnBase,
     access_columns,
@@ -83,7 +84,7 @@ def _plc_write_parquet(
     table,
     filepaths_or_buffers,
     index: bool | None = None,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
     metadata_file_path: str | None = None,
     int96_timestamps: bool = False,
@@ -252,7 +253,7 @@ def _plc_write_parquet(
 def _write_parquet(
     df,
     paths,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     index: bool | None = None,
     statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
     metadata_file_path: str | None = None,
@@ -285,21 +286,29 @@ def _write_parquet(
     output_as_binary: set[Hashable] | None = None,
     write_arrow_schema: bool = True,
     page_level_compression: bool = False,
+    filesystem=None,
 ) -> np.ndarray | None:
     if is_list_like(paths) and len(paths) > 1:
         if partitions_info is None:
-            ValueError("partition info is required for multiple paths")
+            raise ValueError("partition info is required for multiple paths")
         elif not is_list_like(partitions_info):
-            ValueError("partition info must be list-like for multiple paths")
+            raise ValueError(
+                "partition info must be list-like for multiple paths"
+            )
         elif not len(paths) == len(partitions_info):
-            ValueError("partitions_info and paths must be of same size")
+            raise ValueError("partitions_info and paths must be of same size")
     if is_list_like(partitions_info) and len(partitions_info) > 1:
         if not is_list_like(paths):
-            ValueError("paths must be list-like when partitions_info provided")
+            raise ValueError(
+                "paths must be list-like when partitions_info provided"
+            )
 
     paths_or_bufs = [
         ioutils.get_writer_filepath_or_buffer(
-            path_or_data=path, mode="wb", storage_options=storage_options
+            path_or_data=path,
+            mode="wb",
+            storage_options=storage_options,
+            filesystem=filesystem,
         )
         for path in paths
     ]
@@ -348,7 +357,7 @@ def _write_parquet(
 def write_to_dataset(
     df,
     root_path,
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     filename=None,
     partition_cols=None,
     fs=None,
@@ -382,6 +391,7 @@ def write_to_dataset(
     output_as_binary: set[Hashable] | None = None,
     store_schema=False,
     page_level_compression: bool = False,
+    filesystem=None,
 ):
     """Wraps `to_parquet` to write partitioned Parquet datasets.
     For each combination of partition group and value,
@@ -401,7 +411,7 @@ def write_to_dataset(
     df : cudf.DataFrame
     root_path : string,
         The root directory of the dataset
-    compression : {'snappy', 'ZSTD', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     filename : string, default None
         The file name to use (within each partition directory). If None,
@@ -480,6 +490,9 @@ def write_to_dataset(
         be written uncompressed.
     """
 
+    if filesystem is not None:
+        ioutils._validate_filesystem(filesystem, storage_options)
+        fs = fs if fs is not None else filesystem
     fs = ioutils._ensure_filesystem(fs, root_path, storage_options)
     fs.mkdirs(root_path, exist_ok=True)
 
@@ -507,6 +520,7 @@ def write_to_dataset(
             index=preserve_index,
             partition_offsets=part_offsets,
             storage_options=storage_options,
+            filesystem=filesystem,
             metadata_file_path=metadata_file_path,
             statistics=statistics,
             int96_timestamps=int96_timestamps,
@@ -536,6 +550,7 @@ def write_to_dataset(
             compression=compression,
             index=preserve_index,
             storage_options=storage_options,
+            filesystem=filesystem,
             metadata_file_path=metadata_file_path,
             statistics=statistics,
             int96_timestamps=int96_timestamps,
@@ -568,7 +583,7 @@ _BIN_OPS = {
 
 
 def _raise_for_unsupported_scalar_types(val: Any):
-    if not (
+    if (
         isinstance(val, (int, float))
         or isinstance(val, (datetime.date, datetime.timedelta))
         or isinstance(val, str)
@@ -691,7 +706,7 @@ def translate_filters_to_ast(
     )
 
 
-def _parse_metadata(meta) -> tuple[bool, Any, None | np.dtype]:
+def _parse_metadata(meta) -> tuple[bool, Any, np.dtype | None]:
     file_is_range_index = False
     file_index_cols = None
     file_column_dtype = None
@@ -782,7 +797,7 @@ def _process_dataset(
 
     # Deal with case that the user passed in a directory name
     file_list = paths
-    if len(paths) == 1 and ioutils.is_directory(paths[0]):
+    if len(paths) == 1 and ioutils.is_directory(paths[0], filesystem=fs):
         paths = ioutils.stringify_pathlike(paths[0])
     elif (
         filters is None
@@ -942,6 +957,7 @@ def read_parquet(
     skip_rows=None,
     allow_mismatched_pq_schemas=False,
     ignore_missing_columns=True,
+    case_sensitive_names=True,
     *args,
     **kwargs,
 ):
@@ -1105,18 +1121,32 @@ def read_parquet(
         skip_rows=skip_rows,
         allow_mismatched_pq_schemas=allow_mismatched_pq_schemas,
         ignore_missing_columns=ignore_missing_columns,
+        case_sensitive_names=case_sensitive_names,
         filters=ast_filter,
         **kwargs,
     )
+    # Build a lookup from (possibly lowered) name -> actual DataFrame column name
+    _key = str.lower if not case_sensitive_names else str
+    col_names = {_key(name): name for name in df._column_names}
+
     # Apply filters row-wise (if any are defined), and return
     if ast_filter is None:
+        if not case_sensitive_names and filters:
+            filters = [
+                [
+                    (col_names[_key(col)], op, val)
+                    for col, op, val in conjunction
+                ]
+                for conjunction in filters
+            ]
         df = _apply_post_filters(df, filters)
 
     if projected_columns:
         # Elements of `projected_columns` may now be in the index.
-        # We must filter these names from our projection
+        # We must filter these names from our projection. For structs,
+        # only the top-level name needs remapping via col_names
         projected_columns = [
-            col for col in projected_columns if col in df._column_names
+            col_names[_key(col.split(".")[0])] for col in projected_columns
         ]
         return df[projected_columns]
     return df
@@ -1238,6 +1268,7 @@ def _parquet_to_frame(
     dataset_kwargs=None,
     nrows=None,
     skip_rows=None,
+    case_sensitive_names=True,
     **kwargs,
 ):
     # If this is not a partitioned read, only need
@@ -1247,6 +1278,7 @@ def _parquet_to_frame(
             paths_or_buffers,
             nrows=nrows,
             skip_rows=skip_rows,
+            case_sensitive_names=case_sensitive_names,
             *args,
             row_groups=row_groups,
             **kwargs,
@@ -1288,6 +1320,7 @@ def _parquet_to_frame(
                 key_paths,
                 *args,
                 row_groups=key_row_groups,
+                case_sensitive_names=case_sensitive_names,
                 **kwargs,
             )
         )
@@ -1323,10 +1356,7 @@ def _parquet_to_frame(
     if len(dfs) > 1:
         # Concatenate dfs and return.
         # Assume we can ignore the index if it has no name.
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            res = concat(dfs, ignore_index=dfs[-1].index.name is None)
-        return res
+        return concat(dfs, ignore_index=dfs[-1].index.name is None)
     else:
         return dfs[0]
 
@@ -1342,6 +1372,7 @@ def _read_parquet(
     skip_rows: int | None = None,
     allow_mismatched_pq_schemas: bool = False,
     ignore_missing_columns: bool = True,
+    case_sensitive_names: bool = True,
     filters: plc_expr.Expression | None = None,
     *args,
     **kwargs,
@@ -1365,11 +1396,14 @@ def _read_parquet(
             nrows = -1
         if skip_rows is None:
             skip_rows = 0
+        empty_columns = columns is not None and len(columns) == 0
         if get_option("io.parquet.low_memory"):
             # If filters are used, we can't rely on a RangeIndex
             # (row count may be reduced)
             allow_range_index = (
-                filters is None and columns is not None and len(columns) != 0
+                filters is None
+                and columns is not None
+                and (len(columns) != 0 or PYARROW_GE_26)
             )
 
             options = (
@@ -1379,6 +1413,7 @@ def _read_parquet(
                 .use_pandas_metadata(use_pandas_metadata)
                 .allow_mismatched_pq_schemas(allow_mismatched_pq_schemas)
                 .ignore_missing_columns(ignore_missing_columns)
+                .case_sensitive_names(case_sensitive_names)
                 .build()
             )
             if row_groups is not None:
@@ -1402,13 +1437,13 @@ def _read_parquet(
             column_names = tbl_w_meta.column_names(include_children=False)
             child_names = tbl_w_meta.child_names
             per_file_user_data = tbl_w_meta.per_file_user_data
-            concatenated_columns = tbl_w_meta.tbl.columns()
+            concatenated_columns = tbl_w_meta.tbl.release()
 
             # save memory
             del tbl_w_meta
 
             while reader.has_next():
-                columns = reader.read_chunk().tbl.columns()
+                columns = reader.read_chunk().tbl.release()
                 # Iterate in reverse to avoid O(n²) cost from popping
                 for i in range(len(concatenated_columns) - 1, -1, -1):
                     concatenated_columns[i] = plc.concatenate.concatenate(
@@ -1434,10 +1469,23 @@ def _read_parquet(
                 nrows=nrows,
                 skip_rows=skip_rows,
             )
+            if (
+                empty_columns
+                and PYARROW_GE_26
+                and filters is None
+                and len(df.index) == 0
+            ):
+                df.index = RangeIndex(
+                    _num_rows(
+                        filepaths_or_buffers, row_groups, skip_rows, nrows
+                    )
+                )
             return df
         else:
             allow_range_index = True
-            if columns is not None and len(columns) == 0 or filters:
+            if (
+                columns is not None and len(columns) == 0 and not PYARROW_GE_26
+            ) or filters:
                 allow_range_index = False
 
             options = (
@@ -1447,6 +1495,7 @@ def _read_parquet(
                 .use_pandas_metadata(use_pandas_metadata)
                 .allow_mismatched_pq_schemas(allow_mismatched_pq_schemas)
                 .ignore_missing_columns(ignore_missing_columns)
+                .case_sensitive_names(case_sensitive_names)
                 .build()
             )
             if row_groups is not None:
@@ -1473,6 +1522,17 @@ def _read_parquet(
                 nrows=nrows,
                 skip_rows=skip_rows,
             )
+            if (
+                empty_columns
+                and PYARROW_GE_26
+                and filters is None
+                and len(df.index) == 0
+            ):
+                df.index = RangeIndex(
+                    _num_rows(
+                        filepaths_or_buffers, row_groups, skip_rows, nrows
+                    )
+                )
             return df
     else:
         if (
@@ -1498,7 +1558,7 @@ def to_parquet(
     df,
     path,
     engine="cudf",
-    compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+    compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
     index: bool | None = None,
     partition_cols=None,
     partition_file_name=None,
@@ -1535,6 +1595,7 @@ def to_parquet(
     store_schema=False,
     page_level_compression: bool = False,
     *args,
+    filesystem=None,
     **kwargs,
 ):
     """{docstring}"""
@@ -1582,6 +1643,7 @@ def to_parquet(
                 max_page_size_rows=max_page_size_rows,
                 return_metadata=return_metadata,
                 storage_options=storage_options,
+                filesystem=filesystem,
                 force_nullable_schema=force_nullable_schema,
                 header_version=header_version,
                 use_dictionary=use_dictionary,
@@ -1613,6 +1675,7 @@ def to_parquet(
             max_dictionary_size=max_dictionary_size,
             partitions_info=partition_info,
             storage_options=storage_options,
+            filesystem=filesystem,
             force_nullable_schema=force_nullable_schema,
             header_version=header_version,
             use_dictionary=use_dictionary,
@@ -1648,10 +1711,14 @@ def to_parquet(
             )
         # Type ignore: mypy complains about potential duplicate arguments from *args
         # but our API design allows passing additional args/kwargs to pyarrow
+        # pyarrow accepts both native pyarrow and fsspec filesystems.
+        if filesystem is not None:
+            kwargs["filesystem"] = filesystem
         return pq.write_to_dataset(  # type: ignore[misc]
             pa_table,
             root_path=path,
             partition_cols=partition_cols,
+            compression=compression,
             *args,
             **kwargs,
         )
@@ -1764,7 +1831,7 @@ class ParquetWriter:
         If ``True``, include a dataframe's index(es) in the file output.
         If ``False``, they will not be written to the file. If ``None``,
         index(es) other than RangeIndex will be saved as columns.
-    compression : {'snappy', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     statistics : {'ROWGROUP', 'PAGE', 'COLUMN', 'NONE'}, default 'ROWGROUP'
         Level at which column statistics should be included in file.
@@ -1801,7 +1868,7 @@ class ParquetWriter:
         self,
         filepath_or_buffer,
         index: bool | None = None,
-        compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+        compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
         statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
         row_group_size_bytes: int = int(np.iinfo(np.uint64).max),
         row_group_size_rows: int = 1000000,
@@ -2019,7 +2086,7 @@ class ParquetDatasetWriter:
         If ``True``, include the dataframe's index(es) in the file output.
         If ``False``, they will not be written to the file. If ``None``,
         index(es) other than RangeIndex will be saved as columns.
-    compression : {'snappy', None}, default 'snappy'
+    compression : {'snappy', 'ZSTD', 'LZ4', 'GZIP', None}, default 'snappy'
         Name of the compression to use. Use ``None`` for no compression.
     statistics : {'ROWGROUP', 'PAGE', 'COLUMN', 'NONE'}, default 'ROWGROUP'
         Level at which column statistics should be included in file.
@@ -2078,14 +2145,26 @@ class ParquetDatasetWriter:
         path,
         partition_cols,
         index=None,
-        compression: Literal["snappy", "ZSTD", "ZLIB", "LZ4", None] = "snappy",
+        compression: Literal["snappy", "ZSTD", "LZ4", "GZIP", None] = "snappy",
         statistics: Literal["ROWGROUP", "PAGE", "COLUMN", "NONE"] = "ROWGROUP",
         max_file_size=None,
         file_name_prefix=None,
         storage_options=None,
+        filesystem=None,
     ) -> None:
-        if isinstance(path, str) and path.startswith("s3://"):
-            self.fs_meta = {"is_s3": True, "actual_path": path}
+        if filesystem is not None:
+            ioutils._validate_filesystem(filesystem, storage_options)
+        self.filesystem = filesystem
+
+        # libcudf's chunked sinks only take local paths, so remote output is
+        # staged in a temp dir and uploaded in `close()`.
+        is_remote = (
+            filesystem is not None
+            and not ioutils._is_local_filesystem(filesystem)
+        ) or (isinstance(path, str) and path.startswith("s3://"))
+
+        if is_remote:
+            self.fs_meta = {"is_remote": True, "actual_path": path}
             self.dir_: tempfile.TemporaryDirectory | None = (
                 tempfile.TemporaryDirectory()
             )
@@ -2103,7 +2182,17 @@ class ParquetDatasetWriter:
         self.partition_cols = partition_cols
         # Collection of `ParquetWriter`s, and the corresponding
         # partition_col values they're responsible for
-        self._chunked_writers: list[tuple[ParquetWriter, list[str], str]] = []
+        # (``None`` once a writer has been closed because all of its files
+        # were rotated out)
+        self._chunked_writers: list[
+            tuple[ParquetWriter, list[str], str] | None
+        ] = []
+        # Paths each writer may still write to; the writer is closed once
+        # empty. Files from one `write_table` call share a writer, so a
+        # partition that is not written again keeps it open until `close()`
+        self._live_paths: list[set[str]] = []
+        # Footer metadata of writers closed early, keyed by writer index
+        self._closed_metadata: dict[int, np.ndarray | None] = {}
         # Map of partition_col values to their ParquetWriter's index
         # in self._chunked_writers for reverse lookup
         self.path_cw_map: dict[str, int] = {}
@@ -2119,6 +2208,8 @@ class ParquetDatasetWriter:
             self.max_file_size = _parse_bytes(max_file_size)
 
         self._file_sizes: dict[str, int] = {}
+        # Files that hit `max_file_size` and must not be written again
+        self._rotated_paths: set[str] = set()
 
     @_performance_tracking
     def write_table(self, df):
@@ -2130,12 +2221,19 @@ class ParquetDatasetWriter:
             partition_cols=self.partition_cols,
             preserve_index=self.common_args["index"],
         )
-        fs = ioutils._ensure_filesystem(None, self.path, None)
+        if self.fs_meta.get("is_remote", False):
+            # `self.path` is the local staging dir (see `__init__`)
+            fs = ioutils._ensure_filesystem(None, self.path, None)
+        else:
+            fs = ioutils._ensure_filesystem(
+                self.filesystem, self.path, self.storage_options
+            )
         fs.mkdirs(self.path, exist_ok=True)
 
         full_paths = []
         metadata_file_paths = []
         full_offsets = [0]
+        rotated_paths = set()
 
         for idx, keys in enumerate(part_names.itertuples(index=False)):
             subdir = fs.sep.join(
@@ -2181,9 +2279,15 @@ class ParquetDatasetWriter:
                     # Check if the same `new_file_name` exists and
                     # generate a `new_file_name`
                     while new_full_path in self._file_sizes and (
-                        self._file_sizes[new_full_path]
-                        + (current_file_size / parts)
-                    ) > (self.max_file_size):
+                        new_full_path in self._rotated_paths
+                        or (
+                            self._file_sizes[new_full_path]
+                            + (current_file_size / parts)
+                        )
+                        > self.max_file_size
+                    ):
+                        # This file is full and will not be written again
+                        rotated_paths.add(new_full_path)
                         curr_file_num += 1
                         new_file_name = (
                             f"{self.filename}_{curr_file_num}.parquet"
@@ -2231,14 +2335,16 @@ class ParquetDatasetWriter:
 
         # Write out the parts of grouped_df currently handled by existing cw's
         for cw_idx, path_to_part_info_map in existing_cw_batch.items():
-            cw = self._chunked_writers[cw_idx][0]
+            cw, cw_paths, _ = self._chunked_writers[cw_idx]
             # match found paths with this cw's paths and nullify partition info
             # for partition_col values not in this batch
             this_cw_part_info = [
-                path_to_part_info_map.get(path, (0, 0))
-                for path in self._chunked_writers[cw_idx][1]
+                path_to_part_info_map.get(path, (0, 0)) for path in cw_paths
             ]
             cw.write_table(grouped_df, this_cw_part_info)
+
+        # Release retired writers before opening any replacement files
+        self._release_rotated_writers(rotated_paths)
 
         if new_cw_paths:
             # Create new cw for unhandled paths encountered in this write_table
@@ -2251,8 +2357,27 @@ class ParquetDatasetWriter:
                 )
             )
             new_cw_idx = len(self._chunked_writers) - 1
+            self._live_paths.append(set(new_paths))
             self.path_cw_map.update({k: new_cw_idx for k in new_paths})
             self._chunked_writers[-1][0].write_table(grouped_df, part_info)
+
+    def _release_rotated_writers(self, rotated_paths) -> None:
+        """Close writers whose files have all been rotated out."""
+        self._rotated_paths.update(rotated_paths)
+        for path in rotated_paths:
+            cw_idx = self.path_cw_map.pop(path, None)
+            if cw_idx is None:
+                continue
+            live = self._live_paths[cw_idx]
+            live.discard(path)
+            if not live:
+                entry = self._chunked_writers[cw_idx]
+                assert entry is not None
+                writer, _, meta_paths = entry
+                self._closed_metadata[cw_idx] = writer.close(
+                    metadata_file_path=meta_paths
+                )
+                self._chunked_writers[cw_idx] = None
 
     @_performance_tracking
     def close(self, return_metadata=False):
@@ -2261,18 +2386,31 @@ class ParquetDatasetWriter:
         blob
         """
 
-        metadata = [
-            cw.close(metadata_file_path=meta_path if return_metadata else None)
-            for cw, _, meta_path in self._chunked_writers
-        ]
+        metadata = []
+        for idx, entry in enumerate(self._chunked_writers):
+            if entry is None:
+                metadata.append(self._closed_metadata.pop(idx))
+            else:
+                cw, _, meta_path = entry
+                metadata.append(
+                    cw.close(
+                        metadata_file_path=meta_path
+                        if return_metadata
+                        else None
+                    )
+                )
+        self._chunked_writers = []
+        self._live_paths = []
+        self.path_cw_map = {}
 
-        if self.fs_meta.get("is_s3", False):
+        if self.fs_meta.get("is_remote", False):
             local_path = self.path
-            s3_path = self.fs_meta["actual_path"]
-            s3_file, _ = ioutils._get_filesystem_and_paths(
-                s3_path, storage_options=self.storage_options
+            remote_path = self.fs_meta["actual_path"]
+            fs = ioutils._ensure_filesystem(
+                self.filesystem, remote_path, self.storage_options
             )
-            s3_file.put(local_path, s3_path, recursive=True)
+            # Trailing slash: upload the dir's contents, not the dir itself
+            fs.put(local_path.rstrip("/") + "/", remote_path, recursive=True)
             shutil.rmtree(self.path)
 
         if self.dir_ is not None:
@@ -2421,6 +2559,26 @@ def _get_stat_freq(
     return result
 
 
+def _num_rows(
+    filepaths_or_buffers, row_groups, skip_rows: int, nrows: int
+) -> int:
+    metadata = plc.io.parquet_metadata.read_parquet_metadata(
+        plc.io.SourceInfo(filepaths_or_buffers)
+    )
+    if row_groups is not None:
+        row_group_rows = metadata.rowgroup_metadata()
+        file_offsets = itertools.accumulate(
+            metadata.num_rowgroups_per_file(), initial=0
+        )
+        return sum(
+            row_group_rows[offset + row_group]["num_rows"]
+            for offset, groups in zip(file_offsets, row_groups, strict=False)
+            for row_group in groups
+        )
+    num_rows = max(metadata.num_rows() - skip_rows, 0)
+    return num_rows if nrows < 0 else min(num_rows, nrows)
+
+
 def _process_metadata(
     df: DataFrame,
     names: Sequence[Hashable],
@@ -2472,6 +2630,13 @@ def _process_metadata(
                 df._data[col].dtype.precision = meta_data_per_column[col][  # type: ignore[union-attr]
                     "metadata"
                 ]["precision"]
+            elif (
+                isinstance(df._data[col].dtype, pd.StringDtype)
+                and col in meta_data_per_column
+                and meta_data_per_column[col]["pandas_type"] == "empty"
+                and meta_data_per_column[col]["numpy_type"] == "object"
+            ):
+                df._data[col] = df._data[col].astype(np.dtype("object"))
 
     # Set the index column
     if index_col is not None and len(index_col) > 0:
@@ -2480,11 +2645,13 @@ def _process_metadata(
                 return df
 
             if len(per_file_user_data) > 1:
+                # Rows before skip_rows were not read, so the range covers
+                # them too before it is sliced below
                 range_index_meta = {
                     "kind": "range",
                     "name": None,
                     "start": 0,
-                    "stop": len(df),
+                    "stop": skip_rows + len(df),
                     "step": 1,
                 }
             else:
@@ -2510,12 +2677,13 @@ def _process_metadata(
                         row_groups_i.append((start, stop))
                         start = stop
 
+                    # Index the selected row groups by their row
+                    # positions in the file
                     for rg in row_groups[i]:
                         filtered_idx.append(
                             RangeIndex(
                                 start=row_groups_i[rg][0],
                                 stop=row_groups_i[rg][1],
-                                step=range_index_meta["step"],
                             )
                         )
 
@@ -2524,16 +2692,16 @@ def _process_metadata(
                 else:
                     idx = Index._from_column(column_empty(0))
             else:
-                start = range_index_meta["start"] + skip_rows  # type: ignore[operator]
-                stop = int(range_index_meta["stop"])  # type: ignore[arg-type]
-                if nrows > -1:
-                    stop = start + nrows
                 idx = RangeIndex(
-                    start=start,
-                    stop=stop,
+                    start=range_index_meta["start"],
+                    stop=range_index_meta["stop"],
                     step=range_index_meta["step"],
                     name=range_index_meta["name"],
                 )
+                # skip_rows and nrows count rows, not index values
+                idx = idx[
+                    skip_rows : skip_rows + nrows if nrows > -1 else None
+                ]
 
             df.index = idx
         elif set(index_col).issubset(names):

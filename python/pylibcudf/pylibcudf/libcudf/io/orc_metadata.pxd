@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t, int64_t, uint32_t, uint64_t
 from libcpp cimport bool
@@ -8,7 +8,7 @@ from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.io cimport types as cudf_io_types
 from pylibcudf.variant cimport monostate, variant
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 
 cdef extern from "cudf/io/orc_metadata.hpp" \
@@ -71,5 +71,5 @@ cdef extern from "cudf/io/orc_metadata.hpp" \
 
     cdef parsed_orc_statistics read_parsed_orc_statistics(
         const cudf_io_types.source_info& src_info,
-        cuda_stream_view stream
+        cudaStream_t stream
     ) except +libcudf_exception_handler

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint64_t, int64_t
 
@@ -9,7 +9,6 @@ from libcpp.optional cimport optional
 from libcpp.string cimport string
 from libcpp.vector cimport vector
 
-from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from pylibcudf.io.types cimport (
@@ -65,7 +64,7 @@ cdef class OrcReaderOptionsBuilder:
     cpdef OrcReaderOptions build(self)
 
 cpdef TableWithMetadata read_orc(
-    OrcReaderOptions options, Stream stream = *, DeviceMemoryResource mr=*
+    OrcReaderOptions options, object stream = *, DeviceMemoryResource mr=*
 )
 
 cdef class OrcColumnStatistics:
@@ -89,7 +88,7 @@ cdef class ParsedOrcStatistics:
 
 cpdef ParsedOrcStatistics read_parsed_orc_statistics(
     SourceInfo source_info,
-    Stream stream=*
+    object stream = *
 )
 
 cdef class OrcWriterOptions:
@@ -110,7 +109,7 @@ cdef class OrcWriterOptionsBuilder:
     cpdef OrcWriterOptionsBuilder metadata(self, TableInputMetadata meta)
     cpdef OrcWriterOptions build(self)
 
-cpdef void write_orc(OrcWriterOptions options, Stream stream = *)
+cpdef void write_orc(OrcWriterOptions options, object stream = *)
 
 cdef class OrcChunkedWriter:
     cdef unique_ptr[orc_chunked_writer] c_obj

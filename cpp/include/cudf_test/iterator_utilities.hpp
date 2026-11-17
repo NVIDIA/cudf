@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,13 +10,16 @@
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/transform_iterator.h>
 
+#include <algorithm>
 #include <iterator>
+#include <memory>
+#include <vector>
 
 namespace CUDF_EXPORT cudf {
 namespace test {
 namespace iterators {
+
 /**
  * @brief Bool iterator for marking (possibly multiple) null elements in a column_wrapper.
  *
@@ -43,9 +46,10 @@ template <typename Iter>
 {
   using index_type = typename std::iterator_traits<Iter>::value_type;
 
-  return cudf::detail::make_counting_transform_iterator(
-    0, [indices = std::vector<index_type>{index_start, index_end}](auto i) {
-      return std::find(indices.cbegin(), indices.cend(), i) == indices.cend();
+  auto indices = std::make_shared<std::vector<index_type> const>(index_start, index_end);
+  return cuda::transform_iterator(
+    cuda::counting_iterator<cudf::size_type>{0}, [indices = std::move(indices)](auto i) {
+      return std::find(indices->cbegin(), indices->cend(), i) == indices->cend();
     });
 }
 
@@ -106,6 +110,50 @@ template <typename Iter>
 [[maybe_unused]] static auto no_nulls() { return cuda::make_constant_iterator(true); }
 
 /**
+ * @brief Bool iterator for marking null elements at every multiple of n.
+ *
+ * The returned iterator yields `false` (to mark `null`) at indices 0, n, 2n, ...,
+ * and yields `true` (to mark valid rows) for all other indices. E.g.
+ *
+ * @code
+ * auto iter = nulls_at_multiples_of(3);
+ * iter[0] == false; // i.e. Invalid (null) row at index 0.
+ * iter[1] == true;  // i.e. Valid row at index 1.
+ * iter[2] == true;  // i.e. Valid row at index 2.
+ * iter[3] == false; // i.e. Invalid (null) row at index 3.
+ * @endcode
+ *
+ * @param n The period at which nulls occur (nulls at indices 0, n, 2n, ...)
+ * @return auto Validity iterator
+ */
+[[maybe_unused]] static auto nulls_at_multiples_of(cudf::size_type n)
+{
+  return cudf::detail::make_counting_transform_iterator(0, [n](auto i) { return (i % n) != 0; });
+}
+
+/**
+ * @brief Bool iterator for marking valid elements only at multiples of n, null elsewhere.
+ *
+ * The returned iterator yields `true` (to mark valid rows) at indices 0, n, 2n, ...,
+ * and yields `false` (to mark `null`) for all other indices. E.g.
+ *
+ * @code
+ * auto iter = valids_at_multiples_of(3);
+ * iter[0] == true;  // i.e. Valid row at index 0.
+ * iter[1] == false; // i.e. Invalid (null) row at index 1.
+ * iter[2] == false; // i.e. Invalid (null) row at index 2.
+ * iter[3] == true;  // i.e. Valid row at index 3.
+ * @endcode
+ *
+ * @param n The period at which valid elements occur (valid at indices 0, n, 2n, ...)
+ * @return auto Validity iterator
+ */
+[[maybe_unused]] static auto valids_at_multiples_of(cudf::size_type n)
+{
+  return cudf::detail::make_counting_transform_iterator(0, [n](auto i) { return (i % n) == 0; });
+}
+
+/**
  * @brief Bool iterator for marking null elements from pointers of data
  *
  * The returned iterator yields `false` (to mark `null`) at the indices corresponding to the
@@ -121,7 +169,7 @@ template <typename Iter>
 template <class T>
 [[maybe_unused]] static auto nulls_from_nullptrs(std::vector<T const*> const& ptrs)
 {
-  return thrust::make_transform_iterator(ptrs.begin(), [](auto ptr) { return ptr != nullptr; });
+  return cuda::transform_iterator(ptrs.begin(), [](auto ptr) { return ptr != nullptr; });
 }
 
 }  // namespace iterators

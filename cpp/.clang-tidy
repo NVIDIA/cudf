@@ -9,13 +9,11 @@
 #     Purely stylistic, no benefit to rewriting everything
 # modernize-return-braced-init-list:
 #     Stylistically we prefer to see the return type at the return site.
-#     See https://github.com/rapidsai/cudf/pull/16956#pullrequestreview-2341891672
+#     See https://github.com/NVIDIA/cudf/pull/16956#pullrequestreview-2341891672
 #     for more information.
 # modernize-use-bool-literals:
 #     Our tests use int flags for validity masks extensively and we prefer that
 # modernize-use-constraints:
-#     New check that requires a C++20 feature
-# modernize-use-ranges:
 #     New check that requires a C++20 feature
 # modernize-use-designated-initializers:
 #     New check that requires a C++20 feature
@@ -41,7 +39,6 @@ Checks:
        -modernize-return-braced-init-list,
        -modernize-use-bool-literals,
        -modernize-use-constraints,
-       -modernize-use-ranges,
        -modernize-use-designated-initializers,
        clang-analyzer-*,
        -clang-analyzer-cplusplus.NewDeleteLeaks,

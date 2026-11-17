@@ -9,7 +9,6 @@ import pandas as pd
 import pyarrow as pa
 
 import cudf
-from cudf.utils.dtypes import CUDF_STRING_DTYPE
 
 if TYPE_CHECKING:
     from cudf._typing import DtypeObj
@@ -29,13 +28,14 @@ def is_dtype_obj_string(obj: DtypeObj) -> bool:
         Whether or not the dtype object is a cuDF string type.
     """
     return (
-        obj == CUDF_STRING_DTYPE
+        obj == np.dtype("object")
         or isinstance(obj, pd.StringDtype)
         or (
             isinstance(obj, pd.ArrowDtype)
             and (
                 pa.types.is_string(obj.pyarrow_dtype)
                 or pa.types.is_large_string(obj.pyarrow_dtype)
+                or pa.types.is_null(obj.pyarrow_dtype)
             )
         )
     )

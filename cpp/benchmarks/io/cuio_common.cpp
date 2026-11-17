@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/io/cuio_common.hpp>
 
-#include <cudf/detail/utilities/integer_utils.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/logger.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -13,6 +14,9 @@
 #include <kvikio/file_utils.hpp>
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
+
+#include <cuda/buffer>
+#include <cuda/cmath>
 
 #include <unistd.h>
 
@@ -48,7 +52,7 @@ std::string random_file_in_dir(std::string const& dir_path)
 cuio_source_sink_pair::cuio_source_sink_pair(io_type type_param)
   : type{type_param},
     pinned_buffer({pinned_memory_resource(), cudf::get_default_stream()}),
-    d_buffer{0, cudf::get_default_stream()},
+    d_buffer{cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init},
     file_name{random_file_in_dir(tmpdir.path())},
     void_sink{cudf::io::data_sink::create()},
     owns_file{true}
@@ -109,11 +113,16 @@ cudf::io::source_info cuio_source_sink_pair::make_source_info()
       // TODO: make cuio_source_sink_pair stream-friendly and avoid implicit use of the default
       // stream
       auto const stream = cudf::get_default_stream();
-      d_buffer.resize(h_buffer.size(), stream);
+      // TODO: Restore resizing when https://github.com/NVIDIA/cccl/issues/12051 is resolved.
+      // Retain the allocation when it can hold the current input; all bytes are overwritten below.
+      if (d_buffer.size() < h_buffer.size()) {
+        d_buffer = cuda::device_buffer<std::byte>(
+          stream, d_buffer.memory_resource(), h_buffer.size(), cuda::no_init);
+      }
       CUDF_CUDA_TRY(cudaMemcpyAsync(
-        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.value()));
+        d_buffer.data(), h_buffer.data(), h_buffer.size(), cudaMemcpyDefault, stream.get()));
 
-      return cudf::io::source_info(d_buffer);
+      return cudf::io::source_info(d_buffer.subspan(0, h_buffer.size()));
     }
     default: CUDF_FAIL("invalid input type");
   }
@@ -206,7 +215,7 @@ std::vector<cudf::size_type> segments_in_chunk(int num_segments, int num_chunks,
   CUDF_EXPECTS(chunk_idx < num_chunks,
                "Chunk index must be smaller than the number of chunks in the file");
 
-  auto const segments_in_chunk = cudf::util::div_rounding_up_unsafe(num_segments, num_chunks);
+  auto const segments_in_chunk = cuda::ceil_div(num_segments, num_chunks);
   auto const begin_segment     = std::min(chunk_idx * segments_in_chunk, num_segments);
   auto const end_segment       = std::min(begin_segment + segments_in_chunk, num_segments);
   std::vector<cudf::size_type> selected_segments(end_segment - begin_segment);
@@ -236,7 +245,7 @@ std::pair<bool, bool> parse_cache_dropping_env()
   if (env == nullptr) { return {is_drop_cache_enabled, is_file_scope}; }
 
   // Trim leading/trailing whitespace
-  std::regex const static pattern{R"(^\s+|\s+$)"};
+  std::regex static const pattern{R"(^\s+|\s+$)"};
   auto env_sanitized = std::regex_replace(env, pattern, "");
 
   // Convert to lowercase
@@ -274,9 +283,8 @@ void drop_page_cache_if_enabled(std::vector<std::string> const& file_paths)
   }
 
   if (not is_file_scope) {
-    if (not kvikio::drop_system_page_cache()) {
-      CUDF_FAIL("Failed to execute the drop cache command");
-    }
+    auto const is_cache_dropped = kvikio::drop_system_page_cache();
+    CUDF_EXPECTS(is_cache_dropped, "Failed to execute the drop cache command");
     return;
   }
 
@@ -285,7 +293,7 @@ void drop_page_cache_if_enabled(std::vector<std::string> const& file_paths)
     return;
   }
 
-  for (const auto& path : file_paths) {
+  for (auto const& path : file_paths) {
     if (path.empty()) { continue; }
     kvikio::drop_file_page_cache(path);
   }

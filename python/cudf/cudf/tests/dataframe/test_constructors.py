@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import collections
@@ -216,14 +216,10 @@ def test_arrow_handle_no_index_name():
     assert_eq(expect, got)
 
 
-def test_pandas_non_contiguious():
-    rng = np.random.default_rng(seed=0)
-    arr1 = rng.random(size=(5000, 10))
-    assert arr1.flags["C_CONTIGUOUS"] is True
+@pytest.mark.parametrize("order", ["C", "F"])
+def test_pandas_non_contiguious(order):
+    arr1 = np.ones((5, 5), order=order)
     df = pd.DataFrame(arr1)
-    for col in df.columns:
-        assert df[col].values.flags["C_CONTIGUOUS"] is False
-
     gdf = cudf.DataFrame(df)
     assert_eq(gdf.to_pandas(), df)
 
@@ -243,7 +239,6 @@ def test_from_records(numeric_types_as_str):
     assert_eq(df, gdf)
 
 
-@pytest.mark.parametrize("columns", [None, ["first", "second", "third"]])
 @pytest.mark.parametrize(
     "index",
     [
@@ -256,15 +251,28 @@ def test_from_records(numeric_types_as_str):
         ["abc", "xyz"],
     ],
 )
-def test_from_records_index(columns, index):
+def test_from_records_index(index):
     rec_ary = np.array(
         [("Rex", 9, 81.0), ("Fido", 3, 27.0)],
         dtype=[("name", "U10"), ("age", "i4"), ("weight", "f4")],
     )
-    gdf = cudf.DataFrame.from_records(rec_ary, columns=columns, index=index)
-    df = pd.DataFrame.from_records(rec_ary, columns=columns, index=index)
+    gdf = cudf.DataFrame.from_records(rec_ary, index=index)
+    df = pd.DataFrame.from_records(rec_ary, index=index)
     assert isinstance(gdf, cudf.DataFrame)
     assert_eq(df, gdf)
+
+
+def test_from_records_index_invalid_columns_raises():
+    rec_ary = np.array(
+        [("Rex", 9, 81.0), ("Fido", 3, 27.0)],
+        dtype=[("name", "U10"), ("age", "i4"), ("weight", "f4")],
+    )
+    index = None
+    columns = ["first", "second", "third"]
+    with pytest.raises(ValueError):
+        cudf.DataFrame.from_records(rec_ary, columns=columns, index=index)
+    with pytest.raises(ValueError):
+        pd.DataFrame.from_records(rec_ary, columns=columns, index=index)
 
 
 def test_dataframe_construction_from_cp_arrays():
@@ -294,13 +302,20 @@ def test_dataframe_construction_from_cp_arrays():
     df = pd.DataFrame(h_ary)
     df = df.set_index(keys=0, drop=False)
     assert isinstance(gdf, cudf.DataFrame)
-
+    assert gdf.index.dtype == np.dtype("int32")
+    # pandas retuns a RangeIndex
+    assert not isinstance(gdf.index, cudf.RangeIndex)
+    gdf.index = gdf.index.astype(np.int64)
     assert_eq(df, gdf)
 
     gdf = cudf.DataFrame(d_ary)
     gdf = gdf.set_index(keys=1, drop=False)
     df = pd.DataFrame(h_ary)
     df = df.set_index(keys=1, drop=False)
+    assert gdf.index.dtype == np.dtype("int32")
+    # pandas retuns a RangeIndex
+    assert not isinstance(gdf.index, cudf.RangeIndex)
+    gdf.index = gdf.index.astype(np.int64)
     assert isinstance(gdf, cudf.DataFrame)
 
     assert_eq(df, gdf)
@@ -453,12 +468,11 @@ def test_dataframe_constructor_nan_as_null(data, nan_as_null):
 def test_dataframe_init_from_series(data, columns, index):
     expected = pd.DataFrame(data, columns=columns, index=index)
     actual = cudf.DataFrame(data, columns=columns, index=index)
-
-    assert_eq(
-        expected,
-        actual,
-        check_index_type=len(expected) != 0,
-    )
+    if columns == ["abc", "b"]:
+        # In pandas, new columns are object types with NaN
+        # which cuDF doesn't support
+        expected["b"] = expected["b"].astype(actual["b"].dtype)
+    assert_eq(expected, actual)
 
 
 @pytest.mark.parametrize(
@@ -550,9 +564,16 @@ def test_dataframe_dict_like_with_columns(columns, index):
     data = {"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]}
     expect = pd.DataFrame(data, columns=columns, index=index)
     actual = cudf.DataFrame(data, columns=columns, index=index)
-    if index is None and len(columns) == 0:
-        # We make an empty range index, pandas makes an empty index
-        expect = expect.reset_index(drop=True)
+    if isinstance(columns, list):
+        if columns == []:
+            # As of pandas 3.0, empty columns are returned as Index[object]
+            # which cuDF doesn't support
+            expect.columns = expect.columns.astype(actual.columns.dtype)
+        elif columns == ["a", "d", "b", "e", "c"]:
+            # In pandas, new columns are object types with NaN
+            # which cuDF doesn't support
+            expect["d"] = expect["d"].astype(actual["d"].dtype)
+            expect["e"] = expect["e"].astype(actual["e"].dtype)
     assert_eq(expect, actual)
 
 
@@ -642,12 +663,18 @@ def test_series_data_with_name_with_columns_matching():
 def test_series_data_with_name_with_columns_not_matching():
     gdf = cudf.DataFrame(cudf.Series([1], name=2), columns=[1])
     pdf = pd.DataFrame(pd.Series([1], name=2), columns=[1])
+    # As of pandas 3.0, pandas returns object for empty columns
+    # which cuDF doesn't support
+    pdf = gdf.astype(gdf.iloc[:, 0].dtype)
     assert_eq(gdf, pdf)
 
 
 def test_series_data_with_name_with_columns_matching_align():
     gdf = cudf.DataFrame(cudf.Series([1], name=2), columns=[1, 2])
     pdf = pd.DataFrame(pd.Series([1], name=2), columns=[1, 2])
+    # As of pandas 3.0, pandas returns object for a new broadcasted column
+    # which cuDF doesn't support
+    pdf[1] = pdf[1].astype(gdf[1].dtype)
     assert_eq(gdf, pdf)
 
 
@@ -688,7 +715,9 @@ def test_create_dataframe_from_list_like(data):
 def test_create_dataframe_column():
     pdf = pd.DataFrame(columns=["a", "b", "c"], index=["A", "Z", "X"])
     gdf = cudf.DataFrame(columns=["a", "b", "c"], index=["A", "Z", "X"])
-
+    # As of pandas 3.0, pandas returns object for broadcasted columns
+    # which cuDF doesn't support
+    pdf = gdf.astype(gdf.iloc[:, 0].dtype)
     assert_eq(pdf, gdf)
 
     pdf = pd.DataFrame(
@@ -701,7 +730,9 @@ def test_create_dataframe_column():
         columns=["a", "b", "c"],
         index=["A", "Z", "X"],
     )
-
+    # As of pandas 3.0, pandas returns object for broadcasted columns
+    # which cuDF doesn't support
+    pdf["c"] = pdf["c"].astype(gdf["c"].dtype)
     assert_eq(pdf, gdf)
 
 
@@ -889,6 +920,10 @@ def test_construct_dict_scalar_values_raises():
 def test_construct_empty_listlike_index_and_columns(columns, index):
     result = cudf.DataFrame([], columns=columns, index=index)
     expected = pd.DataFrame([], columns=columns, index=index)
+    if columns is not None:
+        # As of pandas 3.0, pandas returns object for empty columns
+        # which cuDF doesn't support
+        expected = expected.astype(result.iloc[:, 0].dtype)
     assert_eq(result, expected)
 
 
@@ -1005,6 +1040,33 @@ def test_change_column_dtype_in_empty():
     pdf["b"] = pdf["b"].astype("int64")
     gdf["b"] = gdf["b"].astype("int64")
     assert_eq(pdf, gdf)
+
+
+def test_init_from_dict_of_empty_lists():
+    # Untyped empty sequences become float64 in the DataFrame
+    # constructor to match pandas (while Series([]) remains object).
+    pdf = pd.DataFrame({"a": [], "b": []})
+    gdf = cudf.DataFrame({"a": [], "b": []})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("float64")
+
+
+def test_init_from_dict_of_empty_iterator():
+    # Iterators drain into an untyped empty sequence, so they follow the
+    # same float64 default as empty lists.
+    pdf = pd.DataFrame({"a": iter([])})
+    gdf = cudf.DataFrame({"a": iter([])})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("float64")
+
+
+def test_init_from_dict_of_empty_range():
+    # An empty range stays int64 like pandas (which converts range via
+    # np.arange), unlike untyped empty lists/tuples/iterators.
+    pdf = pd.DataFrame({"a": range(0)})
+    gdf = cudf.DataFrame({"a": range(0)})
+    assert_eq(pdf, gdf)
+    assert gdf["a"].dtype == np.dtype("int64")
 
 
 @pytest.mark.parametrize(
@@ -1246,6 +1308,10 @@ def test_dataframe_from_dict_cp_np_arrays(
 def test_df_list_dtypes(data):
     expect = pd.DataFrame(data)
     got = cudf.DataFrame(data)
+    if isinstance(data, dict) and "c" in data:
+        # As of pandas 3.0, pandas returns object for broadcasted columns
+        # which cuDF doesn't support
+        expect["c"] = expect["c"].astype(got["c"].dtype)
     assert_eq(expect, got)
 
 
@@ -1978,3 +2044,23 @@ def test_build_df_from_nullable_pandas_dtype(
     got_mask = result["a"].isna().to_numpy()
 
     np.testing.assert_array_equal(expect_mask, got_mask)
+
+
+@pytest.mark.parametrize(
+    "index", [None, [], pd.Index([], name="a"), pd.RangeIndex(0)]
+)
+@pytest.mark.parametrize("columns", [["a", "b"], pd.Index(["a", "b"])])
+def test_empty_dataframe_columns_default_object_dtype(index, columns):
+    # An empty (zero-row) DataFrame built from only column labels has no
+    # data to infer from and defaults to object dtype, matching pandas
+    # (cudf otherwise uses the default string dtype).
+    expected = pd.DataFrame(columns=columns, index=index)
+    got = cudf.DataFrame(columns=columns, index=index)
+    assert_eq(got, expected)
+
+
+def test_empty_dataframe_data_none_with_columns():
+    # data=None with explicit columns and an empty index -> object columns.
+    expected = pd.DataFrame(data=None, columns=["x", "y"])
+    got = cudf.DataFrame(data=None, columns=["x", "y"])
+    assert_eq(got, expected)

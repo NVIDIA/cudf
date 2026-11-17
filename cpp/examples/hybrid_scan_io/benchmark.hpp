@@ -5,7 +5,7 @@
 
 #include "timer.hpp"
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <chrono>
 #include <iostream>
@@ -18,7 +18,7 @@ void benchmark(F&& f, std::size_t iterations)
   auto total_time = double{0.0};
 
   std::for_each(
-    thrust::counting_iterator<size_t>(0), thrust::counting_iterator(iterations), [&](auto iter) {
+    cuda::counting_iterator<std::size_t>{0}, cuda::counting_iterator{iterations}, [&](auto iter) {
       timer timer;
 
       f();

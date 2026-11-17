@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,9 +15,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/iterator>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -65,7 +64,7 @@ CUDF_KERNEL void valid_if_kernel(
  *
  * Bit `i` in the output mask will be set if `p(*(begin+i)) == true`.
  *
- * If `distance(begin,end) == 0`, returns an empty `rmm::device_buffer`.
+ * If `distance(begin,end) == 0`, returns an empty `cuda::device_buffer<cudf::bitmask_type>`.
  *
  * @throws cudf::logic_error if `(begin > end)`
  *
@@ -73,30 +72,33 @@ CUDF_KERNEL void valid_if_kernel(
  * @param end The end of the sequence
  * @param p The predicate
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param resources Memory resources used for the returned bitmask and temporary count scalar
  * @return A pair containing a `device_buffer` with the new bitmask and its null count
  */
 template <typename InputIterator, typename Predicate>
-std::pair<rmm::device_buffer, size_type> valid_if(InputIterator begin,
-                                                  InputIterator end,
-                                                  Predicate p,
-                                                  rmm::cuda_stream_view stream,
-                                                  rmm::device_async_resource_ref mr)
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> valid_if(
+  InputIterator begin,
+  InputIterator end,
+  Predicate p,
+  cuda::stream_ref stream,
+  cudf::memory_resources resources)
 {
   CUDF_EXPECTS(begin <= end, "Invalid range.");
 
   size_type size = cuda::std::distance(begin, end);
 
-  auto null_mask = cudf::create_null_mask(size, mask_state::UNINITIALIZED, stream, mr);
+  auto null_mask =
+    cudf::create_null_mask(size, mask_state::UNINITIALIZED, stream, resources.get_output_mr());
 
   size_type null_count{0};
   if (size > 0) {
-    cudf::detail::device_scalar<size_type> valid_count{0, stream};
+    cudf::detail::device_scalar<size_type> valid_count{0, stream, resources.get_temporary_mr()};
 
     constexpr size_type block_size{256};
     grid_1d grid{size, block_size};
 
-    valid_if_kernel<block_size><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
-      static_cast<bitmask_type*>(null_mask.data()), begin, size, p, valid_count.data());
+    valid_if_kernel<block_size><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+      null_mask.data(), begin, size, p, valid_count.data());
 
     null_count = size - valid_count.value(stream);
   }

@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -55,10 +55,26 @@ public final class HostColumnVector extends HostColumnVectorCore {
   private EventHandler eventHandler;
 
   /**
-   * Create a new column vector with data populated on the host.
+   * Create a new non-nested, fixed-width column vector with data populated on the host.
+   * Convenience form of
+   * {@link #HostColumnVector(DType, long, Optional, HostMemoryBuffer, HostMemoryBuffer, HostMemoryBuffer)}
+   * for types that do not use an offsets buffer (i.e. all types except STRING).
+   * <p>
+   * NOTE: Buffers may still be receiving asynchronous device writes. This constructor
+   * only stores references; callers must sync the relevant CUDA stream before reading.
+   *
+   * @param type               the type of the vector; must not be LIST, and must not be
+   *                           STRING unless rows count is 0
+   * @param rows               the number of rows in the vector
+   * @param nullCount          the number of nulls in the vector
+   * @param hostDataBuffer     the host side data for the vector
+   * @param hostValidityBuffer Arrow-like validity buffer, 1 bit per row with padding for
+   *                           64-bit alignment; may be null if nullCount is 0
+   * @throws IllegalArgumentException if type is LIST, or if type is STRING with rows > 0
+   * @throws IllegalStateException    if nullCount is greater than 0 but hostValidityBuffer is null
    */
-  HostColumnVector(DType type, long rows, Optional<Long> nullCount,
-                   HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer) {
+  public HostColumnVector(DType type, long rows, Optional<Long> nullCount,
+                          HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer) {
     this(type, rows, nullCount, hostDataBuffer, hostValidityBuffer, null);
   }
 
@@ -79,8 +95,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
 
   //Constructor for lists and struct
   public HostColumnVector(DType type, long rows, Optional<Long> nullCount,
-                   HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer,
-                   HostMemoryBuffer offsetBuffer, List<HostColumnVectorCore> nestedHcv) {
+                          HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer,
+                          HostMemoryBuffer offsetBuffer, List<HostColumnVectorCore> nestedHcv) {
     // NOTE: This constructor MUST NOT examine the contents of any host buffers, as they may be
     //       asynchronously written by the device.
     super(type, rows, nullCount, hostDataBuffer, hostValidityBuffer, offsetBuffer, nestedHcv);
@@ -88,18 +104,48 @@ public final class HostColumnVector extends HostColumnVectorCore {
     incRefCountInternal(true);
   }
 
-  HostColumnVector(DType type, long rows, Optional<Long> nullCount,
-                   HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer,
-                   HostMemoryBuffer offsetBuffer) {
+  /**
+   * Create a new non-nested column vector with data populated on the host.
+   * Supports fixed-width types and STRING. For LIST or STRUCT types use
+   * {@link #HostColumnVector(DType, long, Optional, HostMemoryBuffer, HostMemoryBuffer, HostMemoryBuffer, List)}.
+   * <p>
+   * NOTE: Buffers may still be receiving asynchronous device writes. This constructor
+   * only stores references; callers must sync the relevant CUDA stream before reading.
+   *
+   * @param type               the type of the vector; must not be LIST
+   * @param rows               the number of rows in the vector
+   * @param nullCount          the number of nulls in the vector
+   * @param hostDataBuffer     the host side data for the vector; for STRING this is the
+   *                           string data stored as bytes
+   * @param hostValidityBuffer Arrow-like validity buffer, 1 bit per row with padding for
+   *                           64-bit alignment; may be null if nullCount is 0
+   * @param offsetBuffer       for STRING, the offsets into hostDataBuffer indicating the
+   *                           start and end of each entry, must be (rows + 1) ints; may
+   *                           be null when rows count is 0; must be null for all other non-LIST
+   *                           types
+   * @throws IllegalArgumentException if type is LIST; if offsetBuffer is null for a STRING
+   *                                  column with rows &gt; 0; or if offsetBuffer is non-null
+   *                                  for a non-STRING type
+   * @throws IllegalStateException    if nullCount is greater than 0 but hostValidityBuffer is null
+   */
+  public HostColumnVector(DType type, long rows, Optional<Long> nullCount,
+                          HostMemoryBuffer hostDataBuffer, HostMemoryBuffer hostValidityBuffer,
+                          HostMemoryBuffer offsetBuffer) {
     // NOTE: This constructor MUST NOT examine the contents of any host buffers, as they may be
     //       asynchronously written by the device.
     super(type, rows, nullCount, hostDataBuffer, hostValidityBuffer, offsetBuffer, new ArrayList<>());
-    assert !type.equals(DType.LIST) : "This constructor should not be used for list type";
+    if (type.equals(DType.LIST)) {
+      throw new IllegalArgumentException(
+          "This constructor should not be used for LIST type. Use the nested constructor instead");
+    }
+    if (type.equals(DType.STRING) && offsetBuffer == null && rows > 0) {
+      throw new IllegalArgumentException("offsetBuffer is required for non-empty STRING columns");
+    }
     if (nullCount.isPresent() && nullCount.get() > 0 && hostValidityBuffer == null) {
       throw new IllegalStateException("Buffer cannot have a nullCount without a validity buffer");
     }
-    if (!type.equals(DType.STRING) && !type.equals(DType.LIST)) {
-      assert offsetBuffer == null : "offsets are only supported for STRING and LIST";
+    if (!type.equals(DType.STRING) && offsetBuffer != null) {
+      throw new IllegalArgumentException("offsetBuffer is only supported for STRING");
     }
     refCount = 0;
     incRefCountInternal(true);
@@ -515,7 +561,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
   /**
    * Create a new decimal vector from unscaled values (int array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromInts(int scale, int... values) {
     return build(DType.create(DType.DTypeEnum.DECIMAL32, scale), values.length, (b) -> b.appendUnscaledDecimalArray(values));
@@ -524,7 +571,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
   /**
    * Create a new decimal vector from boxed unscaled values (Integer array) and scale.
    * The created vector is of type DType.DECIMAL32, whose max precision is 9.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromBoxedInts(int scale, Integer... values) {
     return build(DType.create(DType.DTypeEnum.DECIMAL32, scale), values.length, (b) -> {
@@ -541,7 +589,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
   /**
    * Create a new decimal vector from unscaled values (long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromLongs(int scale, long... values) {
     return build(DType.create(DType.DTypeEnum.DECIMAL64, scale), values.length, (b) -> b.appendUnscaledDecimalArray(values));
@@ -550,7 +599,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
   /**
    * Create a new decimal vector from boxed unscaled values (Long array) and scale.
    * The created vector is of type DType.DECIMAL64, whose max precision is 18.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromBoxedLongs(int scale, Long... values) {
     return build(DType.create(DType.DTypeEnum.DECIMAL64, scale), values.length, (b) -> {
@@ -567,7 +617,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
   /**
    * Create a new decimal vector from unscaled values (BigInteger array) and scale.
    * The created vector is of type DType.DECIMAL128.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromBigIntegers(int scale, BigInteger... values) {
     return build(DType.create(DType.DTypeEnum.DECIMAL128, scale), values.length, (b) -> {
@@ -586,7 +637,8 @@ public final class HostColumnVector extends HostColumnVectorCore {
    * All doubles will be rescaled if necessary, according to scale of input DecimalType and RoundingMode.
    * If any overflow occurs in extracting integral part, an IllegalArgumentException will be thrown.
    * This API is inefficient because of slow double -> decimal conversion, so it is mainly for testing.
-   * Compared with scale of [[java.math.BigDecimal]], the scale here represents the opposite meaning.
+   * Compared with scale of {@link java.math.BigDecimal}, the scale here represents the opposite
+   * meaning.
    */
   public static HostColumnVector decimalFromDoubles(DType type, RoundingMode mode, double... values) {
     assert type.isDecimalType();
@@ -1801,7 +1853,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public Builder appendBoxed(BigDecimal... values) throws IndexOutOfBoundsException {
       assert type.isDecimalType();
@@ -1819,7 +1871,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Byte... values) throws IndexOutOfBoundsException {
       for (Byte b : values) {
@@ -1836,7 +1888,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Boolean... values) throws IndexOutOfBoundsException {
       for (Boolean b : values) {
@@ -1853,7 +1905,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Short... values) throws IndexOutOfBoundsException {
       for (Short b : values) {
@@ -1870,7 +1922,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Integer... values) throws IndexOutOfBoundsException {
       for (Integer b : values) {
@@ -1887,7 +1939,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Long... values) throws IndexOutOfBoundsException {
       for (Long b : values) {
@@ -1904,7 +1956,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Float... values) throws IndexOutOfBoundsException {
       for (Float b : values) {
@@ -1921,7 +1973,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(Double... values) throws IndexOutOfBoundsException {
       for (Double b : values) {
@@ -1938,7 +1990,7 @@ public final class HostColumnVector extends HostColumnVectorCore {
      * Append multiple values.  This is very slow and should really only be used for tests.
      * @param values the values to append, including nulls.
      * @return this for chaining.
-     * @throws {@link IndexOutOfBoundsException}
+     * @throws IndexOutOfBoundsException
      */
     public final Builder appendBoxed(String... values) throws IndexOutOfBoundsException {
       for (String b : values) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "join_common_utils.hpp"
@@ -15,9 +15,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
+
+#include <cuda/stream>
 
 #include <memory>
 
@@ -29,15 +30,12 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 inner_join(table_view const& left_input,
            table_view const& right_input,
            null_equality compare_nulls,
-           rmm::cuda_stream_view stream,
-           rmm::device_async_resource_ref mr)
+           cuda::stream_ref stream,
+           cudf::memory_resources mr)
 {
-  // Make sure any dictionary columns have matched key sets.
-  // This will return any new dictionary columns created as well as updated table_views.
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input},
-    stream,
-    cudf::get_current_device_resource_ref());  // temporary objects returned
+  // match dictionary key sets so indices are comparable across tables
+  auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
+    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
 
   // now rebuild the table views with the updated ones
   auto const left      = matched.second.front();
@@ -64,15 +62,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 left_join(table_view const& left_input,
           table_view const& right_input,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
-          rmm::device_async_resource_ref mr)
+          cuda::stream_ref stream,
+          cudf::memory_resources mr)
 {
-  // Make sure any dictionary columns have matched key sets.
-  // This will return any new dictionary columns created as well as updated table_views.
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input},  // these should match
-    stream,
-    cudf::get_current_device_resource_ref());  // temporary objects returned
+  // match dictionary keys so indices are comparable across tables
+  auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
+    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
+
   // now rebuild the table views with the updated ones
   table_view const left  = matched.second.front();
   table_view const right = matched.second.back();
@@ -89,15 +85,13 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 full_join(table_view const& left_input,
           table_view const& right_input,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
-          rmm::device_async_resource_ref mr)
+          cuda::stream_ref stream,
+          cudf::memory_resources mr)
 {
-  // Make sure any dictionary columns have matched key sets.
-  // This will return any new dictionary columns created as well as updated table_views.
-  auto matched = cudf::dictionary::detail::match_dictionaries(
-    {left_input, right_input},  // these should match
-    stream,
-    cudf::get_current_device_resource_ref());  // temporary objects returned
+  // match dictionary key sets so indices are comparable across tables
+  auto matched = cudf::dictionary::detail::match_dictionaries_to_indices(
+    {left_input, right_input}, stream, cudf::get_current_device_resource_ref());
+
   // now rebuild the table views with the updated ones
   table_view const left  = matched.second.front();
   table_view const right = matched.second.back();
@@ -116,8 +110,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 inner_join(table_view const& left,
            table_view const& right,
            null_equality compare_nulls,
-           rmm::cuda_stream_view stream,
-           rmm::device_async_resource_ref mr)
+           cuda::stream_ref stream,
+           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::inner_join(left, right, compare_nulls, stream, mr);
@@ -128,8 +122,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 left_join(table_view const& left,
           table_view const& right,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
-          rmm::device_async_resource_ref mr)
+          cuda::stream_ref stream,
+          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::left_join(left, right, compare_nulls, stream, mr);
@@ -140,8 +134,8 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 full_join(table_view const& left,
           table_view const& right,
           null_equality compare_nulls,
-          rmm::cuda_stream_view stream,
-          rmm::device_async_resource_ref mr)
+          cuda::stream_ref stream,
+          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::full_join(left, right, compare_nulls, stream, mr);

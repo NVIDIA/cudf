@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Base class for IR nodes, and utilities."""
@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+import uuid
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+
+from cudf_polars.dsl.traversal import traversal
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Hashable, Sequence
@@ -18,7 +21,29 @@ __all__: list[str] = ["Node"]
 T = TypeVar("T", bound="Node[Any]")
 
 
-class Node(Generic[T]):
+def _update_stable_hasher(hasher: Any, obj: Hashable) -> None:
+    """
+    Feed ``hasher`` a bottom-up structural digest of ``obj``.
+
+    Nested :class:`Node` instances contribute their full cached digest
+    rather than a truncated id or a full subtree expansion, so hashing an
+    entire DAG is linear in total local payload size while distinct child
+    subtrees remain distinguishable when composing parent digests.
+    """
+    if isinstance(obj, Node):
+        hasher.update(b"N")
+        hasher.update(obj._get_stable_digest())
+    elif isinstance(obj, tuple):
+        hasher.update(b"T")
+        hasher.update(len(obj).to_bytes(4, "big"))
+        for x in obj:
+            _update_stable_hasher(hasher, x)
+    else:
+        hasher.update(b"L")
+        hasher.update(repr(obj).encode("utf-8"))
+
+
+class Node[T: "Node[Any]"]:
     """
     An abstract node type.
 
@@ -34,9 +59,18 @@ class Node(Generic[T]):
     *children).``
     """
 
-    __slots__ = ("_hash_value", "_repr_value", "_stable_hash_value", "children")
+    __slots__ = (
+        "_hash_value",
+        "_repr_value",
+        "_stable_digest",
+        "_stable_hash_value",
+        "_stable_plan_id",
+        "children",
+    )
     _hash_value: int
+    _stable_digest: bytes
     _stable_hash_value: int
+    _stable_plan_id: uuid.UUID
     _repr_value: str
     children: tuple[T, ...]
     _non_child: ClassVar[tuple[str, ...]] = ()
@@ -83,17 +117,23 @@ class Node(Generic[T]):
         """
         return (type(self), self._ctor_arguments(self.children))
 
+    def _get_stable_digest(self) -> bytes:
+        """Return the full MD5 digest for this node, computing it if needed."""
+        try:
+            return self._stable_digest
+        except AttributeError:
+            h = hashlib.md5(usedforsecurity=False)
+            _update_stable_hasher(h, self.get_hashable())
+            self._stable_digest = h.digest()
+            return self._stable_digest
+
     def get_stable_id(self) -> int:
         """
         Compute a stable identifier for Node.
 
-        Uses MD5 hash of the node's hashable representation for determinism
-        across process boundaries (Python's hash() uses PYTHONHASHSEED).
-
-        Parameters
-        ----------
-        ir_node
-            The IR node.
+        Digests :meth:`get_hashable` bottom-up with MD5 so the result is
+        deterministic across process boundaries (Python's ``hash()`` uses
+        ``PYTHONHASHSEED``).
 
         Returns
         -------
@@ -103,9 +143,20 @@ class Node(Generic[T]):
         try:
             return self._stable_hash_value
         except AttributeError:
-            content = repr(self.get_hashable()).encode("utf-8")
-            self._stable_hash_value = int(hashlib.md5(content).hexdigest()[:8], 16)
+            # First 4 digest bytes == int(hexdigest()[:8], 16).
+            self._stable_hash_value = int.from_bytes(
+                self._get_stable_digest()[:4], "big"
+            )
             return self._stable_hash_value
+
+    def get_stable_plan_id(self) -> uuid.UUID:
+        """Return a stable ID for the full IR plan rooted at this node."""
+        try:
+            return self._stable_plan_id
+        except AttributeError:
+            ids = tuple(node.get_stable_id() for node in traversal([self]))
+            self._stable_plan_id = uuid.uuid5(uuid.NAMESPACE_URL, str(ids))
+            return self._stable_plan_id
 
     def __hash__(self) -> int:
         """

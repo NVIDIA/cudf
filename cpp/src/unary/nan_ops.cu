@@ -1,7 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include "true_if.cuh"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -13,17 +15,17 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/std/concepts>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
 struct nan_dispatcher {
-  template <typename T, typename Predicate>
+  template <cuda::std::floating_point T, typename Predicate>
   std::unique_ptr<column> operator()(cudf::column_view const& input,
                                      Predicate predicate,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(std::is_floating_point_v<T>)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
   {
     auto input_device_view = column_device_view::create(input, stream);
 
@@ -49,17 +51,16 @@ struct nan_dispatcher {
   template <typename T, typename Predicate>
   std::unique_ptr<column> operator()(cudf::column_view const& input,
                                      Predicate predicate,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(!std::is_floating_point_v<T>)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
   {
     CUDF_FAIL("NAN is not supported in a Non-floating point type column");
   }
 };
 
 std::unique_ptr<column> is_nan(cudf::column_view const& input,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   auto predicate = [] __device__(auto element_validity_pair) {
     return element_validity_pair.second and std::isnan(element_validity_pair.first);
@@ -69,8 +70,8 @@ std::unique_ptr<column> is_nan(cudf::column_view const& input,
 }
 
 std::unique_ptr<column> is_not_nan(cudf::column_view const& input,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   auto predicate = [] __device__(auto element_validity_pair) {
     return !element_validity_pair.second or !std::isnan(element_validity_pair.first);
@@ -82,16 +83,16 @@ std::unique_ptr<column> is_not_nan(cudf::column_view const& input,
 }  // namespace detail
 
 std::unique_ptr<column> is_nan(cudf::column_view const& input,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_nan(input, stream, mr);
 }
 
 std::unique_ptr<column> is_not_nan(cudf::column_view const& input,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::is_not_nan(input, stream, mr);

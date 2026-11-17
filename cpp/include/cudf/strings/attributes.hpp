@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,6 +8,11 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/attributes.hpp
+ * @brief Read attributes of strings column
+ */
+
 namespace CUDF_EXPORT cudf {
 
 //! Strings column APIs
@@ -15,8 +20,6 @@ namespace strings {
 /**
  * @addtogroup strings_apis
  * @{
- * @file strings/attributes.hpp
- * @brief Read attributes of strings column
  */
 
 /**
@@ -36,8 +39,8 @@ namespace strings {
  */
 std::unique_ptr<column> count_characters(
   strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a column containing byte lengths
@@ -56,8 +59,8 @@ std::unique_ptr<column> count_characters(
  */
 std::unique_ptr<column> count_bytes(
   strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Creates a numeric column with code point values (integers) for each
@@ -78,8 +81,8 @@ std::unique_ptr<column> count_bytes(
  */
 std::unique_ptr<column> code_points(
   strings_column_view const& input,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of strings_apis group
 

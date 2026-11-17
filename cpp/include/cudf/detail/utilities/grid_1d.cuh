@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -81,10 +81,9 @@ class grid_1d {
    *
    * The returned stride is the total number of threads in the grid.
    *
-   * @param thread_id The thread index within the block
-   * @param block_id The block index within the grid
    * @param num_threads_per_block The number of threads per block
-   * @return thread_index_type The global thread index
+   * @param num_blocks_per_grid Number of blocks in the grid
+   * @return thread_index_type The grid stride
    */
   __device__ static constexpr thread_index_type grid_stride(thread_index_type num_threads_per_block,
                                                             thread_index_type num_blocks_per_grid)

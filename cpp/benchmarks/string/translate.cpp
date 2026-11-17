@@ -1,15 +1,16 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/translate.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
 
@@ -31,19 +32,22 @@ static void bench_translate(nvbench::state& state)
   auto const input  = cudf::strings_column_view(column->view());
 
   std::vector<entry_type> entries(entry_count);
-  std::transform(thrust::counting_iterator<int>(0),
-                 thrust::counting_iterator<int>(entry_count),
+  std::transform(cuda::counting_iterator<int>{0},
+                 cuda::counting_iterator<int>{entry_count},
                  entries.begin(),
                  [](auto idx) -> entry_type { return entry_type{'!' + idx, '~' - idx}; });
 
   auto stream = cudf::get_default_stream();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = column->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
   state.add_global_memory_writes<nvbench::int8_t>(data_size);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { cudf::strings::translate(input, entries); });
+             [&](nvbench::launch& launch) { cudf::strings::translate(input, std::span{entries}); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_translate)

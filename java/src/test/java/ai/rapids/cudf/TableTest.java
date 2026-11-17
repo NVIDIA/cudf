@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -29,6 +29,7 @@ import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.OriginalType;
+import org.apache.parquet.schema.Type;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -47,6 +48,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapEquals;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapEqualsUnordered;
+import static ai.rapids.cudf.AssertUtils.assertGatherMapsEqualUnordered;
 import static ai.rapids.cudf.AssertUtils.assertPartialColumnsAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertPartialTablesAreEqual;
 import static ai.rapids.cudf.AssertUtils.assertTableTypes;
@@ -62,6 +66,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -84,6 +89,29 @@ public class TableTest extends CudfTestBase {
   private static final File TEST_JSON_WHITESPACES_FILE = TestUtils.getResourceAsFile("whitespaces.json");
   private static final File TEST_MIXED_TYPE_1_JSON = TestUtils.getResourceAsFile("mixed_types_1.json");
   private static final File TEST_MIXED_TYPE_2_JSON = TestUtils.getResourceAsFile("mixed_types_2.json");
+
+  private static class TempFile implements AutoCloseable {
+    private final File file;
+
+    private TempFile(File file) {
+      this.file = file;
+    }
+
+    static TempFile create(String prefix, String suffix) throws IOException {
+      File file = File.createTempFile(prefix, suffix);
+      file.deleteOnExit();
+      return new TempFile(file);
+    }
+
+    File getFile() {
+      return file;
+    }
+
+    @Override
+    public void close() {
+      file.delete();
+    }
+  }
 
   private static final Schema CSV_DATA_BUFFER_SCHEMA = Schema.builder()
       .column(DType.INT32, "A")
@@ -1261,7 +1289,6 @@ public class TableTest extends CudfTestBase {
 
   private void testWriteCSVToFileImpl(char fieldDelim, boolean includeHeader,
                                       String trueValue, String falseValue) throws IOException {
-    File outputFile = File.createTempFile("testWriteCSVToFile", ".csv");
     Schema schema = Schema.builder()
                           .column(DType.INT32, "i")
                           .column(DType.FLOAT64, "f")
@@ -1277,31 +1304,31 @@ public class TableTest extends CudfTestBase {
                                                .withTrueValue(trueValue)
                                                .withFalseValue(falseValue)
                                                .build();
-    try (Table inputTable
-          = new Table.TestBuilder()
-              .column(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
-              .column(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)
-              .column(false, true, false, true, false, true, false, true, false, true)
-              .column("All", "the", "leaves", "are", "brown", "and", "the", "sky", "is", "grey")
-              .build()) {
-      inputTable.writeCSVToFile(writeOptions, outputFile.getAbsolutePath());
+    CSVOptions readOptions = CSVOptions.builder()
+                                       .includeColumn("i")
+                                       .includeColumn("f")
+                                       .includeColumn("b")
+                                       .includeColumn("str")
+                                       .hasHeader(includeHeader)
+                                       .withDelim(fieldDelim)
+                                       .withTrueValue(trueValue)
+                                       .withFalseValue(falseValue)
+                                       .build();
+    try (TempFile outputTempFile = TempFile.create("testWriteCSVToFile", ".csv")) {
+      File outputFile = outputTempFile.getFile();
+      try (Table inputTable = new Table.TestBuilder()
+          .column(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+          .column(0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)
+          .column(false, true, false, true, false, true, false, true, false, true)
+          .column("All", "the", "leaves", "are", "brown", "and", "the", "sky", "is", "grey")
+          .build()) {
+        inputTable.writeCSVToFile(writeOptions, outputFile.getAbsolutePath());
 
-      // Read back.
-      CSVOptions readOptions = CSVOptions.builder()
-                                         .includeColumn("i")
-                                         .includeColumn("f")
-                                         .includeColumn("b")
-                                         .includeColumn("str")
-                                         .hasHeader(includeHeader)
-                                         .withDelim(fieldDelim)
-                                         .withTrueValue(trueValue)
-                                         .withFalseValue(falseValue)
-                                         .build();
-      try (Table readTable = Table.readCSV(schema, readOptions, outputFile)) {
-        assertTablesAreEqual(inputTable, readTable);
+        // Read back.
+        try (Table readTable = Table.readCSV(schema, readOptions, outputFile)) {
+          assertTablesAreEqual(inputTable, readTable);
+        }
       }
-    } finally {
-      outputFile.delete();
     }
   }
 
@@ -1316,7 +1343,6 @@ public class TableTest extends CudfTestBase {
   }
 
   private void testWriteUnquotedCSVToFileImpl(char fieldDelim) throws IOException {
-    File outputFile = File.createTempFile("testWriteUnquotedCSVToFile", ".csv");
     Schema schema = Schema.builder()
                           .column(DType.STRING, "str")
                           .build();
@@ -1328,29 +1354,29 @@ public class TableTest extends CudfTestBase {
                                                .withNullValue("\\N")
                                                .withQuoteStyle(QuoteStyle.NONE)
                                                .build();
-    try (Table inputTable
-          = new Table.TestBuilder()
-              .column("All" + fieldDelim + "the" + fieldDelim + "leaves",
-                      "are\"brown",
-                      "and\nthe\nsky\nis\ngrey")
-              .build()) {
-      inputTable.writeCSVToFile(writeOptions, outputFile.getAbsolutePath());
+    CSVOptions readOptions = CSVOptions.builder()
+                                       .includeColumn("str")
+                                       .hasHeader(false)
+                                       .withDelim(fieldDelim)
+                                       .withQuoteStyle(QuoteStyle.NONE)
+                                       .build();
+    try (TempFile outputTempFile = TempFile.create("testWriteUnquotedCSVToFile", ".csv")) {
+      File outputFile = outputTempFile.getFile();
+      try (Table inputTable = new Table.TestBuilder()
+          .column("All" + fieldDelim + "the" + fieldDelim + "leaves",
+                  "are\"brown",
+                  "and\nthe\nsky\nis\ngrey")
+          .build()) {
+        inputTable.writeCSVToFile(writeOptions, outputFile.getAbsolutePath());
+      }
 
       // Read back.
-      CSVOptions readOptions = CSVOptions.builder()
-                                         .includeColumn("str")
-                                         .hasHeader(false)
-                                         .withDelim(fieldDelim)
-                                         .withQuoteStyle(QuoteStyle.NONE)
-                                         .build();
       try (Table readTable = Table.readCSV(schema, readOptions, outputFile);
            Table expected = new Table.TestBuilder()
              .column("All", "are\"brown", "and", "the", "sky", "is", "grey")
              .build()) {
         assertTablesAreEqual(expected, readTable);
       }
-    } finally {
-      outputFile.delete();
     }
   }
 
@@ -1954,29 +1980,6 @@ public class TableTest extends CudfTestBase {
     }
   }
 
-  private void verifyJoinGatherMaps(GatherMap[] maps, Table expected) {
-    assertEquals(2, maps.length);
-    int numRows = (int) expected.getRowCount();
-    assertEquals(numRows, maps[0].getRowCount());
-    assertEquals(numRows, maps[1].getRowCount());
-    try (ColumnVector leftMap = maps[0].toColumnView(0, numRows).copyToColumnVector();
-         ColumnVector rightMap = maps[1].toColumnView(0, numRows).copyToColumnVector();
-         Table result = new Table(leftMap, rightMap);
-         Table orderedResult = result.orderBy(OrderByArg.asc(0, true))) {
-      assertTablesAreEqual(expected, orderedResult);
-    }
-  }
-
-  private void verifySemiJoinGatherMap(GatherMap map, Table expected) {
-    int numRows = (int) expected.getRowCount();
-    assertEquals(numRows, map.getRowCount());
-    try (ColumnVector leftMap = map.toColumnView(0, numRows).copyToColumnVector();
-         Table result = new Table(leftMap);
-         Table orderedResult = result.orderBy(OrderByArg.asc(0, true))) {
-      assertTablesAreEqual(expected, orderedResult);
-    }
-  }
-
   @Test
   void testLeftJoinGatherMaps() {
     final int inv = Integer.MIN_VALUE;
@@ -1988,7 +1991,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2012,7 +2015,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2024,11 +2027,11 @@ public class TableTest extends CudfTestBase {
   private void checkLeftDistinctJoin(Table leftKeys, Table rightKeys, ColumnView expected,
                                      boolean compareNullsEqual) {
     try (GatherMap map = leftKeys.leftDistinctJoinGatherMap(rightKeys, compareNullsEqual)) {
-      int numRows = (int) expected.getRowCount();
-      assertEquals(numRows, map.getRowCount());
-      try (ColumnView view = map.toColumnView(0, numRows)) {
-        assertColumnsAreEqual(expected, view);
-      }
+      assertGatherMapEquals(expected, map);
+    }
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual);
+         GatherMap map = leftKeys.leftDistinctJoinGatherMap(rightHash)) {
+      assertGatherMapEquals(expected, map);
     }
   }
 
@@ -2134,11 +2137,48 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
         }
+      }
+    }
+  }
+
+  @Test
+  void testFilterLeftJoinGatherMapsMatchesMixedJoin() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1, 1, 2).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 15, 25).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         Table leftKeys = new Table.TestBuilder().column(1, 2, 3, 1).build();
+         Table leftConditional = new Table.TestBuilder().column(10, 20, 30, null).build();
+         CompiledExpression condition = expression.compile();
+         Table expected = new Table.TestBuilder()
+             .column(0,   1,   2,   3)
+             .column(0, inv, inv, inv)
+             .build()) {
+      GatherMap[] equalityMaps = leftKeys.leftJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.LEFT);
+        try (GatherMap leftFilteredMap = filteredMaps[0];
+             GatherMap rightFilteredMap = filteredMaps[1]) {
+          assertGatherMapsEqualUnordered(expected, filteredMaps);
+        }
+      }
+      GatherMap[] mixedMaps = Table.mixedLeftJoinGatherMaps(
+          leftKeys, rightKeys, leftConditional, rightConditional,
+          condition, NullEquality.UNEQUAL);
+      try (GatherMap leftMixedMap = mixedMaps[0];
+           GatherMap rightMixedMap = mixedMaps[1]) {
+        assertGatherMapsEqualUnordered(expected, mixedMaps);
       }
     }
   }
@@ -2157,7 +2197,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2182,7 +2222,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2209,7 +2249,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.leftJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2235,7 +2275,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2263,7 +2303,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2291,7 +2331,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2321,7 +2361,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalLeftJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2354,7 +2394,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2387,7 +2427,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2423,7 +2463,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2459,7 +2499,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedLeftJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
               NullEquality.EQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2478,7 +2518,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2501,7 +2541,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2512,9 +2552,16 @@ public class TableTest extends CudfTestBase {
 
   private void checkInnerDistinctJoin(Table leftKeys, Table rightKeys, Table expected,
                                       boolean compareNullsEqual) {
-    GatherMap[] maps = leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual);
+    checkInnerDistinctJoinGatherMaps(
+        leftKeys.innerDistinctJoinGatherMaps(rightKeys, compareNullsEqual), expected);
+    try (DistinctHashJoin rightHash = new DistinctHashJoin(rightKeys, compareNullsEqual)) {
+      checkInnerDistinctJoinGatherMaps(leftKeys.innerDistinctJoinGatherMaps(rightHash), expected);
+    }
+  }
+
+  private void checkInnerDistinctJoinGatherMaps(GatherMap[] maps, Table expected) {
     try {
-      verifyJoinGatherMaps(maps, expected);
+      assertGatherMapsEqualUnordered(expected, maps);
     } finally {
       for (GatherMap map : maps) {
         map.close();
@@ -2631,11 +2678,280 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
         }
+      }
+    }
+  }
+
+  @Test
+  void testFilterInnerJoinGatherMapsWithReusableHashJoin() {
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1, 1, 2, 3).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 15, 25, 35).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compile();
+         Table firstLeftKeys = new Table.TestBuilder().column(1, 2, 4).build();
+         Table firstLeftConditional = new Table.TestBuilder().column(10, 30, 40).build();
+         Table firstExpected = new Table.TestBuilder().column(0, 1).column(0, 2).build();
+         Table secondLeftKeys = new Table.TestBuilder().column(1, 3).build();
+         Table secondLeftConditional = new Table.TestBuilder().column(20, 30).build();
+         Table secondExpected = new Table.TestBuilder().column(0, 0).column(0, 1).build()) {
+      GatherMap[] firstEqualityMaps = firstLeftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap firstLeftEqualityMap = firstEqualityMaps[0];
+           GatherMap firstRightEqualityMap = firstEqualityMaps[1]) {
+        GatherMap[] firstFilteredMaps = Table.filterJoinGatherMaps(
+            firstLeftEqualityMap, firstRightEqualityMap,
+            firstLeftConditional, rightConditional, condition, JoinKind.INNER);
+        try (GatherMap firstLeftFilteredMap = firstFilteredMaps[0];
+             GatherMap firstRightFilteredMap = firstFilteredMaps[1]) {
+          assertGatherMapsEqualUnordered(firstExpected, firstFilteredMaps);
+        }
+      }
+      GatherMap[] mixedMaps = Table.mixedInnerJoinGatherMaps(
+          firstLeftKeys, rightKeys, firstLeftConditional, rightConditional,
+          condition, NullEquality.UNEQUAL);
+      try (GatherMap leftMixedMap = mixedMaps[0];
+           GatherMap rightMixedMap = mixedMaps[1]) {
+        assertGatherMapsEqualUnordered(firstExpected, mixedMaps);
+      }
+
+      GatherMap[] secondEqualityMaps = secondLeftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap secondLeftEqualityMap = secondEqualityMaps[0];
+           GatherMap secondRightEqualityMap = secondEqualityMaps[1]) {
+        GatherMap[] secondFilteredMaps = Table.filterJoinGatherMaps(
+            secondLeftEqualityMap, secondRightEqualityMap,
+            secondLeftConditional, rightConditional, condition, JoinKind.INNER);
+        try (GatherMap secondLeftFilteredMap = secondFilteredMaps[0];
+             GatherMap secondRightFilteredMap = secondFilteredMaps[1]) {
+          assertGatherMapsEqualUnordered(secondExpected, secondFilteredMaps);
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterLeftJoinGatherMapsWithNullableCandidatesAndReusableHashJoin() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1, 1, 1).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 15, null).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compile()) {
+      for (int value : new int[]{10, 20}) {
+        try (Table leftKeys = new Table.TestBuilder().column(1, 1).build();
+             Table leftConditional = new Table.TestBuilder().column(value, 0).build();
+             Table expected = value == 10 ?
+                 new Table.TestBuilder().column(0, 1).column(0, inv).build() :
+                 new Table.TestBuilder().column(0, 0, 1).column(0, 1, inv).build()) {
+          GatherMap[] equalityMaps = leftKeys.leftJoinGatherMaps(rightHash);
+          try (GatherMap leftEqualityMap = equalityMaps[0];
+               GatherMap rightEqualityMap = equalityMaps[1]) {
+            GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                condition, JoinKind.LEFT);
+            try (GatherMap leftFilteredMap = filteredMaps[0];
+                 GatherMap rightFilteredMap = filteredMaps[1]) {
+              assertGatherMapsEqualUnordered(expected, filteredMaps);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterInnerJoinGatherMapsWithNullableCandidates() {
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1, 1, 1).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 15, null).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         Table leftKeys = new Table.TestBuilder().column(1, 1, 1).build();
+         Table leftConditional = new Table.TestBuilder().column(10, 0, null).build();
+         CompiledExpression condition = expression.compile();
+         Table expected = new Table.TestBuilder().column(0).column(0).build()) {
+      GatherMap[] equalityMaps = leftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.INNER);
+        try (GatherMap leftFilteredMap = filteredMaps[0];
+             GatherMap rightFilteredMap = filteredMaps[1]) {
+          assertGatherMapsEqualUnordered(expected, filteredMaps);
+        }
+      }
+    }
+  }
+
+  private GatherMap[] equalityJoinGatherMaps(Table leftKeys, HashJoin rightHash, JoinKind kind) {
+    switch (kind) {
+      case INNER:
+        return leftKeys.innerJoinGatherMaps(rightHash);
+      case LEFT:
+        return leftKeys.leftJoinGatherMaps(rightHash);
+      case FULL:
+        return leftKeys.fullJoinGatherMaps(rightHash);
+      default:
+        throw new AssertionError(kind);
+    }
+  }
+
+  @Test
+  void testFilterOuterJoinGatherMapsWithEmptyTables() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (CompiledExpression condition = expression.compile()) {
+      for (JoinKind kind : new JoinKind[]{JoinKind.LEFT, JoinKind.FULL}) {
+        // Empty left, empty right, and both empty, using maps of the matching join kind.
+        for (int emptySide = 0; emptySide < 3; ++emptySide) {
+          Integer[] leftValues = emptySide == 1 ? new Integer[]{1} : new Integer[0];
+          Integer[] rightValues = emptySide == 0 ? new Integer[]{1} : new Integer[0];
+          int[] expectedLeft = emptySide == 1 ? new int[]{0} :
+              kind == JoinKind.FULL && emptySide == 0 ? new int[]{inv} : new int[0];
+          int[] expectedRight = emptySide == 1 ? new int[]{inv} :
+              kind == JoinKind.FULL && emptySide == 0 ? new int[]{0} : new int[0];
+          try (Table left = new Table.TestBuilder().column(leftValues).build();
+               Table right = new Table.TestBuilder().column(rightValues).build();
+               HashJoin rightHash = new HashJoin(right, false);
+               ColumnVector expectedLeftColumn = ColumnVector.fromInts(expectedLeft);
+               ColumnVector expectedRightColumn = ColumnVector.fromInts(expectedRight);
+               Table expected = new Table(expectedLeftColumn, expectedRightColumn)) {
+            GatherMap[] equalityMaps = equalityJoinGatherMaps(left, rightHash, kind);
+            try (GatherMap leftEqualityMap = equalityMaps[0];
+                 GatherMap rightEqualityMap = equalityMaps[1]) {
+              GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+                  leftEqualityMap, rightEqualityMap, left, right, condition, kind);
+              try (GatherMap leftFilteredMap = filteredMaps[0];
+                   GatherMap rightFilteredMap = filteredMaps[1]) {
+                assertGatherMapsEqualUnordered(expected, filteredMaps);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsIndependentOwnership() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table leftKeys = new Table.TestBuilder().column(1, 2).build();
+         Table rightKeys = new Table.TestBuilder().column(1, 3).build();
+         Table leftConditional = new Table.TestBuilder().column(10, 20).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 30).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compile()) {
+      for (JoinKind kind : JoinKind.values()) {
+        int[] expectedLeft = kind == JoinKind.INNER ? new int[]{0} :
+            kind == JoinKind.LEFT ? new int[]{0, 1} : new int[]{inv, 0, 1};
+        int[] expectedRight = kind == JoinKind.INNER ? new int[]{0} :
+            kind == JoinKind.LEFT ? new int[]{0, inv} : new int[]{1, 0, inv};
+        try (ColumnVector expectedLeftColumn = ColumnVector.fromInts(expectedLeft);
+             ColumnVector expectedRightColumn = ColumnVector.fromInts(expectedRight);
+             Table expected = new Table(expectedLeftColumn, expectedRightColumn)) {
+          GatherMap[] equalityMaps = equalityJoinGatherMaps(leftKeys, rightHash, kind);
+          GatherMap[] survivingMaps;
+          try (GatherMap leftEqualityMap = equalityMaps[0];
+               GatherMap rightEqualityMap = equalityMaps[1];
+               ColumnView leftView = leftEqualityMap.toColumnView(
+                   0, (int) leftEqualityMap.getRowCount());
+               ColumnView rightView = rightEqualityMap.toColumnView(
+                   0, (int) rightEqualityMap.getRowCount());
+               ColumnVector originalLeft = leftView.copyToColumnVector();
+               ColumnVector originalRight = rightView.copyToColumnVector()) {
+            GatherMap[] firstMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                condition, kind);
+            try (GatherMap firstLeft = firstMaps[0]; GatherMap firstRight = firstMaps[1]) {
+              assertGatherMapsEqualUnordered(expected, firstMaps);
+              assertColumnsAreEqual(originalLeft, leftView);
+              assertColumnsAreEqual(originalRight, rightView);
+            }
+            // Closing outputs must leave the original maps reusable and unchanged.
+            survivingMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                condition, kind);
+            try {
+              assertColumnsAreEqual(originalLeft, leftView);
+              assertColumnsAreEqual(originalRight, rightView);
+            } catch (Throwable t) {
+              survivingMaps[0].close();
+              survivingMaps[1].close();
+              throw t;
+            }
+          }
+          // The second output must remain readable after the input maps have been closed.
+          try (GatherMap survivingLeft = survivingMaps[0];
+               GatherMap survivingRight = survivingMaps[1]) {
+            assertGatherMapsEqualUnordered(expected, survivingMaps);
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsWithEmptyMaps() {
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1).build();
+         Table rightConditional = new Table.TestBuilder().column(1).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         Table leftKeys = new Table.TestBuilder().column(2).build();
+         Table leftConditional = new Table.TestBuilder().column(2).build();
+         CompiledExpression condition = expression.compile()) {
+      GatherMap[] equalityMaps = leftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.INNER);
+        try (GatherMap leftFilteredMap = filteredMaps[0];
+             GatherMap rightFilteredMap = filteredMaps[1]) {
+          assertEquals(0, leftFilteredMap.getRowCount());
+          assertEquals(0, rightFilteredMap.getRowCount());
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsRejectsMismatchedMaps() {
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1).build();
+         Table rightConditional = new Table.TestBuilder().column(1).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         Table matchedLeftKeys = new Table.TestBuilder().column(1).build();
+         Table unmatchedLeftKeys = new Table.TestBuilder().column(2).build();
+         Table leftConditional = new Table.TestBuilder().column(2).build();
+         CompiledExpression condition = expression.compile()) {
+      GatherMap[] matchedMaps = matchedLeftKeys.innerJoinGatherMaps(rightHash);
+      GatherMap[] unmatchedMaps = unmatchedLeftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap matchedLeftMap = matchedMaps[0];
+           GatherMap matchedRightMap = matchedMaps[1];
+           GatherMap unmatchedLeftMap = unmatchedMaps[0];
+           GatherMap unmatchedRightMap = unmatchedMaps[1]) {
+        assertThrows(IllegalArgumentException.class, () -> Table.filterJoinGatherMaps(
+            matchedLeftMap, unmatchedRightMap, leftConditional, rightConditional,
+            condition, JoinKind.INNER));
       }
     }
   }
@@ -2653,7 +2969,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2677,7 +2993,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2703,7 +3019,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.innerJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2728,7 +3044,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2756,7 +3072,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2783,7 +3099,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2810,7 +3126,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2839,7 +3155,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = left.conditionalInnerJoinGatherMaps(right, condition, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2871,7 +3187,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2903,7 +3219,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2938,7 +3254,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2973,7 +3289,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedInnerJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL, sizeInfo);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -2993,7 +3309,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightKeys, false);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3017,7 +3333,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightKeys, true);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3038,13 +3354,110 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
         }
       }
     }
+  }
+
+  @Test
+  void testFilterFullJoinGatherMaps() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table rightKeys = new Table.TestBuilder().column(1, 3).build();
+         Table rightConditional = new Table.TestBuilder().column(15, 30).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         Table leftKeys = new Table.TestBuilder().column(1, 2).build();
+         Table leftConditional = new Table.TestBuilder().column(10, 20).build();
+         CompiledExpression condition = expression.compile();
+         Table expected = new Table.TestBuilder()
+             .column(inv, inv,   0,   1)
+             .column(  0,   1, inv, inv)
+             .build()) {
+      GatherMap[] equalityMaps = leftKeys.fullJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.FULL);
+        try (GatherMap leftFilteredMap = filteredMaps[0];
+             GatherMap rightFilteredMap = filteredMaps[1]) {
+          assertGatherMapsEqualUnordered(expected, filteredMaps);
+        }
+      }
+    }
+  }
+
+  private void checkFilterFullJoinGatherMaps(Integer[] leftValues, Integer[] rightValues,
+                                            int[] expectedLeft, int[] expectedRight) {
+    Integer[] leftKeyValues = new Integer[leftValues.length];
+    Integer[] rightKeyValues = new Integer[rightValues.length];
+    Arrays.fill(leftKeyValues, 1);
+    Arrays.fill(rightKeyValues, 1);
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table leftKeys = new Table.TestBuilder().column(leftKeyValues).build();
+         Table rightKeys = new Table.TestBuilder().column(rightKeyValues).build();
+         Table leftConditional = new Table.TestBuilder().column(leftValues).build();
+         Table rightConditional = new Table.TestBuilder().column(rightValues).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compile();
+         ColumnVector expectedLeftColumn = ColumnVector.fromInts(expectedLeft);
+         ColumnVector expectedRightColumn = ColumnVector.fromInts(expectedRight);
+         Table expected = new Table(expectedLeftColumn, expectedRightColumn)) {
+      GatherMap[] equalityMaps = leftKeys.fullJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.FULL);
+        try (GatherMap leftFilteredMap = filteredMaps[0];
+             GatherMap rightFilteredMap = filteredMaps[1]) {
+          assertGatherMapsEqualUnordered(expected, filteredMaps);
+        }
+      }
+      // All equality keys are identical, so the conditional join is an independent reference.
+      GatherMap[] referenceMaps = leftConditional.conditionalFullJoinGatherMaps(
+          rightConditional, condition);
+      try (GatherMap leftReferenceMap = referenceMaps[0];
+           GatherMap rightReferenceMap = referenceMaps[1]) {
+        assertGatherMapsEqualUnordered(expected, referenceMaps);
+      }
+    }
+  }
+
+  @Test
+  void testFilterFullJoinGatherMapsWithDuplicateMixedCandidates() {
+    final int inv = Integer.MIN_VALUE;
+    checkFilterFullJoinGatherMaps(new Integer[]{10}, new Integer[]{5, 15},
+        new int[]{inv, 0}, new int[]{1, 0});
+  }
+
+  @Test
+  void testFilterFullJoinGatherMapsWithDuplicateRejectedCandidates() {
+    final int inv = Integer.MIN_VALUE;
+    checkFilterFullJoinGatherMaps(new Integer[]{0}, new Integer[]{5, 15},
+        new int[]{inv, inv, 0}, new int[]{0, 1, inv});
+  }
+
+  @Test
+  void testFilterFullJoinGatherMapsWithDuplicateLeftKeys() {
+    final int inv = Integer.MIN_VALUE;
+    checkFilterFullJoinGatherMaps(new Integer[]{10, 0}, new Integer[]{5},
+        new int[]{0, 1}, new int[]{0, inv});
+  }
+
+  @Test
+  void testFilterFullJoinGatherMapsWithNullableDuplicateCandidates() {
+    final int inv = Integer.MIN_VALUE;
+    checkFilterFullJoinGatherMaps(new Integer[]{10}, new Integer[]{5, null},
+        new int[]{inv, 0}, new int[]{1, 0});
   }
 
   @Test
@@ -3061,7 +3474,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3086,7 +3499,7 @@ public class TableTest extends CudfTestBase {
              .build()) {
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3113,7 +3526,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       GatherMap[] maps = leftKeys.fullJoinGatherMaps(rightHash, rowCount);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3139,7 +3552,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalFullJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3167,7 +3580,7 @@ public class TableTest extends CudfTestBase {
          CompiledExpression condition = expr.compile()) {
       GatherMap[] maps = left.conditionalFullJoinGatherMaps(right, condition);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3200,7 +3613,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedFullJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.UNEQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3233,7 +3646,7 @@ public class TableTest extends CudfTestBase {
       GatherMap[] maps = Table.mixedFullJoinGatherMaps(leftKeys, rightKeys, left, right, condition,
           NullEquality.EQUAL);
       try {
-        verifyJoinGatherMaps(maps, expected);
+        assertGatherMapsEqualUnordered(expected, maps);
       } finally {
         for (GatherMap map : maps) {
           map.close();
@@ -3263,7 +3676,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftSemiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.UNEQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3288,7 +3701,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftSemiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.EQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3313,7 +3726,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftAntiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.UNEQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3338,7 +3751,7 @@ public class TableTest extends CudfTestBase {
              .build();
          GatherMap map = Table.mixedLeftAntiJoinGatherMap(leftKeys, rightKeys, left, right,
              condition, NullEquality.EQUAL)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3350,7 +3763,7 @@ public class TableTest extends CudfTestBase {
              .column(2, 7, 8, 9) // left
              .build();
          GatherMap map = leftKeys.leftSemiJoinGatherMap(rightKeys, false)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3366,7 +3779,7 @@ public class TableTest extends CudfTestBase {
              .column(2, 7, 8, 9) // left
              .build();
          GatherMap map = leftKeys.leftSemiJoinGatherMap(rightKeys, true)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3384,7 +3797,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftSemiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3404,7 +3817,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftSemiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3425,7 +3838,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftSemiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3449,7 +3862,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftSemiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3462,7 +3875,7 @@ public class TableTest extends CudfTestBase {
              .column(0, 1, 3, 4, 5, 6) // left
              .build();
          GatherMap map = leftKeys.leftAntiJoinGatherMap(rightKeys, false)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3478,7 +3891,7 @@ public class TableTest extends CudfTestBase {
              .column(0, 1, 3, 4, 5, 6) // left
              .build();
          GatherMap map = leftKeys.leftAntiJoinGatherMap(rightKeys, true)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3496,7 +3909,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftAntiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3516,7 +3929,7 @@ public class TableTest extends CudfTestBase {
              .build();
          CompiledExpression condition = expr.compile();
          GatherMap map = left.conditionalLeftAntiJoinGatherMap(right, condition)) {
-      verifySemiJoinGatherMap(map, expected);
+      assertGatherMapEqualsUnordered(expected.getColumn(0), map);
     }
   }
 
@@ -3537,7 +3950,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftAntiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -3561,7 +3974,7 @@ public class TableTest extends CudfTestBase {
       assertEquals(expected.getRowCount(), rowCount);
       try (GatherMap map =
                left.conditionalLeftAntiJoinGatherMap(right, condition, rowCount)) {
-        verifySemiJoinGatherMap(map, expected);
+        assertGatherMapEqualsUnordered(expected.getColumn(0), map);
       }
     }
   }
@@ -6679,6 +7092,613 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testRangeWindowingMultiOrderByUnboundedToCurrentRow() {
+    // PARTITION BY part ORDER BY oby_int ASC, oby_str DESC
+    // RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW. Input is pre-sorted.
+    try (Table sorted = new Table.TestBuilder()
+        .column(0, 0, 0, 0, 0, 1, 1, 1)                  // part (GBY key)
+        .column(10, 10, 20, 20, 30, 5, 5, 7)             // oby_int (ASC)
+        .column("b", "a", "z", "z", "m", "y", "y", "x")  // oby_str (DESC)
+        .column(1, 2, 3, 4, 5, 6, 7, 8)                  // agg column (non-null)
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{1, 2},
+                              new boolean[]{true, false},
+                              new boolean[]{true, true})
+              .build();
+           Table result = sorted.groupBy(0)
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(3).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(1, 2, 4, 4, 5, 2, 2, 3)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByCurrentRowPeers() {
+    // ORDER BY oby_int ASC, oby_str DESC  RANGE BETWEEN CURRENT ROW AND CURRENT ROW.
+    // The window for each row is its peer group (rows equal on every order-by column).
+    try (Table sorted = new Table.TestBuilder()
+        .column(10, 10, 20, 20, 30)              // oby_int (ASC)
+        .column("b", "a", "z", "z", "m")         // oby_str (DESC)
+        .column(1, 2, 3, 4, 5)                   // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, false},
+                              new boolean[]{true, true})
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(1, 1, 2, 2, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByCurrentRowToUnbounded() {
+    // ORDER BY oby_int DESC, oby_str ASC  RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING.
+    try (Table sorted = new Table.TestBuilder()
+        .column(30, 20, 20, 10, 10)              // oby_int (DESC)
+        .column("m", "z", "z", "a", "b")         // oby_str (ASC)
+        .column(1, 2, 3, 4, 5)                   // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .unboundedFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{false, true},
+                              new boolean[]{true, true})
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(5, 4, 4, 2, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByNullsFirstPeers() {
+    // ORDER BY oby_int ASC NULLS FIRST, oby_str DESC  RANGE BETWEEN CURRENT ROW AND CURRENT ROW.
+    // Null order-by values sort before non-null values, and null rows that match on the remaining
+    // order-by columns are grouped together as peers.
+    try (Table sorted = new Table.TestBuilder()
+        .column((Integer) null, (Integer) null, 10, 20)  // oby_int (ASC, nulls first)
+        .column("x", "x", "y", "z")                       // oby_str (DESC)
+        .column(1, 2, 3, 4)                               // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, false},
+                              new boolean[]{true, true})   // nulls first on oby_int
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 1, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByNullsLastPeers() {
+    // ORDER BY oby_int ASC NULLS LAST, oby_str DESC  RANGE BETWEEN CURRENT ROW AND CURRENT ROW.
+    // Null order-by values sort after non-null values; null rows that match on the remaining
+    // order-by columns are grouped together as peers.
+    try (Table sorted = new Table.TestBuilder()
+        .column(10, 20, (Integer) null, (Integer) null)  // oby_int (ASC, nulls last)
+        .column("y", "z", "x", "x")                       // oby_str (DESC)
+        .column(1, 2, 3, 4)                               // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, false},
+                              new boolean[]{false, true})  // nulls last on oby_int
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(1, 1, 2, 2)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByNullsLastUnboundedToCurrentRow() {
+    // ORDER BY oby_int ASC NULLS LAST, oby_str DESC  RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT
+    // ROW. The cumulative window extends through the last peer of the current row, so the trailing
+    // null peers see the whole group.
+    try (Table sorted = new Table.TestBuilder()
+        .column(10, 20, (Integer) null, (Integer) null)  // oby_int (ASC, nulls last)
+        .column("y", "z", "x", "x")                       // oby_str (DESC)
+        .column(1, 2, 3, 4)                               // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, false},
+                              new boolean[]{false, true})  // nulls last on oby_int
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           ColumnVector expect = ColumnVector.fromBoxedInts(1, 2, 4, 4)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByBoundedScalarThrows() {
+    // Multi-column RANGE windows do not support bounded scalar ranges.
+    try (Table table = new Table.TestBuilder()
+        .column(10, 10, 20)
+        .column("b", "a", "z")
+        .column(1, 2, 3)
+        .build();
+         Scalar one = Scalar.fromInt(1);
+         WindowOptions window = WindowOptions.builder()
+             .minPeriods(1)
+             .window(one, one)
+             .orderByColumns(new int[]{0, 1},
+                             new boolean[]{true, false},
+                             new boolean[]{true, true})
+             .build()) {
+      assertThrows(IllegalArgumentException.class,
+          () -> table.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window)));
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByUnsupportedTypeThrows() {
+    // An unsupported type on any order-by column is rejected (validation loops over all columns).
+    try (Table table = new Table.TestBuilder()
+        .column(10, 20, 30)              // valid int order-by
+        .column(true, false, true)       // unsupported BOOL8 order-by
+        .column(1, 2, 3)                 // agg column
+        .build();
+         WindowOptions window = WindowOptions.builder()
+             .minPeriods(1)
+             .currentRowPreceding()
+             .currentRowFollowing()
+             .orderByColumns(new int[]{0, 1},
+                             new boolean[]{true, true},
+                             new boolean[]{true, true})
+             .build()) {
+      assertThrows(IllegalArgumentException.class,
+          () -> table.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window)));
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByMismatchedArraysThrows() {
+    assertThrows(IllegalArgumentException.class,
+        () -> WindowOptions.builder()
+            .orderByColumns(new int[]{0, 1},
+                            new boolean[]{true},
+                            new boolean[]{true, true}));
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByNullArraysThrows() {
+    // Any null order-by array is rejected by the builder.
+    assertThrows(IllegalArgumentException.class,
+        () -> WindowOptions.builder()
+            .orderByColumns(null, new boolean[]{true}, new boolean[]{true}));
+    assertThrows(IllegalArgumentException.class,
+        () -> WindowOptions.builder()
+            .orderByColumns(new int[]{0}, null, new boolean[]{true}));
+    assertThrows(IllegalArgumentException.class,
+        () -> WindowOptions.builder()
+            .orderByColumns(new int[]{0}, new boolean[]{true}, null));
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByEmptyArraysThrows() {
+    // At least one order-by column is required.
+    assertThrows(IllegalArgumentException.class,
+        () -> WindowOptions.builder()
+            .orderByColumns(new int[]{}, new boolean[]{}, new boolean[]{}));
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByMixingSettersThrows() {
+    // Mixing orderByColumns(...) with the single-column order-by setters is rejected by build().
+    assertThrows(IllegalStateException.class,
+        () -> WindowOptions.builder()
+            .currentRowPreceding()
+            .currentRowFollowing()
+            .orderByColumns(new int[]{0, 1},
+                            new boolean[]{true, true},
+                            new boolean[]{true, true})
+            .orderByColumnIndex(0)
+            .build());
+    assertThrows(IllegalStateException.class,
+        () -> WindowOptions.builder()
+            .currentRowPreceding()
+            .currentRowFollowing()
+            .orderByColumns(new int[]{0, 1},
+                            new boolean[]{true, true},
+                            new boolean[]{true, true})
+            .orderByAscending()
+            .build());
+    assertThrows(IllegalStateException.class,
+        () -> WindowOptions.builder()
+            .currentRowPreceding()
+            .currentRowFollowing()
+            .orderByColumns(new int[]{0, 1},
+                            new boolean[]{true, true},
+                            new boolean[]{true, true})
+            .orderByDescending()
+            .build());
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByOutOfRangeIndexThrows() {
+    // An order-by index outside the input table is rejected during marshalling, before the
+    // native call, with an IllegalArgumentException naming the offending index.
+    try (Table table = new Table.TestBuilder()
+        .column(10, 10, 20)
+        .column("b", "a", "z")
+        .column(1, 2, 3)
+        .build();
+         WindowOptions window = WindowOptions.builder()
+             .minPeriods(1)
+             .currentRowPreceding()
+             .currentRowFollowing()
+             .orderByColumns(new int[]{0, 99},   // 99 is out of range
+                             new boolean[]{true, true},
+                             new boolean[]{true, true})
+             .build()) {
+      assertThrows(IllegalArgumentException.class,
+          () -> table.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window)));
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderBySumMinMax() {
+    // PARTITION BY part ORDER BY oby_int ASC, oby_str DESC
+    // RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW. Input is pre-sorted. Each row's window
+    // runs from the group start through the last peer of the current row (peers match on every
+    // order-by column), so it mirrors the COUNT layout in
+    // testRangeWindowingMultiOrderByUnboundedToCurrentRow.
+    try (Table sorted = new Table.TestBuilder()
+        .column(0, 0, 0, 0, 0, 1, 1, 1)                  // part (GBY key)
+        .column(10, 10, 20, 20, 30, 5, 5, 7)             // oby_int (ASC)
+        .column("b", "a", "z", "z", "m", "y", "y", "x")  // oby_str (DESC)
+        .column(1, 2, 3, 4, 5, 6, 7, 8)                  // agg column (non-null)
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{1, 2},
+                              new boolean[]{true, false},
+                              new boolean[]{true, true})
+              .build();
+           Table result = sorted.groupBy(0)
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.sum().onColumn(3).overWindow(window),
+                  RollingAggregation.min().onColumn(3).overWindow(window),
+                  RollingAggregation.max().onColumn(3).overWindow(window));
+           // Windows: {1},{1,2},{1,2,3,4},{1,2,3,4},{1,2,3,4,5},{6,7},{6,7},{6,7,8}.
+           ColumnVector expectSum = ColumnVector.fromBoxedLongs(1L, 3L, 10L, 10L, 15L, 13L, 13L, 21L);
+           ColumnVector expectMin = ColumnVector.fromBoxedInts(1, 1, 1, 1, 1, 6, 6, 6);
+           ColumnVector expectMax = ColumnVector.fromBoxedInts(1, 2, 4, 4, 5, 7, 7, 8)) {
+        assertColumnsAreEqual(expectSum, result.getColumn(0));
+        assertColumnsAreEqual(expectMin, result.getColumn(1));
+        assertColumnsAreEqual(expectMax, result.getColumn(2));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByAggColumnWithNulls() {
+    // Same peer-window layout as testRangeWindowingMultiOrderBySumMinMax, but the agg column has
+    // nulls. COUNT defaults to NullPolicy.EXCLUDE and SUM skips nulls.
+    try (Table sorted = new Table.TestBuilder()
+        .column(0, 0, 0, 0, 0, 1, 1, 1)                  // part (GBY key)
+        .column(10, 10, 20, 20, 30, 5, 5, 7)             // oby_int (ASC)
+        .column("b", "a", "z", "z", "m", "y", "y", "x")  // oby_str (DESC)
+        .column(1, null, 3, null, 5, 6, null, 8)         // agg column (with nulls)
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{1, 2},
+                              new boolean[]{true, false},
+                              new boolean[]{true, true})
+              .build();
+           Table result = sorted.groupBy(0)
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(3).overWindow(window),
+                  RollingAggregation.sum().onColumn(3).overWindow(window));
+           // Windows: {1},{1,n},{1,n,3,n},{1,n,3,n},{1,n,3,n,5},{6,n},{6,n},{6,n,8}.
+           ColumnVector expectCount = ColumnVector.fromBoxedInts(1, 1, 2, 2, 3, 1, 1, 2);
+           ColumnVector expectSum = ColumnVector.fromBoxedLongs(1L, 1L, 4L, 4L, 9L, 6L, 6L, 14L)) {
+        assertColumnsAreEqual(expectCount, result.getColumn(0));
+        assertColumnsAreEqual(expectSum, result.getColumn(1));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderBySingleColumnEquivalence() {
+    // A single-column order-by expressed via orderByColumns({i},{asc},{nf}) must produce the same
+    // result as the legacy orderByColumnIndex(i) + orderByAscending() path; both route to the
+    // single-column native overload. The order-by column has no nulls, so null placement is moot.
+    try (Table sorted = new Table.TestBuilder()
+        .column(10, 10, 20, 30)  // oby_int (ASC)
+        .column(1, 2, 3, 4)      // agg column
+        .build()) {
+      try (WindowOptions legacy = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumnIndex(0)
+              .orderByAscending()
+              .build();
+           WindowOptions viaArrays = WindowOptions.builder()
+              .minPeriods(1)
+              .unboundedPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0}, new boolean[]{true}, new boolean[]{true})
+              .build();
+           Table legacyResult = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(1).overWindow(legacy));
+           Table arraysResult = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(1).overWindow(viaArrays));
+           // Peers on oby_int: rows 0,1 (=10); window UNBOUNDED PRECEDING -> CURRENT ROW.
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 3, 4)) {
+        assertColumnsAreEqual(expect, legacyResult.getColumn(0));
+        assertColumnsAreEqual(expect, arraysResult.getColumn(0));
+        assertColumnsAreEqual(legacyResult.getColumn(0), arraysResult.getColumn(0));
+      }
+    }
+    // The two builder paths must also compare equal via WindowOptions.equals/hashCode.
+    try (WindowOptions legacy = WindowOptions.builder()
+            .orderByColumnIndex(3)
+            .orderByAscending()
+            .build();
+         WindowOptions viaArrays = WindowOptions.builder()
+            .orderByColumns(new int[]{3}, new boolean[]{true}, new boolean[]{true})
+            .build()) {
+      assertEquals(legacy, viaArrays);
+      assertEquals(legacy.hashCode(), viaArrays.hashCode());
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderBySingleColumnEquivalenceWithNulls() {
+    // Like testRangeWindowingMultiOrderBySingleColumnEquivalence, but the order-by column has
+    // nulls -- the one place the null-ordering handling could diverge between the legacy
+    // single-column path and the length-1 orderByColumns({i}) array path. Both route to the
+    // single-column native overload, which deduces null placement natively, so the results must
+    // match. A CURRENT ROW peer frame keeps the expectation independent of the deduced null
+    // placement: two nulls are mutual peers, so the answer depends only on peer-equality.
+    try (Table sorted = new Table.TestBuilder()
+        .column((Integer) null, (Integer) null, 10, 20)  // oby_int (with nulls)
+        .column(1, 2, 3, 4)                               // agg column
+        .build()) {
+      try (WindowOptions legacy = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumnIndex(0)
+              .orderByAscending()
+              .build();
+           WindowOptions viaArrays = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0}, new boolean[]{true}, new boolean[]{true})
+              .build();
+           Table legacyResult = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(1).overWindow(legacy));
+           Table arraysResult = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(1).overWindow(viaArrays));
+           // Peer groups on oby_int: {null,null}={0,1}, {10}={2}, {20}={3}.
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 1, 1)) {
+        assertColumnsAreEqual(expect, legacyResult.getColumn(0));
+        assertColumnsAreEqual(expect, arraysResult.getColumn(0));
+        assertColumnsAreEqual(legacyResult.getColumn(0), arraysResult.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByTimestampDateDecimalLeading() {
+    // Multi-column RANGE with the leading order-by column being, in turn, a TIMESTAMP_SECONDS,
+    // a TIMESTAMP_DAYS (date), and a DECIMAL64 column, tie-broken by an int column.
+    // ORDER BY lead ASC, tiebreak ASC  RANGE BETWEEN CURRENT ROW AND CURRENT ROW (peer groups).
+    // Leading values 1,1,2,2,2 and tiebreak 5,6,7,7,8 give peer groups {0},{1},{2,3},{4}.
+    try (Table tsTable = new Table.TestBuilder()
+            .timestampSecondsColumn(1L, 1L, 2L, 2L, 2L)  // leading order-by (TIMESTAMP_SECONDS)
+            .column(5, 6, 7, 7, 8)                        // tiebreak order-by (INT32)
+            .column(1, 2, 3, 4, 5)                        // agg column
+            .build();
+         Table dateTable = new Table.TestBuilder()
+            .timestampDayColumn(1, 1, 2, 2, 2)            // leading order-by (TIMESTAMP_DAYS == date)
+            .column(5, 6, 7, 7, 8)
+            .column(1, 2, 3, 4, 5)
+            .build();
+         Table decimalTable = new Table.TestBuilder()
+            .decimal64Column(0, 1L, 1L, 2L, 2L, 2L)       // leading order-by (DECIMAL64)
+            .column(5, 6, 7, 7, 8)
+            .column(1, 2, 3, 4, 5)
+            .build()) {
+      WindowOptions.Builder windowBuilder = WindowOptions.builder()
+          .minPeriods(1)
+          .currentRowPreceding()
+          .currentRowFollowing()
+          .orderByColumns(new int[]{0, 1},
+                          new boolean[]{true, true},
+                          new boolean[]{true, true});
+      // Peer groups {0},{1},{2,3},{4} -> COUNT {1,1,2,2,1} for every leading type.
+      try (WindowOptions tsWindow = windowBuilder.build();
+           WindowOptions dateWindow = windowBuilder.build();
+           WindowOptions decimalWindow = windowBuilder.build();
+           ColumnVector expect = ColumnVector.fromBoxedInts(1, 1, 2, 2, 1);
+           Table tsResult = tsTable.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(tsWindow));
+           Table dateResult = dateTable.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(dateWindow));
+           Table decimalResult = decimalTable.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(decimalWindow))) {
+        assertColumnsAreEqual(expect, tsResult.getColumn(0));
+        assertColumnsAreEqual(expect, dateResult.getColumn(0));
+        assertColumnsAreEqual(expect, decimalResult.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByThreeColumns() {
+    // Three order-by columns exercise the CSR order-by slice for ob_count > 2.
+    // ORDER BY a ASC, b ASC, c ASC  RANGE BETWEEN CURRENT ROW AND CURRENT ROW (peer groups).
+    try (Table sorted = new Table.TestBuilder()
+        .column(1, 1, 1, 1)   // oby a
+        .column(1, 1, 2, 2)   // oby b
+        .column(5, 5, 6, 7)   // oby c
+        .column(1, 2, 3, 4)   // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1, 2},
+                              new boolean[]{true, true, true},
+                              new boolean[]{true, true, true})
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(3).overWindow(window));
+           // Peer groups: {0,1} (1,1,5), {2} (1,2,6), {3} (1,2,7).
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 1, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByNullsInOrderByColumns() {
+    // Nulls in the second order-by column, then nulls in both order-by columns. Null order-by
+    // values that are equal (both null) on a column and match on the others are peers.
+    // ORDER BY a ASC NULLS FIRST, b ASC NULLS FIRST  RANGE BETWEEN CURRENT ROW AND CURRENT ROW.
+    try (Table secondColNulls = new Table.TestBuilder()
+        .column(1, 1, 2, 2)                              // oby a (no nulls)
+        .column((Integer) null, (Integer) null, 3, 4)    // oby b (nulls in 2nd column)
+        .column(1, 2, 3, 4)                              // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, true},
+                              new boolean[]{true, true})
+              .build();
+           Table result = secondColNulls.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           // Peer groups: {0,1} (1,null), {2} (2,3), {3} (2,4).
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 1, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+    try (Table bothColsNulls = new Table.TestBuilder()
+        .column((Integer) null, (Integer) null, 2)       // oby a (nulls)
+        .column((Integer) null, (Integer) null, 3)       // oby b (nulls)
+        .column(1, 2, 3)                                 // agg column
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, true},
+                              new boolean[]{true, true})
+              .build();
+           Table result = bothColsNulls.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           // Peer groups: {0,1} (null,null), {2} (2,3).
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 1)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
+  void testRangeWindowingMultiOrderByFloatEdgeValuePeers() {
+    // ORDER BY oby_f32 ASC NULLS FIRST (FLOAT32), oby_f64 ASC NULLS FIRST (FLOAT64)
+    // RANGE BETWEEN CURRENT ROW AND CURRENT ROW. Each row's window is its peer group, so the
+    // expected COUNT exercises float peer-equality on the tricky edge values: NaN == NaN, signed
+    // zero (-0.0f == +0.0f), and null == null on either order-by column. Input is pre-sorted on
+    // (oby_f32, oby_f64): nulls first, then ascending finite values, then NaN last.
+    try (Table sorted = new Table.TestBuilder()
+        // oby_f32 (FLOAT32): null,null | -0.0,+0.0 | 2.5,2.5,2.5 | NaN,NaN
+        .column((Float) null, (Float) null, -0.0f, 0.0f, 2.5f, 2.5f, 2.5f, Float.NaN, Float.NaN)
+        // oby_f64 (FLOAT64), tie-breaks within equal oby_f32 (nulls first)
+        .column(1.0, 1.0, 5.0, 5.0, (Double) null, (Double) null, 9.0, 4.0, 4.0)
+        .column(1, 2, 3, 4, 5, 6, 7, 8, 9)  // agg column (non-null)
+        .build()) {
+      try (WindowOptions window = WindowOptions.builder()
+              .minPeriods(1)
+              .currentRowPreceding()
+              .currentRowFollowing()
+              .orderByColumns(new int[]{0, 1},
+                              new boolean[]{true, true},
+                              new boolean[]{true, true})   // ASC, nulls first on both
+              .build();
+           Table result = sorted.groupBy()
+              .aggregateWindowsOverRanges(
+                  RollingAggregation.count().onColumn(2).overWindow(window));
+           // Peer groups: {0,1} (null,1.0), {2,3} (+/-0.0,5.0), {4,5} (2.5,null), {6} (2.5,9.0),
+           // {7,8} (NaN,4.0).
+           ColumnVector expect = ColumnVector.fromBoxedInts(2, 2, 2, 2, 2, 2, 1, 2, 2)) {
+        assertColumnsAreEqual(expect, result.getColumn(0));
+      }
+    }
+  }
+
+  @Test
   void testRangeWindowingOrderByUnsupportedDataTypeExceptions() {
     try (Table table = new Table.TestBuilder()
         .column(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1) // GBY Key
@@ -7826,6 +8846,240 @@ public class TableTest extends CudfTestBase {
     }
   }
 
+  private static void assertSumOverflowResult(Table results,
+                                                  int[] expectedKeys,
+                                                  long[] expectedSums,
+                                                  boolean[] expectedOvf) {
+    ColumnVector structCol = results.getColumn(1);
+    assertEquals(DType.STRUCT, structCol.getType());
+    try (ColumnView ovfChild = structCol.getChildColumnView(1);
+         ColumnVector ovfCol = ovfChild.copyToColumnVector();
+         ColumnVector expectedKeyCol = ColumnVector.fromInts(expectedKeys);
+         ColumnVector expectedOvfCol = ColumnVector.fromBooleans(expectedOvf)) {
+      assertColumnsAreEqual(expectedKeyCol, results.getColumn(0));
+      assertColumnsAreEqual(expectedOvfCol, ovfCol);
+      if (expectedSums != null) {
+        try (ColumnView sumChild = structCol.getChildColumnView(0);
+             ColumnVector sumCol = sumChild.copyToColumnVector();
+             ColumnVector expectedSumCol = ColumnVector.fromLongs(expectedSums)) {
+          assertEquals(DType.INT64, sumCol.getType());
+          assertColumnsAreEqual(expectedSumCol, sumCol);
+        }
+      }
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflow() {
+    try (Table input = new Table.TestBuilder()
+             .column(1, 2, 3, 1, 2, 2, 1, 3, 3, 2)
+             .column(10L, 20L, 30L, 11L, 21L, 22L, 12L, 31L, 32L, 23L)
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      assertEquals(2, sorted.getNumberOfColumns());
+      assertEquals(3, sorted.getRowCount());
+      assertSumOverflowResult(sorted,
+          new int[]{1, 2, 3}, new long[]{33L, 86L, 93L}, new boolean[]{false, false, false});
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflowDetectsOverflow() {
+    try (Table input = new Table.TestBuilder()
+             .column(1, 1, 2, 2)
+             .column(Long.MAX_VALUE, Long.MAX_VALUE, 3L, 4L)
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      assertSumOverflowResult(sorted, new int[]{1, 2}, null, new boolean[]{true, false});
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflowInt32() {
+    // Int32 input: hash groupby supports it (reduction does not).
+    try (Table input = new Table.TestBuilder()
+             .column(1, 2, 1, 2)
+             .column(1, 10, 2, 20)
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      ColumnVector structCol = sorted.getColumn(1);
+      assertEquals(DType.STRUCT, structCol.getType());
+      try (ColumnView sumChild = structCol.getChildColumnView(0);
+           ColumnView ovfChild = structCol.getChildColumnView(1);
+           ColumnVector sumCol = sumChild.copyToColumnVector();
+           ColumnVector ovfCol = ovfChild.copyToColumnVector();
+           ColumnVector expectedSum = ColumnVector.fromInts(3, 30);
+           ColumnVector expectedOvf = ColumnVector.fromBooleans(false, false)) {
+        assertEquals(DType.INT32, sumCol.getType());
+        assertColumnsAreEqual(expectedSum, sumCol);
+        assertColumnsAreEqual(expectedOvf, ovfCol);
+      }
+    }
+  }
+
+  @Test
+  void testGroupBySortSumOverflow() {
+    try (Table input = new Table.TestBuilder()
+             .column(1, 1, 2, 2)
+             .column(1L, 2L, 3L, 4L)
+             .build();
+         // median() is sort-only, so it forces the sort-based groupby path
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1),
+             GroupByAggregation.median().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      assertSumOverflowResult(sorted,
+          new int[]{1, 2}, new long[]{3L, 7L}, new boolean[]{false, false});
+    }
+  }
+
+  @Test
+  void testGroupBySortSumOverflowDetectsOverflow() {
+    try (Table input = new Table.TestBuilder()
+             .column(1, 1, 2, 2)
+             .column(Long.MAX_VALUE, Long.MAX_VALUE, 3L, 4L)
+             .build();
+         // median() is sort-only, so it forces the sort-based groupby path
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1),
+             GroupByAggregation.median().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      assertSumOverflowResult(sorted, new int[]{1, 2}, null, new boolean[]{true, false});
+    }
+  }
+
+  // For SUM_OVERFLOW on fixed-point inputs, cudf's hash groupby produces a
+  // STRUCT whose sum-child has the same decimal type AND scale as the input
+  // (target_type_impl<fixed_point, SUM_OVERFLOW> uses Source as the sum
+  // type at cpp/include/cudf/detail/aggregation/aggregation.hpp). The three
+  // tests below assert both the values and that scale is preserved end-to-end
+  // through the JNI struct-column extraction path.
+  @Test
+  void testGroupByHashSumOverflowDecimal32() {
+    final int scale = -2;
+    try (Table input = new Table.TestBuilder()
+             .column(1, 2, 1, 2, 1)
+             .decimal32Column(scale, 100, 200, 150, 250, 50)  // 1.00, 2.00, 1.50, 2.50, 0.50
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      ColumnVector keyCol = sorted.getColumn(0);
+      ColumnVector structCol = sorted.getColumn(1);
+      assertEquals(DType.STRUCT, structCol.getType());
+
+      try (ColumnView sumChild = structCol.getChildColumnView(0);
+           ColumnView ovfChild = structCol.getChildColumnView(1);
+           ColumnVector sumCol = sumChild.copyToColumnVector();
+           ColumnVector ovfCol = ovfChild.copyToColumnVector();
+           ColumnVector expectedKeys = ColumnVector.fromInts(1, 2);
+           ColumnVector expectedSum = ColumnVector.decimalFromInts(scale, 300, 450);
+           ColumnVector expectedOvf = ColumnVector.fromBooleans(false, false)) {
+        assertEquals(DType.DTypeEnum.DECIMAL32, sumCol.getType().getTypeId());
+        assertEquals(scale, sumCol.getType().getScale());
+        assertColumnsAreEqual(expectedKeys, keyCol);
+        assertColumnsAreEqual(expectedSum, sumCol);
+        assertColumnsAreEqual(expectedOvf, ovfCol);
+      }
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflowDecimal64() {
+    final int scale = -4;
+    try (Table input = new Table.TestBuilder()
+             .column(1, 2, 1, 2)
+             .decimal64Column(scale, 10000L, 20000L, 30000L, 40000L)  // 1.0000, 2.0000, ...
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      ColumnVector structCol = sorted.getColumn(1);
+      assertEquals(DType.STRUCT, structCol.getType());
+
+      try (ColumnView sumChild = structCol.getChildColumnView(0);
+           ColumnView ovfChild = structCol.getChildColumnView(1);
+           ColumnVector sumCol = sumChild.copyToColumnVector();
+           ColumnVector ovfCol = ovfChild.copyToColumnVector();
+           ColumnVector expectedSum = ColumnVector.decimalFromLongs(scale, 40000L, 60000L);
+           ColumnVector expectedOvf = ColumnVector.fromBooleans(false, false)) {
+        assertEquals(DType.DTypeEnum.DECIMAL64, sumCol.getType().getTypeId());
+        assertEquals(scale, sumCol.getType().getScale());
+        assertColumnsAreEqual(expectedSum, sumCol);
+        assertColumnsAreEqual(expectedOvf, ovfCol);
+      }
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflowDecimal128() {
+    final int scale = -10;
+    BigInteger v1 = BigInteger.valueOf(123456789L).multiply(BigInteger.TEN.pow(10));
+    BigInteger v2 = BigInteger.valueOf(987654321L).multiply(BigInteger.TEN.pow(10));
+    BigInteger v3 = BigInteger.valueOf(111111111L).multiply(BigInteger.TEN.pow(10));
+    BigInteger v4 = BigInteger.valueOf(222222222L).multiply(BigInteger.TEN.pow(10));
+    try (Table input = new Table.TestBuilder()
+             .column(1, 2, 1, 2)
+             .decimal128Column(scale, RoundingMode.UNNECESSARY, v1, v2, v3, v4)
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      ColumnVector structCol = sorted.getColumn(1);
+      assertEquals(DType.STRUCT, structCol.getType());
+
+      try (ColumnView sumChild = structCol.getChildColumnView(0);
+           ColumnView ovfChild = structCol.getChildColumnView(1);
+           ColumnVector sumCol = sumChild.copyToColumnVector();
+           ColumnVector ovfCol = ovfChild.copyToColumnVector();
+           ColumnVector expectedSum = ColumnVector.decimalFromBigInt(scale,
+               v1.add(v3), v2.add(v4));
+           ColumnVector expectedOvf = ColumnVector.fromBooleans(false, false)) {
+        assertEquals(DType.DTypeEnum.DECIMAL128, sumCol.getType().getTypeId());
+        assertEquals(scale, sumCol.getType().getScale());
+        assertColumnsAreEqual(expectedSum, sumCol);
+        assertColumnsAreEqual(expectedOvf, ovfCol);
+      }
+    }
+  }
+
+  @Test
+  void testGroupByHashSumOverflowDecimal128DetectsOverflow() {
+    // Pick a value with at most 38 significant digits (the MathContext cap in
+    // Table.TestBuilder.decimal128Column) that still overflows int128_max when
+    // summed with itself. 10^38 - 1 is 38 nines; 2 * (10^38 - 1) ~= 2e38 which
+    // exceeds int128_max ~= 1.7e38, so cudf's kernel flags overflow. The sum
+    // value for the overflowed group is unspecified so only the flag is checked.
+    final int scale = 0;
+    BigInteger nearMax = BigInteger.TEN.pow(38).subtract(BigInteger.ONE);
+    try (Table input = new Table.TestBuilder()
+             .column(1, 1, 2, 2)
+             .decimal128Column(scale, RoundingMode.UNNECESSARY,
+                 nearMax, nearMax, BigInteger.valueOf(3), BigInteger.valueOf(4))
+             .build();
+         Table results = input.groupBy(0).aggregate(
+             GroupByAggregation.sumOverflow().onColumn(1));
+         Table sorted = results.orderBy(OrderByArg.asc(0))) {
+      ColumnVector structCol = sorted.getColumn(1);
+      assertEquals(DType.STRUCT, structCol.getType());
+
+      try (ColumnView sumChild = structCol.getChildColumnView(0);
+           ColumnView ovfChild = structCol.getChildColumnView(1);
+           ColumnVector ovfCol = ovfChild.copyToColumnVector();
+           ColumnVector expectedOvf = ColumnVector.fromBooleans(true, false)) {
+        assertEquals(DType.DTypeEnum.DECIMAL128, sumChild.getType().getTypeId());
+        assertEquals(scale, sumChild.getType().getScale());
+        assertColumnsAreEqual(expectedOvf, ovfCol);
+      }
+    }
+  }
+
   @Test
   void testGroupByMergeM2() {
     StructType nestedType = new StructType(false,
@@ -8085,7 +9339,7 @@ public class TableTest extends CudfTestBase {
   /**
    * A wrapper for ContiguousTable[] to implement AutoCloseable
    */
-  static class ContiguousSplitRes implements AutoCloseable {
+  private static class ContiguousSplitRes implements AutoCloseable {
     // to be closed
     private ContiguousTable[] splits;
 
@@ -9151,6 +10405,7 @@ public class TableTest extends CudfTestBase {
   private final class MyBufferConsumer implements HostBufferConsumer, AutoCloseable {
     public final HostMemoryBuffer buffer;
     long offset = 0;
+    int doneCount = 0;
 
     public MyBufferConsumer() {
       buffer = hostMemoryAllocator.allocate(10 * 1024 * 1024);
@@ -9164,6 +10419,11 @@ public class TableTest extends CudfTestBase {
       } finally {
         src.close();
       }
+    }
+
+    @Override
+    public void done() {
+      doneCount++;
     }
 
     @Override
@@ -9232,33 +10492,36 @@ public class TableTest extends CudfTestBase {
             new ColumnWriterOptions("key0", false),
             new ColumnWriterOptions("value0"),
             true)).build();
-    File f = File.createTempFile("test-map", ".parquet");
-    List<HostColumnVector.StructData> list1 =
-        Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "b")));
-    List<HostColumnVector.StructData> list2 =
-        Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "c")));
-    List<HostColumnVector.StructData> list3 =
-     Arrays.asList(new HostColumnVector.StructData(Arrays.asList("e", "d")));
-    HostColumnVector.StructType structType = new HostColumnVector.StructType(true,
-     Arrays.asList(new HostColumnVector.BasicType(true, DType.STRING),
-        new HostColumnVector.BasicType(true, DType.STRING)));
-    try (ColumnVector listColumn = ColumnVector.fromLists(new HostColumnVector.ListType(true,
-            structType), list1, list2, list3);
-         Table t0 = new Table(listColumn)) {
-      try (TableWriter writer = Table.writeParquetChunked(options, f)) {
-        writer.write(t0);
+    try (TempFile tempFile = TempFile.create("test-map", ".parquet")) {
+      File f = tempFile.getFile();
+      List<HostColumnVector.StructData> list1 =
+          Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "b")));
+      List<HostColumnVector.StructData> list2 =
+          Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "c")));
+      List<HostColumnVector.StructData> list3 =
+          Arrays.asList(new HostColumnVector.StructData(Arrays.asList("e", "d")));
+      HostColumnVector.StructType structType = new HostColumnVector.StructType(true,
+          Arrays.asList(new HostColumnVector.BasicType(true, DType.STRING),
+              new HostColumnVector.BasicType(true, DType.STRING)));
+      try (ColumnVector listColumn = ColumnVector.fromLists(new HostColumnVector.ListType(true,
+              structType), list1, list2, list3);
+           Table t0 = new Table(listColumn)) {
+        try (TableWriter writer = Table.writeParquetChunked(options, f)) {
+          writer.write(t0);
+        }
+        try (ParquetFileReader reader =
+             ParquetFileReader.open(HadoopInputFile.fromPath(new Path(f.getAbsolutePath()),
+                 new Configuration()))) {
+          MessageType schema = reader.getFooter().getFileMetaData().getSchema();
+          assertEquals(OriginalType.MAP, schema.getType("my_map").getOriginalType());
+        }
       }
-      ParquetFileReader reader =
-       ParquetFileReader.open(HadoopInputFile.fromPath(new Path(f.getAbsolutePath()),
-           new Configuration()));
-      MessageType schema = reader.getFooter().getFileMetaData().getSchema();
-      assertEquals(OriginalType.MAP, schema.getType("my_map").getOriginalType());
-    }
-    try (ColumnVector cv = Table.readParquet(f).getColumn(0);
-         Scalar aString = Scalar.fromString("a");
-         ColumnVector res = cv.getMapValue(aString);
-         ColumnVector expected = ColumnVector.fromStrings("b", "c", null)) {
-      assertColumnsAreEqual(expected, res);
+      try (Table table = Table.readParquet(f);
+           Scalar aString = Scalar.fromString("a");
+           ColumnVector res = table.getColumn(0).getMapValue(aString);
+           ColumnVector expected = ColumnVector.fromStrings("b", "c", null)) {
+        assertColumnsAreEqual(expected, res);
+      }
     }
   }
 
@@ -9283,6 +10546,109 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testParquetWriterCloseAndGetFooterToFile() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    try (TempFile tempFile = TempFile.create("returned-footer", ".parquet");
+         Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, tempFile.getFile())) {
+      writer.write(table);
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        assertReturnedFooterMatches(Files.readAllBytes(tempFile.getFile().toPath()), footer);
+        assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+        assertDoesNotThrow(writer::close);
+      }
+
+      try (Table result = Table.readParquet(tempFile.getFile());
+           Table expected = Table.concatenate(table, table)) {
+        assertTablesAreEqual(expected, result);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterToBuffer() {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id", "value")
+        .build();
+    TrackingHostMemoryAllocator allocator = new TrackingHostMemoryAllocator();
+    try (Table table = new Table.TestBuilder()
+             .column(1, 2, 3)
+             .column("a", "b", "c")
+             .build();
+         MyBufferConsumer consumer = new MyBufferConsumer();
+         ParquetTableWriter writer =
+             Table.writeParquetChunked(options, consumer, allocator)) {
+      writer.write(table);
+      try (HostMemoryBuffer footer = writer.closeAndGetFooter()) {
+        byte[] parquetData = new byte[(int) consumer.offset];
+        consumer.buffer.getBytes(parquetData, 0, 0, consumer.offset);
+        assertReturnedFooterMatches(parquetData, footer);
+        assertSame(allocator.lastAllocated, footer);
+        assertEquals(1, consumer.doneCount);
+        assertDoesNotThrow(writer::close);
+        assertEquals(1, consumer.doneCount);
+      }
+    }
+  }
+
+  @Test
+  void testParquetWriterCloseAndGetFooterAfterClose() throws IOException {
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withColumns(true, "id")
+        .build();
+    try (TempFile tempFile = TempFile.create("discarded-footer", ".parquet");
+         Table table = new Table.TestBuilder().column(1, 2, 3).build()) {
+      ParquetTableWriter writer = Table.writeParquetChunked(options, tempFile.getFile());
+      writer.write(table);
+      writer.close();
+      assertThrows(IllegalStateException.class, writer::closeAndGetFooter);
+      assertDoesNotThrow(writer::close);
+    }
+  }
+
+  private static void assertReturnedFooterMatches(byte[] parquetData,
+                                                  HostMemoryBuffer returnedFooter) {
+    int fileLength = parquetData.length;
+    int metadataLength = (parquetData[fileLength - 8] & 0xff)
+        | ((parquetData[fileLength - 7] & 0xff) << 8)
+        | ((parquetData[fileLength - 6] & 0xff) << 16)
+        | ((parquetData[fileLength - 5] & 0xff) << 24);
+    int footerAndTrailerLength = metadataLength + 8;
+    byte[] expected = new byte[4 + footerAndTrailerLength];
+    System.arraycopy(parquetData, 0, expected, 0, 4);
+    System.arraycopy(parquetData, fileLength - footerAndTrailerLength,
+        expected, 4, footerAndTrailerLength);
+
+    assertEquals(expected.length, returnedFooter.getLength());
+    byte[] actual = new byte[expected.length];
+    returnedFooter.getBytes(actual, 0, 0, actual.length);
+    assertArrayEquals(expected, actual);
+  }
+
+  private static final class TrackingHostMemoryAllocator implements HostMemoryAllocator {
+    private HostMemoryBuffer lastAllocated;
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes, boolean preferPinned) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes, preferPinned);
+      return lastAllocated;
+    }
+
+    @Override
+    public HostMemoryBuffer allocate(long bytes) {
+      lastAllocated = DefaultHostMemoryAllocator.get().allocate(bytes);
+      return lastAllocated;
+    }
+  }
+
+  @Test
   void testParquetWriteToBufferChunked() {
     ParquetWriterOptions.Builder optBuilder = ParquetWriterOptions.builder();
     List<String> columns = Lists.newArrayList(WriteUtils.getNonNestedColumns(false));
@@ -9293,6 +10659,8 @@ public class TableTest extends CudfTestBase {
       optBuilder.withCompressionType(CompressionType.NONE)
       .withRowGroupSizeRows(10000)
       .withRowGroupSizeBytes(10000)
+      .withMaxDictionarySize(2 * 1024 * 1024)
+      .withDictionaryPolicy(ParquetWriterOptions.DictionaryPolicy.ALWAYS)
       .build();
     try (Table table0 = getExpectedFileTable(columns);
          MyBufferConsumer consumer = new MyBufferConsumer()) {
@@ -9325,10 +10693,38 @@ public class TableTest extends CudfTestBase {
     }
   }
 
+  /**
+   * Exercises the file-chunked Parquet write path with the dictionary configuration
+   * setters so any signature/forwarding drift between {@code writeParquetFileBegin}
+   * and {@code writeParquetBufferBegin} is caught.
+   */
+  @Test
+  void testParquetWriteToFileChunkedWithDictionaryOptions() throws IOException {
+    try (TempFile tempFile = TempFile.create("test-dict-options", ".parquet");
+         Table table0 = getExpectedFileTableWithDecimals()) {
+      File file = tempFile.getFile();
+      ParquetWriterOptions options = ParquetWriterOptions.builder()
+          .withNonNullableColumns("first", "second", "third", "fourth", "fifth", "sixth", "seventh")
+          .withDecimalColumn("eighth", 5)
+          .withDecimalColumn("ninth", 6)
+          .withCompressionType(CompressionType.NONE)
+          .withMaxDictionarySize(2 * 1024 * 1024)
+          .withDictionaryPolicy(ParquetWriterOptions.DictionaryPolicy.ALWAYS)
+          .build();
+      try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
+        writer.write(table0);
+      }
+      try (Table table2 = Table.readParquet(file.getAbsoluteFile())) {
+        assertTablesAreEqual(table0, table2);
+      }
+    }
+  }
+
   @Test
   void testParquetWriteToFileWithNames() throws IOException {
-    File tempFile = File.createTempFile("test-names", ".parquet");
-    try (Table table0 = getExpectedFileTableWithDecimals()) {
+    try (TempFile tempFile = TempFile.create("test-names", ".parquet");
+         Table table0 = getExpectedFileTableWithDecimals()) {
+      File file = tempFile.getFile();
       ParquetWriterOptions options = ParquetWriterOptions.builder()
           .withNonNullableColumns("first", "second", "third", "fourth", "fifth", "sixth", "seventh")
           .withDecimalColumn("eighth", 5)
@@ -9336,21 +10732,20 @@ public class TableTest extends CudfTestBase {
           .withCompressionType(CompressionType.NONE)
           .withStatisticsFrequency(ParquetWriterOptions.StatisticsFrequency.NONE)
           .build();
-      try (TableWriter writer = Table.writeParquetChunked(options, tempFile.getAbsoluteFile())) {
+      try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
         writer.write(table0);
       }
-      try (Table table2 = Table.readParquet(tempFile.getAbsoluteFile())) {
+      try (Table table2 = Table.readParquet(file.getAbsoluteFile())) {
         assertTablesAreEqual(table0, table2);
       }
-    } finally {
-      tempFile.delete();
     }
   }
 
   @Test
   void testParquetWriteToFileWithNamesAndMetadata() throws IOException {
-    File tempFile = File.createTempFile("test-names-metadata", ".parquet");
-    try (Table table0 = getExpectedFileTableWithDecimals()) {
+    try (TempFile tempFile = TempFile.create("test-names-metadata", ".parquet");
+         Table table0 = getExpectedFileTableWithDecimals()) {
+      File file = tempFile.getFile();
       ParquetWriterOptions options = ParquetWriterOptions.builder()
           .withNonNullableColumns("first", "second", "third", "fourth", "fifth", "sixth", "seventh")
           .withDecimalColumn("eighth", 6)
@@ -9359,21 +10754,20 @@ public class TableTest extends CudfTestBase {
           .withCompressionType(CompressionType.NONE)
           .withStatisticsFrequency(ParquetWriterOptions.StatisticsFrequency.NONE)
           .build();
-      try (TableWriter writer = Table.writeParquetChunked(options, tempFile.getAbsoluteFile())) {
+      try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
         writer.write(table0);
       }
-      try (Table table2 = Table.readParquet(tempFile.getAbsoluteFile())) {
+      try (Table table2 = Table.readParquet(file.getAbsoluteFile())) {
         assertTablesAreEqual(table0, table2);
       }
-    } finally {
-      tempFile.delete();
     }
   }
 
   @Test
   void testParquetWriteToFileUncompressedNoStats() throws IOException {
-    File tempFile = File.createTempFile("test-uncompressed", ".parquet");
-    try (Table table0 = getExpectedFileTableWithDecimals()) {
+    try (TempFile tempFile = TempFile.create("test-uncompressed", ".parquet");
+         Table table0 = getExpectedFileTableWithDecimals()) {
+      File file = tempFile.getFile();
       ParquetWriterOptions options = ParquetWriterOptions.builder()
           .withNonNullableColumns("_c0", "_c1", "_c2", "_c3", "_c4", "_c5", "_c6")
           .withDecimalColumn("_c7", 4)
@@ -9383,14 +10777,12 @@ public class TableTest extends CudfTestBase {
           .withRowGroupSizeBytes(10000)
           .withStatisticsFrequency(ParquetWriterOptions.StatisticsFrequency.NONE)
           .build();
-      try (TableWriter writer = Table.writeParquetChunked(options, tempFile.getAbsoluteFile())) {
+      try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
         writer.write(table0);
       }
-      try (Table table2 = Table.readParquet(tempFile.getAbsoluteFile())) {
+      try (Table table2 = Table.readParquet(file.getAbsoluteFile())) {
         assertTablesAreEqual(table0, table2);
       }
-    } finally {
-      tempFile.delete();
     }
   }
 
@@ -9410,8 +10802,8 @@ public class TableTest extends CudfTestBase {
         .withColumns( true, "c5")
         .build();
 
-    File tempFile = File.createTempFile("test-field-id", ".parquet");
-    try {
+    try (TempFile tempFile = TempFile.create("test-field-id", ".parquet")) {
+      File file = tempFile.getFile();
       HostColumnVector.StructType structType = new HostColumnVector.StructType(
           true,
           new HostColumnVector.BasicType(true, DType.STRING),
@@ -9425,13 +10817,13 @@ public class TableTest extends CudfTestBase {
           .timestampMicrosecondsColumn(1000L, 2000L) // c4
           .column("a", "b") // c5
           .build()) {
-        try (TableWriter writer = Table.writeParquetChunked(options, tempFile.getAbsoluteFile())) {
+        try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
           writer.write(table0);
         }
       }
 
       try (ParquetFileReader reader = ParquetFileReader.open(HadoopInputFile.fromPath(
-          new Path(tempFile.getAbsolutePath()),
+          new Path(file.getAbsolutePath()),
           new Configuration()))) {
         MessageType schema = reader.getFooter().getFileMetaData().getSchema();
         assert (schema.getFields().get(0).getId().intValue() == -1);
@@ -9442,8 +10834,6 @@ public class TableTest extends CudfTestBase {
         assert (schema.getFields().get(3).getId().intValue() == -4);
         assert (schema.getFields().get(4).getId() == null);
       }
-    } finally {
-      tempFile.delete();
     }
   }
 
@@ -9475,8 +10865,8 @@ public class TableTest extends CudfTestBase {
         .withColumn(true, "c4", 0)
         .build();
 
-    File tempFile = File.createTempFile("test-field-id", ".parquet");
-    try {
+    try (TempFile tempFile = TempFile.create("test-field-id", ".parquet")) {
+      File file = tempFile.getFile();
       HostColumnVector.StructType structType = new HostColumnVector.StructType(
           true,
           new HostColumnVector.BasicType(true, DType.STRING),
@@ -9491,13 +10881,13 @@ public class TableTest extends CudfTestBase {
               new HostColumnVector.StructData("a", "b"), new HostColumnVector.StructData("a", "b"))
           .column("a", "b") // c4
           .build()) {
-        try (TableWriter writer = Table.writeParquetChunked(options, tempFile.getAbsoluteFile())) {
+        try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
           writer.write(table0);
         }
       }
 
       try (ParquetFileReader reader = ParquetFileReader.open(HadoopInputFile.fromPath(
-          new Path(tempFile.getAbsolutePath()),
+          new Path(file.getAbsolutePath()),
           new Configuration()))) {
         MessageType schema = reader.getFooter().getFileMetaData().getSchema();
         assert (schema.getFields().get(0).getId() == null);
@@ -9509,8 +10899,153 @@ public class TableTest extends CudfTestBase {
         assert (((GroupType) schema.getFields().get(3)).getFields().get(1).getId() == null);
         assert (schema.getFields().get(4).getId().intValue() == 0);
       }
-    } finally {
-      tempFile.delete();
+    }
+  }
+
+  @Test
+  void testParquetWriteFieldIdOnOuterListBinaryAndMap() throws IOException {
+    // Regression test for cudf #22347: parquet field IDs supplied via
+    // withBinaryColumn(name, nullable, id), listBuilder(name, nullable, id) and
+    // mapColumn(name, key, value, isNullable, id) must end up on the outer
+    // (list/map) column on disk, not on the inner element/key_value child.
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withBinaryColumn("_c0", true, 1)
+        .withListColumn(listBuilder("_c1", true, 2)
+            .withColumn(false, "element", 22)
+            .build())
+        .withMapColumn(mapColumn("_c2",
+            new ColumnWriterOptions("key", false),
+            new ColumnWriterOptions("value"),
+            true, 3))
+        .build();
+
+    try (TempFile tempFile = TempFile.create("test-field-id-outer", ".parquet")) {
+      File file = tempFile.getFile();
+      List<Byte> bin1 = asList("ABC");
+      List<Byte> bin2 = asList("DEF");
+      HostColumnVector.ListType binType = new HostColumnVector.ListType(true,
+          new HostColumnVector.BasicType(false, DType.UINT8));
+      HostColumnVector.ListType listOfInt = new HostColumnVector.ListType(true,
+          new HostColumnVector.BasicType(false, DType.INT32));
+      HostColumnVector.StructType kvType = new HostColumnVector.StructType(true,
+          Arrays.asList(new HostColumnVector.BasicType(true, DType.STRING),
+                        new HostColumnVector.BasicType(true, DType.STRING)));
+      HostColumnVector.ListType mapType = new HostColumnVector.ListType(true, kvType);
+
+      try (ColumnVector binCol = ColumnVector.fromLists(binType, bin1, bin2);
+           ColumnVector listCol = ColumnVector.fromLists(listOfInt,
+               Arrays.asList(1, 2, 3), Arrays.asList(4, 5));
+           ColumnVector mapCol = ColumnVector.fromLists(mapType,
+               Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "b"))),
+               Arrays.asList(new HostColumnVector.StructData(Arrays.asList("c", "d"))));
+           Table t0 = new Table(binCol, listCol, mapCol)) {
+        try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
+          writer.write(t0);
+        }
+      }
+
+      try (ParquetFileReader reader = ParquetFileReader.open(HadoopInputFile.fromPath(
+          new Path(file.getAbsolutePath()), new Configuration()))) {
+        MessageType schema = reader.getFooter().getFileMetaData().getSchema();
+        // The id supplied to the API must land on the outer (BINARY/LIST/MAP) column.
+        assertEquals(1, schema.getFields().get(0).getId().intValue());
+        assertEquals(2, schema.getFields().get(1).getId().intValue());
+        assertEquals(3, schema.getFields().get(2).getId().intValue());
+
+        // No nested descendant must inherit the outer id (catches "id placed on
+        // both outer and inner" regressions, including the original bug where
+        // withBinary(...id) attached the id to the inner BINARY_DATA child).
+        assertNoNestedIdEquals(schema.getFields().get(0), 1);
+        assertNoNestedIdEquals(schema.getFields().get(1), 2);
+        assertNoNestedIdEquals(schema.getFields().get(2), 3);
+
+        // The explicit child id on the LIST<INT> "element" must be preserved.
+        Type listElement = findDescendantByName(schema.getFields().get(1), "element");
+        assertNotNull(listElement);
+        assertEquals(22, listElement.getId().intValue());
+      }
+    }
+  }
+
+  private static void assertNoNestedIdEquals(Type type, int outerId) {
+    if (type.isPrimitive()) return;
+    for (Type child : type.asGroupType().getFields()) {
+      if (child.getId() != null) {
+        assertNotEquals(outerId, child.getId().intValue(),
+            "Field " + child.getName() + " unexpectedly inherited outer id " + outerId);
+      }
+      assertNoNestedIdEquals(child, outerId);
+    }
+  }
+
+  private static Type findDescendantByName(Type type, String name) {
+    if (type.isPrimitive()) {
+      return name.equals(type.getName()) ? type : null;
+    }
+    for (Type child : type.asGroupType().getFields()) {
+      if (name.equals(child.getName())) return child;
+      Type found = findDescendantByName(child, name);
+      if (found != null) return found;
+    }
+    return null;
+  }
+
+  @Test
+  void testParquetWriteFieldIdOnNestedArrayOfBinaryAndString() throws IOException {
+    // Regression test for cudf #22347: the original Spark-Rapids/Iceberg
+    // failure ("Missing required field ... optional binary element is not in
+    // the store") came from array<binary> / array<string> columns where
+    // iceberg looks the leaf up by its parquet field id. Lock that nested path
+    // down here in addition to the top-level cases.
+    ParquetWriterOptions options = ParquetWriterOptions.builder()
+        .withListColumn(listBuilder("arr_bin", true, 10)
+            .withBinaryColumn("element", true, 11)
+            .build())
+        .withListColumn(listBuilder("arr_str", true, 20)
+            .withColumn(true, "element", 21)
+            .build())
+        .build();
+
+    try (TempFile tempFile = TempFile.create("test-field-id-nested", ".parquet")) {
+      File file = tempFile.getFile();
+      HostColumnVector.ListType binEl = new HostColumnVector.ListType(true,
+          new HostColumnVector.BasicType(false, DType.UINT8));
+      HostColumnVector.ListType arrBinType = new HostColumnVector.ListType(true, binEl);
+      HostColumnVector.ListType arrStrType = new HostColumnVector.ListType(true,
+          new HostColumnVector.BasicType(true, DType.STRING));
+
+      try (ColumnVector arrBinCol = ColumnVector.fromLists(arrBinType,
+               Arrays.asList(asList("ABC"), asList("DEF")),
+               Arrays.asList(asList("GHI")));
+           ColumnVector arrStrCol = ColumnVector.fromLists(arrStrType,
+               Arrays.asList("a", "b"),
+               Arrays.asList("c"));
+           Table t0 = new Table(arrBinCol, arrStrCol)) {
+        try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
+          writer.write(t0);
+        }
+      }
+
+      try (ParquetFileReader reader = ParquetFileReader.open(HadoopInputFile.fromPath(
+          new Path(file.getAbsolutePath()), new Configuration()))) {
+        MessageType schema = reader.getFooter().getFileMetaData().getSchema();
+        // Outer LIST ids must land on the outer list groups.
+        assertEquals(10, schema.getFields().get(0).getId().intValue());
+        assertEquals(20, schema.getFields().get(1).getId().intValue());
+
+        // Outer ids must not leak into nested descendants.
+        assertNoNestedIdEquals(schema.getFields().get(0), 10);
+        assertNoNestedIdEquals(schema.getFields().get(1), 20);
+
+        // Inner element ids must reach the leaf — this is the iceberg lookup
+        // path that broke before the fix on array<binary>.
+        Type binElement = findDescendantByName(schema.getFields().get(0), "element");
+        assertNotNull(binElement);
+        assertEquals(11, binElement.getId().intValue());
+        Type strElement = findDescendantByName(schema.getFields().get(1), "element");
+        assertNotNull(strElement);
+        assertEquals(21, strElement.getId().intValue());
+      }
     }
   }
 
@@ -9577,34 +11112,29 @@ public class TableTest extends CudfTestBase {
     "we don't automatically upcast to decimal128 on conversion to arrow, we have" +
     "to wait until it supports those types, then upgrade")
   void testArrowIPCWriteToFileWithNamesAndMetadata() throws IOException {
-    File tempFile = File.createTempFile("test-names-metadata", ".arrow");
-    String[] columnNames = WriteUtils.getNonNestedColumns(false);
-    try (Table table0 = getExpectedFileTable(columnNames)) {
-      ArrowIPCWriterOptions options = ArrowIPCWriterOptions.builder()
-              .withColumnNames(columnNames)
-              .build();
-      try (TableWriter writer = Table.writeArrowIPCChunked(options, tempFile.getAbsoluteFile())) {
-        writer.write(table0);
-      }
-      // Reading from Arrow converts decimals to DECIMAL128
-      try (StreamedTableReader reader = Table.readArrowIPCChunked(tempFile);
-           Table expected = castDecimal64To128(table0)) {
-        boolean done = false;
-        int count = 0;
-        while (!done) {
-          try (Table t = reader.getNextIfAvailable()) {
-            if (t == null) {
-              done = true;
-            } else {
+    try (TempFile tempFile = TempFile.create("test-names-metadata", ".arrow")) {
+      File file = tempFile.getFile();
+      String[] columnNames = WriteUtils.getNonNestedColumns(false);
+      try (Table table0 = getExpectedFileTable(columnNames)) {
+        ArrowIPCWriterOptions options = ArrowIPCWriterOptions.builder()
+                .withColumnNames(columnNames)
+                .build();
+        try (TableWriter writer = Table.writeArrowIPCChunked(options, file.getAbsoluteFile())) {
+          writer.write(table0);
+        }
+        // Reading from Arrow converts decimals to DECIMAL128
+        try (StreamedTableReader reader = Table.readArrowIPCChunked(file);
+             Table expected = castDecimal64To128(table0)) {
+          int count;
+          for (count = 0; ; count++) {
+            try (Table t = reader.getNextIfAvailable()) {
+              if (t == null) break;
               assertTablesAreEqual(expected, t);
-              count++;
             }
           }
+          assertEquals(1, count);
         }
-        assertEquals(1, count);
       }
-    } finally {
-      tempFile.delete();
     }
   }
 
@@ -9719,20 +11249,20 @@ public class TableTest extends CudfTestBase {
 
   @Test
   void testORCWriteToFileChunked() throws IOException {
-    File tempFile = File.createTempFile("test", ".orc");
-    String[] selectedColumns = WriteUtils.getAllColumns(false);
-    try (Table table0 = getExpectedFileTable(selectedColumns)) {
-      ORCWriterOptions.Builder builder = ORCWriterOptions.builder();
-      WriteUtils.buildWriterOptions(builder, selectedColumns);
-      ORCWriterOptions opts = builder.build();
-      try (TableWriter writer = Table.writeORCChunked(opts, tempFile.getAbsoluteFile())) {
-        writer.write(table0);
+    try (TempFile tempFile = TempFile.create("test", ".orc")) {
+      File file = tempFile.getFile();
+      String[] selectedColumns = WriteUtils.getAllColumns(false);
+      try (Table table0 = getExpectedFileTable(selectedColumns)) {
+        ORCWriterOptions.Builder builder = ORCWriterOptions.builder();
+        WriteUtils.buildWriterOptions(builder, selectedColumns);
+        ORCWriterOptions opts = builder.build();
+        try (TableWriter writer = Table.writeORCChunked(opts, file.getAbsoluteFile())) {
+          writer.write(table0);
+        }
+        try (Table table1 = Table.readORC(file.getAbsoluteFile())) {
+          assertTablesAreEqual(table0, table1);
+        }
       }
-      try (Table table1 = Table.readORC(tempFile.getAbsoluteFile())) {
-        assertTablesAreEqual(table0, table1);
-      }
-    } finally {
-      tempFile.delete();
     }
   }
 
@@ -9743,7 +11273,6 @@ public class TableTest extends CudfTestBase {
                     new ColumnWriterOptions("key0", false),
                     new ColumnWriterOptions("value0"),
                     true)).build();
-    File f = File.createTempFile("test-map", ".parquet");
     List<HostColumnVector.StructData> list1 =
             Arrays.asList(new HostColumnVector.StructData(Arrays.asList("a", "b")));
     List<HostColumnVector.StructData> list2 =
@@ -9753,82 +11282,118 @@ public class TableTest extends CudfTestBase {
     HostColumnVector.StructType structType = new HostColumnVector.StructType(true,
             Arrays.asList(new HostColumnVector.BasicType(true, DType.STRING),
                     new HostColumnVector.BasicType(true, DType.STRING)));
-    try (ColumnVector listColumn = ColumnVector.fromLists(new HostColumnVector.ListType(true,
-            structType), list1, list2, list3);
-         Table t0 = new Table(listColumn)) {
-      try (TableWriter writer = Table.writeORCChunked(options, f)) {
-        writer.write(t0);
-      }
-      try (Table res = Table.readORC(f)) {
-        assertTablesAreEqual(t0, res);
+    try (TempFile tempFile = TempFile.create("test-map", ".orc")) {
+      File f = tempFile.getFile();
+      try (ColumnVector listColumn = ColumnVector.fromLists(new HostColumnVector.ListType(true,
+              structType), list1, list2, list3);
+           Table t0 = new Table(listColumn)) {
+        try (TableWriter writer = Table.writeORCChunked(options, f)) {
+          writer.write(t0);
+        }
+        try (Table res = Table.readORC(f)) {
+          assertTablesAreEqual(t0, res);
+        }
       }
     }
   }
 
   @Test
   void testORCWriteToFileWithColNames() throws IOException {
-    File tempFile = File.createTempFile("test", ".orc");
-    String[] colNames = WriteUtils.getNonNestedColumns(false);
-    try (Table table0 = getExpectedFileTable(colNames)) {
-      ORCWriterOptions.Builder optBuilder = ORCWriterOptions.builder();
-      WriteUtils.buildWriterOptions(optBuilder, colNames);
-      ORCWriterOptions options = optBuilder.build();
-      try (TableWriter writer = Table.writeORCChunked(options, tempFile.getAbsoluteFile())) {
-        writer.write(table0);
+    try (TempFile tempFile = TempFile.create("test", ".orc")) {
+      File file = tempFile.getFile();
+      String[] colNames = WriteUtils.getNonNestedColumns(false);
+      try (Table table0 = getExpectedFileTable(colNames)) {
+        ORCWriterOptions.Builder optBuilder = ORCWriterOptions.builder();
+        WriteUtils.buildWriterOptions(optBuilder, colNames);
+        ORCWriterOptions options = optBuilder.build();
+        try (TableWriter writer = Table.writeORCChunked(options, file.getAbsoluteFile())) {
+          writer.write(table0);
+        }
+        ORCOptions opts = ORCOptions.builder().includeColumn(colNames).build();
+        try (Table table1 = Table.readORC(opts, file.getAbsoluteFile())) {
+          assertTablesAreEqual(table0, table1);
+        }
       }
-      ORCOptions opts = ORCOptions.builder().includeColumn(colNames).build();
-      try (Table table1 = Table.readORC(opts, tempFile.getAbsoluteFile())) {
-        assertTablesAreEqual(table0, table1);
-      }
-    } finally {
-      tempFile.delete();
     }
   }
 
   @Test
   void testORCReadAndWriteForDecimal128() throws IOException {
-    File tempFile = File.createTempFile("test", ".orc");
-    String[] colNames = new String[]{Columns.DECIMAL64.name,
-        Columns.DECIMAL128.name, Columns.STRUCT_DEC128.name, Columns.LIST_DEC128.name};
-    try (Table table0 = getExpectedFileTable(colNames)) {
-      ORCWriterOptions.Builder optBuilder = ORCWriterOptions.builder();
-      WriteUtils.buildWriterOptions(optBuilder, colNames);
-      ORCWriterOptions options = optBuilder.build();
-      try (TableWriter writer = Table.writeORCChunked(options, tempFile.getAbsoluteFile())) {
-        writer.write(table0);
+    try (TempFile tempFile = TempFile.create("test", ".orc")) {
+      File file = tempFile.getFile();
+      String[] colNames = new String[]{Columns.DECIMAL64.name,
+          Columns.DECIMAL128.name, Columns.STRUCT_DEC128.name, Columns.LIST_DEC128.name};
+      try (Table table0 = getExpectedFileTable(colNames)) {
+        ORCWriterOptions.Builder optBuilder = ORCWriterOptions.builder();
+        WriteUtils.buildWriterOptions(optBuilder, colNames);
+        ORCWriterOptions options = optBuilder.build();
+        try (TableWriter writer = Table.writeORCChunked(options, file.getAbsoluteFile())) {
+          writer.write(table0);
+        }
+        ORCOptions opts = ORCOptions.builder()
+            .includeColumn(colNames)
+            .decimal128Column(Columns.DECIMAL128.name,
+                String.format("%s.%s", Columns.STRUCT_DEC128.name, "ch_dec128"),
+                String.format("%s.1.%s", Columns.LIST_DEC128.name, "ch_dec128"))
+            .build();
+        try (Table table1 = Table.readORC(opts, file.getAbsoluteFile())) {
+          assertTablesAreEqual(table0, table1);
+        }
       }
-      ORCOptions opts = ORCOptions.builder()
-          .includeColumn(colNames)
-          .decimal128Column(Columns.DECIMAL128.name,
-              String.format("%s.%s", Columns.STRUCT_DEC128.name, "ch_dec128"),
-              String.format("%s.1.%s", Columns.LIST_DEC128.name, "ch_dec128"))
-          .build();
-      try (Table table1 = Table.readORC(opts, tempFile.getAbsoluteFile())) {
-        assertTablesAreEqual(table0, table1);
-      }
-    } finally {
-      tempFile.delete();
     }
   }
 
   @Test
+  void testORCWriteWithWriterTimezone() throws IOException {
+    // Asia/Shanghai is a fixed +8 offset, with no daylight saving to depend on the dates used here
+    long offset = 8 * 60 * 60;
+    try (TempFile tempFile = TempFile.create("test-timezone", ".orc");
+         ColumnVector timestamps = ColumnVector.timestampSecondsFromLongs(-3000, 0, 1421323200);
+         Table table0 = new Table(timestamps)) {
+      File file = tempFile.getFile();
+      ORCWriterOptions opts = ORCWriterOptions.builder()
+          .withColumns(false, "ts")
+          .withWriterTimezone("Asia/Shanghai")
+          .build();
+      try (TableWriter writer = Table.writeORCChunked(opts, file.getAbsoluteFile())) {
+        writer.write(table0);
+      }
+      ORCOptions readOpts = ORCOptions.builder().withTimeUnit(DType.TIMESTAMP_SECONDS).build();
+      // The reader has no session timezone, so it returns the wall clock the writer encoded
+      try (Table table1 = Table.readORC(readOpts, file.getAbsoluteFile());
+           ColumnVector expected =
+               ColumnVector.timestampSecondsFromLongs(-3000 + offset, offset, 1421323200 + offset);
+           Table expectedTable = new Table(expected)) {
+        assertTablesAreEqual(expectedTable, table1);
+      }
+    }
+  }
+
+  @Test
+  void testORCWriterTimezoneInvalid() {
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(null));
+    assertThrows(IllegalArgumentException.class,
+        () -> ORCWriterOptions.builder().withWriterTimezone(""));
+  }
+
+  @Test
   void testORCWriteToFileUncompressed() throws IOException {
-    File tempFileUncompressed = File.createTempFile("test-uncompressed", ".orc");
-    try (Table table0 = getExpectedFileTable(WriteUtils.getNonNestedColumns(false))) {
+    try (TempFile tempFileUncompressed = TempFile.create("test-uncompressed", ".orc");
+         Table table0 = getExpectedFileTable(WriteUtils.getNonNestedColumns(false))) {
+      File file = tempFileUncompressed.getFile();
       String[] colNames = WriteUtils.getNonNestedColumns(false);
       ORCWriterOptions.Builder optsBuilder = ORCWriterOptions.builder();
       WriteUtils.buildWriterOptions(optsBuilder, colNames);
       optsBuilder.withCompressionType(CompressionType.NONE);
       ORCWriterOptions opts = optsBuilder.build();
       try (TableWriter writer =
-               Table.writeORCChunked(opts,tempFileUncompressed.getAbsoluteFile())) {
+               Table.writeORCChunked(opts, file.getAbsoluteFile())) {
         writer.write(table0);
       }
-      try (Table table2 = Table.readORC(tempFileUncompressed.getAbsoluteFile())) {
+      try (Table table2 = Table.readORC(file.getAbsoluteFile())) {
         assertTablesAreEqual(table0, table2);
       }
-    } finally {
-      tempFileUncompressed.delete();
     }
   }
 
@@ -10169,6 +11734,22 @@ public class TableTest extends CudfTestBase {
       try (Table ret = t.sample(8, true, 0)) {
         assertEquals(ret.getRowCount(), 8);
       }
+    }
+  }
+
+  @Test
+  void testWindowOptionsRowsFrameOrderByGettersReturnNull() {
+    // A ROWS-frame WindowOptions sets no order-by, so the parallel order-by arrays stay null and
+    // their getters must return null rather than NPE on an unguarded copy.
+    try (Scalar one = Scalar.fromInt(1);
+         WindowOptions rowsWindow = WindowOptions.builder()
+             .minPeriods(1)
+             .window(one, one)
+             .build()) {
+      assertEquals(WindowOptions.FrameType.ROWS, rowsWindow.getFrameType());
+      assertNull(rowsWindow.getOrderByColumnIndices());
+      assertNull(rowsWindow.getOrderByAscending());
+      assertNull(rowsWindow.getOrderByNullsFirst());
     }
   }
 }

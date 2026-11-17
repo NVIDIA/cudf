@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -37,13 +37,13 @@ def test_groupby_shift_row(shift_perc, direction, fill_value):
         pytest.param(
             0,
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/10608"
+                reason="https://github.com/NVIDIA/cudf/issues/10608"
             ),
         ),
         pytest.param(
             42,
             marks=pytest.mark.xfail(
-                reason="https://github.com/rapidsai/cudf/issues/10608"
+                reason="https://github.com/NVIDIA/cudf/issues/10608"
             ),
         ),
     ],

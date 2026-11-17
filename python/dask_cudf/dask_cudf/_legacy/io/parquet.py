@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import contextlib
 import itertools
@@ -106,7 +106,7 @@ class CudfEngine(ArrowDatasetEngine):
             )
         except RuntimeError as err:
             # TODO: Remove try/except after null-schema issue is resolved
-            # (See: https://github.com/rapidsai/cudf/issues/12702)
+            # (See: https://github.com/NVIDIA/cudf/issues/12702)
             if len(paths) > 1:
                 df = cudf.concat(
                     [
@@ -385,7 +385,7 @@ class CudfEngine(ArrowDatasetEngine):
             metadata_path = fs.sep.join([path, "_metadata"])
             _meta = []
             if append and fmd is not None:
-                # Convert to bytes: <https://github.com/rapidsai/cudf/issues/17177>
+                # Convert to bytes: <https://github.com/NVIDIA/cudf/issues/17177>
                 if isinstance(fmd, pq.FileMetaData):
                     with BytesIO() as myio:
                         fmd.write_metadata_file(myio)

@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -18,7 +19,7 @@
 
 #include <rmm/device_buffer.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <algorithm>
 #include <functional>
@@ -62,7 +63,8 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestColumnFactoryConstruction)
   cols.push_back(std::move(ages_col));
   cols.push_back(std::move(is_human_col));
 
-  auto struct_col = cudf::make_structs_column(num_rows, std::move(cols), 0, {});
+  auto struct_col = cudf::make_structs_column(
+    num_rows, std::move(cols), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_EQ(num_rows, struct_col->size());
 
@@ -81,8 +83,8 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestColumnFactoryConstruction)
   expected_children.emplace_back(
     cudf::test::fixed_width_column_wrapper<bool>{true, true, false}.release());
 
-  std::for_each(thrust::make_counting_iterator(0),
-                thrust::make_counting_iterator(0) + expected_children.size(),
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator<std::size_t>{0} + expected_children.size(),
                 [&](auto idx) {
                   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(struct_col_view.child(idx),
                                                       expected_children[idx]->view());
@@ -132,8 +134,8 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestColumnWrapperConstruction)
     {true, true, false, false, false, false}, {1, 1, 0, 0, 1, 0}}
                                    .release());
 
-  std::for_each(thrust::make_counting_iterator(0),
-                thrust::make_counting_iterator(0) + expected_children.size(),
+  std::for_each(cuda::counting_iterator<std::size_t>{0},
+                cuda::counting_iterator<std::size_t>{0} + expected_children.size(),
                 [&](auto idx) {
                   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(struct_col_view.child(idx),
                                                       expected_children[idx]->view());
@@ -178,25 +180,25 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestStructsContainingLists)
   // Check that the last two rows are null for all members.
 
   // For `Name` member, indices 4 and 5 are null.
-  auto expected_names_col = cudf::test::strings_column_wrapper{
-    names.begin(), names.end(), cudf::detail::make_counting_transform_iterator(0, [](auto i) {
-      return i < 4;
-    })}.release();
+  auto expected_names_col =
+    cudf::test::strings_column_wrapper{
+      names.begin(), names.end(), cudf::test::iterators::nulls_at({4, 5})}
+      .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(struct_col->view().child(0), expected_names_col->view());
 
   // For the `List` member, indices 4, 5 should be null.
-  auto expected_last_two_lists_col = cudf::test::lists_column_wrapper<TypeParam, int32_t>{
-    {
-      {1, 2, 3},
-      {4},
-      {5, 6},
-      {},
-      {7, 8},  // Null.
-      {9}      // Null.
-    },
-    cudf::detail::make_counting_transform_iterator(
-      0, [](auto i) { return i < 4; })}.release();
+  auto expected_last_two_lists_col =
+    cudf::test::lists_column_wrapper<TypeParam, int32_t>{{
+                                                           {1, 2, 3},
+                                                           {4},
+                                                           {5, 6},
+                                                           {},
+                                                           {7, 8},  // Null.
+                                                           {9}      // Null.
+                                                         },
+                                                         cudf::test::iterators::nulls_at({4, 5})}
+      .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(struct_col->view().child(1),
                                       expected_last_two_lists_col->view());
@@ -234,12 +236,9 @@ TYPED_TEST(TypedStructColumnWrapperTest, StructOfStructs)
   EXPECT_EQ(struct_2->view().child(1).size(), num_rows);
 
   // Verify that the child/grandchild columns are as expected.
-  auto expected_names_col =
-    cudf::test::strings_column_wrapper(
-      names.begin(),
-      names.end(),
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 0 && i != 4; }))
-      .release();
+  auto expected_names_col = cudf::test::strings_column_wrapper(
+                              names.begin(), names.end(), cudf::test::iterators::nulls_at({0, 4}))
+                              .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_names_col, struct_2->child(1).child(0));
 
@@ -314,12 +313,9 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestNullMaskPropagationForNonNullStruct
 
   // Top-struct has 1 null (at index 0).
   // Bottom-level struct had no nulls, but must now report nulls
-  auto expected_names_col =
-    cudf::test::strings_column_wrapper(
-      names.begin(),
-      names.end(),
-      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 0; }))
-      .release();
+  auto expected_names_col = cudf::test::strings_column_wrapper(
+                              names.begin(), names.end(), cudf::test::iterators::null_at(0))
+                              .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_names_col, struct_2->child(1).child(0));
 
@@ -400,11 +396,14 @@ TYPED_TEST(TypedStructColumnWrapperTest, TestListsOfStructs)
   auto expected_unchanged_struct_col = cudf::column(*struct_col);
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<size_type>{0, 2, 3, 5, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 3, 5, 6}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
-  auto list_col = cudf::make_lists_column(
-    num_list_rows, std::move(list_offsets_column), std::move(struct_col), 0, {});
+  auto list_col = cudf::make_lists_column(num_list_rows,
+                                          std::move(list_offsets_column),
+                                          std::move(struct_col),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // List of structs was constructed successfully. No exceptions.
   // Verify that child columns is as it was set.
@@ -417,22 +416,21 @@ TYPED_TEST(TypedStructColumnWrapperTest, ListOfStructOfList)
 {
   using namespace cudf::test;
 
-  auto list_col = lists_column_wrapper<TypeParam, int32_t>{
-    {{0}, {1}, {}, {3}, {4}, {5, 5}, {6}, {}, {8}, {9}},
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; })};
+  auto list_col =
+    lists_column_wrapper<TypeParam, int32_t>{{{0}, {1}, {}, {3}, {4}, {5, 5}, {6}, {}, {8}, {9}},
+                                             cudf::test::iterators::nulls_at_multiples_of(2)};
 
   // TODO: Struct<List> cannot be compared with expect_columns_equal(),
   // if the struct has null values. After lists support "equivalence"
   // comparisons, the structs column needs to be modified to add nulls.
   auto struct_of_lists_col = structs_column_wrapper{{list_col}}.release();
 
-  auto list_of_struct_of_list_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3; });
+  auto list_of_struct_of_list_validity = cudf::test::iterators::nulls_at_multiples_of(3);
   auto [null_mask, null_count] =
     detail::make_null_mask(list_of_struct_of_list_validity, list_of_struct_of_list_validity + 5);
   auto list_of_struct_of_list =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(struct_of_lists_col),
                             null_count,
                             std::move(null_mask));
@@ -441,8 +439,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, ListOfStructOfList)
   // Compare with expected values.
 
   auto expected_level0_list = lists_column_wrapper<TypeParam, int32_t>{
-    {{}, {3}, {}, {5, 5}, {}, {9}},
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; })};
+    {{}, {3}, {}, {5, 5}, {}, {9}}, cudf::test::iterators::nulls_at_multiples_of(2)};
 
   auto expected_level2_struct = structs_column_wrapper{{expected_level0_list}}.release();
 
@@ -453,7 +450,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, ListOfStructOfList)
     detail::make_null_mask(list_of_struct_of_list_validity, list_of_struct_of_list_validity + 5);
   auto expected_level3_list =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 0, 2, 4, 4, 6}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 0, 2, 4, 4, 6}.release(),
                             std::move(expected_level2_struct),
                             null_count,
                             std::move(null_mask));
@@ -467,24 +464,20 @@ TYPED_TEST(TypedStructColumnWrapperTest, StructOfListOfStruct)
   using namespace cudf::test;
 
   auto ints_col = fixed_width_column_wrapper<TypeParam, int32_t>{
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9},
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; })};
+    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, cudf::test::iterators::nulls_at_multiples_of(2)};
 
   auto structs_col =
     structs_column_wrapper{
-      {ints_col},
-      cudf::detail::make_counting_transform_iterator(
-        0, [](auto i) { return i < 6; })  // Last 4 structs are null.
+      {ints_col}, cudf::test::iterators::nulls_at({6, 7, 8, 9})  // Last 4 structs are null.
     }
       .release();
 
-  auto list_validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3; });
+  auto list_validity           = cudf::test::iterators::nulls_at_multiples_of(3);
   auto [null_mask, null_count] = detail::make_null_mask(list_validity, list_validity + 5);
 
   auto lists_col =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(structs_col),
                             null_count,
                             std::move(null_mask));
@@ -506,7 +499,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, StructOfListOfStruct)
 
   auto expected_lists_col =
     cudf::make_lists_column(5,
-                            fixed_width_column_wrapper<size_type>{0, 2, 4, 6, 8, 10}.release(),
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6, 8, 10}.release(),
                             std::move(expected_structs_col),
                             null_count,
                             std::move(null_mask));
@@ -542,8 +535,12 @@ TYPED_TEST(TypedStructColumnWrapperTest, EmptyColumnsOfStructs)
     EXPECT_TRUE(struct_column->size() == 0);
     EXPECT_TRUE(struct_column->null_count() == 0);
 
-    auto empty_list_of_structs = cudf::make_lists_column(
-      0, fixed_width_column_wrapper<size_type>{0}.release(), std::move(struct_column), 0, {});
+    auto empty_list_of_structs =
+      cudf::make_lists_column(0,
+                              fixed_width_column_wrapper<int32_t>{0}.release(),
+                              std::move(struct_column),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     EXPECT_TRUE(empty_list_of_structs->size() == 0);
     EXPECT_TRUE(empty_list_of_structs->null_count() == 0);
@@ -561,7 +558,7 @@ TYPED_TEST(TypedStructColumnWrapperTest, EmptyColumnsOfStructs)
   //     fixed_width_column_wrapper<TypeParam>{1,2,3,4,5}.release();
   //
   //   auto list_offsets =
-  //     fixed_width_column_wrapper<size_type>{0}.release();
+  //     fixed_width_column_wrapper<int32_t>{0}.release();
   //
   //   auto empty_list_column =
   //     cudf::make_lists_column(
@@ -587,20 +584,21 @@ TYPED_TEST(TypedStructColumnWrapperTest, CopyColumnFromView)
     fixed_width_column_wrapper<T, int32_t>{{0, 1, 2, 3, 4, 5}, {1, 1, 1, 1, 1, 0}};
 
   auto lists_column = lists_column_wrapper<T, int32_t>{
-    {{0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}},
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 4; })};
+    {{0, 0}, {1, 1}, {2, 2}, {3, 3}, {4, 4}, {5, 5}}, iterators::null_at(4)};
 
-  auto structs_column = structs_column_wrapper{
-    {numeric_column, lists_column},
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 3; })};
+  auto structs_column =
+    structs_column_wrapper{{numeric_column, lists_column}, iterators::null_at(3)};
 
   auto clone_structs_column = cudf::column(structs_column);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(clone_structs_column, structs_column);
 
   auto list_of_structs_column =
-    cudf::make_lists_column(
-      3, fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(), structs_column.release(), 0, {})
+    cudf::make_lists_column(3,
+                            fixed_width_column_wrapper<int32_t>{0, 2, 4, 6}.release(),
+                            structs_column.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED))
       .release();
 
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(list_of_structs_column->view(),
@@ -613,8 +611,12 @@ TEST_F(StructColumnWrapperTest, TestStructsColumnWithEmptyChild)
   // because EMPTY columns cannot have a null mask. This test ensures that
   // we can construct a structs column with a parent null mask and an EMPTY
   // child and then view it.
-  auto empty_col = std::make_unique<cudf::column>(
-    cudf::data_type(cudf::type_id::EMPTY), 3, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+  auto empty_col =
+    std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
+                                   3,
+                                   rmm::device_buffer{},
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                   0);
   int num_rows{empty_col->size()};
   vector_of_columns cols;
   cols.push_back(std::move(empty_col));

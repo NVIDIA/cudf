@@ -1,11 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "parquet_common.hpp"
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
@@ -109,8 +110,7 @@ TEST_P(ParquetV2Test, MultiColumnWithNulls)
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i >= 40 && i <= 60); });
   auto col5_mask =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i > 80); });
-  auto col6_mask =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 5); });
+  auto col6_mask = cudf::test::iterators::nulls_at_multiples_of(5);
   auto col7_mask =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i != 55); });
 
@@ -272,8 +272,7 @@ TEST_P(ParquetV2Test, SlicedTable)
 
   auto seq_col0 = random_values<int>(num_rows);
   auto seq_col2 = random_values<float>(num_rows);
-  auto validity =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3 != 0; });
+  auto validity = cudf::test::iterators::nulls_at_multiples_of(3);
 
   column_wrapper<int> col0{seq_col0.begin(), seq_col0.end(), validity};
   column_wrapper<cudf::string_view> col1{strings.begin(), strings.end()};
@@ -290,17 +289,17 @@ TEST_P(ParquetV2Test, SlicedTable)
   // [NULL, [[13],[14,15,16]],  NULL]
   // [[[]]]
   // [NULL, [], NULL, [[]]]
-  auto valids  = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
-  auto valids2 = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 3; });
+  auto valids  = cudf::test::iterators::nulls_at_multiples_of(2);
+  auto valids2 = cudf::test::iterators::null_at(3);
   lcw col4{{
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
+             {{{}}},
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             lcw{lcw{lcw{}}},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
+             {{{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
            },
            valids2};
 
@@ -331,13 +330,13 @@ TEST_P(ParquetV2Test, SlicedTable)
   // [[], [], []]
   // [[10]]
   // [[13, 14], [15]]
-  lcw flats{lcw{},
+  lcw flats{{},
             {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}},
             {{7, 8}, {}},
-            lcw{lcw{}},
-            lcw{lcw{}},
-            lcw{lcw{}, lcw{}, lcw{}},
-            {lcw{10}},
+            {{}},
+            {{}},
+            {{}, {}, {}},
+            {{10}},
             {{13, 14}, {15}}};
 
   auto struct_1 = cudf::test::structs_column_wrapper{land, flats};
@@ -383,8 +382,8 @@ TEST_P(ParquetV2Test, ListColumn)
 {
   auto const is_v2 = GetParam();
 
-  auto valids  = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
-  auto valids2 = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 3; });
+  auto valids  = cudf::test::iterators::nulls_at_multiples_of(2);
+  auto valids2 = cudf::test::iterators::null_at(3);
 
   using lcw = cudf::test::lists_column_wrapper<int32_t>;
 
@@ -398,23 +397,21 @@ TEST_P(ParquetV2Test, ListColumn)
   // [[7, 8]]
   // []
   // [[]]
-  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, {}, {{}}};
 
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
   // [[7, 8]]
   // []
   // [[]]
-  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, valids2}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, valids2}, {{7, 8}}, {}, {{}}};
 
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
   // [[7, 8]]
   // []
   // [[]]
   using dlcw = cudf::test::lists_column_wrapper<double>;
-  dlcw col3{{{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, valids}}, valids2},
-            {{7., 8.}},
-            dlcw{},
-            dlcw{dlcw{}}};
+  dlcw col3{
+    {{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, valids}}, valids2}, {{7., 8.}}, {}, {{}}};
 
   // TODO: uint16_t lists are not read properly in parquet reader
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -430,16 +427,14 @@ TEST_P(ParquetV2Test, ListColumn)
   // [[7, 8]]
   // []
   // NULL
-  lcw col5{
-    {{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, valids}}, valids2}, {{7, 8}}, lcw{}, lcw{lcw{}}},
-    valids2};
+  lcw col5{{{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, valids}}, valids2}, {{7, 8}}, {}, {{}}},
+           valids2};
 
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col6{
     {{"Monday", "Monday", "Friday"}, {}, {"Monday", "Friday"}, {}, {"Sunday", "Funday"}},
     {{"bee", "sting"}},
-    strlcw{},
-    strlcw{strlcw{}}};
+    {},
+    {{}}};
 
   // [[[NULL,2,NULL,4]], [[NULL,6,NULL], [8,9]]]
   // [NULL, [[13],[14,15,16]],  NULL]
@@ -448,8 +443,8 @@ TEST_P(ParquetV2Test, ListColumn)
   lcw col7{{
              {{{{1, 2, 3, 4}, valids}}, {{{5, 6, 7}, valids}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, valids},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, valids},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, valids},
+             {{{}}},
            },
            valids2};
 
@@ -498,8 +493,8 @@ TEST_P(ParquetV2Test, StructOfList)
   auto ages_col = cudf::test::fixed_width_column_wrapper<int32_t>{
     {48, 27, 25, 31, 351, 351}, {true, true, true, true, true, false}};
 
-  auto valids  = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
-  auto valids2 = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i != 3; });
+  auto valids  = cudf::test::iterators::nulls_at_multiples_of(2);
+  auto valids2 = cudf::test::iterators::null_at(3);
 
   using lcw = cudf::test::lists_column_wrapper<int32_t>;
 
@@ -517,12 +512,7 @@ TEST_P(ParquetV2Test, StructOfList)
   // [[]]
   // [[]]
   // [[], [], []]
-  lcw flats{lcw{},
-            {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}},
-            {{7, 8}, {}},
-            lcw{lcw{}},
-            lcw{lcw{}},
-            lcw{lcw{}, lcw{}, lcw{}}};
+  lcw flats{{}, {{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}, {}}, {{}}, {{}}, {{}, {}, {}}};
 
   auto struct_1 = cudf::test::structs_column_wrapper{{weights_col, ages_col, land_unit, flats},
                                                      {true, true, true, true, false, true}};
@@ -588,11 +578,14 @@ TEST_P(ParquetV2Test, ListOfStruct)
                     .release();
 
   auto list_offsets_column =
-    cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 2, 5, 5, 6}.release();
+    cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 5, 5, 6}.release();
   auto num_list_rows = list_offsets_column->size() - 1;
 
-  auto list_col = cudf::make_lists_column(
-    num_list_rows, std::move(list_offsets_column), std::move(struct_2), 0, {});
+  auto list_col = cudf::make_lists_column(num_list_rows,
+                                          std::move(list_offsets_column),
+                                          std::move(struct_2),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   auto expected = table_view({*list_col});
 
@@ -723,7 +716,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndex)
   auto const expected = table_view{{col0, col1, col2, col3, col4, col5, col6, col7}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndex.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -797,8 +790,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNulls)
   auto col5_data = random_values<float>(num_rows);
   auto col6_data = random_values<double>(num_rows);
 
-  auto valids =
-    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2 == 0; });
+  auto valids = cudf::test::iterators::valids_at_multiples_of(2);
 
   // add null values for all but first column
   auto col1 =
@@ -822,7 +814,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNulls)
   auto expected = table_view{{col0, col1, col2, col3, col4, col5, col6, col7}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexNulls.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -899,7 +891,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNullColumn)
   auto col2_data = random_values<int32_t>(num_rows);
 
   // col1 is all nulls
-  auto valids = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return false; });
+  auto valids = cudf::test::iterators::all_nulls();
   auto col1 =
     cudf::test::fixed_width_column_wrapper<int32_t>(col1_data.begin(), col1_data.end(), valids);
   auto col2 = cudf::test::fixed_width_column_wrapper<int32_t>(col2_data.begin(), col2_data.end());
@@ -912,7 +904,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexNullColumn)
   auto expected = table_view{{col0, col1, col2, col3}};
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexNullColumn.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -1005,12 +997,16 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStruct)
   auto offsets =
     cudf::test::fixed_width_column_wrapper<int32_t>(offgen, offgen + num_ordered_rows + 1);
 
-  auto c2 = cudf::make_lists_column(num_ordered_rows, offsets.release(), list.release(), 0, {});
+  auto c2 = cudf::make_lists_column(num_ordered_rows,
+                                    offsets.release(),
+                                    list.release(),
+                                    0,
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   table_view expected({c0, c1, *c2});
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexStruct.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -1072,14 +1068,10 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStructNulls)
   auto const expected_hdr_type =
     is_v2 ? cudf::io::parquet::PageType::DATA_PAGE_V2 : cudf::io::parquet::PageType::DATA_PAGE;
 
-  auto validity2 =
-    cudf::detail::make_counting_transform_iterator(0, [](cudf::size_type i) { return i % 2; });
-  auto validity3 = cudf::detail::make_counting_transform_iterator(
-    0, [](cudf::size_type i) { return (i % 3) != 0; });
-  auto validity4 = cudf::detail::make_counting_transform_iterator(
-    0, [](cudf::size_type i) { return (i % 4) != 0; });
-  auto validity5 = cudf::detail::make_counting_transform_iterator(
-    0, [](cudf::size_type i) { return (i % 5) != 0; });
+  auto validity2 = cudf::test::iterators::nulls_at_multiples_of(2);
+  auto validity3 = cudf::test::iterators::nulls_at_multiples_of(3);
+  auto validity4 = cudf::test::iterators::nulls_at_multiples_of(4);
+  auto validity5 = cudf::test::iterators::nulls_at_multiples_of(5);
 
   auto c0 = testdata::ascending<uint32_t>();
 
@@ -1104,7 +1096,7 @@ TEST_P(ParquetV2Test, CheckColumnOffsetIndexStructNulls)
   table_view expected({c0, c1});
 
   auto const filepath = temp_env->get_temp_filepath("CheckColumnOffsetIndexStructNulls.parquet");
-  const cudf::io::parquet_writer_options out_opts =
+  cudf::io::parquet_writer_options const out_opts =
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
       .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
       .write_v2_headers(is_v2)
@@ -1194,7 +1186,7 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // [[]]
   // def histogram [1, 3, 10]
   // rep histogram [4, 4, 6]
-  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col1{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, {{7, 8}}, {}, {{}}};
 
   // 4 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -1203,7 +1195,7 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // [[]]
   // def histogram [1, 1, 2, 10]
   // rep histogram [4, 4, 6]
-  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, lcw{}, lcw{lcw{}}};
+  lcw col2{{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, {}, {{}}};
 
   // 6 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
@@ -1215,8 +1207,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   using dlcw = cudf::test::lists_column_wrapper<double>;
   dlcw col3{{{{1., 2., 3.}, {}, {4., 5.}, {}, {{0., 6., 0.}, nulls_at({0, 2})}}, null_at(3)},
             {{7., 8.}},
-            dlcw{},
-            dlcw{dlcw{}}};
+            {},
+            {{}}};
 
   // 4 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [0, 6, 0]]
@@ -1225,10 +1217,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // NULL
   // def histogram [1, 1, 1, 1, 10]
   // rep histogram [4, 4, 6]
-  using ui16lcw = cudf::test::lists_column_wrapper<uint16_t>;
   cudf::test::lists_column_wrapper<uint16_t> col4{
-    {{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, ui16lcw{}, ui16lcw{ui16lcw{}}},
-    null_at(3)};
+    {{{{1, 2, 3}, {}, {4, 5}, {}, {0, 6, 0}}, null_at(3)}, {{7, 8}}, {}, {{}}}, null_at(3)};
 
   // 6 nulls
   // [[1, 2, 3], [], [4, 5], NULL, [NULL, 6, NULL]]
@@ -1237,34 +1227,30 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   // NULL
   // def histogram [1, 1, 1, 1, 2, 8]
   // rep histogram [4, 4, 6]
-  lcw col5{{{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, nulls_at({0, 2})}}, null_at(3)},
-            {{7, 8}},
-            lcw{},
-            lcw{lcw{}}},
-           null_at(3)};
+  lcw col5{
+    {{{{1, 2, 3}, {}, {4, 5}, {}, {{0, 6, 0}, nulls_at({0, 2})}}, null_at(3)}, {{7, 8}}, {}, {{}}},
+    null_at(3)};
 
   // 4 nulls
   // def histogram [1, 3, 9]
   // rep histogram [4, 4, 5]
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col6{
     {{"Monday", "Monday", "Friday"}, {}, {"Monday", "Friday"}, {}, {"Sunday", "Funday"}},
     {{"bee", "sting"}},
-    strlcw{},
-    strlcw{strlcw{}}};
+    {},
+    {{}}};
 
   // 5 nulls
   // def histogram [1, 3, 1, 8]
   // rep histogram [4, 4, 5]
-  using strlcw = cudf::test::lists_column_wrapper<cudf::string_view>;
   cudf::test::lists_column_wrapper<cudf::string_view> col7{{{"Monday", "Monday", "Friday"},
                                                             {},
                                                             {{"Monday", "Friday"}, null_at(1)},
                                                             {},
                                                             {"Sunday", "Funday"}},
                                                            {{"bee", "sting"}},
-                                                           strlcw{},
-                                                           strlcw{strlcw{}}};
+                                                           {},
+                                                           {{}}};
 
   // 11 nulls
   // D   5   6   5  6        5  6  5      6 6
@@ -1284,8 +1270,8 @@ TEST_P(ParquetV2Test, CheckColumnIndexListWithNulls)
   lcw col8{{
              {{{{1, 2, 3, 4}, nulls_at({0, 2})}}, {{{5, 6, 7}, nulls_at({0, 2})}, {8, 9}}},
              {{{{10, 11}, {12}}, {{13}, {14, 15, 16}}, {{17, 18}}}, nulls_at({0, 2})},
-             {{lcw{lcw{}}, lcw{}, lcw{}, lcw{lcw{}}}, nulls_at({0, 2})},
-             lcw{lcw{lcw{}}},
+             {{{{}}, {}, {}, {{}}}, nulls_at({0, 2})},
+             {{{}}},
            },
            null_at(3)};
 
@@ -1401,7 +1387,7 @@ TEST_P(ParquetV2Test, CheckEncodings)
   // data should be PLAIN for v1, DELTA_BINARY_PACKED for v2
   auto col1_data = random_values<int32_t>(num_rows);
   // data should be PLAIN_DICTIONARY for v1, PLAIN and RLE_DICTIONARY for v2
-  auto col2_data = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 1; });
+  auto col2_data = cuda::constant_iterator{1};
 
   cudf::test::fixed_width_column_wrapper<bool> col0{col0_data, col0_data + num_rows, validity};
   column_wrapper<int32_t> col1{col1_data.begin(), col1_data.end(), validity};

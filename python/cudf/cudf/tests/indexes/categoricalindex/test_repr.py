@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -17,15 +17,15 @@ def test_categorical_index_with_nan_repr():
     )
 
     expected_repr = (
-        "CategoricalIndex([1.0, 2.0, NaN, 10.0, NaN, <NA>], "
-        "categories=[1.0, 2.0, 10.0, NaN], ordered=False, dtype='category')"
+        "CategoricalIndex([1.0, 2.0, <NA>, 10.0, <NA>, <NA>], "
+        "categories=[1.0, 2.0, 10.0], ordered=False, dtype='category')"
     )
 
     assert repr(cat_index) == expected_repr
 
     sliced_expected_repr = (
-        "CategoricalIndex([NaN, 10.0, NaN, <NA>], "
-        "categories=[1.0, 2.0, 10.0, NaN], ordered=False, dtype='category')"
+        "CategoricalIndex([<NA>, 10.0, <NA>, <NA>], "
+        "categories=[1.0, 2.0, 10.0], ordered=False, dtype='category')"
     )
 
     assert repr(cat_index[2:]) == sliced_expected_repr

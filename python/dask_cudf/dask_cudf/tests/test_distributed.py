@@ -33,11 +33,12 @@ def dask_client(worker_id: str):
         scheduler_port = 8800 + worker_index
         dashboard_address = 8900 + worker_index
     else:
-        scheduler_port = None
+        scheduler_port = 0
         dashboard_address = None
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=Warning, message="Port")
+        warnings.filterwarnings("ignore", category=ResourceWarning)
 
         with dask_cuda.LocalCUDACluster(
             n_workers=1,
@@ -51,7 +52,7 @@ def dask_client(worker_id: str):
 @pytest.mark.usefixtures("dask_client")
 @pytest.mark.parametrize("delayed", [True, False])
 def test_basic(delayed):
-    pdf = dask.datasets.timeseries(dtypes={"x": int}).reset_index()
+    pdf = dask.datasets.timeseries(dtypes={"x": int}, seed=1).reset_index()
     gdf = pdf.map_partitions(cudf.DataFrame)
     if delayed:
         gdf = dd.from_delayed(gdf.to_delayed())
@@ -81,23 +82,22 @@ def test_merge():
 @pytest.mark.skipif(
     not at_least_n_gpus(2), reason="Machine does not have two GPUs"
 )
+@pytest.mark.filterwarnings("ignore:Port")
 def test_ucx_seriesgroupby():
     pytest.importorskip("distributed_ucxx")
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=Warning, message="Port")
-        with (
-            dask_cuda.LocalCUDACluster(
-                n_workers=3, dashboard_address=None
-            ) as cluster,
-            cluster.get_client(),
-        ):
-            # Repro Issue#3913
-            df = cudf.DataFrame({"a": [1, 2, 3, 4], "b": [5, 1, 2, 5]})
-            dask_df = dask_cudf.from_cudf(df, npartitions=2)
-            dask_df_g = dask_df.groupby(["a"]).b.sum().compute()
+    with (
+        dask_cuda.LocalCUDACluster(
+            n_workers=3, dashboard_address=None
+        ) as cluster,
+        cluster.get_client(),
+    ):
+        # Repro Issue#3913
+        df = cudf.DataFrame({"a": [1, 2, 3, 4], "b": [5, 1, 2, 5]})
+        dask_df = dask_cudf.from_cudf(df, npartitions=2)
+        dask_df_g = dask_df.groupby(["a"]).b.sum().compute()
 
-            assert dask_df_g.name == "b"
+        assert dask_df_g.name == "b"
 
 
 @pytest.mark.usefixtures("dask_client")
@@ -123,6 +123,7 @@ def test_p2p_shuffle():
             start="2000-01-01",
             end="2000-01-08",
             dtypes={"x": int},
+            seed=1,
         )
         .reset_index(drop=True)
         .to_backend("cudf")
@@ -138,24 +139,23 @@ def test_p2p_shuffle():
     not at_least_n_gpus(3),
     reason="Machine does not have three GPUs",
 )
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+@pytest.mark.filterwarnings("ignore:Port")
 def test_unique():
     # Using `"p2p"` can produce dispatching problems
     # TODO: Test "p2p" after dask > 2024.4.1 is required
     # See: https://github.com/dask/dask/pull/11040
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", category=Warning, message="Port")
-
-        with dask_cuda.LocalCUDACluster(
-            n_workers=3, dashboard_address=None
-        ) as cluster:
-            with Client(cluster):
-                df = cudf.DataFrame({"x": ["a", "b", "c", "a", "a"]})
-                ddf = dask_cudf.from_cudf(df, npartitions=2)
-                dd.assert_eq(
-                    df.x.unique(),
-                    ddf.x.unique().compute(),
-                    check_index=False,
-                )
+    with dask_cuda.LocalCUDACluster(
+        n_workers=3, dashboard_address=None
+    ) as cluster:
+        with Client(cluster):
+            df = cudf.DataFrame({"x": ["a", "b", "c", "a", "a"]})
+            ddf = dask_cudf.from_cudf(df, npartitions=2)
+            dd.assert_eq(
+                df.x.unique(),
+                ddf.x.unique().compute(),
+                check_index=False,
+            )
 
 
 @pytest.mark.usefixtures("dask_client")

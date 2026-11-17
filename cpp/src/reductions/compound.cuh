@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,7 +14,8 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 #include <stdexcept>
 #include <type_traits>
@@ -42,8 +43,8 @@ template <typename ElementType, typename ResultType, typename Op>
 std::unique_ptr<scalar> compound_reduction(column_view const& col,
                                            data_type const output_dtype,
                                            size_type ddof,
-                                           rmm::cuda_stream_view stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cuda::stream_ref stream,
+                                           cudf::memory_resources mr)
 {
   auto const valid_count = col.size() - col.null_count();
 
@@ -62,19 +63,19 @@ std::unique_ptr<scalar> compound_reduction(column_view const& col,
 
   if (!cudf::is_dictionary(col.type())) {
     if (col.has_nulls()) {
-      auto it = thrust::make_transform_iterator(
+      auto it = cuda::transform_iterator(
         dcol->pair_begin<ElementType, true>(),
         compound_op.template get_null_replacing_element_transformer<ResultType>());
       return cudf::reduction::detail::reduce<Op, decltype(it), ResultType>(
         it, col.size(), compound_op, valid_count, ddof, stream, mr);
     } else {
-      auto it = thrust::make_transform_iterator(
+      auto it = cuda::transform_iterator(
         dcol->begin<ElementType>(), compound_op.template get_element_transformer<ResultType>());
       return cudf::reduction::detail::reduce<Op, decltype(it), ResultType>(
         it, col.size(), compound_op, valid_count, ddof, stream, mr);
     }
   } else {
-    auto it = thrust::make_transform_iterator(
+    auto it = cuda::transform_iterator(
       cudf::dictionary::detail::make_dictionary_pair_iterator<ElementType>(*dcol, col.has_nulls()),
       compound_op.template get_null_replacing_element_transformer<ResultType>());
     return cudf::reduction::detail::reduce<Op, decltype(it), ResultType>(
@@ -99,8 +100,8 @@ struct result_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ResultType>())
   {
     return compound_reduction<ElementType, ResultType, Op>(col, output_dtype, ddof, stream, mr);
@@ -110,8 +111,8 @@ struct result_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(not is_supported_v<ResultType>())
   {
     CUDF_FAIL("Unsupported output data type");
@@ -126,7 +127,7 @@ struct element_type_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported_v()
   {
-    return std::is_arithmetic_v<ElementType>;
+    return cuda::std::is_arithmetic_v<ElementType>;
   }
 
  public:
@@ -134,8 +135,8 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ElementType>())
   {
     CUDF_EXPECTS(ddof >= 0, "ddof must be non-negative", std::domain_error);
@@ -147,8 +148,8 @@ struct element_type_dispatcher {
   std::unique_ptr<scalar> operator()(column_view const& col,
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(not is_supported_v<ElementType>())
   {
     CUDF_FAIL(

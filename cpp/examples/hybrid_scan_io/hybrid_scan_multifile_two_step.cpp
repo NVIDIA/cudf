@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -14,9 +14,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_stream_pool.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cassert>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -63,7 +63,8 @@ struct hybrid_scan_two_step_fn {
         input_sources[source_idx], filter_expression_opt, filters, false, stream, mr);
     }
 
-    stream.synchronize_no_throw();
+    [[maybe_unused]] auto const status = cudaStreamSynchronize(stream.get());
+    assert(status == cudaSuccess);
 
     if (verbose) {
       std::cout << "Thread " << tid << " ";
@@ -152,14 +153,13 @@ int main(int argc, char const** argv)
   auto resource               = create_memory_resource(is_pool_used);
   auto stream_pool = rmm::cuda_stream_pool(1 + num_threads, rmm::cuda_stream::flags::non_blocking);
   auto default_stream = stream_pool.get_stream();
-  auto stats_mr =
-    rmm::mr::statistics_resource_adaptor<rmm::mr::device_memory_resource>(resource.get());
-  rmm::mr::set_current_device_resource(&stats_mr);
+  auto stats_mr       = rmm::mr::statistics_resource_adaptor{resource};
+  rmm::mr::set_current_device_resource(stats_mr);
 
   // Create filter expressions (one per thread; reused circularly if needed)
   auto const column_reference = cudf::ast::column_name_reference(column_name);
   auto scalar                 = cudf::string_scalar(literal_value, true, default_stream);
-  default_stream.synchronize();
+  default_stream.sync();
   auto literal = cudf::ast::literal(scalar);
 
   std::vector<cudf::ast::operation> filter_expressions;
@@ -181,7 +181,7 @@ int main(int argc, char const** argv)
     try {
       return extract_input_sources(
         input_paths, input_multiplier, num_threads, io_source_type, default_stream);
-    } catch (const std::exception& e) {
+    } catch (std::exception const& e) {
       print_usage();
       throw std::runtime_error(e.what());
     }

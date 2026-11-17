@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,8 +13,6 @@
 #include <cudf/table/table_view.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <src/rolling/detail/range_window_bounds.hpp>
 
@@ -92,8 +90,8 @@ void verify_results_for_ascending(WindowExecT exec)
   auto const n_rows       = exec.num_rows();
   auto const all_valid    = cuda::make_constant_iterator<bool>(true);
   auto const all_invalid  = cuda::make_constant_iterator<bool>(false);
-  auto const last_invalid = thrust::make_transform_iterator(
-    thrust::make_counting_iterator(0), [&n_rows](auto i) { return i != (n_rows - 1); });
+  auto const last_invalid = cuda::transform_iterator(
+    cuda::counting_iterator<cudf::size_type>{0}, [&n_rows](auto i) { return i != (n_rows - 1); });
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     exec(cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::INCLUDE))
@@ -175,8 +173,8 @@ void verify_results_for_descending(WindowExecT exec)
 {
   auto const all_valid     = cuda::make_constant_iterator<bool>(true);
   auto const all_invalid   = cuda::make_constant_iterator<bool>(false);
-  auto const first_invalid = thrust::make_transform_iterator(thrust::make_counting_iterator(0),
-                                                             [](auto i) { return i != 0; });
+  auto const first_invalid = cuda::transform_iterator(cuda::counting_iterator<cudf::size_type>{0},
+                                                      [](auto i) { return i != 0; });
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     exec(cudf::make_count_aggregation<cudf::rolling_aggregation>(cudf::null_policy::INCLUDE))

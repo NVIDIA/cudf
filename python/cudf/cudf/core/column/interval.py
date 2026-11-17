@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
@@ -23,10 +23,14 @@ from cudf.utils.dtypes import get_dtype_of_same_kind
 
 if TYPE_CHECKING:
     from cudf._typing import ColumnBinaryOperand, DtypeObj
-    from cudf.core.buffer import Buffer
 
 
 class IntervalColumn(ColumnBase):
+    _VALID_BINARY_OPERATIONS = {
+        "__eq__",
+        "__ne__",
+    }
+
     @functools.cached_property
     def subtype(self) -> DtypeObj:
         return subtype_from_interval_dtype(self.dtype)
@@ -34,7 +38,8 @@ class IntervalColumn(ColumnBase):
     @functools.cached_property
     def closed(self) -> Literal["left", "right", "neither", "both"]:
         if isinstance(self.dtype, IntervalDtype):
-            return self.dtype.closed
+            closed = self.dtype.closed
+            return "right" if closed is None else closed
         else:
             return cast("pd.ArrowDtype", self.dtype).pyarrow_dtype.closed
 
@@ -46,36 +51,6 @@ class IntervalColumn(ColumnBase):
             else cast("pd.ArrowDtype", self.dtype).pyarrow_dtype
         )
         return pa.ExtensionArray.from_storage(pa_type, pa_array)
-
-    @classmethod
-    def _deserialize_plc_column(
-        cls,
-        header: dict,
-        dtype: DtypeObj,
-        data: Buffer | None,
-        mask: Buffer | None,
-        children: list[plc.Column],
-    ) -> plc.Column:
-        """Construct plc.Column using STRUCT type for interval columns."""
-        offset = header.get("offset", 0)
-        if mask is None:
-            null_count = 0
-        else:
-            null_count = plc.null_mask.null_count(
-                mask, offset, header["size"] + offset
-            )
-
-        plc_type = plc.DataType(plc.TypeId.STRUCT)
-        return plc.Column(
-            plc_type,
-            header["size"],
-            data,
-            mask,
-            null_count,
-            offset,
-            children,
-            validate=False,
-        )
 
     @functools.cached_property
     def is_empty(self) -> ColumnBase:
@@ -158,18 +133,21 @@ class IntervalColumn(ColumnBase):
         )
 
     def _binaryop(self, other: ColumnBinaryOperand, op: str) -> ColumnBase:
-        reflect, op = self._check_reflected_op(op)
+        _reflect, op = self._check_reflected_op(op)
         if not isinstance(other, type(self)):
             return NotImplemented
-        if op == "NULL_EQUALS":
+        if op in {"__eq__", "__ne__", "NULL_EQUALS", "NULL_NOT_EQUALS"}:
             lefts_equal = self.left._binaryop(other.left, "NULL_EQUALS")
             rights_equal = self.right._binaryop(other.right, "NULL_EQUALS")
-            return binaryop.binaryop(
+            result = binaryop.binaryop(
                 lefts_equal,
                 rights_equal,
                 "__and__",
                 get_dtype_of_same_kind(self.dtype, lefts_equal.dtype),
             )
+            if op in {"__ne__", "NULL_NOT_EQUALS"}:
+                result = ~result
+            return result
         else:
             raise TypeError(f"{op} not supported with {type(other).__name__}")
 

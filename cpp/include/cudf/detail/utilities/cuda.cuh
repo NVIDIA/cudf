@@ -1,17 +1,21 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #pragma once
 
 #include <cudf/types.hpp>
+
+#ifndef __CUDACC_RTC__
+
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-
-#include <cub/cub.cuh>
+#include <cub/warp/warp_reduce.cuh>
 #include <cuda/std/type_traits>
+#include <cuda/stream>
+
+#endif
 
 namespace cudf {
 namespace detail {
@@ -20,6 +24,8 @@ namespace detail {
  * @brief Size of a warp in a CUDA kernel.
  */
 static constexpr size_type warp_size{32};
+
+#ifndef __CUDACC_RTC__
 
 /**
  * @brief Performs a sum reduction of values from the same lane across all
@@ -81,10 +87,12 @@ CUDF_KERNEL void single_thread_kernel(F f)
  * @param stream CUDA stream used for the kernel launch
  */
 template <class Functor>
-void device_single_thread(Functor functor, rmm::cuda_stream_view stream)
+void device_single_thread(Functor functor, cuda::stream_ref stream)
 {
-  single_thread_kernel<<<1, 1, 0, stream.value()>>>(functor);
+  single_thread_kernel<<<1, 1, 0, stream.get()>>>(functor);
 }
+
+#endif
 
 }  // namespace detail
 }  // namespace cudf

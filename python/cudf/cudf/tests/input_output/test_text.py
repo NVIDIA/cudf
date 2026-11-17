@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from io import StringIO
+from io import BytesIO, StringIO
 
 import pytest
 
@@ -98,6 +98,20 @@ def test_read_text_in_memory(datadir):
     expected = cudf.Series(["x::", "y::", "z"])
 
     actual = cudf.read_text(StringIO("x::y::z"), delimiter="::")
+
+    assert_eq(expected, actual)
+
+
+def test_read_text_in_memory_bytesio(datadir):
+    # GH #13734: a binary host buffer (BytesIO) should be readable just like
+    # StringIO. The whole buffer is read regardless of its current position,
+    # matching the other readers (e.g. read_csv).
+    expected = cudf.Series(["x::", "y::", "z"])
+
+    buf = BytesIO(b"x::y::z")
+    buf.seek(0, 2)  # emulate a written-but-not-rewound buffer
+
+    actual = cudf.read_text(buf, delimiter="::")
 
     assert_eq(expected, actual)
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from cython.operator cimport dereference
@@ -17,27 +17,47 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 )
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
+from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = ["BPEMergePairs", "byte_pair_encoding"]
 
 cdef class BPEMergePairs:
     """The table of merge pairs for the BPE encoder.
 
-    For details, see :cpp:class:`cudf::nvtext::bpe_merge_pairs`.
+    For details, see :cpp:func:`nvtext::load_merge_pairs`.
+
+    Parameters
+    ----------
+    merge_pairs : Column
+        Strings column of merge pairs. Each row contains the two halves
+        of a pair separated by a single space. Pairs are ranked by their row
+        position; earlier rows have higher priority. A duplicate pair keeps
+        its earliest (highest priority) rank.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the merge pairs table.
     """
     def __cinit__(
         self,
         Column merge_pairs,
-        Stream stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None
     ):
         cdef column_view c_pairs = merge_pairs.view()
-        stream = _get_stream(stream)
+        cdef Stream _stream = _get_stream(stream)
+        cdef cudaStream_t _cs = _stream.view().get()
         mr = _get_memory_resource(mr)
         with nogil:
-            self.c_obj = move(cpp_load_merge_pairs(c_pairs, stream.view(), mr.get_mr()))
+            self.c_obj = move(
+                cpp_load_merge_pairs(c_pairs, _cs, mr.get_mr())
+            )
 
     __hash__ = None
 
@@ -45,24 +65,27 @@ cpdef Column byte_pair_encoding(
     Column input,
     BPEMergePairs merge_pairs,
     Scalar separator=None,
-    Stream stream=None,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """
     Byte pair encode the input strings.
 
-    For details, see cpp:func:`cudf::nvtext::byte_pair_encoding`
+    For details, see :cpp:func:`nvtext::byte_pair_encoding`.
 
     Parameters
     ----------
     input : Column
         Strings to encode.
     merge_pairs : BPEMergePairs
-       Substrings to rebuild each string on.
-    separator : Scalar
-        String used to build the output after encoding. Default is a space.
+        The ranked merge pairs used to encode the strings.
+    separator : Scalar | None
+        Single-byte string inserted between the encoded tokens.
+        Default is a space.
     stream : Stream | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
@@ -70,23 +93,25 @@ cpdef Column byte_pair_encoding(
         An encoded column of strings.
     """
     cdef unique_ptr[column] c_result
-    stream = _get_stream(stream)
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if separator is None:
         separator = Scalar.from_libcudf(
-            cpp_make_string_scalar(" ".encode(), stream.view(), mr.get_mr())
+            cpp_make_string_scalar(" ".encode(), _stream.view().get(), mr.get_mr())
         )
 
+    cdef column_view c_input = input.view()
     with nogil:
         c_result = move(
             cpp_byte_pair_encoding(
-                input.view(),
+                c_input,
                 dereference(merge_pairs.c_obj.get()),
                 dereference(<const string_scalar*>separator.c_obj.get()),
-                stream.view(),
+                _cs,
                 mr.get_mr()
             )
         )
 
-    return Column.from_libcudf(move(c_result), stream, mr)
+    return Column.from_libcudf(move(c_result), _stream, mr)

@@ -45,6 +45,8 @@ std::tuple<std::vector<cuio_source_sink_pair>, size_t, size_t> write_file_data(
   cudf::size_type const num_cols    = state.get_int64("num_cols");
   size_t const num_files            = state.get_int64("num_threads");
   size_t const per_file_data_size   = state.get_int64("total_data_size") / num_files;
+  auto const rg_size_bytes          = state.get_int64("row_group_size_bytes");
+  auto const rg_size_rows           = state.get_int64("row_group_size_rows");
 
   std::vector<cuio_source_sink_pair> source_sink_vector;
 
@@ -64,6 +66,9 @@ std::tuple<std::vector<cuio_source_sink_pair>, size_t, size_t> write_file_data(
         .compression(cudf::io::compression_type::SNAPPY)
         .max_page_size_rows(50000)
         .max_page_size_bytes(1024 * 1024);
+    // Sentinel 0 == use cuDF default (parquet bytes default is size_t::max).
+    if (rg_size_bytes > 0) write_opts.set_row_group_size_bytes(rg_size_bytes);
+    if (rg_size_rows > 0) write_opts.set_row_group_size_rows(rg_size_rows);
 
     if (write_page_index) {
       write_opts.set_stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
@@ -182,4 +187,6 @@ NVBENCH_BENCH(BM_hybrid_scan_multithreaded_read)
   .add_int64_axis("num_iterations", {1})
   .add_int64_axis("num_cols", {4})
   .add_int64_axis("run_length", {8})
-  .add_string_axis("io_type", {"PINNED_BUFFER"});
+  .add_string_axis("io_type", {"PINNED_BUFFER"})
+  .add_int64_axis("row_group_size_bytes", {0})
+  .add_int64_axis("row_group_size_rows", {0});

@@ -1,26 +1,31 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "error.hpp"
-#include "io/comp/common.hpp"
 #include "reader_impl_preprocess_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
-#include <cudf/detail/utilities/host_worker_pool.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/io/parquet_io_utils.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.lower_bound.h>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
+#include <cuda/std/cstdint>
 #include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <thrust/gather.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
@@ -29,13 +34,15 @@
 
 #include <algorithm>
 #include <bitset>
+#if defined(PREPROCESS_DEBUG)
 #include <iostream>
+#endif  // PREPROCESS_DEBUG
 #include <numeric>
 
 namespace cudf::io::parquet::detail {
 
 #if defined(PREPROCESS_DEBUG)
-void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, rmm::cuda_stream_view stream)
+void print_pages(cudf::detail::hostdevice_span<PageInfo> pages, cuda::stream_ref stream)
 {
   pages.device_to_host(stream);
   auto idx = 0;
@@ -109,15 +116,18 @@ void generate_depth_remappings(
       int schema_idx = mapped_src_col_schema;
       while (schema_idx > 0) {
         auto& cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r) {
           // if this is a repeated field, map it one level deeper
           shallowest = cur_schema.is_stub() ? cur_depth + 1 : cur_depth;
         }
         // if it's one-level encoding list
-        else if (cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx))) {
+        else if (one_level_list) {
           shallowest = cur_depth - 1;
         }
-        if (!cur_schema.is_stub()) { cur_depth--; }
+        // a one-level list also accounts for its implicit list level
+        if (!cur_schema.is_stub()) { cur_depth -= one_level_list ? 2 : 1; }
         schema_idx = cur_schema.parent_idx;
       }
       return shallowest;
@@ -128,19 +138,15 @@ void generate_depth_remappings(
   // compute "Y" from above
   for (int s_idx = schema.max_definition_level; s_idx >= 0; s_idx--) {
     auto find_deepest = [&](int d) {
-      SchemaElement prev_schema;
       int schema_idx = mapped_src_col_schema;
       int r1         = 0;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
         if (cur_schema.max_definition_level == d) {
-          // if this is a repeated field, map it one level deeper
-          r1 = cur_schema.is_stub() ? prev_schema.max_repetition_level
-                                    : cur_schema.max_repetition_level;
+          r1 = cur_schema.max_repetition_level;
           break;
         }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        schema_idx = cur_schema.parent_idx;
       }
 
       // we now know R1 from above. return the deepest nesting level that has the
@@ -149,14 +155,20 @@ void generate_depth_remappings(
       int depth  = max_depth - 1;
       while (schema_idx > 0) {
         SchemaElement cur_schema = md.get_schema(schema_idx, src_file_idx);
+        auto const one_level_list =
+          cur_schema.is_one_level_list(md.get_schema(cur_schema.parent_idx, src_file_idx));
         if (cur_schema.max_repetition_level == r1) {
           // if this is a repeated field, map it one level deeper
           depth = cur_schema.is_stub() ? depth + 1 : depth;
           break;
         }
-        if (!cur_schema.is_stub()) { depth--; }
-        prev_schema = cur_schema;
-        schema_idx  = cur_schema.parent_idx;
+        // the implicit list of a one-level list has one less repetition level than its leaf
+        if (one_level_list and cur_schema.max_repetition_level - 1 == r1) {
+          depth--;
+          break;
+        }
+        if (!cur_schema.is_stub()) { depth -= one_level_list ? 2 : 1; }
+        schema_idx = cur_schema.parent_idx;
       }
       return depth;
     };
@@ -172,112 +184,56 @@ void generate_depth_remappings(
   size_t end_chunk,
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
-  rmm::cuda_stream_view stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  // Calculate total size per source and offset for each chunk
-  std::vector<size_t> source_total_size(sources.size(), 0);
-  std::vector<size_t> chunk_buffer_offset(end_chunk - begin_chunk);
+  // Construct per source byte ranges in chunk iteration order
+  std::vector<std::vector<byte_range_info>> source_byte_ranges(sources.size());
+  std::for_each(cuda::counting_iterator(begin_chunk),
+                cuda::counting_iterator(end_chunk),
+                [&](auto const chunk) {
+                  auto const source_idx = chunk_source_map[chunk];
+                  source_byte_ranges[source_idx].emplace_back(
+                    static_cast<int64_t>(column_chunk_offsets[chunk]),
+                    static_cast<int64_t>(chunks[chunk].compressed_size));
+                });
 
-  for (size_t chunk = begin_chunk; chunk < end_chunk; ++chunk) {
-    auto const source_idx                    = chunk_source_map[chunk];
-    chunk_buffer_offset[chunk - begin_chunk] = source_total_size[source_idx];
-    source_total_size[source_idx] += chunks[chunk].compressed_size;
+  // Wrap datasource references
+  std::vector<std::reference_wrapper<datasource>> datasource_refs;
+  datasource_refs.reserve(sources.size());
+  for (auto const& source : sources) {
+    datasource_refs.emplace_back(std::ref(*source));
   }
 
-  // Allocate one buffer per source
-  std::transform(
-    source_total_size.begin(), source_total_size.end(), page_data.begin(), [&](size_t total_size) {
-      return rmm::device_buffer(
-        cudf::util::round_up_safe(total_size, cudf::io::detail::BUFFER_PADDING_MULTIPLE), stream);
-    });
-  // device_read_async is not guaranteed to follow stream-ordering (see datasource API docs).
-  stream.synchronize();
+  // Read byte ranges into buffers
+  auto [buffers, data_per_source, read_task] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+    {datasource_refs.data(), datasource_refs.size()},
+    {source_byte_ranges.data(), source_byte_ranges.size()},
+    cudf::io::parquet::io_submission_policy::INTERLEAVE,
+    stream,
+    mr);
 
-  // Issue reads, coalescing adjacent chunks
-  std::vector<std::future<size_t>> read_tasks;
-  for (size_t chunk = begin_chunk; chunk < end_chunk;) {
-    auto const source_idx    = chunk_source_map[chunk];
-    auto const io_offset     = column_chunk_offsets[chunk];
-    size_t io_size           = chunks[chunk].compressed_size;
-    size_t const first_chunk = chunk;
-    size_t next_chunk        = chunk + 1;
+  // Extract data pointers from returned spans
+  size_t range_idx = 0;
+  std::for_each(cuda::counting_iterator(begin_chunk),
+                cuda::counting_iterator(end_chunk),
+                [&](auto const chunk) {
+                  auto const src_idx            = chunk_source_map[chunk];
+                  chunks[chunk].compressed_data = data_per_source[src_idx][range_idx++].data();
+                  if (range_idx == data_per_source[src_idx].size()) { range_idx = 0; }
+                });
 
-    while (next_chunk < end_chunk) {
-      if (chunk_source_map[next_chunk] != source_idx) { break; }
-      auto const next_offset = column_chunk_offsets[next_chunk];
-      if (next_offset != io_offset + io_size) { break; }
-      io_size += chunks[next_chunk].compressed_size;
-      next_chunk++;
-    }
+  // Transfer device buffer ownership to the page data span
+  CUDF_EXPECTS(page_data.size() == buffers.size(),
+               "Parquet reader encountered a mismatch in size of page data and read buffers");
 
-    if (io_size != 0) {
-      auto& source = sources[source_idx];
-      auto* dest   = static_cast<uint8_t*>(page_data[source_idx].data()) +
-                   chunk_buffer_offset[first_chunk - begin_chunk];
+  std::move(buffers.begin(), buffers.end(), page_data.begin());
 
-      if (source->is_device_read_preferred(io_size)) {
-        auto fut = source->device_read_async(io_offset, io_size, dest, stream);
-        read_tasks.emplace_back(std::move(fut));
-      } else {
-        read_tasks.emplace_back(std::async(
-          std::launch::deferred, [source = std::ref(*source), io_offset, io_size, dest, stream]() {
-            auto const read_buffer = source.get().host_read(io_offset, io_size);
-            cudf::detail::cuda_memcpy_async(
-              cudf::device_span<uint8_t>{static_cast<uint8_t*>(dest), io_size},
-              cudf::host_span<uint8_t const>{read_buffer->data(), io_size},
-              stream);
-            return io_size;
-          }));
-      }
-
-      // Set compressed_data pointers for all coalesced chunks
-      auto* ptr = static_cast<uint8_t const*>(dest);
-      for (size_t c = first_chunk; c < next_chunk; ++c) {
-        chunks[c].compressed_data = ptr;
-        ptr += chunks[c].compressed_size;
-      }
-    }
-
-    chunk = next_chunk;
-  }
-
-  auto sync_fn = [](decltype(read_tasks) read_tasks) {
-    for (auto& task : read_tasks) {
-      task.get();
-    }
-  };
-  return std::async(std::launch::deferred, sync_fn, std::move(read_tasks));
-}
-
-[[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        rmm::cuda_stream_view stream)
-{
-  size_t total_pages = 0;
-
-  kernel_error error_code(stream);
-  chunks.host_to_device_async(stream);
-  count_page_headers(chunks, error_code.data(), stream);
-  chunks.device_to_host(stream);
-
-  // It's required to ignore unsupported encodings in this function
-  // so that we can actually compile a list of all the unsupported encodings found
-  // in the pages. That cannot be done here since we do not have the pages vector here.
-  // see https://github.com/rapidsai/cudf/pull/14453#pullrequestreview-1778346688
-  if (auto const error = error_code.value_sync(stream);
-      error != 0 and error != static_cast<uint32_t>(decode_error::UNSUPPORTED_ENCODING)) {
-    CUDF_FAIL("Parquet header parsing failed with code(s) while counting page headers " +
-              kernel_error::to_string(error));
-  }
-
-  for (auto chunk = chunks.host_begin(); chunk != chunks.host_end(); chunk++) {
-    total_pages += chunk->num_data_pages + chunk->num_dict_pages;
-  }
-
-  return total_pages;
+  return std::move(read_task);
 }
 
 [[nodiscard]] size_t count_page_headers_with_pgidx(
-  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, rmm::cuda_stream_view stream)
+  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, cuda::stream_ref stream)
 {
   auto const total_pages =
     std::accumulate(chunks.host_begin(), chunks.host_end(), size_t{0}, [](size_t sum, auto& chunk) {
@@ -288,43 +244,10 @@ void generate_depth_remappings(
       return sum + chunk.num_data_pages + chunk.num_dict_pages;
     });
 
-  // count_page_headers() also pushes chunks to device, so not using thrust here
+  // Push the updated page counts to device like `compute_page_spans()`
   chunks.host_to_device_async(stream);
 
   return total_pages;
-}
-
-void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
-                       device_span<PageInfo> pages,
-                       rmm::cuda_stream_view stream)
-{
-  auto const num_pages = pages.size();
-  auto page_indexes    = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
-
-  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
-    auto const& chunk = chunks[c];
-    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
-    auto const& chunk_info = *chunk.h_chunk_info;
-    size_t start_row       = 0;
-    page_count += chunk.num_dict_pages;
-    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
-      auto& page      = page_indexes[page_count];
-      page.num_rows   = chunk_info.pages[p].num_rows;
-      page.chunk_row  = start_row;
-      page.num_nulls  = chunk_info.pages[p].num_nulls.value_or(0);
-      page.num_valids = chunk_info.pages[p].num_valid.value_or(0);
-      page.str_bytes  = chunk_info.pages[p].var_bytes_size.value_or(0);
-
-      start_row += page.num_rows;
-    }
-  }
-
-  auto d_page_indexes = cudf::detail::make_device_uvector_async(
-    page_indexes, stream, cudf::get_current_device_resource_ref());
-
-  auto iter = thrust::make_counting_iterator<size_type>(0);
-  thrust::for_each(
-    rmm::exec_policy_nosync(stream), iter, iter + num_pages, copy_page_info{d_page_indexes, pages});
 }
 
 std::string encoding_to_string(Encoding encoding)
@@ -360,20 +283,28 @@ std::string encoding_to_string(Encoding encoding)
 }
 
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream)
 {
-  auto const to_mask     = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
+  auto const to_mask        = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
     return is_supported_encoding(page.encoding) ? uint32_t{0} : encoding_to_mask(page.encoding);
   });
-  auto const unsupported = cudf::detail::transform_reduce(
-    pages.begin(), pages.end(), to_mask, uint32_t{0}, cuda::std::bit_or<uint32_t>(), stream);
+  auto const unsupported    = cudf::detail::transform_reduce(pages.begin(),
+                                                          pages.end(),
+                                                          to_mask,
+                                                          uint32_t{0},
+                                                          cuda::std::bit_or<uint32_t>(),
+                                                          stream,
+                                                          mr.as_temporary());
   return encoding_bitmask_to_str(unsupported);
 }
 
 cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const> unsorted_pages,
                                                      device_span<ColumnChunkDesc const> chunks,
-                                                     rmm::cuda_stream_view stream)
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
 {
+  auto const temp_mr = mr.get_temporary_mr();
   CUDF_FUNC_RANGE();
 
   // sort the pages in chunk/schema order. we use chunk.src_col_index instead of
@@ -397,9 +328,9 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3
   //
   // We also need to preserve key-relative page ordering, so we need to use a stable sort.
-  rmm::device_uvector<int32_t> page_keys{unsorted_pages.size(), stream};
+  cuda::device_buffer<int32_t> page_keys(stream, temp_mr, unsorted_pages.size(), cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, temp_mr),
     unsorted_pages.begin(),
     unsorted_pages.end(),
     page_keys.begin(),
@@ -409,125 +340,289 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // we are doing this by sorting indices first and then transforming the output because nvcc
   // started generating kernels using too much shared memory when trying to sort the pages
   // directly.
-  rmm::device_uvector<int32_t> sort_indices(unsorted_pages.size(), stream);
-  thrust::sequence(rmm::exec_policy_nosync(stream), sort_indices.begin(), sort_indices.end(), 0);
-  thrust::stable_sort_by_key(rmm::exec_policy_nosync(stream),
+  cuda::device_buffer<int32_t> sort_indices(stream, temp_mr, unsorted_pages.size(), cuda::no_init);
+  thrust::sequence(
+    rmm::exec_policy_nosync(stream, temp_mr), sort_indices.begin(), sort_indices.end(), 0);
+  thrust::stable_sort_by_key(rmm::exec_policy_nosync(stream, temp_mr),
                              page_keys.begin(),
                              page_keys.end(),
                              sort_indices.begin(),
                              cuda::std::less<int>());
-  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream);
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    sort_indices.begin(),
-                    sort_indices.end(),
-                    pass_pages.d_begin(),
-                    cuda::proclaim_return_type<PageInfo>(
-                      [p = unsorted_pages.data()] __device__(int32_t i) { return p[i]; }));
-  stream.synchronize();
+  auto pass_pages =
+    cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream, mr.get_output_mr());
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+                 sort_indices.begin(),
+                 sort_indices.end(),
+                 unsorted_pages.data(),
+                 pass_pages.d_begin());
+  stream.sync();
   return pass_pages;
 }
 
-void decode_page_headers(pass_intermediate_data& pass,
-                         device_span<PageInfo> unsorted_pages,
-                         bool has_page_index,
-                         rmm::cuda_stream_view stream)
-{
-  CUDF_FUNC_RANGE();
+namespace {
 
-  auto iter = thrust::counting_iterator<size_t>(0);
-  rmm::device_uvector<size_type> chunk_page_offsets(pass.chunks.size() + 1, stream);
+/**
+ * @brief Construct metadata for a data page; dictionary slots remain zero-initialized.
+ */
+page_index_info make_page_index_info(page_info const& source, Type physical_type, size_t start_row)
+{
+  page_index_info page{};
+  page.num_rows       = source.num_rows;
+  page.chunk_row      = start_row;
+  page.num_nulls      = source.num_nulls.value_or(0);
+  page.num_valids     = source.num_valid.value_or(0);
+  page.str_bytes      = source.var_bytes_size.value_or(0);
+  page.has_value_info = source.num_nulls.has_value() and source.num_valid.has_value() and
+                        (physical_type != Type::BYTE_ARRAY or source.var_bytes_size.has_value());
+  return page;
+}
+
+/**
+ * @brief Construct page_index_info metadata structs for each page.
+ * To be applied to PageInfo later when decoding pages.
+ *
+ * @param[in] chunks Host span of column chunks
+ * @param[in] num_pages Number of pages
+ * @param[in] stream CUDA stream to use
+ * @return Pinned vector of page index metadata
+ */
+auto construct_page_index_info(host_span<ColumnChunkDesc> chunks,
+                               size_t num_pages,
+                               cuda::stream_ref stream)
+{
+  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
+  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
+
+  for (size_t c = 0, page_count = 0; c < chunks.size(); c++) {
+    auto const& chunk = chunks[c];
+    CUDF_EXPECTS(chunk.h_chunk_info != nullptr, "Expected non-null column info struct");
+    auto const& chunk_info = *chunk.h_chunk_info;
+    size_t start_row       = 0;
+    page_count += chunk.num_dict_pages;
+    CUDF_EXPECTS(page_count + chunk_info.pages.size() <= num_pages,
+                 "Page index metadata exceeds the number of pages");
+    for (size_t p = 0; p < chunk_info.pages.size(); p++, page_count++) {
+      auto const page = make_page_index_info(chunk_info.pages[p], chunk.physical_type, start_row);
+      page_indexes[page_count] = page;
+      start_row += page.num_rows;
+    }
+  }
+
+  return page_indexes;
+}
+
+/**
+ * @brief Compute the offset of each column chunk's first page in chunk-sorted page order
+ *
+ * @param chunks Device span of column chunks
+ * @param stream CUDA stream to use
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Exclusive scan of the number of pages per chunk, with one extra entry for the total
+ */
+cuda::device_buffer<size_type> compute_chunk_page_offsets(device_span<ColumnChunkDesc const> chunks,
+                                                          cuda::stream_ref stream,
+                                                          cudf::memory_resources mr)
+{
+  cuda::device_buffer<size_type> chunk_page_offsets(
+    stream, mr.get_output_mr(), chunks.size() + 1, cuda::no_init);
+  auto iter = cuda::counting_iterator<size_t>{0};
   thrust::transform_exclusive_scan(
-    rmm::exec_policy_nosync(stream),
+    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
     iter,
-    iter + pass.chunks.size() + 1,
+    iter + chunks.size() + 1,
     chunk_page_offsets.begin(),
-    cuda::proclaim_return_type<size_type>(
-      [chunks = pass.chunks.d_begin(), num_chunks = pass.chunks.size()] __device__(size_t i) {
-        return static_cast<size_type>(
-          i >= num_chunks ? 0 : chunks[i].num_data_pages + chunks[i].num_dict_pages);
-      }),
+    cuda::proclaim_return_type<size_type>([chunks] __device__(size_t i) {
+      return static_cast<size_type>(
+        i >= chunks.size() ? 0 : chunks[i].num_data_pages + chunks[i].num_dict_pages);
+    }),
     size_type{0},
     cuda::std::plus<size_type>{});
-  rmm::device_uvector<chunk_page_info> d_chunk_page_info(pass.chunks.size(), stream);
-  thrust::for_each(rmm::exec_policy_nosync(stream),
-                   iter,
-                   iter + pass.chunks.size(),
-                   [cpi                = d_chunk_page_info.begin(),
-                    chunk_page_offsets = chunk_page_offsets.begin(),
-                    unsorted_pages     = unsorted_pages.begin()] __device__(size_t i) {
-                     cpi[i].pages = &unsorted_pages[chunk_page_offsets[i]];
-                   });
+  return chunk_page_offsets;
+}
 
-  kernel_error error_code(stream);
+/**
+ * @brief Count the page headers of the column chunks and locate the data span of each page
+ *
+ * Page starts that do not fit in the fixed-size buffer are recorded by a second launch into an
+ * exact-size buffer.
+ *
+ * @param chunks Host-device span of column chunks. Page counts are updated on host and device
+ * @param stream CUDA stream to use
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Data span of each page, in chunk-sorted page order
+ */
+cuda::device_buffer<cudf::device_span<uint8_t const>> compute_page_spans(
+  cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
+{
+  auto const temp_mr = mr.get_temporary_mr();
 
-  // If page index is present, collect data ptrs for all pages and launch the accelerated decode
-  // page headers kernel
-  if (has_page_index) {
-    auto host_page_locations =
-      cudf::detail::make_pinned_vector_async<uint8_t*>(unsorted_pages.size(), stream);
-    auto curr_page_idx = 0;
+  // Maximum number of page header addresses recorded in counting phase
+  constexpr size_t max_page_addrs = 1'000'000;
 
-    std::for_each(pass.chunks.begin(), pass.chunks.end(), [&](auto const& chunk) {
-      // Column chunk buffer's data pointer
-      auto data_ptr = const_cast<uint8_t*>(chunk.compressed_data);
-
-      // Dictionary page, if any
-      if (chunk.num_dict_pages) {
-        CUDF_EXPECTS(chunk.h_chunk_info->dictionary_offset.has_value() and
-                       chunk.h_chunk_info->dictionary_size.has_value(),
-                     "Encountered missing dictionary page information in the page index");
-        // Parquet spec requires that the dictionary page be the first column chunk page
-        // if the column chunk has dictionary encoding
-        // Ref: https://github.com/apache/parquet-format?tab=readme-ov-file#column-chunks
-        CUDF_EXPECTS(std::cmp_less(chunk.h_chunk_info->dictionary_offset.value(),
-                                   chunk.h_chunk_info->pages.front().location.offset),
-                     "Encountered dictionary page located beyond the first data page");
-        host_page_locations[curr_page_idx] = data_ptr;
-        ++curr_page_idx;
-        data_ptr += chunk.h_chunk_info->dictionary_size.value();
-      }
-
-      // Data pages
-      CUDF_EXPECTS(chunk.h_chunk_info and
-                     std::cmp_equal(chunk.h_chunk_info->pages.size(), chunk.num_data_pages),
-                   "Encountered invalid sized data page information in the page index");
-      auto const num_data_pages = chunk.num_data_pages;
-      std::for_each(thrust::counting_iterator(0),
-                    thrust::counting_iterator(num_data_pages),
-                    [&](auto const page_idx) {
-                      host_page_locations[curr_page_idx] = data_ptr;
-                      ++curr_page_idx;
-                      if (page_idx < num_data_pages - 1) {
-                        data_ptr += chunk.h_chunk_info->pages[page_idx + 1].location.offset -
-                                    chunk.h_chunk_info->pages[page_idx].location.offset;
-                      }
-                    });
+  // A column chunk can have at most one dictionary page and `num_values` data pages
+  auto const max_num_pages = std::transform_reduce(
+    chunks.host_begin(), chunks.host_end(), size_t{0}, std::plus{}, [](auto const& chunk) {
+      return size_t{1} + chunk.num_values;
     });
 
-    // Check if we have data ptrs for all input pages
-    CUDF_EXPECTS(std::cmp_equal(curr_page_idx, unsorted_pages.size()),
-                 "Expected page offsets to match total pages");
+  // Maximum number of page addresses recorded in counting phase
+  auto const page_addrs_capacity = std::min<size_t>(max_num_pages, max_page_addrs);
 
-    // Copy page data ptrs to device
-    auto page_locations = cudf::detail::make_device_uvector_async(
-      host_page_locations, stream, cudf::get_current_device_resource_ref());
+  chunks.host_to_device_async(stream);
 
-    // Accelerated decode page headers, one thread per page
-    decode_page_headers_with_pgidx(
-      device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
-      unsorted_pages,
-      page_locations.begin(),
-      chunk_page_offsets.begin(),
-      error_code.data(),
-      stream);
-  } else {
-    // (Slow) decode page headers, one warp (lane) per pages of a chunk
-    decode_page_headers(
-      device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
-      d_chunk_page_info.begin(),
-      error_code.data(),
-      stream);
+  // Initialize chunk page discovery progress
+  cuda::device_buffer<chunk_page_info> chunk_page_infos(
+    stream, temp_mr, chunks.size(), cuda::no_init);
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, temp_mr),
+    chunks.device_begin(),
+    chunks.device_end(),
+    chunk_page_infos.begin(),
+    cuda::proclaim_return_type<chunk_page_info>([] __device__(ColumnChunkDesc const& chunk) {
+      return chunk_page_info{.cursor           = chunk.compressed_data,
+                             .num_values_found = 0,
+                             .num_data_pages   = 0,
+                             .num_dict_pages   = 0,
+                             .is_done          = false};
+    }));
+
+  // Allocate device memory for page addresses
+  cuda::device_buffer<cuda::std::uintptr_t> page_addrs(
+    stream, temp_mr, page_addrs_capacity, cuda::no_init);
+  cudf::detail::device_scalar<size_t> num_consumed_page_addrs(0, stream, temp_mr);
+
+  kernel_error error_code(stream, mr.as_temporary());
+  discover_page_headers(chunks,
+                        chunk_page_infos,
+                        page_addrs,
+                        num_consumed_page_addrs.data(),
+                        error_code.data(),
+                        stream);
+  // Synchronized by the error code below
+  chunks.device_to_host_async(stream);
+
+  // It's required to ignore unsupported encodings in this function
+  // so that we can actually compile a list of all the unsupported encodings found
+  // in the pages. That cannot be done here since we do not have the pages vector here.
+  // see https://github.com/NVIDIA/cudf/pull/14453#pullrequestreview-1778346688
+  if (auto const error = error_code.value_sync(stream);
+      error != 0 and error != static_cast<uint32_t>(decode_error::UNSUPPORTED_ENCODING)) {
+    CUDF_FAIL("Parquet header parsing failed with code(s) while counting page headers " +
+              kernel_error::to_string(error));
   }
+
+  // Compute the actual total number of pages
+  auto const total_pages = std::transform_reduce(
+    chunks.host_begin(), chunks.host_end(), size_t{0}, std::plus{}, [](auto const& chunk) {
+      return static_cast<size_t>(chunk.num_data_pages) + static_cast<size_t>(chunk.num_dict_pages);
+    });
+
+  if (total_pages > page_addrs_capacity) {
+    // Keep the recorded page addresses and record the rest
+    cuda::device_buffer<cuda::std::uintptr_t> all_page_addrs(
+      stream, temp_mr, total_pages, cuda::no_init);
+    CUDF_CUDA_TRY(cudf::detail::memcpy_async(all_page_addrs.data(),
+                                             page_addrs.data(),
+                                             page_addrs_capacity * sizeof(cuda::std::uintptr_t),
+                                             stream));
+    page_addrs = std::move(all_page_addrs);
+    num_consumed_page_addrs.set_value_async(page_addrs_capacity, stream);
+
+    // Run second discovery phase to record  remaining page addresses
+    discover_page_headers(chunks,
+                          chunk_page_infos,
+                          page_addrs,
+                          num_consumed_page_addrs.data(),
+                          error_code.data(),
+                          stream);
+
+    // Check if we have recorded all page addresses
+    CUDF_EXPECTS(num_consumed_page_addrs.value(stream) == total_pages,
+                 "Encountered a mismatch in the number of page headers");
+  }
+
+  // A chunk's data does not overlap other chunks, so its pages stay contiguous once sorted
+  auto const sorted_page_addrs = device_span<cuda::std::uintptr_t>{page_addrs.data(), total_pages};
+  thrust::sort(
+    rmm::exec_policy_nosync(stream, temp_mr), sorted_page_addrs.begin(), sorted_page_addrs.end());
+
+  auto const chunk_page_offsets = compute_chunk_page_offsets(chunks, stream, mr.as_temporary());
+
+  cuda::device_buffer<cudf::device_span<uint8_t const>> page_spans(
+    stream, mr.get_output_mr(), total_pages, cuda::no_init);
+
+  CUDF_EXPECTS(std::cmp_less_equal(total_pages, std::numeric_limits<size_type>::max()),
+               "Number of parquet pass pages overflow the int32_t limit",
+               std::overflow_error);
+
+  thrust::transform(
+    rmm::exec_policy_nosync(stream, temp_mr),
+    cuda::counting_iterator<size_type>(0),
+    cuda::counting_iterator<size_type>(total_pages),
+    page_spans.begin(),
+    cuda::proclaim_return_type<cudf::device_span<uint8_t const>>(
+      [chunks = chunks.device_begin(),
+       chunk_page_offsets =
+         device_span<size_type const>{chunk_page_offsets.data(), chunk_page_offsets.size()},
+       page_addrs       = device_span<cuda::std::uintptr_t const>{sorted_page_addrs},
+       chunk_page_infos = chunk_page_infos.data()] __device__(size_type page_idx) {
+        auto const chunk_idx =
+          cuda::std::distance(chunk_page_offsets.begin(),
+                              cuda::std::upper_bound(
+                                chunk_page_offsets.begin(), chunk_page_offsets.end(), page_idx)) -
+          1;
+        auto const page_addr =
+          cuda::std::lower_bound(
+            page_addrs.begin(),
+            page_addrs.end(),
+            reinterpret_cast<cuda::std::uintptr_t>(chunks[chunk_idx].compressed_data)) +
+          (page_idx - chunk_page_offsets[chunk_idx]);
+        auto const begin = reinterpret_cast<uint8_t const*>(*page_addr);
+        auto const end   = page_idx + 1 < chunk_page_offsets[chunk_idx + 1]
+                             ? reinterpret_cast<uint8_t const*>(*(page_addr + 1))
+                             : chunk_page_infos[chunk_idx].cursor;
+        return cudf::device_span<uint8_t const>{begin, static_cast<size_t>(end - begin)};
+      }));
+  return page_spans;
+}
+
+/**
+ * @brief Decode page headers from corresponding page data spans and set up the pass pages
+ *
+ * @param pass Struct containing pass information
+ * @param unsorted_pages Device span of page information to decode
+ * @param page_data Device span of page data spans, in chunk order
+ * @param page_indexes Device span of page index metadata
+ * @param stream CUDA stream to use
+ * @param mr Memory resources used to allocate temporary and output device memory
+ */
+void decode_page_headers_impl(pass_intermediate_data& pass,
+                              device_span<PageInfo> unsorted_pages,
+                              device_span<cudf::device_span<uint8_t const> const> page_data,
+                              device_span<page_index_info const> page_indexes,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
+{
+  auto const temp_mr = mr.get_temporary_mr();
+  CUDF_FUNC_RANGE();
+
+  auto const chunks =
+    device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size());
+  auto const chunk_page_offsets = compute_chunk_page_offsets(chunks, stream, mr.as_temporary());
+
+  kernel_error error_code(stream, mr.as_temporary());
+
+  // Launch page header decode kernel
+  decode_page_headers_from_page_data(
+    chunks,
+    unsorted_pages,
+    page_data,
+    device_span<size_type const>(chunk_page_offsets.data(), chunk_page_offsets.size()),
+    page_indexes,
+    error_code.data(),
+    stream);
 
   if (auto const error = error_code.value_sync(stream); error != 0) {
     if (BitAnd(error, decode_error::UNSUPPORTED_ENCODING) != 0) {
@@ -540,31 +635,44 @@ void decode_page_headers(pass_intermediate_data& pass,
     }
   }
 
-  if (has_page_index) { fill_in_page_info(pass.chunks, unsorted_pages, stream); }
+  // Without a page index, compute each page's chunk-relative row index from the row counts of
+  // the pages before it. Pages are in chunk order here
+  if (page_indexes.empty()) {
+    auto const page_keys = cuda::transform_iterator(unsorted_pages.begin(), get_page_chunk_idx{});
+    auto const page_rows = cuda::transform_iterator(unsorted_pages.begin(), get_page_num_rows{});
+    thrust::exclusive_scan_by_key(
+      rmm::exec_policy_nosync(stream, temp_mr),
+      page_keys,
+      page_keys + unsorted_pages.size(),
+      page_rows,
+      cuda::make_tabulate_output_iterator(set_chunk_row_fn{unsorted_pages.data()}));
+  }
 
   // compute max bytes needed for level data
-  auto level_bit_size = cudf::detail::make_counting_transform_iterator(
-    0, cuda::proclaim_return_type<int32_t>([chunks = pass.chunks.d_begin()] __device__(int i) {
-      auto c = chunks[i];
-      return std::max<int32_t>(c.level_bits[level_type::REPETITION],
-                               c.level_bits[level_type::DEFINITION]);
-    }));
-  // max level data bit size.
-  auto const max_level_bits = cudf::detail::reduce(
-    level_bit_size, level_bit_size + pass.chunks.size(), int{0}, cuda::maximum<int>{}, stream);
-  pass.level_type_size = std::max<int32_t>(1, cudf::util::div_rounding_up_safe(max_level_bits, 8));
+  auto const max_level_bits = std::transform_reduce(
+    pass.chunks.begin(),
+    pass.chunks.end(),
+    int32_t{0},
+    [](auto a, auto b) { return std::max(a, b); },
+    [](auto const& chunk) {
+      return std::max<int32_t>(chunk.level_bits[level_type::REPETITION],
+                               chunk.level_bits[level_type::DEFINITION]);
+    });
+  pass.level_type_size =
+    std::max<int32_t>(1, cudf::detail::div_rounding_up_safe(max_level_bits, 8));
 
   // sort the pages in chunk/schema order.
   pass.pages =
     sort_pages(unsorted_pages,
                device_span<ColumnChunkDesc const>(pass.chunks.device_ptr(), pass.chunks.size()),
-               stream);
+               stream,
+               mr);
 
   // compute offsets to each group of input pages.
   // page_keys:   1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3
   //
   // result:      0,          4,          8
-  rmm::device_uvector<size_type> page_counts(pass.pages.size() + 1, stream);
+  cuda::device_buffer<size_type> page_counts(stream, temp_mr, pass.pages.size() + 1, cuda::no_init);
   auto page_keys =
     make_page_key_iterator(device_span<PageInfo const>(pass.pages.device_ptr(), pass.pages.size()));
   auto const page_counts_end = cudf::detail::reduce_by_key(page_keys,
@@ -573,17 +681,19 @@ void decode_page_headers(pass_intermediate_data& pass,
                                                            cuda::make_discard_iterator(),
                                                            page_counts.begin(),
                                                            cuda::std::plus<>{},
-                                                           stream)
+                                                           stream,
+                                                           mr)
                                  .second;
   auto const num_page_counts = page_counts_end - page_counts.begin();
-  pass.page_offsets          = rmm::device_uvector<size_type>(num_page_counts + 1, stream);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream),
+  pass.page_offsets =
+    cuda::device_buffer<size_type>(stream, temp_mr, num_page_counts + 1, cuda::no_init);
+  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
                          page_counts.begin(),
                          page_counts.begin() + num_page_counts + 1,
                          pass.page_offsets.begin());
 
   // setup dict_page for each chunk if necessary
-  thrust::for_each(rmm::exec_policy_nosync(stream),
+  thrust::for_each(rmm::exec_policy_nosync(stream, temp_mr),
                    pass.pages.d_begin(),
                    pass.pages.d_end(),
                    [chunks = pass.chunks.d_begin()] __device__(PageInfo const& p) {
@@ -594,7 +704,127 @@ void decode_page_headers(pass_intermediate_data& pass,
 
   pass.pages.device_to_host_async(stream);
   pass.chunks.device_to_host_async(stream);
-  stream.synchronize();
+  stream.sync();
+}
+
+}  // namespace
+
+cuda::device_buffer<PageInfo> decode_page_headers_with_pgidx(pass_intermediate_data& pass,
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr)
+{
+  auto const temp_mr = mr.get_temporary_mr();
+
+  auto const num_pages = count_page_headers_with_pgidx(pass.chunks, stream);
+  // Zero out the pages as decoding may not write every byte of a `PageInfo`, and `sort_pages`
+  // copies `PageInfo` as whole objects
+  auto unsorted_pages =
+    cudf::detail::make_zeroed_device_buffer_async<PageInfo>(num_pages, stream, mr);
+
+  if (num_pages == 0) { return unsorted_pages; }
+
+  // Collect page data spans and page index info from the offset index
+  auto host_page_data =
+    cudf::detail::make_pinned_vector_async<cudf::device_span<uint8_t const>>(num_pages, stream);
+  auto page_indexes = cudf::detail::make_pinned_vector_async<page_index_info>(num_pages, stream);
+  std::fill(page_indexes.begin(), page_indexes.end(), page_index_info{});
+  size_t curr_page_idx = 0;
+
+  std::for_each(pass.chunks.begin(), pass.chunks.end(), [&](auto const& chunk) {
+    CUDF_EXPECTS(
+      chunk.h_chunk_info and std::cmp_equal(chunk.h_chunk_info->pages.size(), chunk.num_data_pages),
+      "Encountered invalid sized data page information in the page index");
+    CUDF_EXPECTS(
+      curr_page_idx + chunk.num_dict_pages + chunk.h_chunk_info->pages.size() <= num_pages,
+      "Page index metadata exceeds the number of pages");
+
+    // Column chunk buffer's data pointer
+    auto data_ptr = const_cast<uint8_t*>(chunk.compressed_data);
+
+    // Dictionary page, if any
+    if (chunk.num_dict_pages) {
+      CUDF_EXPECTS(chunk.h_chunk_info->dictionary_offset.has_value() and
+                     chunk.h_chunk_info->dictionary_size.has_value(),
+                   "Encountered missing dictionary page information in the page index");
+
+      // Parquet spec requires that the dictionary page be the first column chunk page
+      // if the column chunk has dictionary encoding
+      // Ref: https://github.com/apache/parquet-format?tab=readme-ov-file#column-chunks
+      CUDF_EXPECTS(std::cmp_less(chunk.h_chunk_info->dictionary_offset.value(),
+                                 chunk.h_chunk_info->pages.front().location.offset),
+                   "Encountered dictionary page located beyond the first data page");
+      auto const dictionary_size = chunk.h_chunk_info->dictionary_size.value();
+      CUDF_EXPECTS(dictionary_size >= 0, "Encountered invalid dictionary page size");
+
+      host_page_data[curr_page_idx] = {data_ptr, static_cast<std::size_t>(dictionary_size)};
+      ++curr_page_idx;
+      data_ptr += dictionary_size;
+    }
+
+    // Data pages
+    auto const num_data_pages = chunk.num_data_pages;
+    size_t start_row          = 0;
+    std::for_each(cuda::counting_iterator<int32_t>{0},
+                  cuda::counting_iterator{num_data_pages},
+                  [&](auto const page_idx) {
+                    auto const page_size =
+                      chunk.h_chunk_info->pages[page_idx].location.compressed_page_size;
+
+                    CUDF_EXPECTS(page_size >= 0, "Encountered invalid data page size");
+
+                    host_page_data[curr_page_idx] = {data_ptr, static_cast<std::size_t>(page_size)};
+                    auto const index              = make_page_index_info(
+                      chunk.h_chunk_info->pages[page_idx], chunk.physical_type, start_row);
+                    page_indexes[curr_page_idx] = index;
+                    start_row += index.num_rows;
+                    ++curr_page_idx;
+                    if (page_idx < num_data_pages - 1) {
+                      data_ptr += chunk.h_chunk_info->pages[page_idx + 1].location.offset -
+                                  chunk.h_chunk_info->pages[page_idx].location.offset;
+                    }
+                  });
+  });
+
+  // Check if we have data spans for all input pages
+  CUDF_EXPECTS(std::cmp_equal(curr_page_idx, num_pages),
+               "Expected page offsets to match total pages");
+
+  // Copy page data spans and page index info to device
+  auto const d_page_data = cudf::detail::make_device_buffer_async(host_page_data, stream, temp_mr);
+  auto const d_page_indexes = cudf::detail::make_device_buffer_async(page_indexes, stream, temp_mr);
+
+  decode_page_headers_impl(pass, unsorted_pages, d_page_data, d_page_indexes, stream, mr);
+
+  return unsorted_pages;
+}
+
+cuda::device_buffer<PageInfo> decode_page_headers(pass_intermediate_data& pass,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
+{
+  auto const page_spans = compute_page_spans(pass.chunks, stream, mr.as_temporary());
+  auto const num_pages  = page_spans.size();
+  // Zero out the pages as decoding may not write every byte of a `PageInfo`, and `sort_pages`
+  // copies `PageInfo` as whole objects
+  auto unsorted_pages =
+    cudf::detail::make_zeroed_device_buffer_async<PageInfo>(num_pages, stream, mr);
+  if (num_pages > 0) { decode_page_headers_impl(pass, unsorted_pages, page_spans, {}, stream, mr); }
+  return unsorted_pages;
+}
+
+void decode_sparse_page_headers(pass_intermediate_data& pass,
+                                device_span<PageInfo> unsorted_pages,
+                                std::span<cudf::device_span<uint8_t const> const> page_data,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(page_data.size() == unsorted_pages.size(),
+               "Page span count must match the number of logical pages");
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto const d_page_data    = cudf::detail::make_device_buffer_async(page_data, stream, temp_mr);
+  auto const page_indexes   = construct_page_index_info(pass.chunks, unsorted_pages.size(), stream);
+  auto const d_page_indexes = cudf::detail::make_device_buffer_async(page_indexes, stream, temp_mr);
+  decode_page_headers_impl(pass, unsorted_pages, d_page_data, d_page_indexes, stream, mr);
 }
 
 }  // namespace cudf::io::parquet::detail

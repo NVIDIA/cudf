@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -18,7 +18,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
 
 #include <stdexcept>
 
@@ -96,7 +96,7 @@ TEST_F(StringGetValueTest, GetEmpty)
 
 TEST_F(StringGetValueTest, GetFromNullable)
 {
-  cudf::test::strings_column_wrapper col({"this", "is", "a", "test"}, {false, true, false, true});
+  cudf::test::strings_column_wrapper col({"", "is", "", "test"}, {false, true, false, true});
   auto s = cudf::get_element(col, 1);
 
   auto typed_s = static_cast<cudf::string_scalar const*>(s.get());
@@ -107,7 +107,7 @@ TEST_F(StringGetValueTest, GetFromNullable)
 
 TEST_F(StringGetValueTest, GetNull)
 {
-  cudf::test::strings_column_wrapper col({"this", "is", "a", "test"}, {false, true, false, true});
+  cudf::test::strings_column_wrapper col({"", "is", "", "test"}, {false, true, false, true});
   auto s = cudf::get_element(col, 2);
 
   EXPECT_FALSE(s->is_valid());
@@ -170,10 +170,7 @@ TYPED_TEST(DictionaryGetValueTest, GetNull)
 
 template <typename T>
 struct ListGetFixedWidthValueTest : public cudf::test::BaseFixture {
-  auto odds_valid()
-  {
-    return cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
-  }
+  auto odds_valid() { return nulls_at_multiples_of(2); }
   auto nth_valid(cudf::size_type x)
   {
     return cudf::detail::make_counting_transform_iterator(0, [=](auto i) { return x == i; });
@@ -186,7 +183,7 @@ TYPED_TEST(ListGetFixedWidthValueTest, NonNestedGetNonNullNonEmpty)
 {
   using LCW = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
 
-  LCW col{LCW({1, 2, 34}, this->odds_valid()), LCW{}, LCW{1}, LCW{}};
+  LCW col{{{1, 2, 34}, this->odds_valid()}, {}, {1}, {}};
   cudf::test::fixed_width_column_wrapper<TypeParam> expected_data({1, 2, 34}, this->odds_valid());
   cudf::size_type index = 0;
 
@@ -201,7 +198,7 @@ TYPED_TEST(ListGetFixedWidthValueTest, NonNestedGetNonNullEmpty)
 {
   using LCW = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
 
-  LCW col{LCW{1, 2, 34}, LCW{}, LCW{1}, LCW{}};
+  LCW col{{1, 2, 34}, {}, {1}, {}};
   cudf::test::fixed_width_column_wrapper<TypeParam> expected_data{};
   cudf::size_type index = 1;
 
@@ -217,7 +214,7 @@ TYPED_TEST(ListGetFixedWidthValueTest, NonNestedGetNull)
   using LCW = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
   using FCW = cudf::test::fixed_width_column_wrapper<TypeParam>;
 
-  LCW col({LCW{1, 2, 34}, LCW{}, LCW{1}, LCW{}}, this->odds_valid());
+  LCW col({{1, 2, 34}, {}, {1}, {}}, this->odds_valid());
   cudf::size_type index = 2;
 
   auto s       = cudf::get_element(col, index);
@@ -234,13 +231,13 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullNonEmpty)
 
   // clang-format off
   LCW col{
-    LCW{LCW{1, 2}, LCW{34}},
-    LCW{},
-    LCW{LCW{1}},
-    LCW{LCW{42}, LCW{10}}
+    {{1, 2}, {34}},
+    {},
+    {{1}},
+    {{42}, {10}}
   };
   // clang-format on
-  LCW expected_data{LCW{42}, LCW{10}};
+  LCW expected_data({{42}, {10}});
 
   cudf::size_type index = 3;
 
@@ -258,13 +255,13 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullNonEmptyPreserveNull)
   std::vector<cudf::valid_type> valid{0, 1, 1};
   // clang-format off
   LCW col{
-    LCW{LCW{1, 2}, LCW{34}},
-    LCW{},
-    LCW{LCW{1}},
-    LCW({LCW{42}, LCW{10}, LCW({1, 3, 2}, this->nth_valid(1))}, valid.begin())
+    {{1, 2}, {34}},
+    {},
+    {{1}},
+    {{{42}, {10}, {{1, 3, 2}, this->nth_valid(1)}}, valid.begin()}
   };
   // clang-format on
-  LCW expected_data({LCW{42}, LCW{10}, LCW({1, 3, 2}, this->nth_valid(1))}, valid.begin());
+  LCW expected_data({{42}, {10}, {{1, 3, 2}, this->nth_valid(1)}}, valid.begin());
   cudf::size_type index = 3;
 
   auto s       = cudf::get_element(col, index);
@@ -280,10 +277,10 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNonNullEmpty)
 
   // clang-format off
   LCW col{
-    LCW{LCW{1, 2}, LCW{34}},
-    LCW{},
-    LCW{LCW{1}},
-    LCW{LCW{42}, LCW{10}}
+    {{1, 2}, {34}},
+    {},
+    {{1}},
+    {{42}, {10}}
   };
   // clang-format on
   LCW expected_data{};
@@ -306,10 +303,10 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNull)
   // clang-format off
   LCW col(
     {
-      LCW{LCW{1, 2}, LCW{34}},
-      LCW{},
-      LCW{LCW{1}},
-      LCW{LCW{42}, LCW{10}}
+      {{1, 2}, {34}},
+      {},
+      {{1}},
+      {{42}, {10}}
     }, valid.begin());
   // clang-format on
   cudf::size_type index = 1;
@@ -318,7 +315,11 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNull)
   auto typed_s = static_cast<cudf::list_scalar const*>(s.get());
 
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), FCW{}.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            FCW{}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   // Test preserve column hierarchy
@@ -326,10 +327,7 @@ TYPED_TEST(ListGetFixedWidthValueTest, NestedGetNull)
 }
 
 struct ListGetStringValueTest : public cudf::test::BaseFixture {
-  auto odds_valid()
-  {
-    return cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2; });
-  }
+  auto odds_valid() { return nulls_at_multiples_of(2); }
   auto nth_valid(cudf::size_type x)
   {
     return cudf::detail::make_counting_transform_iterator(0, [=](auto i) { return x == i; });
@@ -340,8 +338,8 @@ TEST_F(ListGetStringValueTest, NonNestedGetNonNullNonEmpty)
 {
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  LCW col{LCW({"aaa", "Héllo"}, this->odds_valid()), LCW{}, LCW{""}, LCW{"42"}};
-  cudf::test::strings_column_wrapper expected_data({"aaa", "Héllo"}, this->odds_valid());
+  LCW col{{{"aaa", "Héllo"}, this->odds_valid()}, {}, {""}, {"42"}};
+  cudf::test::strings_column_wrapper expected_data({"", "Héllo"}, this->odds_valid());
   cudf::size_type index = 0;
 
   auto s       = cudf::get_element(col, index);
@@ -355,7 +353,7 @@ TEST_F(ListGetStringValueTest, NonNestedGetNonNullEmpty)
 {
   using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
 
-  LCW col{LCW{"aaa", "Héllo"}, LCW{}, LCW{""}, LCW{"42"}};
+  LCW col{{"aaa", "Héllo"}, {}, {""}, {"42"}};
   cudf::test::strings_column_wrapper expected_data{};
   cudf::size_type index = 1;
 
@@ -372,7 +370,7 @@ TEST_F(ListGetStringValueTest, NonNestedGetNull)
   using StringCW = cudf::test::strings_column_wrapper;
 
   std::vector<cudf::valid_type> valid{1, 0, 0, 1};
-  LCW col({LCW{"aaa", "Héllo"}, LCW{}, LCW{""}, LCW{"42"}}, valid.begin());
+  LCW col({{"aaa", "Héllo"}, {}, {""}, {"42"}}, valid.begin());
   cudf::size_type index = 2;
 
   auto s       = cudf::get_element(col, index);
@@ -388,13 +386,13 @@ TEST_F(ListGetStringValueTest, NestedGetNonNullNonEmpty)
 
   // clang-format off
   LCW col{
-    LCW{LCW{"aaa", "Héllo"}},
-    LCW{},
-    LCW{LCW{""}, LCW({"string", "str2", "xyz"}, this->nth_valid(0))},
-    LCW{LCW{"42"}, LCW{"21"}}
+    {{"aaa", "Héllo"}},
+    {},
+    {{""}, {{"string", "str2", "xyz"}, this->nth_valid(0)}},
+    {{"42"}, {"21"}}
   };
   // clang-format on
-  LCW expected_data{LCW{""}, LCW({"string", "str2", "xyz"}, this->nth_valid(0))};
+  LCW expected_data{{""}, {{"string", "str2", "xyz"}, this->nth_valid(0)}};
   cudf::size_type index = 2;
 
   auto s       = cudf::get_element(col, index);
@@ -411,14 +409,13 @@ TEST_F(ListGetStringValueTest, NestedGetNonNullNonEmptyPreserveNull)
   std::vector<cudf::valid_type> valid{0, 1, 1};
   // clang-format off
   LCW col{
-    LCW{LCW{"aaa", "Héllo"}},
-    LCW{},
-    LCW({LCW{""}, LCW{"cc"}, LCW({"string", "str2", "xyz"}, this->nth_valid(0))}, valid.begin()),
-    LCW{LCW{"42"}, LCW{"21"}}
+    {{"aaa", "Héllo"}},
+    {},
+    {{{""}, {"cc"}, {{"string", "str2", "xyz"}, this->nth_valid(0)}}, valid.begin()},
+    {{"42"}, {"21"}}
   };
   // clang-format on
-  LCW expected_data({LCW{""}, LCW{"cc"}, LCW({"string", "str2", "xyz"}, this->nth_valid(0))},
-                    valid.begin());
+  LCW expected_data({{""}, {"cc"}, {{"string", "str2", "xyz"}, this->nth_valid(0)}}, valid.begin());
   cudf::size_type index = 2;
 
   auto s       = cudf::get_element(col, index);
@@ -434,10 +431,10 @@ TEST_F(ListGetStringValueTest, NestedGetNonNullEmpty)
 
   // clang-format off
   LCW col{
-    LCW{LCW{"aaa", "Héllo"}},
-    LCW{LCW{""}},
-    LCW{LCW{"42"}, LCW{"21"}},
-    LCW{}
+    {{"aaa", "Héllo"}},
+    {{""}},
+    {{"42"}, {"21"}},
+    {}
   };
   // clang-format on
   LCW expected_data{};
@@ -462,10 +459,10 @@ TEST_F(ListGetStringValueTest, NestedGetNull)
   // clang-format off
   LCW col(
     {
-      LCW{LCW{"aaa", "Héllo"}},
-      LCW{LCW{""}},
-      LCW{LCW{"42"}, LCW{"21"}},
-      LCW{}
+      {{"aaa", "Héllo"}},
+      {{""}},
+      {{"42"}, {"21"}},
+      {}
     }, valid.begin());
   // clang-format on
   cudf::size_type index = 0;
@@ -474,7 +471,11 @@ TEST_F(ListGetStringValueTest, NestedGetNull)
   auto typed_s = static_cast<cudf::list_scalar const*>(s.get());
 
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), StringCW{}.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            StringCW{}.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_data, typed_s->view());
@@ -505,13 +506,13 @@ struct ListGetStructValueTest : public cudf::test::BaseFixture {
     auto d_null_mask           = cudf::create_null_mask(
       num_lists, null_count == 0 ? cudf::mask_state::UNALLOCATED : cudf::mask_state::ALL_NULL);
     if (null_count > 0) {
-      std::for_each(
-        thrust::make_counting_iterator(0), thrust::make_counting_iterator(num_lists), [&](auto i) {
-          if (*(null_mask.begin() + i)) {
-            cudf::set_null_mask(
-              static_cast<cudf::bitmask_type*>(d_null_mask.data()), i, i + 1, true);
-          }
-        });
+      std::for_each(cuda::counting_iterator<cudf::size_type>{0},
+                    cuda::counting_iterator{num_lists},
+                    [&](auto i) {
+                      if (*(null_mask.begin() + i)) {
+                        cudf::set_null_mask(d_null_mask.data(), i, i + 1, true);
+                      }
+                    });
     }
     return cudf::make_lists_column(
       num_lists, offsets.release(), std::move(child), null_count, std::move(d_null_mask));
@@ -548,7 +549,7 @@ struct ListGetStructValueTest : public cudf::test::BaseFixture {
   {
     // {int: 1, string: NULL, list: NULL}
     return this->make_test_structs_column({{1}, {1}},
-                                          cudf::test::strings_column_wrapper({"aa"}, {false}),
+                                          cudf::test::strings_column_wrapper({""}, {false}),
                                           LCWinner_t({{}}, all_nulls()),
                                           no_nulls());
   }
@@ -772,7 +773,11 @@ TYPED_TEST(ListGetStructValueTest, NestedGetNull)
 
   auto nested = this->make_test_structs_column({}, {}, {}, valid_t{}.begin());
   auto expected_data =
-    cudf::make_lists_column(0, offset_t{}.release(), nested.release(), 0, rmm::device_buffer{});
+    cudf::make_lists_column(0,
+                            offset_t{}.release(),
+                            nested.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   EXPECT_FALSE(s->is_valid());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*expected_data, typed_s->view());
@@ -792,7 +797,7 @@ TYPED_TEST(StructGetValueTestTyped, mixed_types_valid)
   cudf::test::fixed_width_column_wrapper<TypeParam> f1{1, 2, 3};
   cudf::test::strings_column_wrapper f2{"aa", "bbb", "c"};
   cudf::test::dictionary_column_wrapper<TypeParam, int32_t> f3{42, 42, 24};
-  LCW f4{LCW{8, 8, 8}, LCW{9, 9}, LCW{10}};
+  LCW f4{{8, 8, 8}, {9, 9}, {10}};
 
   cudf::test::structs_column_wrapper col{f1, f2, f3, f4};
 
@@ -804,9 +809,13 @@ TYPED_TEST(StructGetValueTestTyped, mixed_types_valid)
   cudf::test::fixed_width_column_wrapper<TypeParam> ef1{3};
   cudf::test::strings_column_wrapper ef2{"c"};
   cudf::test::dictionary_column_wrapper<TypeParam, int32_t> ef3{24};
-  LCW ef4{LCW{10}};
+  LCW ef4{{10}};
 
-  cudf::table_view expect_data{{ef1, ef2, ef3, ef4}};
+  // keys need to match so dictionaries can be compared
+  auto def3 = cudf::dictionary::set_keys(cudf::dictionary_column_view(ef3),
+                                         cudf::dictionary_column_view(f3).keys());
+
+  cudf::table_view expect_data{{ef1, ef2, def3->view(), ef4}};
 
   EXPECT_TRUE(typed_s->is_valid());
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expect_data, typed_s->view());
@@ -819,10 +828,10 @@ TYPED_TEST(StructGetValueTestTyped, mixed_types_valid_with_nulls)
 
   // col fields
   cudf::test::fixed_width_column_wrapper<TypeParam> f1({1, 2, 3}, {true, false, true});
-  cudf::test::strings_column_wrapper f2({"aa", "bbb", "c"}, {false, false, true});
+  cudf::test::strings_column_wrapper f2({"", "", "c"}, {false, false, true});
   cudf::test::dictionary_column_wrapper<TypeParam, uint32_t> f3(
     {42, 42, 24}, validity_mask_t{true, true, true}.begin());
-  LCW f4({LCW{8, 8, 8}, LCW{9, 9}, LCW{10}}, validity_mask_t{false, false, false}.begin());
+  LCW f4({{8, 8, 8}, {9, 9}, {10}}, validity_mask_t{false, false, false}.begin());
 
   cudf::test::structs_column_wrapper col{f1, f2, f3, f4};
 
@@ -839,7 +848,7 @@ TYPED_TEST(StructGetValueTestTyped, mixed_types_valid_with_nulls)
   cudf::test::fixed_width_column_wrapper<TypeParam> new_key{24};
   auto ef3 = cudf::dictionary::add_keys(dict_col, new_key);
 
-  LCW ef4({LCW{10}}, validity_mask_t{false}.begin());
+  LCW ef4({{10}}, validity_mask_t{false}.begin());
 
   cudf::table_view expect_data{{ef1, ef2, *ef3, ef4}};
 
@@ -856,7 +865,7 @@ TYPED_TEST(StructGetValueTestTyped, mixed_types_invalid)
   cudf::test::fixed_width_column_wrapper<TypeParam> f1{1, 2, 3};
   cudf::test::strings_column_wrapper f2{"aa", "bbb", "c"};
   cudf::test::dictionary_column_wrapper<TypeParam, uint32_t> f3{42, 42, 24};
-  LCW f4{LCW{8, 8, 8}, LCW{9, 9}, LCW{10}};
+  LCW f4{{8, 8, 8}, {9, 9}, {10}};
 
   cudf::test::structs_column_wrapper col({f1, f2, f3, f4},
                                          validity_mask_t{false, true, true}.begin());
@@ -882,14 +891,13 @@ TEST_F(StructGetValueTest, multi_level_nested)
   using validity_mask_t = std::vector<cudf::valid_type>;
 
   // col fields
-  LCW l3({LCW{1, 1, 1}, LCW{2, 2}, LCW{3}}, validity_mask_t{false, true, true}.begin());
+  LCW l3({{1, 1, 1}, {2, 2}, {3}}, validity_mask_t{false, true, true}.begin());
   cudf::test::structs_column_wrapper l2{l3};
-  auto l1 =
-    cudf::make_lists_column(1,
-                            cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 3}.release(),
-                            l2.release(),
-                            0,
-                            cudf::create_null_mask(1, cudf::mask_state::UNALLOCATED));
+  auto l1 = cudf::make_lists_column(1,
+                                    cudf::test::fixed_width_column_wrapper<int32_t>{0, 3}.release(),
+                                    l2.release(),
+                                    0,
+                                    cudf::create_null_mask(1, cudf::mask_state::UNALLOCATED));
   std::vector<std::unique_ptr<cudf::column>> l0_fields;
   l0_fields.emplace_back(std::move(l1));
   cudf::test::structs_column_wrapper l0(std::move(l0_fields));

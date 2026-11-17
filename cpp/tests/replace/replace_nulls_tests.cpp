@@ -36,7 +36,6 @@
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/iterator>
-#include <thrust/iterator/counting_iterator.h>
 
 using namespace cudf::test::iterators;
 
@@ -444,9 +443,10 @@ TYPED_TEST(ReplaceNullsPolicyTest, PrecedingFillLargeArray)
   cudf::size_type const sz = 1000;
 
   // Source: 0, null, null...
-  auto src_begin       = thrust::make_counting_iterator(0);
+  auto src_begin = cudf::detail::make_counting_transform_iterator(
+    0, [](cudf::size_type i) { return static_cast<TypeParam>(i); });
   auto src_end         = src_begin + sz;
-  auto nulls_idx_begin = thrust::make_counting_iterator(1);
+  auto nulls_idx_begin = cuda::counting_iterator<cudf::size_type>{1};
   auto nulls_idx_end   = nulls_idx_begin + sz - 1;
 
   // Expected: 0, 0, 0, ...
@@ -465,9 +465,10 @@ TYPED_TEST(ReplaceNullsPolicyTest, FollowingFillLargeArray)
   cudf::size_type const sz = 1000;
 
   // Source: null, ... null, 999
-  auto src_begin       = thrust::make_counting_iterator(0);
+  auto src_begin = cudf::detail::make_counting_transform_iterator(
+    0, [](cudf::size_type i) { return static_cast<TypeParam>(i); });
   auto src_end         = src_begin + sz;
-  auto nulls_idx_begin = thrust::make_counting_iterator(0);
+  auto nulls_idx_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto nulls_idx_end   = nulls_idx_begin + sz - 1;
 
   // Expected: 999, 999, 999, ...
@@ -492,8 +493,7 @@ TYPED_TEST(ReplaceNullsFixedPointTest, ReplaceColumn)
   auto const sz    = std::size_t{1000};
   auto data_begin =
     cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return TypeParam{i, scale}; });
-  auto valid_begin =
-    cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return i % 3 ? 1 : 0; });
+  auto valid_begin = cudf::test::iterators::nulls_at_multiples_of(3);
   auto replace_begin =
     cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return TypeParam{-2, scale}; });
   auto expected_begin = cudf::detail::make_counting_transform_iterator(0, [&](auto i) {
@@ -520,8 +520,7 @@ TYPED_TEST(ReplaceNullsFixedPointTest, ReplaceScalar)
   auto const sz    = std::size_t{1000};
   auto data_begin =
     cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return TypeParam{i, scale}; });
-  auto valid_begin =
-    cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return i % 3 ? 1 : 0; });
+  auto valid_begin    = cudf::test::iterators::nulls_at_multiples_of(3);
   auto expected_begin = cudf::detail::make_counting_transform_iterator(0, [&](auto i) {
     int val = i % 3 ? static_cast<int>(i) : -2;
     return TypeParam{val, scale};
@@ -541,18 +540,15 @@ TYPED_TEST(ReplaceNullsFixedPointTest, ReplacementHasNulls)
   auto const sz    = std::size_t{1000};
   auto data_begin =
     cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return TypeParam{i, scale}; });
-  auto data_valid_begin =
-    cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return i % 3 ? 1 : 0; });
+  auto data_valid_begin = cudf::test::iterators::nulls_at_multiples_of(3);
   auto replace_begin =
     cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return TypeParam{-2, scale}; });
-  auto replace_valid_begin =
-    cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return i % 2 ? 1 : 0; });
-  auto expected_begin = cudf::detail::make_counting_transform_iterator(0, [&](auto i) {
+  auto replace_valid_begin  = cudf::test::iterators::nulls_at_multiples_of(2);
+  auto expected_begin       = cudf::detail::make_counting_transform_iterator(0, [&](auto i) {
     int val = i % 3 ? static_cast<int>(i) : -2;
     return TypeParam{val, scale};
   });
-  auto expected_valid_begin =
-    cudf::detail::make_counting_transform_iterator(0, [&](auto i) { return i % 6 ? 1 : 0; });
+  auto expected_valid_begin = cudf::test::iterators::nulls_at_multiples_of(6);
 
   ReplaceNullsColumn<TypeParam>(cudf::test::fixed_width_column_wrapper<TypeParam>(
                                   data_begin, data_begin + sz, data_valid_begin),

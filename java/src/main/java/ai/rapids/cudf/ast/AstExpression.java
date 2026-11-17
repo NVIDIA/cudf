@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,20 +12,22 @@ import java.nio.ByteOrder;
 public abstract class AstExpression {
   /**
    * Enumeration for the types of AST nodes that can appear in a serialized AST.
-   * NOTE: This must be kept in sync with the `jni_serialized_node_type` in CompiledExpression.cpp!
+   * NOTE: This must be kept in sync with `jni_serialized_expression_type` in
+   * CompiledExpression.cpp!
    */
   protected enum ExpressionType {
     VALID_LITERAL(0),
     NULL_LITERAL(1),
     COLUMN_REFERENCE(2),
     UNARY_EXPRESSION(3),
-    BINARY_EXPRESSION(4);
+    BINARY_EXPRESSION(4),
+    COLUMN_NAME_REFERENCE(5),
+    JIT_EXPRESSION(6);
 
     private final byte nativeId;
 
     ExpressionType(int nativeId) {
-      this.nativeId = (byte) nativeId;
-      assert this.nativeId == nativeId;
+      this.nativeId = AstUtils.checkByte(nativeId);
     }
 
     /** Get the size in bytes to serialize this node type */
@@ -39,13 +41,45 @@ public abstract class AstExpression {
     }
   }
 
+  /**
+   * Compile this expression for execution with the process-level backend selection.
+   *
+   * @return expression compatible with default AST consumers
+   * @throws IllegalArgumentException if a root literal requires JIT compilation
+   * @throws ai.rapids.cudf.CudfException if compilation fails
+   */
   public CompiledExpression compile() {
+    return compile(CompiledExpression.CompilationMode.DEFAULT);
+  }
+
+  /**
+   * Compile this expression for explicit execution with the libcudf JIT backend.
+   * The returned expression cannot be used as a join or scan predicate.
+   *
+   * @return expression specialized for JIT execution
+   * @throws ai.rapids.cudf.CudfException if compilation fails
+   */
+  public CompiledExpression compileJit() {
+    return compile(CompiledExpression.CompilationMode.JIT);
+  }
+
+  private CompiledExpression compile(CompiledExpression.CompilationMode mode) {
+    validateRootCompilationMode(mode);
     int size = getSerializedSize();
     ByteBuffer bb = ByteBuffer.allocate(size);
     bb.order(ByteOrder.nativeOrder());
     serialize(bb);
-    return new CompiledExpression(bb.array());
+    return new CompiledExpression(bb.array(), mode);
   }
+
+  /**
+   * Validate this node as the root of the expression being compiled.
+   * Overrides must not recurse into children: root restrictions do not apply to nested literals.
+   *
+   * @param mode requested compilation mode
+   * @throws IllegalArgumentException if this root is unsupported in the requested mode
+   */
+  void validateRootCompilationMode(CompiledExpression.CompilationMode mode) {}
 
   /** Get the size in bytes of the serialized form of this node and all child nodes */
   abstract int getSerializedSize();

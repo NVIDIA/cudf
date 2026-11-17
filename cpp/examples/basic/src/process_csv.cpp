@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,10 +8,7 @@
 #include <cudf/io/csv.hpp>
 #include <cudf/table/table.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/mr/cuda_memory_resource.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
-#include <rmm/mr/pool_memory_resource.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 
 #include <memory>
 #include <string>
@@ -66,20 +63,13 @@ std::unique_ptr<cudf::table> average_closing_price(cudf::table_view stock_info_t
 
 int main(int argc, char** argv)
 {
-  // Construct a CUDA memory resource using RAPIDS Memory Manager (RMM)
-  // This is the default memory resource for libcudf for allocating device memory.
-  rmm::mr::cuda_memory_resource cuda_mr{};
-  // Construct a memory pool using the CUDA memory resource
-  // Using a memory pool for device memory allocations is important for good performance in libcudf.
-  // The pool defaults to allocating half of the available GPU memory.
-  rmm::mr::pool_memory_resource mr{&cuda_mr, rmm::percent_of_free_device_memory(50)};
+  rmm::mr::cuda_async_memory_resource mr{};
 
-  // Set the pool resource to be used by default for all device memory allocations
   // Note: It is the user's responsibility to ensure the `mr` object stays alive for the duration of
   // it being set as the default
   // Also, call this before the first libcudf API call to ensure all data is allocated by the same
   // memory resource.
-  cudf::set_current_device_resource(&mr);
+  cudf::set_current_device_resource(mr);
 
   // Read data
   auto stock_table_with_metadata = read_csv("4stock_5day.csv");

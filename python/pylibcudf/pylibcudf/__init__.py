@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # If libcudf was installed as a wheel, we must request it to load the library symbols.
@@ -16,6 +16,7 @@ from . import (
     binaryop,
     column_factories,
     concatenate,
+    context,
     contiguous_split,
     copying,
     datetime,
@@ -46,10 +47,12 @@ from . import (
     span,
     stream_compaction,
     strings,
+    table_equality,
     traits,
     transform,
     transpose,
     types,
+    typing,
     unary,
     utilities,
     utils,
@@ -71,6 +74,7 @@ __all__ = [
     "binaryop",
     "column_factories",
     "concatenate",
+    "context",
     "contiguous_split",
     "copying",
     "datetime",
@@ -102,10 +106,12 @@ __all__ = [
     "span",
     "stream_compaction",
     "strings",
+    "table_equality",
     "traits",
     "transform",
     "transpose",
     "types",
+    "typing",
     "unary",
     "utilities",
     "utils",

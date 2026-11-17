@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint32_t, uint64_t
 from libcpp.memory cimport unique_ptr
@@ -7,8 +7,8 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.scalar.scalar cimport numeric_scalar
 from pylibcudf.libcudf.types cimport size_type
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "nvtext/minhash.hpp" namespace "nvtext" nogil:
@@ -19,8 +19,8 @@ cdef extern from "nvtext/minhash.hpp" namespace "nvtext" nogil:
         const column_view &a,
         const column_view &b,
         const size_type width,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] minhash64(
@@ -29,8 +29,8 @@ cdef extern from "nvtext/minhash.hpp" namespace "nvtext" nogil:
         const column_view &a,
         const column_view &b,
         const size_type width,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] minhash_ngrams(
@@ -39,8 +39,8 @@ cdef extern from "nvtext/minhash.hpp" namespace "nvtext" nogil:
         const uint32_t seed,
         const column_view &a,
         const column_view &b,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] minhash64_ngrams(
@@ -49,6 +49,6 @@ cdef extern from "nvtext/minhash.hpp" namespace "nvtext" nogil:
         const uint64_t seed,
         const column_view &a,
         const column_view &b,
-        cuda_stream_view stream,
-        device_memory_resource* mr
+        cudaStream_t stream,
+        device_async_resource_ref mr
     ) except +libcudf_exception_handler

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -86,7 +86,7 @@ class byte_array_view {
    * @brief Comparing target byte_array_view with this byte_array_view. Each byte in the array is
    * compared.
    *
-   * @param byte_array_view Target byte_array_view to compare with this byte_array_view.
+   * @param rhs Target byte_array_view to compare with this byte_array_view.
    * @return 0  If they compare equal.
    *         <0 Either the value of the first byte of this byte_array_view that does not match is
    * lower in the arg byte_array_view, or all compared bytes match but the arg byte_array_view is

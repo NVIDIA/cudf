@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -10,6 +10,11 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file strings/contains.hpp
+ * @brief Strings APIs for regex contains, count, matches, like
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -18,8 +23,6 @@ struct regex_program;
 /**
  * @addtogroup strings_contains
  * @{
- * @file strings/contains.hpp
- * @brief Strings APIs for regex contains, count, matches, like
  */
 
 /**
@@ -47,8 +50,8 @@ struct regex_program;
 std::unique_ptr<column> contains_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying rows which
@@ -75,8 +78,8 @@ std::unique_ptr<column> contains_re(
 std::unique_ptr<column> matches_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns the number of times the given regex_program's pattern
@@ -103,8 +106,8 @@ std::unique_ptr<column> matches_re(
 std::unique_ptr<column> count_re(
   strings_column_view const& input,
   regex_program const& prog,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying rows which
@@ -149,37 +152,11 @@ std::unique_ptr<column> count_re(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New boolean column
  */
-std::unique_ptr<column> like(
-  strings_column_view const& input,
-  std::string_view const& pattern,
-  std::string_view const& escape_character = "",
-  rmm::cuda_stream_view stream             = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr        = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Returns a boolean column identifying rows which
- * match the given like pattern
- *
- * @deprecated in 25.12 and to be removed in a future release. Use like(strings_column_view,
- * std::string_view, std::string_view, rmm::cuda_stream_view, rmm::device_async_resource_ref)
- *
- * @throw std::invalid_argument if `pattern` or `escape_character` is invalid
- * @throw std::invalid_argument if `escape_character` contains more than on byte
- *
- * @param input Strings instance for this operation
- * @param pattern Like pattern to match within each string
- * @param escape_character Optional character specifies the escape prefix.
- *                         Default is no escape character.
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return New boolean column
- */
-[[deprecated]] std::unique_ptr<column> like(
-  strings_column_view const& input,
-  string_scalar const& pattern,
-  string_scalar const& escape_character = string_scalar(""),
-  rmm::cuda_stream_view stream          = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr     = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> like(strings_column_view const& input,
+                             std::string_view const& pattern,
+                             std::string_view const& escape_character = "",
+                             cuda::stream_ref stream                  = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a boolean column identifying rows which
@@ -214,12 +191,11 @@ std::unique_ptr<column> like(
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return New boolean column
  */
-std::unique_ptr<column> like(
-  strings_column_view const& input,
-  strings_column_view const& patterns,
-  string_scalar const& escape_character = string_scalar(""),
-  rmm::cuda_stream_view stream          = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr     = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> like(strings_column_view const& input,
+                             strings_column_view const& patterns,
+                             string_scalar const& escape_character = string_scalar(""),
+                             cuda::stream_ref stream               = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

@@ -1,9 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "simple.cuh"
+
+#include <cuda/std/type_traits>
 
 namespace cudf::reduction::detail {
 
@@ -17,15 +19,15 @@ namespace {
  */
 template <type_id t>
 struct dispatch_void_if_non_integral {
-  using type = std::conditional_t<std::is_integral_v<id_to_type<t>>, id_to_type<t>, void>;
+  using type = std::conditional_t<cuda::std::is_integral_v<id_to_type<t>>, id_to_type<t>, void>;
 };
 
 }  // namespace
 
 std::unique_ptr<scalar> bitwise_reduction(bitwise_op bit_op,
                                           column_view const& col,
-                                          rmm::cuda_stream_view stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cuda::stream_ref stream,
+                                          cudf::memory_resources mr)
 {
   auto const dtype =
     cudf::is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();

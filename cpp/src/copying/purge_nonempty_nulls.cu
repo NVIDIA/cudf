@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf/copying.hpp>
@@ -10,7 +10,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <thrust/iterator/counting_iterator.h>
+#include <cuda/iterator>
+
+#include <algorithm>
 
 namespace cudf {
 namespace detail {
@@ -26,7 +28,9 @@ bool type_may_have_nonempty_nulls(cudf::type_id const& type)
 }
 
 /// Check if the (STRING/LIST) column has any null rows with non-zero length.
-bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_null_rows(cudf::column_view const& input,
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
   if (not input.has_nulls()) { return false; }  // No nulls => no dirty rows.
 
@@ -38,14 +42,14 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
     (type == type_id::STRING) ? strings_column_view{input}.offsets()
                               : lists_column_view{input}.offsets(),
     input.offset());
-  auto const d_input      = cudf::column_device_view::create(input, stream);
+  auto const d_input      = cudf::column_device_view::create(input, stream, mr.as_temporary());
   auto const is_dirty_row = [d_input = *d_input, offsets] __device__(size_type const& row_idx) {
     return d_input.is_null_nocheck(row_idx) && (offsets[row_idx] != offsets[row_idx + 1]);
   };
 
-  auto const row_begin = thrust::counting_iterator<cudf::size_type>(0);
+  auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream) > 0;
+  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr) > 0;
 }
 
 }  // namespace
@@ -53,7 +57,9 @@ bool has_nonempty_null_rows(cudf::column_view const& input, rmm::cuda_stream_vie
 /**
  * @copydoc cudf::detail::has_nonempty_nulls
  */
-bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(cudf::column_view const& input,
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
 {
   auto const type = input.type().id();
 
@@ -61,14 +67,15 @@ bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view st
 
   // For types with variable-length rows, check if any rows are "dirty".
   // A dirty row is a null row with non-zero length.
-  if ((type == type_id::STRING || type == type_id::LIST) && has_nonempty_null_rows(input, stream)) {
+  if ((type == type_id::STRING || type == type_id::LIST) &&
+      has_nonempty_null_rows(input, stream, mr)) {
     return true;
   }
 
   // For complex types, check if child columns need purging.
   if ((type == type_id::STRUCT || type == type_id::LIST) &&
-      std::any_of(input.child_begin(), input.child_end(), [stream](auto const& child) {
-        return cudf::detail::has_nonempty_nulls(child, stream);
+      std::ranges::any_of(input.child_begin(), input.child_end(), [stream, mr](auto const& child) {
+        return cudf::detail::has_nonempty_nulls(child, stream, mr);
       })) {
     return true;
   }
@@ -77,16 +84,16 @@ bool has_nonempty_nulls(cudf::column_view const& input, rmm::cuda_stream_view st
 }
 
 std::unique_ptr<column> purge_nonempty_nulls(column_view const& input,
-                                             rmm::cuda_stream_view stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   // If not compound types (LIST/STRING/STRUCT/DICTIONARY) then just copy the input into output.
   if (!cudf::is_compound(input.type())) { return std::make_unique<column>(input, stream, mr); }
 
   // Implement via identity gather.
   auto gathered_table = cudf::detail::gather(table_view{{input}},
-                                             thrust::make_counting_iterator(0),
-                                             thrust::make_counting_iterator(input.size()),
+                                             cuda::counting_iterator<cudf::size_type>{0},
+                                             cuda::counting_iterator{input.size()},
                                              out_of_bounds_policy::DONT_CHECK,
                                              stream,
                                              mr);
@@ -117,17 +124,17 @@ bool may_have_nonempty_nulls(column_view const& input)
 /**
  * @copydoc cudf::has_nonempty_nulls
  */
-bool has_nonempty_nulls(column_view const& input, rmm::cuda_stream_view stream)
+bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
 {
   return detail::has_nonempty_nulls(input, stream);
 }
 
 /**
- * @copydoc cudf::purge_nonempty_nulls(column_view const&, rmm::device_async_resource_ref)
+ * @copydoc cudf::purge_nonempty_nulls(column_view const&, cudf::memory_resources)
  */
 std::unique_ptr<cudf::column> purge_nonempty_nulls(column_view const& input,
-                                                   rmm::cuda_stream_view stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cuda::stream_ref stream,
+                                                   cudf::memory_resources mr)
 {
   return detail::purge_nonempty_nulls(input, stream, mr);
 }

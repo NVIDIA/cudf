@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.  All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -23,7 +23,8 @@
 //    0 - decimal
 //
 
-uint8_t const g_character_codepoint_flags[] = {
+// clang-format off
+uint8_t const g_character_codepoint_flags[] = { // NOLINT
   0,   0,   0,   0,   0,   0,   0,   0,   0,   16,  16,  16,  16,  16,  0,   0,   0,   0,   0,
   0,   0,   0,   0,   0,   0,   0,   0,   0,   16,  16,  16,  16,  16,  0,   0,   0,   0,   0,
   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   7,   7,   7,   7,   7,   7,   7,   7,   7,
@@ -3475,3 +3476,4 @@ uint8_t const g_character_codepoint_flags[] = {
   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
   0,   0,   0,   0,   0,
 };
+// clang-format on

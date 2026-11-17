@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,14 +8,15 @@
 
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/offsets_iterator_factory.cuh>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/iterator>
 #include <thrust/adjacent_difference.h>
 
@@ -31,7 +32,7 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   IndexType chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr)
 {
   auto total_source_size = [&sources]() {
@@ -43,7 +44,8 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
   auto find_first_delimiter_in_chunk =
     [total_source_size, &sources, &stream](
       cudf::io::json_reader_options const& reader_opts) -> IndexType {
-    rmm::device_uvector<char> buffer(total_source_size, stream);
+    cuda::device_buffer<char> buffer(
+      stream, cudf::get_current_device_resource_ref(), total_source_size, cuda::no_init);
     auto readbufspan = cudf::io::json::detail::ingest_raw_input(buffer,
                                                                 sources,
                                                                 reader_opts.get_byte_range_offset(),
@@ -108,7 +110,7 @@ template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   std::int32_t chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
 template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std::int64_t>(
@@ -117,13 +119,14 @@ template std::vector<cudf::io::table_with_metadata> split_byte_range_reading<std
   cudf::io::json_reader_options const& reader_opts,
   cudf::io::json_reader_options const& creader_opts,
   std::int64_t chunk_size,
-  rmm::cuda_stream_view stream,
+  cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
-rmm::device_uvector<cudf::size_type> string_offset_to_length(
-  cudf::strings_column_view const& column, rmm::cuda_stream_view stream)
+cuda::device_buffer<cudf::size_type> string_offset_to_length(
+  cudf::strings_column_view const& column, cuda::stream_ref stream)
 {
-  rmm::device_uvector<cudf::size_type> svs_length(column.size(), stream);
+  cuda::device_buffer<cudf::size_type> svs_length(
+    stream, cudf::get_current_device_resource_ref(), column.size(), cuda::no_init);
   auto itr =
     cudf::detail::offsetalator_factory::make_input_iterator(column.offsets(), column.offset());
   thrust::adjacent_difference(

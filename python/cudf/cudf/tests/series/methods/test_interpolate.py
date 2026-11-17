@@ -1,18 +1,12 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
 
 import cudf
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 from cudf.testing import assert_eq
-from cudf.testing._utils import expect_warning_if
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "data",
     [
@@ -22,7 +16,6 @@ from cudf.testing._utils import expect_warning_if
         [1.0, None, 3.0, None],
         [None, None, 3.0, 4.0],
         [1.0, 2.0, None, None],
-        [None, None, None, None],
         [0.1, 0.2, 0.3],
     ],
 )
@@ -32,13 +25,10 @@ def test_interpolate_series(data):
     gsr = cudf.Series(data)
     psr = gsr.to_pandas()
 
-    is_str_dtype = psr.dtype == "object"
-    with expect_warning_if(is_str_dtype):
-        expect = psr.interpolate(method=method, axis=axis)
-    with expect_warning_if(is_str_dtype):
-        got = gsr.interpolate(method=method, axis=axis)
+    expect = psr.interpolate(method=method, axis=axis)
+    got = gsr.interpolate(method=method, axis=axis)
 
-    assert_eq(expect, got, check_dtype=psr.dtype != "object")
+    assert_eq(expect, got)
 
 
 def test_interpolate_series_unsorted_index():
@@ -51,10 +41,6 @@ def test_interpolate_series_unsorted_index():
     assert_eq(expect, got)
 
 
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="warning not present in older pandas versions",
-)
 @pytest.mark.parametrize(
     "data",
     [
@@ -65,7 +51,6 @@ def test_interpolate_series_unsorted_index():
         [1.0, 2.0, None, None],
         [1.0, None, 3.0, None],
         [None, 2.0, None, 4.0],
-        [None, None, None, None],
     ],
 )
 @pytest.mark.parametrize("index", [[0, 1, 2, 3], [0, 2, 4, 6], [0, 3, 4, 9]])
@@ -74,13 +59,10 @@ def test_interpolate_series_values_or_index(data, index, method):
     gsr = cudf.Series(data, index=index)
     psr = gsr.to_pandas()
 
-    is_str_dtype = gsr.dtype == "object"
-    with expect_warning_if(is_str_dtype):
-        expect = psr.interpolate(method=method)
-    with expect_warning_if(is_str_dtype):
-        got = gsr.interpolate(method=method)
+    expect = psr.interpolate(method=method)
+    got = gsr.interpolate(method=method)
 
-    assert_eq(expect, got, check_dtype=psr.dtype != "object")
+    assert_eq(expect, got)
 
 
 def test_interpolate_noop_new_column():

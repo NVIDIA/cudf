@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -98,3 +98,44 @@ def test_from_pandas_datetimeindex_freq():
     actual = cudf.Index(expected)
     assert_eq(expected, actual)
     assert actual.freq is not None
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [],
+        (),
+        [None],
+        [None, None],
+        pd.Series([], dtype="object"),
+    ],
+)
+def test_datetime_index_empty_object_default_dtype(data):
+    # Pandas's array_to_datetime falls back to "s" precision when no
+    # concrete (non-NaT) datetime is observed (pandas-dev/pandas#55901).
+    # cuDF should match so cudf.pandas-wrapped pd.DatetimeIndex([]) doesn't
+    # diverge from plain pandas. Inputs to this test deliberately carry no
+    # explicit dtype so cuDF's default-unit logic is what's exercised.
+    pd_data = data
+    gd_data = cudf.from_pandas(data) if isinstance(data, pd.Series) else data
+    expected = pd.DatetimeIndex(pd_data)
+    actual = cudf.DatetimeIndex(gd_data)
+    assert actual.dtype == expected.dtype
+    assert_eq(actual, expected)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ["2020-01-01"],
+        ["2020-01-01", "2020-01-02"],
+        ["1970-01-01 00:00:00.000000"],
+    ],
+)
+def test_datetime_index_string_input_us_default(values):
+    # Non-empty string parsing should still resolve to [us] (pandas 3 default
+    # when no nanosecond-precision component is present).
+    expected = pd.DatetimeIndex(values)
+    actual = cudf.DatetimeIndex(values)
+    assert actual.dtype == expected.dtype
+    assert_eq(actual, expected)

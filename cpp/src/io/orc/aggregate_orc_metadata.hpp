@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -51,7 +51,7 @@ class aggregate_orc_metadata {
   bool row_grp_idx_present{true};
 
   aggregate_orc_metadata(std::vector<std::unique_ptr<datasource>> const& sources,
-                         rmm::cuda_stream_view stream);
+                         cuda::stream_ref stream);
 
   aggregate_orc_metadata(aggregate_orc_metadata const&)            = delete;
   aggregate_orc_metadata& operator=(aggregate_orc_metadata const&) = delete;
@@ -121,7 +121,7 @@ class aggregate_orc_metadata {
     std::vector<std::vector<size_type>> const& user_specified_stripes,
     int64_t skip_rows,
     std::optional<size_type> const& num_read_rows,
-    rmm::cuda_stream_view stream);
+    cuda::stream_ref stream);
 
   /**
    * @brief Filters ORC file to a selection of columns, based on their paths in the file.

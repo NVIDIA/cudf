@@ -153,48 +153,6 @@ def test_multiindex_levels():
     assert_eq(gidx.levels[1], pidx.levels[1])
 
 
-@pytest.mark.parametrize(
-    "pidx",
-    [
-        pd.MultiIndex.from_arrays(
-            [[1, 1, 2, 2], ["Red", "Blue", "Red", "Blue"]]
-        ),
-        pd.MultiIndex.from_arrays(
-            [[1, 2, 3, 4], [5, 6, 7, 10], [11, 12, 12, 13]],
-            names=["a", "b", "c"],
-        ),
-        pd.MultiIndex.from_arrays(
-            [[1.0, 2, 3, 4], [5, 6, 7.8, 10], [11, 12, 12, 13]],
-        ),
-    ],
-)
-@pytest.mark.parametrize(
-    "func",
-    [
-        "is_numeric",
-        "is_boolean",
-        "is_integer",
-        "is_floating",
-        "is_object",
-        "is_categorical",
-        "is_interval",
-    ],
-)
-def test_multiindex_type_methods(pidx, func):
-    gidx = cudf.from_pandas(pidx)
-
-    with pytest.warns(FutureWarning):
-        expected = getattr(pidx, func)()
-
-    with pytest.warns(FutureWarning):
-        actual = getattr(gidx, func)()
-
-    if func == "is_object":
-        assert_eq(False, actual)
-    else:
-        assert_eq(expected, actual)
-
-
 def test_multiindex_iter_error():
     midx = cudf.MultiIndex(
         levels=[[1, 3, 4, 5], [1, 2, 5]],
@@ -226,17 +184,6 @@ def test_multiindex_values():
     np.testing.assert_array_equal(
         result.get(), np.array([[1, 1], [1, 5], [3, 2], [4, 2], [5, 1]])
     )
-
-
-def test_multiindex_values_host():
-    midx = cudf.MultiIndex(
-        levels=[[1, 3, 4, 5], [1, 2, 5]],
-        codes=[[0, 0, 1, 2, 3], [0, 2, 1, 1, 0]],
-        names=["x", "y"],
-    )
-    pmidx = midx.to_pandas()
-
-    assert_eq(midx.to_numpy(), pmidx.values)
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,7 +8,7 @@
 
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace io {
@@ -43,7 +43,7 @@ void DecodeAvroColumnData(cudf::device_span<block_desc_s const> blocks,
                           uint8_t const* avro_data,
                           uint32_t schema_len,
                           uint32_t min_row_size,
-                          rmm::cuda_stream_view stream);
+                          cuda::stream_ref stream);
 
 }  // namespace gpu
 }  // namespace avro

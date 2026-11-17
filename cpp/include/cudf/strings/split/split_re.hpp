@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -9,6 +9,11 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings column APIs for splitting strings using a regex pattern.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 
@@ -17,7 +22,6 @@ struct regex_program;
 /**
  * @addtogroup strings_split
  * @{
- * @file
  */
 
 /**
@@ -70,9 +74,9 @@ struct regex_program;
 std::unique_ptr<table> split_re(
   strings_column_view const& input,
   regex_program const& prog,
-  size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  size_type maxsplit        = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits strings elements into a table of strings columns using a
@@ -126,9 +130,9 @@ std::unique_ptr<table> split_re(
 std::unique_ptr<table> rsplit_re(
   strings_column_view const& input,
   regex_program const& prog,
-  size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  size_type maxsplit        = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits strings elements into a list column of strings
@@ -184,9 +188,9 @@ std::unique_ptr<table> rsplit_re(
 std::unique_ptr<column> split_record_re(
   strings_column_view const& input,
   regex_program const& prog,
-  size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  size_type maxsplit        = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits strings elements into a list column of strings using the given
@@ -244,9 +248,9 @@ std::unique_ptr<column> split_record_re(
 std::unique_ptr<column> rsplit_record_re(
   strings_column_view const& input,
   regex_program const& prog,
-  size_type maxsplit                = -1,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  size_type maxsplit        = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

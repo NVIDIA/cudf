@@ -16,9 +16,6 @@ def _only_spaces(s):
     return bool(_regex_whitespaces.match(s))
 
 
-_wrapopts = {"width": 78, "replace_whitespace": False}
-
-
 def docfmt(**kwargs):
     """Format docstring.
 
@@ -201,13 +198,13 @@ doc_describe = docfmt_partial(
         4    c
         5    a
         dtype: category
-        Categories (3, object): ['a', 'b', 'c']
+        Categories (3, str): ['a', 'b', 'c']
         >>> s.describe()
         count     6
         unique    3
         top       a
         freq      3
-        dtype: object
+        dtype: str
 
         Describing a timestamp ``Series``.
 
@@ -229,7 +226,7 @@ doc_describe = docfmt_partial(
         50%     2010-01-01 00:00:00
         75%     2010-01-01 00:00:00
         max     2010-01-01 00:00:00
-        dtype: object
+        dtype: str
 
         Describing a ``DataFrame``. By default only numeric fields are
         returned.
@@ -237,10 +234,10 @@ doc_describe = docfmt_partial(
         >>> df = cudf.DataFrame({"categorical": cudf.Series(['d', 'e', 'f'],
         ...                         dtype='category'),
         ...                      "numeric": [1, 2, 3],
-        ...                      "object": ['a', 'b', 'c']
+        ...                      "string": ['a', 'b', 'c']
         ... })
         >>> df
-          categorical  numeric object
+          categorical  numeric string
         0           d        1      a
         1           e        2      b
         2           f        3      c
@@ -258,18 +255,18 @@ doc_describe = docfmt_partial(
         Describing all columns of a ``DataFrame`` regardless of data type.
 
         >>> df.describe(include='all')
-               categorical numeric object
+               categorical numeric string
         count            3     3.0      3
-        unique           3    <NA>      3
-        top              d    <NA>      a
-        freq             1    <NA>      1
-        mean          None     2.0   None
-        std           None     1.0   None
-        min           None     1.0   None
-        25%           None     1.5   None
-        50%           None     2.0   None
-        75%           None     2.5   None
-        max           None     3.0   None
+        unique           3     NaN      3
+        top              d     NaN      a
+        freq             1     NaN      1
+        mean           NaN     2.0    NaN
+        std            NaN     1.0    NaN
+        min            NaN     1.0    NaN
+        25%            NaN     1.5    NaN
+        50%            NaN     2.0    NaN
+        75%            NaN     2.5    NaN
+        max            NaN     3.0    NaN
 
         Describing a column from a ``DataFrame`` by accessing it as an
         attribute.
@@ -300,8 +297,8 @@ doc_describe = docfmt_partial(
 
         Including only string columns in a ``DataFrame`` description.
 
-        >>> df.describe(include=[object])
-               object
+        >>> df.describe(include=[str])
+               string
         count       3
         unique      3
         top         a
@@ -319,7 +316,7 @@ doc_describe = docfmt_partial(
         Excluding numeric columns from a ``DataFrame`` description.
 
         >>> df.describe(exclude=[np.number])
-               categorical object
+               categorical string
         count            3      3
         unique           3      3
         top              d      a
@@ -327,18 +324,18 @@ doc_describe = docfmt_partial(
 
         Excluding object columns from a ``DataFrame`` description.
 
-        >>> df.describe(exclude=[object])
+        >>> df.describe(exclude=[str])
                categorical numeric
         count            3     3.0
-        unique           3    <NA>
-        top              d    <NA>
-        freq             1    <NA>
-        mean          None     2.0
-        std           None     1.0
-        min           None     1.0
-        25%           None     1.5
-        50%           None     2.0
-        75%           None     2.5
-        max           None     3.0
+        unique           3     NaN
+        top              d     NaN
+        freq             1     NaN
+        mean           NaN     2.0
+        std            NaN     1.0
+        min            NaN     1.0
+        25%            NaN     1.5
+        50%            NaN     2.0
+        75%            NaN     2.5
+        max            NaN     3.0
 """
 )

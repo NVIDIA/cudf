@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from io import BytesIO, StringIO, TextIOBase
@@ -20,6 +20,7 @@ def read_text(
     compression=None,
     compression_offsets=None,
     storage_options=None,
+    filesystem=None,
 ) -> Series:
     """{docstring}"""
 
@@ -30,6 +31,7 @@ def read_text(
         path_or_data=filepath_or_buffer,
         iotypes=(BytesIO, StringIO),
         storage_options=storage_options,
+        filesystem=filesystem,
     )
     filepath_or_buffer = ioutils._select_single_source(
         filepath_or_buffer, "read_text"
@@ -38,6 +40,12 @@ def read_text(
     if compression is None:
         if isinstance(filepath_or_buffer, TextIOBase):
             datasource = plc.io.text.make_source(filepath_or_buffer.read())
+        elif isinstance(filepath_or_buffer, BytesIO):
+            # Read the whole buffer regardless of its current position, to
+            # match the other readers (e.g. read_csv) on host buffers.
+            datasource = plc.io.text.make_source(
+                filepath_or_buffer.getvalue().decode()
+            )
         else:
             datasource = plc.io.text.make_source_from_file(filepath_or_buffer)
     elif compression == "bgzip":

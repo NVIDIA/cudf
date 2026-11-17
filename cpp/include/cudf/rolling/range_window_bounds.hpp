@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,11 +8,15 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/export.hpp>
 
+/**
+ * @file
+ * @brief Class defining range-based window boundary sizes for rolling window operations
+ */
+
 namespace CUDF_EXPORT cudf {
 /**
  * @addtogroup aggregation_rolling
  * @{
- * @file
  */
 
 /**
@@ -50,7 +54,7 @@ struct range_window_bounds {
    * @return A bounded window boundary object
    */
   static range_window_bounds get(scalar const& boundary,
-                                 rmm::cuda_stream_view stream = cudf::get_default_stream());
+                                 cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Factory method to construct a window boundary
@@ -61,7 +65,7 @@ struct range_window_bounds {
    * @return  A "current row" window boundary object
    */
   static range_window_bounds current_row(data_type type,
-                                         rmm::cuda_stream_view stream = cudf::get_default_stream());
+                                         cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Whether or not the window is bounded to the current row
@@ -79,7 +83,7 @@ struct range_window_bounds {
    * @return  An unbounded window boundary object
    */
   static range_window_bounds unbounded(data_type type,
-                                       rmm::cuda_stream_view stream = cudf::get_default_stream());
+                                       cuda::stream_ref stream = cudf::get_default_stream());
 
   /**
    * @brief Whether or not the window is unbounded
@@ -105,7 +109,7 @@ struct range_window_bounds {
 
   range_window_bounds(extent_type extent_,
                       std::unique_ptr<scalar> range_scalar_,
-                      rmm::cuda_stream_view = cudf::get_default_stream());
+                      cuda::stream_ref = cudf::get_default_stream());
 };
 
 /** @} */  // end of group

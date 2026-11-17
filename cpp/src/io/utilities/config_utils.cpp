@@ -1,39 +1,50 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "getenv_or.hpp"
-
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/io/config_utils.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <kvikio/defaults.hpp>
 
+#include <cstdint>
+#include <optional>
+#include <stdexcept>
 #include <string>
 
 namespace cudf::io {
 
 namespace kvikio_integration {
 
-void set_up_kvikio()
+void set_up_kvikio(std::optional<uint32_t> nthreads, std::optional<compat_mode> mode)
 {
   static std::once_flag flag{};
-  std::call_once(flag, [] {
-    // Workaround for https://github.com/rapidsai/cudf/issues/14140, where cuFileDriverOpen errors
+  std::call_once(flag, [nthreads, mode] {
+    // Workaround for https://github.com/NVIDIA/cudf/issues/14140, where cuFileDriverOpen errors
     // out if no CUDA calls have been made before it. This is a no-op if the CUDA context is already
     // initialized.
-    cudaFree(nullptr);
+    CUDF_CUDA_TRY(cudaFree(nullptr));
 
-    auto const compat_mode = kvikio::getenv_or("KVIKIO_COMPAT_MODE", kvikio::CompatMode::ON);
-    kvikio::defaults::set_compat_mode(compat_mode);
+    auto const kvikio_mode = [mode] {
+      if (!mode.has_value()) {
+        return kvikio::getenv_or("KVIKIO_COMPAT_MODE", kvikio::CompatMode::ON);
+      }
+      switch (*mode) {
+        case compat_mode::ON: return kvikio::CompatMode::ON;
+        case compat_mode::OFF: return kvikio::CompatMode::OFF;
+        case compat_mode::AUTO: return kvikio::CompatMode::AUTO;
+        default: CUDF_FAIL("Invalid KvikIO compatibility mode", std::invalid_argument);
+      }
+    }();
+    kvikio::defaults::set_compat_mode(kvikio_mode);
 
-    auto const nthreads = getenv_or<unsigned int>("KVIKIO_NTHREADS", 4u);
-    kvikio::defaults::set_thread_pool_nthreads(nthreads);
+    auto const n = nthreads.value_or(cudf::detail::getenv_or<unsigned int>("KVIKIO_NTHREADS", 4u));
+    kvikio::defaults::set_thread_pool_nthreads(n);
   });
 }
-
 }  // namespace kvikio_integration
 
 namespace nvcomp_integration {
@@ -49,7 +60,7 @@ enum class usage_policy : uint8_t { OFF, STABLE, ALWAYS };
  */
 [[nodiscard]] usage_policy get_env_policy()
 {
-  auto const env_val = getenv_or<std::string>("LIBCUDF_NVCOMP_POLICY", "STABLE");
+  auto const env_val = cudf::detail::getenv_or<std::string>("LIBCUDF_NVCOMP_POLICY", "STABLE");
   if (env_val == "OFF") return usage_policy::OFF;
   if (env_val == "STABLE") return usage_policy::STABLE;
   if (env_val == "ALWAYS") return usage_policy::ALWAYS;

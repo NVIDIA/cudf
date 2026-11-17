@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -20,11 +20,17 @@ constexpr cudf::size_type num_cols = 64;
 // that can trigger quoting issues.
 data_profile const profile = data_profile_builder().string_char_range('0', 'z');  // ASCII 48-122
 
+// Quotes and commas make the writer quote only some fields and double their embedded quotes.
+data_profile const quoted_profile = data_profile_builder().string_char_range(' ', '~');
+
 template <typename DataType>
-void csv_read_common(DataType const& data_types, io_type const& source_type, nvbench::state& state)
+void csv_read_common(DataType const& data_types,
+                     io_type const& source_type,
+                     nvbench::state& state,
+                     data_profile const& table_profile = profile)
 {
-  auto const tbl =
-    create_random_table(cycle_dtypes(data_types, num_cols), table_size_bytes{data_size}, profile);
+  auto const tbl = create_random_table(
+    cycle_dtypes(data_types, num_cols), table_size_bytes{data_size}, table_profile);
   auto const view = tbl->view();
 
   cuio_source_sink_pair source_sink(source_type);
@@ -47,7 +53,7 @@ void csv_read_common(DataType const& data_types, io_type const& source_type, nvb
       .dtypes(column_types);
 
   auto const mem_stats_logger = cudf::memory_stats_logger();  // init stats logger
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(
     nvbench::exec_tag::sync | nvbench::exec_tag::timer, [&](nvbench::launch& launch, auto& timer) {
       drop_page_cache_if_enabled(read_options.get_source().filepaths());
@@ -91,6 +97,12 @@ void BM_csv_read_io(nvbench::state& state, nvbench::type_list<nvbench::enum_type
   csv_read_common(d_type, source_type, state);
 }
 
+void BM_csv_read_quoted_strings(nvbench::state& state)
+{
+  auto const d_type = get_type_or_group(static_cast<int32_t>(data_type::STRING));
+  csv_read_common(d_type, io_type::DEVICE_BUFFER, state, quoted_profile);
+}
+
 using d_type_list = nvbench::enum_type_list<data_type::INTEGRAL,
                                             data_type::FLOAT,
                                             data_type::DECIMAL,
@@ -110,3 +122,5 @@ NVBENCH_BENCH_TYPES(BM_csv_read_io, NVBENCH_TYPE_AXES(io_list))
   .set_name("csv_read_io")
   .set_type_axes_names({"io"})
   .set_min_samples(4);
+
+NVBENCH_BENCH(BM_csv_read_quoted_strings).set_name("csv_read_quoted_strings").set_min_samples(4);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,8 +15,9 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <thrust/adjacent_difference.h>
-#include <thrust/iterator/transform_iterator.h>
+#include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace reduction {
@@ -43,8 +44,8 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
                                                      device_span<size_type const> offsets,
                                                      null_policy null_handling,
                                                      size_type ddof,
-                                                     rmm::cuda_stream_view stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
 {
   auto d_col              = cudf::column_device_view::create(col, stream);
   auto compound_op        = Op{};
@@ -55,7 +56,7 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
   auto out_itr = result->mutable_view().template begin<ResultType>();
 
   // Compute counts
-  rmm::device_uvector<size_type> counts =
+  cuda::device_buffer<size_type> counts =
     cudf::reduction::detail::segmented_counts(col.null_mask(),
                                               col.has_nulls(),
                                               offsets,
@@ -66,14 +67,28 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
   // Run segmented reduction
   if (col.has_nulls()) {
     auto nrt = compound_op.template get_null_replacing_element_transformer<ResultType>();
-    auto itr = thrust::make_transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
-    cudf::reduction::detail::segmented_reduce(
-      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
+    auto itr = cuda::transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
+    cudf::reduction::detail::segmented_reduce(itr,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              out_itr,
+                                              compound_op,
+                                              ddof,
+                                              counts.data(),
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   } else {
     auto et  = compound_op.template get_element_transformer<ResultType>();
-    auto itr = thrust::make_transform_iterator(d_col->begin<InputType>(), et);
-    cudf::reduction::detail::segmented_reduce(
-      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream);
+    auto itr = cuda::transform_iterator(d_col->begin<InputType>(), et);
+    cudf::reduction::detail::segmented_reduce(itr,
+                                              offsets.begin(),
+                                              offsets.end(),
+                                              out_itr,
+                                              compound_op,
+                                              ddof,
+                                              counts.data(),
+                                              stream,
+                                              cudf::get_current_device_resource_ref());
   }
 
   // Compute the output null mask
@@ -98,8 +113,8 @@ struct compound_float_output_dispatcher {
                                      device_span<size_type const> offsets,
                                      null_policy null_handling,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ResultType>())
   {
     return compound_segmented_reduction<ElementType, ResultType, Op>(
@@ -111,8 +126,8 @@ struct compound_float_output_dispatcher {
                                      device_span<size_type const>,
                                      null_policy,
                                      size_type,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref)
+                                     cuda::stream_ref,
+                                     cudf::memory_resources)
     requires(not is_supported_v<ResultType>())
   {
     CUDF_FAIL("Unsupported output data type");
@@ -125,7 +140,7 @@ struct compound_segmented_dispatcher {
   template <typename ElementType>
   static constexpr bool is_supported_v()
   {
-    return std::is_arithmetic_v<ElementType>;
+    return cuda::std::is_arithmetic_v<ElementType>;
   }
 
  public:
@@ -135,8 +150,8 @@ struct compound_segmented_dispatcher {
                                      cudf::data_type const output_dtype,
                                      null_policy null_handling,
                                      size_type ddof,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ElementType>())
   {
     return cudf::type_dispatcher(output_dtype,
@@ -155,8 +170,8 @@ struct compound_segmented_dispatcher {
                                      cudf::data_type const,
                                      null_policy,
                                      size_type,
-                                     rmm::cuda_stream_view,
-                                     rmm::device_async_resource_ref)
+                                     cuda::stream_ref,
+                                     cudf::memory_resources)
     requires(not is_supported_v<ElementType>())
   {
     CUDF_FAIL("Compound operators are not supported for non-arithmetic types");

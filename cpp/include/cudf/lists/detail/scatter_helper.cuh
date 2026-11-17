@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,7 +12,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
+
+#include <cuda/buffer>
 
 #include <memory>
 
@@ -39,7 +40,7 @@ struct unbound_list_view {
    */
   enum class label_type : bool { SOURCE, TARGET };
 
-  using lists_column_device_view = cudf::detail::lists_column_device_view;
+  using lists_column_device_view = cudf::lists_column_device_view;
   using list_device_view         = cudf::list_device_view;
 
   unbound_list_view()                                    = default;
@@ -56,7 +57,7 @@ struct unbound_list_view {
    * @param row_index Index of the row in lists_column that this instance represents
    */
   __device__ inline unbound_list_view(label_type scatter_source_label,
-                                      cudf::detail::lists_column_device_view const& lists_column,
+                                      cudf::lists_column_device_view const& lists_column,
                                       size_type const& row_index)
     : _label{scatter_source_label}, _row_index{row_index}
   {
@@ -121,12 +122,12 @@ struct unbound_list_view {
 
 std::unique_ptr<column> build_lists_child_column_recursive(
   data_type child_column_type,
-  rmm::device_uvector<unbound_list_view> const& list_vector,
+  cuda::device_buffer<unbound_list_view> const& list_vector,
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
-  rmm::cuda_stream_view stream,
-  rmm::device_async_resource_ref mr);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace lists

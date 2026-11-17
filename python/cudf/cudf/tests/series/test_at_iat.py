@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
@@ -6,12 +6,13 @@ import pytest
 import cudf
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def sr_with_index():
+    # All consumers except the scalar setter only read this Series.
     return cudf.Series([1, 2, 3], index=["x", "y", "z"])
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def sr_without_index():
     return cudf.Series([1, 2, 3])
 
@@ -22,6 +23,7 @@ def test_series_at_scalar_getitem(sr_with_index):
 
 
 def test_series_at_scalar_setitem(sr_with_index):
+    sr_with_index = sr_with_index.copy(deep=True)
     sr_with_index.at["x"] = 10
     assert sr_with_index.at["x"] == 10
 
@@ -43,6 +45,7 @@ def test_series_iat_scalar_getitem(sr_without_index):
 
 
 def test_series_iat_scalar_setitem(sr_without_index):
+    sr_without_index = sr_without_index.copy(deep=True)
     sr_without_index.iat[0] = 10
     assert sr_without_index.iat[0] == 10
 

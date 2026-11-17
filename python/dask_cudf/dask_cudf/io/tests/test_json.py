@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
@@ -17,7 +17,9 @@ import dask_cudf
 def test_read_json_backend_dispatch(tmp_path):
     # Test ddf.read_json cudf-backend dispatch
     df1 = dask.datasets.timeseries(
-        dtypes={"x": int, "y": int}, freq="120s"
+        dtypes={"x": int, "y": int},
+        freq="120s",
+        seed=1,
     ).reset_index(drop=True)
     json_path = str(tmp_path / "data-*.json")
     df1.to_json(json_path)
@@ -29,7 +31,9 @@ def test_read_json_backend_dispatch(tmp_path):
 
 def test_read_json(tmp_path):
     df1 = dask.datasets.timeseries(
-        dtypes={"x": int, "y": int}, freq="120s"
+        dtypes={"x": int, "y": int},
+        freq="120s",
+        seed=1,
     ).reset_index(drop=True)
     json_path = str(tmp_path / "data-*.json")
     df1.to_json(json_path)
@@ -99,7 +103,9 @@ def test_read_json_nested(tmp_path):
 
 def test_read_json_aggregate_files(tmp_path):
     df1 = dask.datasets.timeseries(
-        dtypes={"x": int, "y": int}, freq="120s"
+        dtypes={"x": int, "y": int},
+        freq="120s",
+        seed=1,
     ).reset_index(drop=True)
     json_path = str(tmp_path / "data-*.json")
     df1.to_json(json_path)

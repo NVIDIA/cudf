@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -11,12 +11,16 @@
 #include <string>
 #include <vector>
 
+/**
+ * @file
+ * @brief APIs for converting strings columns to and from timestamp values
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_convert
  * @{
- * @file
  */
 
 /**
@@ -76,8 +80,8 @@ std::unique_ptr<column> to_timestamps(
   strings_column_view const& input,
   data_type timestamp_type,
   std::string_view format,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Verifies the given strings column can be parsed to timestamps using the provided format
@@ -126,8 +130,8 @@ std::unique_ptr<column> to_timestamps(
 std::unique_ptr<column> is_timestamp(
   strings_column_view const& input,
   std::string_view format,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Returns a new strings column converting a timestamp column into
@@ -162,7 +166,7 @@ std::unique_ptr<column> is_timestamp(
  * | \%B | Month name from the `names` parameter |
  *
  * Additional descriptions can be found here:
- * https://en.cppreference.com/w/cpp/chrono/system_clock/formatter
+ * https://en.cppreference.com/cpp/chrono/system_clock/formatter
  *
  * No checking is done for invalid formats or invalid timestamp values.
  * All timestamps values are formatted to UTC.
@@ -238,11 +242,11 @@ std::unique_ptr<column> is_timestamp(
  */
 std::unique_ptr<column> from_timestamps(
   column_view const& timestamps,
-  std::string_view format           = "%Y-%m-%dT%H:%M:%SZ",
-  strings_column_view const& names  = strings_column_view(column_view{
+  std::string_view format          = "%Y-%m-%dT%H:%M:%SZ",
+  strings_column_view const& names = strings_column_view(column_view{
     data_type{type_id::STRING}, 0, nullptr, nullptr, 0}),
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cudf::memory_resources mr        = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -8,13 +8,16 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+/**
+ * @file
+ * @brief Strings APIs for copying strings.
+ */
+
 namespace CUDF_EXPORT cudf {
 namespace strings {
 /**
  * @addtogroup strings_copy
  * @{
- * @file
- * @brief Strings APIs for copying strings.
  */
 
 /**
@@ -47,8 +50,8 @@ namespace strings {
 std::unique_ptr<string_scalar> repeat_string(
   string_scalar const& input,
   size_type repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Repeat each string in the given strings column a given number of times
@@ -78,8 +81,8 @@ std::unique_ptr<string_scalar> repeat_string(
 std::unique_ptr<column> repeat_strings(
   strings_column_view const& input,
   size_type repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Repeat each string in the given strings column by the numbers of times given in another
@@ -115,8 +118,8 @@ std::unique_ptr<column> repeat_strings(
 std::unique_ptr<column> repeat_strings(
   strings_column_view const& input,
   column_view const& repeat_times,
-  rmm::cuda_stream_view stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

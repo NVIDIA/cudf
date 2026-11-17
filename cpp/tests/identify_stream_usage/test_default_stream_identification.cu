@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -26,4 +26,8 @@ void test_cudaLaunchKernel()
   throw std::runtime_error("No exception raised for kernel on default stream!");
 }
 
-int main() { test_cudaLaunchKernel(); }
+int main()
+{
+  test_cudaLaunchKernel();
+  return 0;
+}

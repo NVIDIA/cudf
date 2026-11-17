@@ -40,6 +40,7 @@ This page provides API documentation for pylibcudf.
     sorting
     stream_compaction
     table
+    table_equality
     traits
     transform
     transpose

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,8 +12,8 @@ reader::reader() = default;
 reader::reader(std::vector<std::unique_ptr<datasource>>&& sources,
                std::vector<FileMetaData>&& parquet_metadatas,
                parquet_reader_options const& options,
-               rmm::cuda_stream_view stream,
-               rmm::device_async_resource_ref mr)
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
   : _impl(std::make_unique<reader_impl>(
       std::move(sources), std::move(parquet_metadatas), options, stream, mr))
 {
@@ -28,8 +28,8 @@ chunked_reader::chunked_reader(std::size_t chunk_read_limit,
                                std::vector<std::unique_ptr<datasource>>&& sources,
                                std::vector<FileMetaData>&& parquet_metadatas,
                                parquet_reader_options const& options,
-                               rmm::cuda_stream_view stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   _impl = std::make_unique<reader_impl>(chunk_read_limit,
                                         pass_read_limit,

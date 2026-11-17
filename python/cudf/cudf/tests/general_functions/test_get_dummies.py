@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from string import ascii_lowercase
@@ -119,9 +119,7 @@ def test_get_dummies_prefix_sep(prefix, prefix_sep):
 
 
 def test_get_dummies_with_nan():
-    df = cudf.DataFrame(
-        {"a": cudf.Series([1, 2, np.nan, None], nan_as_null=False)}
-    )
+    df = cudf.DataFrame({"a": cudf.Series([1, 2, np.nan, None])})
 
     expected = pd.get_dummies(
         df.to_pandas(nullable=True), dummy_na=True, columns=["a"]
@@ -167,7 +165,7 @@ def test_get_dummies_array_like(
 
 
 def test_get_dummies_array_like_with_nan():
-    ser = cudf.Series([0.1, 2, 3, None, np.nan], nan_as_null=False)
+    ser = cudf.Series([0.1, 2, 3, np.nan, np.nan])
 
     expected = pd.get_dummies(
         ser.to_pandas(nullable=True), dummy_na=True, prefix="a", prefix_sep="_"

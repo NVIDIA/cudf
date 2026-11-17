@@ -51,8 +51,10 @@ def test_memory_usage(deep, index, set_index):
 
     gdf = cudf.from_pandas(df)
 
-    if index and set_index is None:
-        # Special Case: Assume RangeIndex size == 0
+    if index and isinstance(gdf.index, cudf.RangeIndex):
+        # cudf RangeIndex always reports 0 bytes (ignores deep).
+        # pandas may return non-zero (e.g. set_index on an arange column
+        # is optimised to a RangeIndex in pandas 3), so compare separately.
         with expect_warning_if(deep, UserWarning):
             assert gdf.index.memory_usage(deep=deep) == 0
 

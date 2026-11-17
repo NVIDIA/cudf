@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,10 +9,8 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/lists/count_elements.hpp>
-
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
 
 struct ListsElementsTest : public cudf::test::BaseFixture {};
 
@@ -26,10 +24,10 @@ TYPED_TEST_SUITE(ListsElementsNumericsTest, NumericTypesNotBool);
 
 TYPED_TEST(ListsElementsNumericsTest, CountElements)
 {
-  auto validity = thrust::make_transform_iterator(
-    thrust::make_counting_iterator<cudf::size_type>(0), [](auto i) { return i != 1; });
-  using LCW = cudf::test::lists_column_wrapper<TypeParam>;
-  LCW input({LCW{3, 2, 1}, LCW{}, LCW{30, 20, 10, 50}, LCW{100, 120}, LCW{0}}, validity);
+  auto validity = cudf::detail::make_counting_transform_iterator(cudf::size_type{0},
+                                                                 [](auto i) { return i != 1; });
+  using LCW     = cudf::test::lists_column_wrapper<TypeParam>;
+  LCW input({{3, 2, 1}, {}, {30, 20, 10, 50}, {100, 120}, {0}}, validity);
 
   auto result = cudf::lists::count_elements(cudf::lists_column_view(input));
   cudf::test::fixed_width_column_wrapper<int32_t> expected({3, 0, 4, 2, 1},
@@ -39,12 +37,11 @@ TYPED_TEST(ListsElementsNumericsTest, CountElements)
 
 TEST_F(ListsElementsTest, CountElementsStrings)
 {
-  auto validity = thrust::make_transform_iterator(
-    thrust::make_counting_iterator<cudf::size_type>(0), [](auto i) { return i != 1; });
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW input(
-    {LCW{"", "Héllo", "thesé"}, LCW{}, LCW{"are", "some", "", "z"}, LCW{"tést", "String"}, LCW{""}},
-    validity);
+  auto validity = cudf::detail::make_counting_transform_iterator(cudf::size_type{0},
+                                                                 [](auto i) { return i != 1; });
+  using LCW     = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW input({{"", "Héllo", "thesé"}, {}, {"are", "some", "", "z"}, {"tést", "String"}, {""}},
+            validity);
 
   auto result = cudf::lists::count_elements(cudf::lists_column_view(input));
   cudf::test::fixed_width_column_wrapper<int32_t> expected({3, 0, 4, 2, 1},
@@ -54,12 +51,11 @@ TEST_F(ListsElementsTest, CountElementsStrings)
 
 TEST_F(ListsElementsTest, CountElementsSliced)
 {
-  auto validity = thrust::make_transform_iterator(
-    thrust::make_counting_iterator<cudf::size_type>(0), [](auto i) { return i != 1; });
-  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
-  LCW input(
-    {LCW{"", "Héllo", "thesé"}, LCW{}, LCW{"are", "some", "", "z"}, LCW{"tést", "String"}, LCW{""}},
-    validity);
+  auto validity = cudf::detail::make_counting_transform_iterator(cudf::size_type{0},
+                                                                 [](auto i) { return i != 1; });
+  using LCW     = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW input({{"", "Héllo", "thesé"}, {}, {"are", "some", "", "z"}, {"tést", "String"}, {""}},
+            validity);
 
   auto sliced = cudf::slice(input, {1, 4}).front();
   auto result = cudf::lists::count_elements(cudf::lists_column_view(sliced));
@@ -71,10 +67,10 @@ TYPED_TEST(ListsElementsNumericsTest, CountElementsNestedLists)
 {
   std::vector<int32_t> validity{1, 0, 1, 1};
   using LCW = cudf::test::lists_column_wrapper<TypeParam>;
-  LCW list({LCW{LCW{2, 3}, LCW{4, 5}},
-            LCW{LCW{}},
-            LCW{LCW{6, 7, 8}, LCW{9, 10, 11}, LCW({12, 13, 14}, validity.begin())},
-            LCW{LCW{15, 16}, LCW{17, 18}, LCW{19, 20}, LCW{21, 22}, LCW{23, 24}}},
+  LCW list({{{2, 3}, {4, 5}},
+            {{}},
+            {{6, 7, 8}, {9, 10, 11}, {{12, 13, 14}, validity.begin()}},
+            {{15, 16}, {17, 18}, {19, 20}, {21, 22}, {23, 24}}},
            validity.begin());
 
   auto result = cudf::lists::count_elements(cudf::lists_column_view(list));

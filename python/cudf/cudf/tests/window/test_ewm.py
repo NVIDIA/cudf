@@ -1,5 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
+import math
+
 import pytest
 
 import cudf
@@ -29,7 +31,7 @@ from cudf.testing import assert_eq
     ],
 )
 @pytest.mark.parametrize("adjust", [True, False])
-def test_ewma(data, params, adjust):
+def test_ewma(request, data, params, adjust):
     """
     The most basic test asserts that we obtain
     the same numerical values as pandas for various
@@ -38,6 +40,24 @@ def test_ewma(data, params, adjust):
     """
     gsr = cudf.Series(data, dtype="float64")
     psr = gsr.to_pandas()
+
+    # pandas 3 produces an incorrect EWM result when adjust=False and
+    # com=1.0 (alpha=0.5) and the data contains nulls.  For every other
+    # alpha value the cudf formula matches pandas exactly; the discrepancy
+    # is specific to the alpha==1-alpha symmetry point.
+    com = cudf.core.window.ewm.get_center_of_mass(
+        comass=params.get("com"),
+        span=params.get("span"),
+        halflife=params.get("halflife"),
+        alpha=params.get("alpha"),
+    )
+    if not adjust and math.isclose(com, 1.0) and psr.isna().any():
+        request.applymarker(
+            pytest.mark.xfail(
+                reason="pandas 3 bug: "
+                "https://github.com/pandas-dev/pandas/issues/58538"
+            )
+        )
 
     expect = psr.ewm(**params, adjust=adjust).mean()
     got = gsr.ewm(**params, adjust=adjust).mean()

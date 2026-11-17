@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,13 +10,14 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/sorting.hpp>
 #include <cudf/strings/convert/convert_integers.hpp>
 #include <cudf/strings/convert/int_cast.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/iterator>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 #include <array>
 #include <numeric>
@@ -76,15 +77,15 @@ TEST_F(StringsConvertTest, IsIntegerBoundCheckWithNulls)
   std::vector<char const*> const h_strings{
     "eee", "1234", nullptr, "", "-9832", "93.24", "765é", nullptr};
   auto const strings = cudf::test::strings_column_wrapper(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   auto const results = cudf::strings::is_integer(cudf::strings_column_view(strings),
                                                  cudf::data_type{cudf::type_id::INT32});
   // Input has null elements then the output should have the same null mask
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>(
     std::initializer_list<int8_t>{0, 1, NULL_VAL, 0, 1, 0, 0, NULL_VAL},
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 
@@ -189,15 +190,15 @@ TEST_F(StringsConvertTest, ToInteger)
                                      "-2147483648",
                                      "2147483648"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   auto results            = cudf::strings::to_integers(cudf::strings_column_view(strings),
                                             cudf::data_type{cudf::type_id::INT16});
   auto const expected_i16 = cudf::test::fixed_width_column_wrapper<int16_t>(
     std::initializer_list<int16_t>{0, 1234, NULL_VAL, 0, -9832, 93, 765, NULL_VAL, -1, -1, 0, 0},
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_i16);
 
   results                 = cudf::strings::to_integers(cudf::strings_column_view(strings),
@@ -205,7 +206,7 @@ TEST_F(StringsConvertTest, ToInteger)
   auto const expected_i32 = cudf::test::fixed_width_column_wrapper<int32_t>(
     std::initializer_list<int32_t>{
       0, 1234, NULL_VAL, 0, -9832, 93, 765, NULL_VAL, -1, 2147483647, -2147483648, -2147483648},
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_i32);
 
   results                 = cudf::strings::to_integers(cudf::strings_column_view(strings),
@@ -223,7 +224,7 @@ TEST_F(StringsConvertTest, ToInteger)
                                     2147483647,
                                     2147483648,
                                     2147483648},
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_u32);
 }
 
@@ -238,14 +239,14 @@ TEST_F(StringsConvertTest, FromInteger)
   cudf::test::fixed_width_column_wrapper<int32_t> integers(
     h_integers.begin(),
     h_integers.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   auto results = cudf::strings::from_integers(integers);
 
   cudf::test::strings_column_wrapper expected(
     h_expected.begin(),
     h_expected.end(),
-    thrust::make_transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
+    cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
@@ -328,9 +329,9 @@ TEST_F(StringsConvertTest, HexToInteger)
   std::vector<char const*> h_strings{
     "1234", nullptr, "98BEEF", "1a5", "CAFE", "2face", "0xAABBCCDD", "112233445566"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
 
   {
     std::vector<int32_t> h_expected;
@@ -346,7 +347,7 @@ TEST_F(StringsConvertTest, HexToInteger)
     cudf::test::fixed_width_column_wrapper<int32_t> expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
   {
@@ -363,7 +364,7 @@ TEST_F(StringsConvertTest, HexToInteger)
     cudf::test::fixed_width_column_wrapper<int64_t> expected(
       h_expected.begin(),
       h_expected.end(),
-      thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+      cuda::transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }
@@ -383,9 +384,9 @@ TEST_F(StringsConvertTest, IsHex)
                                      "0x",
                                      "x"};
   cudf::test::strings_column_wrapper strings(
-    h_strings.begin(),
-    h_strings.end(),
-    thrust::make_transform_iterator(h_strings.begin(), [](auto str) { return str != nullptr; }));
+    h_strings.begin(), h_strings.end(), cuda::transform_iterator(h_strings.begin(), [](auto str) {
+      return str != nullptr;
+    }));
   cudf::test::fixed_width_column_wrapper<bool> expected(
     {0, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 0},
     {true, true, false, true, true, true, true, true, true, true, true, true});
@@ -489,7 +490,7 @@ TEST_F(StringsConvertTest, IntegerCast)
   sv     = cudf::strings_column_view(input);
   result = cudf::strings::cast_to_integer(sv, int16_type);
   auto expected16 =
-    cudf::test::fixed_width_column_wrapper<int16_t>({0x61, 0x6263, 0x6465, 0x6566, 0, 0x2067});
+    cudf::test::fixed_width_column_wrapper<int16_t>({0x6100, 0x6263, 0x6465, 0x6566, 0, 0x2067});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected16);
   result = cudf::strings::cast_from_integer(expected16);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -501,7 +502,7 @@ TEST_F(StringsConvertTest, IntegerCast)
   sv              = cudf::strings_column_view(input);
   result          = cudf::strings::cast_to_integer(sv, int32_type);
   auto expected32 = cudf::test::fixed_width_column_wrapper<int32_t>(
-    {0x61, 0x6263, 0x646566, 0x676869, 0, 0x6A206B});
+    {0x61000000, 0x62630000, 0x64656600, 0x67686900, 0, 0x6A206B00});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected32);
   result = cudf::strings::cast_from_integer(expected32);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -512,8 +513,12 @@ TEST_F(StringsConvertTest, IntegerCast)
   input  = cudf::test::strings_column_wrapper({"the", "quick", "brown", "fox", "", "jumps up"});
   sv     = cudf::strings_column_view(input);
   result = cudf::strings::cast_to_integer(sv, int64_type);
-  auto expected64 = cudf::test::fixed_width_column_wrapper<int64_t>(
-    {0x746865L, 0x717569636BL, 0x62726F776EL, 0x666F78L, 0L, 0x6A756D7073207570L});
+  auto expected64 = cudf::test::fixed_width_column_wrapper<int64_t>({0x7468650000000000L,
+                                                                     0x717569636B000000L,
+                                                                     0x62726F776E000000L,
+                                                                     0x666F780000000000L,
+                                                                     0L,
+                                                                     0x6A756D7073207570L});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected64);
   result = cudf::strings::cast_from_integer(expected64);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, input);
@@ -553,6 +558,48 @@ TEST_F(StringsConvertTest, IntegerCastType)
   sv    = cudf::strings_column_view(input);
   otype = cudf::strings::integer_cast_type(sv);
   EXPECT_EQ(otype.value(), uint64_type);
+
+  // a leading byte with the high bit set requires an unsigned type even if it is not the longest
+  input = cudf::test::strings_column_wrapper({"é", "abc"});
+  sv    = cudf::strings_column_view(input);
+  otype = cudf::strings::integer_cast_type(sv);
+  EXPECT_EQ(otype.value(), uint32_type);
+}
+
+TEST_F(StringsConvertTest, IntegerCastSortOrder)
+{
+  auto input = cudf::test::strings_column_wrapper(
+    {"b", "ab", "a", "abcdefgh", "abcdefghZZ", "é", "z", "", "\x01", "abcdefgg", "ba"},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  auto sv     = cudf::strings_column_view(input);
+  auto result = cudf::strings::cast_to_integer(sv, cudf::data_type{cudf::type_id::UINT64});
+
+  auto expected = cudf::test::fixed_width_column_wrapper<uint64_t>(
+    {0x6200000000000000UL,
+     0x6162000000000000UL,
+     0x6100000000000000UL,
+     0x6162636465666768UL,
+     0x6162636465666768UL,
+     0xC3A9000000000000UL,
+     0x7A00000000000000UL,
+     0UL,
+     0x0100000000000000UL,
+     0x6162636465666767UL,
+     0UL},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected);
+
+  // the integers should sort in the same order as the strings
+  auto const sorted_strings  = cudf::stable_sorted_order(cudf::table_view({input}));
+  auto const sorted_integers = cudf::stable_sorted_order(cudf::table_view({*result}));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*sorted_integers, *sorted_strings);
+
+  // strings longer than 8 bytes are truncated
+  auto expected_strings = cudf::test::strings_column_wrapper(
+    {"b", "ab", "a", "abcdefgh", "abcdefgh", "é", "z", "", "\x01", "abcdefgg", ""},
+    {true, true, true, true, true, true, true, true, true, true, false});
+  auto strings = cudf::strings::cast_from_integer(*result);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*strings, expected_strings);
 }
 
 TEST_F(StringsConvertTest, IntegerCastBigEndian)

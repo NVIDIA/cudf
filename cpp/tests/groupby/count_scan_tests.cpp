@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,14 +10,14 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/aggregation.hpp>
 
 using key_wrapper = cudf::test::fixed_width_column_wrapper<int32_t>;
 
 template <typename T>
 struct groupby_count_scan_test : public cudf::test::BaseFixture {
   using V              = T;
-  using R              = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_ALL>;
+  using R              = cudf::size_type;
   using value_wrapper  = cudf::test::fixed_width_column_wrapper<V, int32_t>;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 };
@@ -133,8 +133,7 @@ struct groupby_count_scan_string_test : public cudf::test::BaseFixture {};
 
 TEST_F(groupby_count_scan_string_test, basic)
 {
-  using V              = cudf::string_view;
-  using R              = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_ALL>;
+  using R              = cudf::size_type;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 
   // clang-format off
@@ -165,8 +164,7 @@ TYPED_TEST(GroupByCountScanFixedPointTest, GroupByCountScan)
   using RepType    = cudf::device_storage_type_t<decimalXX>;
   using fp_wrapper = cudf::test::fixed_point_column_wrapper<RepType>;
 
-  using V              = decimalXX;
-  using R              = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_ALL>;
+  using R              = cudf::size_type;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 
   auto const scale       = scale_type{-1};
@@ -189,8 +187,7 @@ struct groupby_dictionary_count_scan_test : public cudf::test::BaseFixture {};
 TEST_F(groupby_dictionary_count_scan_test, basic)
 {
   using K              = int32_t;
-  using V              = std::string;
-  using R              = cudf::detail::target_type_t<V, cudf::aggregation::COUNT_ALL>;
+  using R              = cudf::size_type;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 
   cudf::test::strings_column_wrapper keys{"1", "3", "3", "5", "5", "0"};

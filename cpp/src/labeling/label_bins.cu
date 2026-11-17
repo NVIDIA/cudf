@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -21,17 +21,15 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
-#include <rmm/mr/device_memory_resource.hpp>
 
 #include <cuda/std/iterator>
+#include <cuda/std/limits>
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/binary_search.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform.h>
-
-#include <limits>
 
 namespace cudf {
 namespace detail {
@@ -64,7 +62,7 @@ auto dispatch_inclusive(inclusive i, Func&& func)
 // bin.
 // NOTE: In theory if a user decided to specify 2^31 bins this would fail. We
 // could make this an error in Python, but that is such a crazy edge case...
-constexpr size_type NULL_VALUE{std::numeric_limits<size_type>::max()};
+__device__ constexpr size_type NULL_VALUE{cuda::std::numeric_limits<size_type>::max()};
 
 /*
  * Functor for finding bins using thrust::transform.
@@ -123,8 +121,8 @@ template <typename T, typename LeftComparator, typename RightComparator>
 std::unique_ptr<column> label_bins(column_view const& input,
                                    column_view const& left_edges,
                                    column_view const& right_edges,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   auto output = make_numeric_column(
     data_type(type_to_id<size_type>()), input.size(), mask_state::UNALLOCATED, stream, mr);
@@ -147,7 +145,7 @@ std::unique_ptr<column> label_bins(column_view const& input,
   using RandomAccessIterator = decltype(left_edges_device_view->begin<T>());
 
   dispatch_bool(input.has_nulls(), [&](auto has_nulls) {
-    thrust::transform(rmm::exec_policy_nosync(stream),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       input_device_view->pair_begin<T, has_nulls>(),
                       input_device_view->pair_end<T, has_nulls>(),
                       output_begin,
@@ -181,8 +179,8 @@ struct bin_type_dispatcher {
                                      inclusive left_inclusive,
                                      column_view const& right_edges,
                                      inclusive right_inclusive,
-                                     rmm::cuda_stream_view stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
     requires(detail::is_supported_bin_type<T>())
   {
     return dispatch_inclusive(left_inclusive, [&](auto li) {
@@ -202,8 +200,8 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    inclusive left_inclusive,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(
@@ -237,8 +235,8 @@ std::unique_ptr<column> label_bins(column_view const& input,
                                    inclusive left_inclusive,
                                    column_view const& right_edges,
                                    inclusive right_inclusive,
-                                   rmm::cuda_stream_view stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::label_bins(

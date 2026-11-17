@@ -1,0 +1,1147 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""IO logic for the RapidsMPF streaming runtime."""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import functools
+import io
+import math
+from typing import TYPE_CHECKING, Any, cast
+
+import polars as pl
+
+import pylibcudf as plc
+from cudf_streaming.channel_metadata import ChannelMetadata
+from cudf_streaming.table_chunk import (
+    TableChunk,
+    make_table_chunks_available_or_wait,
+)
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
+from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
+from rapidsmpf.streaming.core.message import Message
+
+from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.ir import IR, CallbackSink, DataFrameScan, PythonScan, Sink
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
+from cudf_polars.streaming.actor_graph.nodes import define_actor, shutdown_on_error
+from cudf_polars.streaming.actor_graph.scan_ordering import (
+    parquet_metadata_ordering,
+)
+from cudf_polars.streaming.actor_graph.tracing import send_chunk
+from cudf_polars.streaming.actor_graph.utils import (
+    ChannelManager,
+    chunk_to_frame,
+    empty_table_chunk,
+    gather_in_task_group,
+    process_children,
+    recv_metadata,
+    send_metadata,
+)
+from cudf_polars.streaming.io import (
+    StreamingScan,
+    StreamingSink,
+    _prepare_sink_directory,
+    _sink_to_file,
+)
+from cudf_polars.streaming.rank_aware_source import RankAwareSource
+from cudf_polars.streaming.utils import _fallback_inform
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Sequence
+
+    from polars import polars as plrs  # type: ignore[attr-defined]
+
+    from rapidsmpf.communicator.communicator import Communicator
+    from rapidsmpf.streaming.core.channel import Channel
+    from rapidsmpf.streaming.core.context import Context
+
+    from cudf_polars.dsl.ir import IR, IRExecutionContext
+    from cudf_polars.streaming.actor_graph.core import SubNetGenerator
+    from cudf_polars.streaming.actor_graph.tracing import ActorTracer
+    from cudf_polars.streaming.base import (
+        IOPartitionPlan,
+        PartitionInfo,
+    )
+    from cudf_polars.streaming.io import ScanTask
+    from cudf_polars.streaming.partitioning_requests import PartitioningRequest
+    from cudf_polars.utils.config import MaxConcurrentIOTasks
+
+
+def resolve_max_concurrent_io_tasks(
+    max_concurrent_io_tasks: MaxConcurrentIOTasks,
+    paths: Iterable[str],
+) -> int:
+    """Resolve the scan-local IO producer count."""
+    if any(plc.io.SourceInfo._is_remote_uri(path) for path in paths):
+        return max_concurrent_io_tasks.remote
+    return max_concurrent_io_tasks.local
+
+
+class Lineariser:
+    """
+    Linearizer that ensures ordered delivery from multiple concurrent producers.
+
+    Creates one input channel per producer and streams messages to output
+    in sequence-number order. Each producer must provide a monotonic
+    increasing order of sequence numbers. For best performance, sequence
+    numbers should be assigned round-robin to producers.
+    """
+
+    def __init__(
+        self, context: Context, ch_out: Channel[TableChunk], num_producers: int
+    ):
+        self.context = context
+        self.ch_out = ch_out
+        self.num_producers = num_producers
+        self.input_channels = [context.create_channel() for _ in range(num_producers)]
+        self._producer_slots = [asyncio.Semaphore(1) for _ in range(num_producers)]
+
+    async def acquire(self, producer_id: int) -> Channel[TableChunk]:
+        """
+        Wait for capacity to produce, then return the producer's channel.
+
+        Capacity is returned only after the lineariser has forwarded the
+        producer's message downstream. Acquiring before constructing the next
+        message therefore bounds each producer to one in-flight message.
+        """
+        await self._producer_slots[producer_id].acquire()
+        return self.input_channels[producer_id]
+
+    async def drain(self) -> None:
+        """
+        Drain producer channels and forward messages in sequence-number order.
+
+        Streams messages to output as soon as they arrive in order, buffering
+        only out-of-order messages to minimize memory pressure.
+        """
+        next_seq = 0
+        buffer = {}
+
+        pending_tasks = {
+            asyncio.create_task(ch.recv(self.context)): producer_id
+            for producer_id, ch in enumerate(self.input_channels)
+        }
+
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                producer_id = pending_tasks.pop(task)
+                msg = await task
+
+                if msg is not None:
+                    buffer[msg.sequence_number] = (msg, producer_id)
+
+            # Forward consecutive messages
+            while next_seq in buffer:
+                msg, producer_id = buffer.pop(next_seq)
+                await self.ch_out.send(self.context, msg)
+                self._producer_slots[producer_id].release()
+                ch = self.input_channels[producer_id]
+                new_task = asyncio.create_task(ch.recv(self.context))
+                pending_tasks[new_task] = producer_id
+                next_seq += 1
+
+        # Forward any remaining buffered messages
+        for seq in sorted(buffer.keys()):
+            msg, producer_id = buffer.pop(seq)
+            await self.ch_out.send(self.context, msg)
+            self._producer_slots[producer_id].release()
+
+        await self.ch_out.drain(self.context)
+
+
+@define_actor()
+async def dataframescan_node(
+    context: Context,
+    comm: Communicator,
+    ir: DataFrameScan,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+    *,
+    num_producers: int,
+    rows_per_partition: int,
+    estimated_chunk_bytes: int,
+    distributed_scan: bool,
+) -> None:
+    """
+    DataFrameScan node for rapidsmpf.
+
+    Parameters
+    ----------
+    context
+        The rapidsmpf context.
+    comm
+        The communicator.
+    ir
+        The DataFrameScan node.
+    ir_context
+        The execution context for the IR node.
+    ch_out
+        The output Channel[TableChunk].
+    num_producers
+        The number of producers to use for the DataFrameScan node.
+    rows_per_partition
+        The number of rows per partition.
+    estimated_chunk_bytes
+        Estimated size of each chunk in bytes. Used for memory reservation
+        with block spilling to avoid thrashing.
+    distributed_scan
+        If ``True``, the DataFrame is treated as a shared object and divided
+        across workers so each rank reads a disjoint subset. This is normally
+        used in ``Cluster.RAY`` and ``Cluster.DASK`` modes.
+
+        If ``False``, the DataFrame is treated as rank-local and each rank
+        scans its local DataFrame in full. This is normally used in
+        ``Cluster.SPMD`` mode.
+    """
+    async with shutdown_on_error(
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
+        # Find local partition count.
+        nrows = ir.df.shape()[0]
+        global_count = math.ceil(nrows / rows_per_partition) if nrows > 0 else 0
+
+        # For single rank or when scanning the full local DataFrame, each rank
+        # uses all partitions with no offset.
+        if not distributed_scan or comm.nranks == 1:
+            local_count = global_count
+            local_offset = 0
+        else:
+            local_count = math.ceil(global_count / comm.nranks)
+            local_offset = local_count * comm.rank
+
+        # Send basic metadata
+        await send_metadata(
+            ch_out,
+            context,
+            ChannelMetadata(local_count=local_count),
+        )
+
+        # Build list of IR slices to read
+        ir_slices = []
+        # Partial workarounds for sliced nested columns. Polars exports invalid
+        # validity buffers for struct columns with nulls
+        # (https://github.com/pola-rs/polars/issues/23214), and double-counts
+        # offsets for Array columns with outer nulls
+        # (https://github.com/pola-rs/polars/pull/28602).
+        dtypes = ir.df.dtypes()
+        has_struct = False
+        array_columns = []
+        for name, dtype in zip(ir.df.columns(), dtypes, strict=True):
+            has_struct = has_struct or any(
+                isinstance(dt, pl.Struct)
+                for dt in pl.datatypes.unpack_dtypes(dtype, include_compound=True)
+            )
+            if isinstance(dtype, pl.Array):
+                array_columns.append(name)
+
+        for seq_num in range(local_count):
+            offset = local_offset * rows_per_partition + seq_num * rows_per_partition
+            if offset >= nrows:
+                break
+            sliced = ir.df.slice(offset, rows_per_partition)
+            if has_struct or any(
+                sliced.get_column(name).null_count() > 0 for name in array_columns
+            ):
+                # Copy the affected slice to contiguous storage before Arrow export.
+                f = io.BytesIO()
+                sliced.serialize_binary(f)
+                f.seek(0)
+                sliced = pl._plr.PyDataFrame.deserialize_binary(f)
+            ir_slices.append(
+                DataFrameScan(
+                    ir.schema,
+                    sliced,
+                    ir.projection,
+                )
+            )
+
+        # If there are no slices, drain the channel and return
+        if len(ir_slices) == 0:
+            await ch_out.drain(context)
+            return
+
+        # If there is only one ir_slices or one producer, we can
+        # skip the lineariser and read the chunks directly
+        if len(ir_slices) == 1 or num_producers == 1:
+            for seq_num, ir_slice in enumerate(ir_slices):
+                await read_chunk(
+                    context,
+                    ir_slice,
+                    seq_num,
+                    ch_out,
+                    ir_context,
+                    estimated_chunk_bytes,
+                    tracer=tracer,
+                )
+            await ch_out.drain(context)
+            return
+
+        # Use Lineariser to ensure ordered delivery
+        num_producers = min(num_producers, len(ir_slices))
+        lineariser = Lineariser(context, ch_out, num_producers)
+
+        # Assign tasks to producers using round-robin
+        producer_tasks: list[list[tuple[int, DataFrameScan]]] = [
+            [] for _ in range(num_producers)
+        ]
+        for task_idx, ir_slice in enumerate(ir_slices):
+            producer_id = task_idx % num_producers
+            producer_tasks[producer_id].append((task_idx, ir_slice))
+
+        async def _producer(producer_id: int) -> None:
+            for task_idx, ir_slice in producer_tasks[producer_id]:
+                ch_out = await lineariser.acquire(producer_id)
+                await read_chunk(
+                    context,
+                    ir_slice,
+                    task_idx,
+                    ch_out,
+                    ir_context,
+                    estimated_chunk_bytes,
+                    tracer=tracer,
+                )
+            await ch_out.drain(context)
+
+        async with shutdown_on_error(
+            context,
+            chs_aux=lineariser.input_channels,
+            trace_ir=ir,
+            ir_context=ir_context,
+        ) as inner_actor_scope:
+            ir_context = inner_actor_scope.require_ir_context()
+            await gather_in_task_group(
+                lineariser.drain(),
+                *(_producer(i) for i in range(num_producers)),
+            )
+
+
+@generate_ir_sub_network.register(DataFrameScan)
+def _(
+    ir: DataFrameScan, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    config_options = rec.state["config_options"]
+    rows_per_partition = config_options.executor.max_rows_per_partition
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"], ()
+    )
+    # Use target_partition_size as the estimated chunk size
+    estimated_chunk_bytes = config_options.executor.target_partition_size
+
+    context = rec.state["context"]
+    ir_context = ir_context_for_node(rec, ir)
+    channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
+    nodes: dict[IR, list[Any]] = {
+        ir: [
+            dataframescan_node(
+                context,
+                rec.state["comm"],
+                ir,
+                ir_context,
+                channels[ir].reserve_input_slot(),
+                num_producers=num_producers,
+                rows_per_partition=rows_per_partition,
+                estimated_chunk_bytes=estimated_chunk_bytes,
+                distributed_scan=config_options.executor.cluster != "spmd",
+            )
+        ]
+    }
+    return nodes, channels
+
+
+def _find_rank_aware_source(scan_fn: Callable[..., Any]) -> RankAwareSource | None:
+    """
+    Return the :class:`RankAwareSource` captured by a registered IO source function.
+
+    Parameters
+    ----------
+    scan_fn
+        Python scan function exported by Polars for a ``PythonScan`` node. For
+        sources created with :func:`polars.io.plugins.register_io_source`, this
+        is the wrapper function that captures the original user-provided source.
+
+    Returns
+    -------
+    The captured `RankAwareSource`, or ``None`` if the IO source function does not
+    capture one directly (a plain or wrapped source, treated as rank-unaware).
+
+    Notes
+    -----
+    This reaches into Polars' ``register_io_source`` closure layout (the captured
+    source object). It is the only available hook today. When Polars exposes a
+    supported way to thread state into a source this should move to it. See
+    https://github.com/NVIDIA/cudf/issues/22917.
+    """
+    for cell in getattr(scan_fn, "__closure__", ()):
+        source = cell.cell_contents
+        if isinstance(source, RankAwareSource):
+            return source
+    return None
+
+
+async def _process_and_send_chunk(
+    context: Context,
+    ch_out: Channel[TableChunk],
+    ir: PythonScan,
+    ir_context: IRExecutionContext,
+    tracer: ActorTracer | None,
+    chunk: pl.DataFrame | DataFrame,
+    seq_num: int,
+) -> None:
+    """Move a raw chunk to the device, validate and filter it, then send it."""
+    process = functools.partial(
+        ir.process_chunk, chunk, ir.schema, ir.predicate, context=ir_context
+    )
+
+    # Reserve memory for allocations introduced by this step:
+    #
+    #   host input, no predicate  -> 1x input size (host->device)
+    #   host input, predicate     -> 2x input size (host->device + filter output)
+    #   GPU input,  no predicate  -> 0
+    #   GPU input,  predicate     -> 1x input size (filter output)
+    #
+    # The net memory increase is the retained host->device copy for host inputs,
+    # and 0 for GPU-resident inputs.
+    if isinstance(chunk, DataFrame):
+        input_bytes = sum(col.device_buffer_size() for col in chunk.table.columns())
+        net_memory_delta = 0
+        reservation = input_bytes * (ir.predicate is not None)
+    else:  # pl.DataFrame
+        input_bytes = int(chunk.estimated_size())
+        net_memory_delta = input_bytes
+        reservation = input_bytes * (1 + (ir.predicate is not None))
+    with opaque_memory_usage(
+        await reserve_memory(
+            context, size=reservation, net_memory_delta=net_memory_delta
+        )
+    ):
+        df = await ir_context.to_thread(process)
+    chunk_out = TableChunk.from_pylibcudf_table(
+        df.table, df.stream, exclusive_view=True, br=context.br()
+    )
+    await send_chunk(context, ch_out, chunk_out, seq_num, tracer=tracer)
+
+
+@define_actor()
+async def python_scan_node(
+    context: Context,
+    comm: Communicator,
+    ir: PythonScan,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+) -> None:
+    """
+    PythonScan node for rapidsmpf.
+
+    Parameters
+    ----------
+    context
+        The rapidsmpf context.
+    comm
+        The communicator.
+    ir
+        The PythonScan node.
+    ir_context
+        The execution context for the IR node.
+    ch_out
+        The output Channel[TableChunk].
+    """
+    async with shutdown_on_error(
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
+        rank_aware_source = _find_rank_aware_source(ir.options[0])
+        if rank_aware_source is None and comm.nranks > 1 and comm.rank != 0:
+            # A plain (rank-unaware) source runs on rank 0 only; other ranks
+            # contribute nothing to avoid duplicating the data.
+            await send_metadata(ch_out, context, ChannelMetadata(local_count=0))
+            await ch_out.drain(context)
+            return
+
+        count, raw_chunks = await ir_context.to_thread(
+            lambda: ir.run_source_function(
+                ir.options,
+                ir.schema,
+                rank_aware_source=rank_aware_source,
+                rank=comm.rank,
+                nranks=comm.nranks,
+                context=ir_context,
+            )
+        )
+        # A rank-aware source may emit a duplicated output (an identical copy on
+        # every rank, e.g. a persisted global sort/limit). Re-advertise that as
+        # the channel's ``duplicated`` flag so downstream collectives treat the
+        # copies as duplicates rather than distinct partitions.
+        duplicated = (
+            rank_aware_source is not None
+            and rank_aware_source.output_duplicated(comm.rank, comm.nranks)
+        )
+        if count is not None:
+            # The chunk count is available so we can stream one chunk at a time.
+            announced = max(count, 1)
+            await send_metadata(
+                ch_out,
+                context,
+                ChannelMetadata(local_count=announced, duplicated=duplicated),
+            )
+            sentinel = object()
+            seq_num = 0
+            while True:
+                chunk = await ir_context.to_thread(next, raw_chunks, sentinel)
+                if chunk is sentinel:
+                    break
+                await _process_and_send_chunk(
+                    context,
+                    ch_out,
+                    ir,
+                    ir_context,
+                    tracer,
+                    cast("pl.DataFrame | DataFrame", chunk),
+                    seq_num,
+                )
+                seq_num += 1
+            if seq_num != announced:
+                raise RuntimeError(
+                    f"PythonScan source reported {announced} chunk(s) but "
+                    f"produced {seq_num}"
+                )
+        else:
+            # A plain generator hides its count, so we must drain it to learn the
+            # count before announcing it.
+            chunks = await ir_context.to_thread(lambda: list(raw_chunks))
+            await send_metadata(
+                ch_out,
+                context,
+                ChannelMetadata(local_count=len(chunks), duplicated=duplicated),
+            )
+            for seq_num, chunk in enumerate(chunks):
+                await _process_and_send_chunk(
+                    context, ch_out, ir, ir_context, tracer, chunk, seq_num
+                )
+        await ch_out.drain(context)
+
+
+@generate_ir_sub_network.register(PythonScan)
+def _(
+    ir: PythonScan, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    context = rec.state["context"]
+    ir_context = ir_context_for_node(rec, ir)
+    channels: dict[IR, ChannelManager] = {ir: ChannelManager(context)}
+    nodes: dict[IR, list[Any]] = {
+        ir: [
+            python_scan_node(
+                context,
+                rec.state["comm"],
+                ir,
+                ir_context,
+                channels[ir].reserve_input_slot(),
+            )
+        ]
+    }
+    return nodes, channels
+
+
+async def read_chunk(
+    context: Context,
+    task: IR,
+    seq_num: int,
+    ch_out: Channel[TableChunk],
+    ir_context: IRExecutionContext,
+    estimated_chunk_bytes: int,
+    tracer: ActorTracer | None = None,
+) -> None:
+    """
+    Read a chunk from disk and send it to the output channel.
+
+    Parameters
+    ----------
+    context
+        The rapidsmpf context.
+    task
+        The scan task to evaluate.
+    seq_num
+        The sequence number.
+    ch_out
+        The output channel.
+    ir_context
+        The execution context for the IR node.
+    estimated_chunk_bytes
+        Estimated retained output size in bytes. Used to estimate peak memory
+        for admission before launching the read.
+    tracer
+        The actor tracer for collecting runtime statistics.
+    """
+    reservation_bytes = (
+        estimated_chunk_bytes
+        if isinstance(task, DataFrameScan)
+        else 2 * estimated_chunk_bytes
+    )
+    quent_state = ir_context.actor_bound_quent_ir_execution_state
+    if quent_state is not None:
+        ir_context = dataclasses.replace(
+            ir_context,
+            actor_bound_quent_ir_execution_state=dataclasses.replace(
+                quent_state,
+                sequence_number=seq_num,
+                scan_task_node_id=str(task.get_stable_id()),
+                scan_task_node_type=type(task).__name__,
+                io_bytes=estimated_chunk_bytes,
+            ),
+        )
+
+    reservation = await reserve_memory(
+        context,
+        size=reservation_bytes,
+        net_memory_delta=estimated_chunk_bytes,
+    )
+    with opaque_memory_usage(reservation):
+        df = await ir_context.to_thread(
+            task.do_evaluate,
+            *task._non_child_args,
+            context=ir_context,
+        )
+        chunk = TableChunk.from_pylibcudf_table(
+            df.table,
+            df.stream,
+            exclusive_view=True,
+            br=context.br(),
+        )
+
+    await send_chunk(context, ch_out, chunk, seq_num, tracer=tracer)
+
+
+@define_actor()
+async def scan_node(
+    context: Context,
+    comm: Communicator,
+    ir: StreamingScan,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+    *,
+    global_chunk_count: int,
+    partitioning_requests: tuple[PartitioningRequest, ...],
+    collective_id: int,
+    infer_ordering: bool,
+    num_producers: int,
+    estimated_chunk_bytes: int,
+) -> None:
+    """
+    Scan node for rapidsmpf.
+
+    Parameters
+    ----------
+    context
+        The rapidsmpf context.
+    comm
+        The communicator.
+    ir
+        The Scan node.
+    ir_context
+        The execution context for the IR node.
+    ch_out
+        The output Channel[TableChunk].
+    global_chunk_count
+        Global number of scan chunks.
+    partitioning_requests
+        Downstream partitioning requests for this scan node.
+    collective_id
+        Collective ID for the Parquet bounds all-gather.
+    infer_ordering
+        Whether to infer scan ordering from input metadata when possible.
+    num_producers
+        The number of producers to use for the scan node.
+    estimated_chunk_bytes
+        Estimated retained output size of each chunk in bytes. Used to estimate
+        peak memory for admission before launching each read.
+    """
+    tasks: Sequence[ScanTask] = ir.tasks
+
+    async with shutdown_on_error(
+        context,
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
+        # Send basic metadata
+        ir_context = dataclasses.replace(ir_context, tracer=tracer)
+        partitioning = (
+            await parquet_metadata_ordering(
+                context,
+                comm,
+                ir,
+                global_chunk_count,
+                partitioning_requests,
+                ir_context,
+                collective_id,
+            )
+            if infer_ordering and ir.base_scan.typ == "parquet"
+            else None
+        )
+        if partitioning is not None and tracer is not None:
+            tracer.decision = "parquet_ordering"
+        await send_metadata(
+            ch_out,
+            context,
+            ChannelMetadata(local_count=len(tasks), partitioning=partitioning),
+        )
+
+        # If there is nothing to scan, drain the channel and return
+        if len(tasks) == 0:
+            await ch_out.drain(context)
+            return
+
+        # If there is only one task or one producer, we can
+        # skip the lineariser and read the chunks directly
+        if len(tasks) == 1 or num_producers == 1:
+            for seq_num, task in enumerate(tasks):
+                await read_chunk(
+                    context,
+                    task,
+                    seq_num,
+                    ch_out,
+                    ir_context,
+                    estimated_chunk_bytes,
+                    tracer=tracer,
+                )
+            await ch_out.drain(context)
+            return
+
+        # Use Lineariser to ensure ordered delivery
+        num_producers = min(num_producers, len(tasks))
+        lineariser = Lineariser(context, ch_out, num_producers)
+
+        # Assign tasks to producers using round-robin
+        producer_tasks: list[list[tuple[int, ScanTask]]] = [
+            [] for _ in range(num_producers)
+        ]
+        for task_idx, task in enumerate(tasks):
+            producer_id = task_idx % num_producers
+            producer_tasks[producer_id].append((task_idx, task))
+
+        async def _producer(producer_id: int) -> None:
+            for task_idx, task in producer_tasks[producer_id]:
+                ch_out = await lineariser.acquire(producer_id)
+                await read_chunk(
+                    context,
+                    task,
+                    task_idx,
+                    ch_out,
+                    ir_context,
+                    estimated_chunk_bytes,
+                    tracer=tracer,
+                )
+            await ch_out.drain(context)
+
+        async with shutdown_on_error(
+            context,
+            chs_aux=lineariser.input_channels,
+            trace_ir=ir,
+            ir_context=ir_context,
+        ) as inner_actor_scope:
+            ir_context = inner_actor_scope.require_ir_context()
+            await gather_in_task_group(
+                lineariser.drain(),
+                *(_producer(i) for i in range(num_producers)),
+            )
+
+
+@generate_ir_sub_network.register(StreamingScan)
+def _(
+    ir: StreamingScan, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    config_options = rec.state["config_options"]
+    executor = config_options.executor
+    partition_info = rec.state["partition_info"][ir]
+    ir_context = ir_context_for_node(rec, ir)
+    num_producers = resolve_max_concurrent_io_tasks(
+        rec.state["max_concurrent_io_tasks"],
+        ir.base_scan.paths,
+    )
+    channels: dict[IR, ChannelManager] = {ir: ChannelManager(rec.state["context"])}
+
+    assert partition_info.io_plan is not None, "Scan node must have a partition plan"
+    plan: IOPartitionPlan = partition_info.io_plan
+    dynamic_planning = executor.dynamic_planning
+
+    ch_out = channels[ir].reserve_input_slot()
+    nodes: dict[IR, list[Any]] = {}
+
+    nodes[ir] = [
+        scan_node(
+            rec.state["context"],
+            rec.state["comm"],
+            ir,
+            ir_context,
+            ch_out,
+            global_chunk_count=partition_info.count,
+            partitioning_requests=rec.state["partitioning_requests"].get(ir, ()),
+            collective_id=rec.state["collective_id_map"][ir][0],
+            infer_ordering=(
+                dynamic_planning is not None and dynamic_planning.infer_ordering
+            ),
+            num_producers=num_producers,
+            estimated_chunk_bytes=(
+                plan.estimated_chunk_bytes or executor.target_partition_size
+            ),
+        )
+    ]
+    return nodes, channels
+
+
+class _CallbackConsumer:
+    """Convert table chunks and invoke a callback on host batches."""
+
+    def __init__(
+        self,
+        callback: Callable[[plrs.PyDataFrame], bool],
+        chunk_size: int | None,
+        ir_context: IRExecutionContext,
+        context: Context,
+        input_ir: IR,
+    ) -> None:
+        self.callback = callback
+        self.chunk_size = chunk_size
+        self.ir_context = ir_context
+        self.context = context
+        self.input_ir = input_ir
+        self.stopped = False
+        self.pending: list[pl.DataFrame] = []
+        self.pending_rows = 0
+
+    async def consume(self, chunk: TableChunk) -> None:
+        """Convert a table chunk and invoke the callback on complete batches."""
+        if self.stopped:
+            raise RuntimeError("Cannot consume data after the callback requested stop")
+        chunk, _ = await make_table_chunks_available_or_wait(
+            self.context,
+            chunk,
+            reserve_extra=0,
+            net_memory_delta=-chunk.data_alloc_size(),
+        )
+        df = chunk_to_frame(chunk, self.input_ir)
+        host_df = await self.ir_context.to_thread(df.to_polars)
+        del chunk, df
+        if self.chunk_size is None:
+            self.stopped = bool(
+                await self.ir_context.to_thread(self.callback, host_df._df)
+            )
+        elif host_df.height:
+            self.pending.append(host_df)
+            self.pending_rows += host_df.height
+            if self.pending_rows >= self.chunk_size:
+                combined = (
+                    self.pending[0]
+                    if len(self.pending) == 1
+                    else pl.concat(self.pending, rechunk=False)
+                )
+                while combined.height >= self.chunk_size:
+                    batch = combined.slice(0, self.chunk_size)
+                    combined = combined.slice(self.chunk_size)
+                    if await self.ir_context.to_thread(self.callback, batch._df):
+                        self.stopped = True
+                        break
+                self.pending = [combined] if combined.height else []
+                self.pending_rows = combined.height
+
+    async def finish(self) -> None:
+        """Invoke the callback on a final partial batch."""
+        if not self.stopped and self.pending_rows:
+            batch = (
+                self.pending[0]
+                if len(self.pending) == 1
+                else pl.concat(self.pending, rechunk=False)
+            )
+            await self.ir_context.to_thread(self.callback, batch._df)
+
+
+@define_actor()
+async def callback_sink_actor(
+    context: Context,
+    comm: Communicator,
+    ir: CallbackSink,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+    collective_id: int,
+    parallel: bool,  # noqa: FBT001
+) -> None:
+    """Invoke a callback on input batches and emit an empty result."""
+    async with shutdown_on_error(
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ):
+        metadata = await recv_metadata(ch_in, context)
+        await send_metadata(
+            ch_out, context, ChannelMetadata(local_count=1, duplicated=True)
+        )
+        consumer = (
+            _CallbackConsumer(
+                CallbackSink.load_function(ir.function),
+                ir.chunk_size,
+                ir_context,
+                context,
+                ir.children[0],
+            )
+            if parallel or comm.rank == 0
+            else None
+        )
+
+        # Ordered callbacks and the default mode process all chunks on rank 0.
+        exchange = (
+            SparseAlltoall(
+                context,
+                comm,
+                collective_id,
+                srcs=range(1, comm.nranks) if comm.rank == 0 else (),
+                dsts=(0,) if comm.rank != 0 else (),
+            )
+            if comm.nranks > 1 and not parallel
+            else None
+        )
+
+        try:
+            while (msg := await ch_in.recv(context)) is not None:
+                if metadata.duplicated and comm.rank != 0:
+                    continue
+                if consumer is not None and consumer.stopped:
+                    continue
+                chunk = TableChunk.from_message(msg, br=context.br())
+                if consumer is not None:
+                    await consumer.consume(chunk)
+                else:
+                    chunk, extra = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=chunk.into_packed_data_cost(),
+                        net_memory_delta=0,
+                    )
+                    assert exchange is not None
+                    exchange.insert(0, chunk.into_packed_data(extra))
+        finally:
+            if exchange is not None:
+                await exchange.insert_finished(context)
+
+        if consumer is not None:
+            if exchange is not None:
+                for src in range(1, comm.nranks):
+                    for packed in exchange.extract(src):
+                        if not consumer.stopped:
+                            chunk = TableChunk.from_packed_data(packed, context.br())
+                            await consumer.consume(chunk)
+            await consumer.finish()
+
+        empty_chunk = empty_table_chunk(ir, context, ir_context.get_cuda_stream())
+        await ch_out.send(context, Message(0, empty_chunk))
+        await ch_out.drain(context)
+
+
+@generate_ir_sub_network.register(CallbackSink)
+def _(
+    ir: CallbackSink, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    nodes, channels = process_children(ir, rec)
+    channels[ir] = ChannelManager(rec.state["context"])
+    parallel = (
+        rec.state["config_options"].executor.parallel_sink_batches
+        and not ir.maintain_order
+    )
+    if rec.state["comm"].nranks > 1 and not parallel:
+        _fallback_inform(
+            "sink_batches callbacks are executed on rank 0 for multi-rank "
+            "streaming unless parallel_sink_batches=True and "
+            "maintain_order=False.",
+            rec.state["config_options"],
+        )
+    nodes[ir] = [
+        callback_sink_actor(
+            rec.state["context"],
+            rec.state["comm"],
+            ir,
+            ir_context_for_node(rec, ir),
+            channels[ir.children[0]].reserve_output_slot(),
+            channels[ir].reserve_input_slot(),
+            rec.state["collective_id_map"][ir][0],
+            parallel,
+        )
+    ]
+    return nodes, channels
+
+
+@define_actor()
+async def sink_node(
+    context: Context,
+    comm: Communicator,
+    ir: StreamingSink,
+    ir_context: IRExecutionContext,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+    partition_info: PartitionInfo,
+    collective_id: int,
+) -> None:
+    """
+    Sink node for rapidsmpf - writes data chunks to a file.
+
+    Parameters
+    ----------
+    context
+        The rapidsmpf context.
+    comm
+        The communicator.
+    ir
+        The StreamingSink node.
+    ir_context
+        The execution context for the IR node.
+    ch_in
+        The input ChannelPair.
+    ch_out
+        The output ChannelPair for returning an empty result DataFrame.
+    partition_info
+        The partition information.
+    collective_id
+        The collective ID for this operation, used for AllGather
+        reduction of the chunk count.
+    """
+    child_ir = ir.children[0]
+
+    suffix = ir.sink.kind.lower()
+    # safety-net, if count is too low, we might get conflicts
+    # with other files.
+
+    async with shutdown_on_error(
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        ir_context=ir_context,
+        trace_ir=ir,
+    ) as actor_scope:
+        ir_context = actor_scope.require_ir_context()
+        metadata = await recv_metadata(ch_in, context)
+        await send_metadata(
+            ch_out, context, ChannelMetadata(local_count=1, duplicated=True)
+        )
+        skip_write = metadata.duplicated and comm.rank != 0
+
+        if skip_write:
+            while await ch_in.recv(context) is not None:
+                pass
+        else:
+            path_root = f"{ir.sink.path}/part"
+            if comm.nranks > 1:
+                rank_width = math.ceil(math.log10(comm.nranks))
+                rank_str = str(comm.rank).zfill(rank_width)
+                path_root = f"{path_root}.{rank_str}"
+            # local_count may be 0 when a rank receives no partitions
+            # (e.g. more ranks than input files); log10(0) is undefined.
+            count_width = math.ceil(math.log10(max(metadata.local_count, 1)))
+            count_width = max(count_width, 6)
+
+            if ir.sink_to_directory:
+                _prepare_sink_directory(ir.sink.path)
+                i = 0
+                while (msg := await ch_in.recv(context)) is not None:
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
+                    df = chunk_to_frame(chunk, child_ir)
+                    part_path = f"{path_root}.{str(i).zfill(count_width)}.{suffix}"
+                    await ir_context.to_thread(
+                        Sink.do_evaluate,
+                        ir.sink.schema,
+                        ir.sink.kind,
+                        part_path,
+                        ir.sink.parquet_options,
+                        ir.sink.options,
+                        df,
+                        context=ir_context,
+                    )
+                    i += 1
+            else:
+                # Write chunks to a single file
+                writer_state = None
+                while (msg := await ch_in.recv(context)) is not None:
+                    chunk = TableChunk.from_message(msg, br=context.br())
+                    # Terminal: the chunk is dropped after the write, so its
+                    # whole footprint leaves the system.
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        chunk,
+                        reserve_extra=0,
+                        net_memory_delta=-chunk.data_alloc_size(),
+                    )
+                    # Multiple chunks - use chunked writer
+                    df = chunk_to_frame(chunk, child_ir)
+                    writer_state = await ir_context.to_thread(
+                        _sink_to_file,  # type: ignore[arg-type]  # (to_thread accepts this keyword-only sink helper)
+                        ir.sink.kind,
+                        ir.sink.path,
+                        ir.sink.options,
+                        writer_state=writer_state,
+                        df=df,
+                    )
+
+                # Finalize the writer after all chunks are processed
+                if writer_state and ir.sink.kind == "Parquet":
+                    # We know that with ir.sink.kind == "Parquet", writer_state being truthy
+                    # means that it's a ChunkedParquetWriter.
+                    await ir_context.to_thread(writer_state.close, [])  # type: ignore[attr-defined]
+
+        # Signal completion on the metadata and data channels with empty results
+        stream = ir_context.get_cuda_stream()
+        empty_chunk = empty_table_chunk(ir, context, stream)
+        await ch_out.send(context, Message(0, empty_chunk))
+        await ch_out.drain(context)
+
+
+@generate_ir_sub_network.register(StreamingSink)
+def _(
+    ir: StreamingSink, rec: SubNetGenerator
+) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
+    """Generate network for StreamingSink node."""
+    nodes, channels = process_children(ir, rec)
+    channels[ir] = ChannelManager(rec.state["context"])
+    ir_context = ir_context_for_node(rec, ir)
+    nodes[ir] = [
+        sink_node(
+            rec.state["context"],
+            rec.state["comm"],
+            ir,
+            ir_context,
+            channels[ir.children[0]].reserve_output_slot(),
+            channels[ir].reserve_input_slot(),
+            rec.state["partition_info"][ir],
+            rec.state["collective_id_map"][ir][0],
+        )
+    ]
+
+    return nodes, channels

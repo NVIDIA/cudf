@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t, int64_t
 from libcpp cimport bool
@@ -8,8 +8,8 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.fixed_point.fixed_point cimport scale_type
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport data_type
-from rmm.librmm.cuda_stream_view cimport cuda_stream_view
-from rmm.librmm.memory_resource cimport device_memory_resource
+from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
 cdef extern from "cudf/scalar/scalar.hpp" namespace "cudf" nogil:
@@ -18,31 +18,31 @@ cdef extern from "cudf/scalar/scalar.hpp" namespace "cudf" nogil:
         scalar(scalar other) except +libcudf_exception_handler
         data_type type() except +libcudf_exception_handler
         void set_valid_async(
-            bool is_valid, cuda_stream_view stream
+            bool is_valid, cudaStream_t stream
         ) except +libcudf_exception_handler
-        bool is_valid(cuda_stream_view stream) except +libcudf_exception_handler
+        bool is_valid(cudaStream_t stream) except +libcudf_exception_handler
 
     cdef cppclass numeric_scalar[T](scalar):
         void set_value(
             T value,
-            cuda_stream_view stream
+            cudaStream_t stream
         ) except +libcudf_exception_handler
-        T value(cuda_stream_view stream) except +libcudf_exception_handler
+        T value(cudaStream_t stream) except +libcudf_exception_handler
 
     cdef cppclass timestamp_scalar[T](scalar):
         void set_value(
             T value,
-            cuda_stream_view stream
+            cudaStream_t stream
         ) except +libcudf_exception_handler
 
     cdef cppclass duration_scalar[T](scalar):
         void set_value(
             T value,
-            cuda_stream_view stream
+            cudaStream_t stream
         ) except +libcudf_exception_handler
 
     cdef cppclass string_scalar(scalar):
-        string to_string(cuda_stream_view stream) except +libcudf_exception_handler
+        string to_string(cudaStream_t stream) except +libcudf_exception_handler
 
     cdef cppclass list_scalar(scalar):
         pass
@@ -57,4 +57,4 @@ cdef extern from "cudf/scalar/scalar.hpp" namespace "cudf" nogil:
             scale_type scale,
             bool is_valid
         ) except +libcudf_exception_handler
-        T value(cuda_stream_view stream) except +libcudf_exception_handler
+        T value(cudaStream_t stream) except +libcudf_exception_handler

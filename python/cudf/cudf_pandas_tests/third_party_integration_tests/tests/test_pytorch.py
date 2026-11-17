@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -140,4 +140,4 @@ def test_torch_tensor_ctor():
 
 def test_torch_tensor_from_numpy():
     s = pd.Series(range(5))
-    return torch.from_numpy(s.values)
+    return torch.from_numpy(s.to_numpy(copy=True))

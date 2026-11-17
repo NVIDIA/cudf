@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -64,8 +64,16 @@ bool container::parse(file_metadata* md, size_t max_num_rows, size_t first_row)
   sig4 |= get_raw<uint8_t>() << 24;
   if (sig4 != avro_magic) { return false; }
   for (;;) {
-    auto num_md_items = static_cast<uint32_t>(get_encoded<int64_t>());
-    if (num_md_items == 0) { break; }
+    auto md_items_signed = get_encoded<int64_t>();
+    if (md_items_signed == 0) { break; }
+    if (md_items_signed < 0) {
+      // A negative count means a block's byte size follows. Read it and discard it.
+      [[maybe_unused]] auto const md_block_size = get_encoded<int64_t>();
+      md_items_signed                           = -md_items_signed;
+    }
+    // Check that the claimed item count can fit in the remaining input
+    if (md_items_signed > (m_end - m_cur) / 2) { return false; }
+    auto const num_md_items = static_cast<uint32_t>(md_items_signed);
     for (uint32_t i = 0; i < num_md_items; i++) {
       auto const key   = get_encoded<std::string>();
       auto const value = get_encoded<std::string>();

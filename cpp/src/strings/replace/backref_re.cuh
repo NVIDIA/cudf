@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,9 +12,8 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
 
-#include <rmm/cuda_stream_view.hpp>
-
 #include <cuda/std/utility>
+#include <cuda/stream>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 
@@ -102,8 +101,10 @@ struct backrefs_fn {
 
     // finally, copy remainder of input string
     if (out_ptr) {
-      thrust::copy_n(
-        thrust::seq, in_ptr + itr.byte_offset(), d_str.size_bytes() - itr.byte_offset(), out_ptr);
+      thrust::copy_n(thrust::seq,
+                     in_ptr + last_pos.byte_offset(),
+                     d_str.size_bytes() - last_pos.byte_offset(),
+                     out_ptr);
     } else {
       d_sizes[idx] = nbytes;
     }

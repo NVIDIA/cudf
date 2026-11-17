@@ -1,9 +1,10 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import cudf
@@ -47,14 +48,15 @@ def test_dataframe_hash_values(method, seed):
         out = gdf.hash_values(method=method, seed=seed)
     assert isinstance(out, cudf.Series)
     assert len(out) == nrows
+    string_dtype = pd.StringDtype(na_value=np.nan)
     expected_dtypes = {
         "murmur3": np.uint32,
-        "md5": object,
-        "sha1": object,
-        "sha224": object,
-        "sha256": object,
-        "sha384": object,
-        "sha512": object,
+        "md5": string_dtype,
+        "sha1": string_dtype,
+        "sha224": string_dtype,
+        "sha256": string_dtype,
+        "sha384": string_dtype,
+        "sha512": string_dtype,
         "xxhash32": np.uint32,
         "xxhash64": np.uint64,
     }

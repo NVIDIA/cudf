@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -9,9 +9,8 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/rolling.hpp>
-
-#include <cuda/iterator>
 
 template <typename T>
 using fwcw = cudf::test::fixed_width_column_wrapper<T>;
@@ -254,7 +253,7 @@ TEST_F(OffsetRowWindowTest, OffsetRowWindow_Ungrouped_0_to_2)
 TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
 {
   auto const grp_iter =
-    thrust::make_transform_iterator(thrust::make_counting_iterator(0), [](auto const& i) {
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto const& i) {
       return i / 10;  // 0-9 in the first group, 10-19 in the second, etc.
     });
   auto const agg_iter = cuda::make_constant_iterator(1);
@@ -278,7 +277,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
       return int64_t{10 - start};
     };
     auto const expected_iter =
-      thrust::make_transform_iterator(thrust::make_counting_iterator(0), expected_fun);
+      cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, expected_fun);
     auto const expected = bigints_column(expected_iter, expected_iter + 30, no_nulls());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -293,7 +292,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
       return int64_t{end + 1};
     };
     auto const expected_iter =
-      thrust::make_transform_iterator(thrust::make_counting_iterator(0), expected_fun);
+      cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, expected_fun);
     auto const expected = bigints_column(expected_iter, expected_iter + 30, no_nulls());
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
@@ -302,7 +301,7 @@ TEST_F(OffsetRowWindowTest, TestNegativeBoundsClamp)
 TEST_F(OffsetRowWindowTest, CheckGroupBoundaries)
 {
   auto grp_iter =
-    thrust::make_transform_iterator(thrust::make_counting_iterator(0), [](auto const& i) {
+    cudf::detail::make_counting_transform_iterator(cudf::size_type{0}, [](auto const& i) {
       if (i < 10) return 1;
       if (i < 20) return 2;
       return 3;

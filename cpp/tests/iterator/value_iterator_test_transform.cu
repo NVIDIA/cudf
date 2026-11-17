@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <tests/iterator/iterator_tests.cuh>
@@ -7,8 +7,8 @@
 #include <cudf_test/random.hpp>
 
 #include <cuda/functional>
+#include <cuda/iterator>
 #include <thrust/host_vector.h>
-#include <thrust/iterator/transform_iterator.h>
 
 struct TransformedIteratorTest : public IteratorTest<int8_t> {};
 
@@ -56,7 +56,7 @@ TEST_F(TransformedIteratorTest, null_iterator_upcast)
 
   // GPU test
   auto it_dev        = cudf::detail::make_null_replacement_iterator(*d_col, T{0});
-  auto it_dev_upcast = thrust::make_transform_iterator(it_dev, cast_fn<T_upcast>{});
+  auto it_dev_upcast = cuda::transform_iterator(it_dev, cast_fn<T_upcast>{});
   this->iterator_test_thrust(replaced_array, it_dev_upcast, d_col->size());
   this->iterator_test_cub(expected_value, it_dev, d_col->size());
 }
@@ -99,8 +99,8 @@ TEST_F(TransformedIteratorTest, null_iterator_square)
 
   // GPU test
   auto it_dev         = cudf::detail::make_null_replacement_iterator(*d_col, T{0});
-  auto it_dev_upcast  = thrust::make_transform_iterator(it_dev, cast_fn<T_upcast>{});
-  auto it_dev_squared = thrust::make_transform_iterator(it_dev_upcast, transformer);
+  auto it_dev_upcast  = cuda::transform_iterator(it_dev, cast_fn<T_upcast>{});
+  auto it_dev_squared = cuda::transform_iterator(it_dev_upcast, transformer);
   this->iterator_test_thrust(replaced_array, it_dev_squared, d_col->size());
   this->iterator_test_cub(expected_value, it_dev_squared, d_col->size());
 }
@@ -111,7 +111,7 @@ TEST_F(TransformedIteratorTest, large_size_reduction)
   using T = int64_t;
 
   int const column_size{1000000};
-  const T init{0};
+  T const init{0};
 
   // data and valid arrays
   std::vector<T> host_values(column_size);

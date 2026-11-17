@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -19,18 +19,16 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 #include <cuda/atomic>
 #include <cuda/iterator>
+#include <cuda/std/limits>
 #include <cuda/std/utility>
-#include <thrust/binary_search.h>
+#include <cuda/stream>
 #include <thrust/fill.h>
-#include <thrust/for_each.h>
-#include <thrust/iterator/counting_iterator.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -135,7 +133,7 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
   }();
 
   // each thread compares the target with the thread's individual starting byte
-  size_type position = forward ? std::numeric_limits<size_type>::max() : -1;
+  size_type position = forward ? cuda::std::numeric_limits<size_type>::max() : -1;
   for (auto itr = begin + lane_idx; itr + d_target.size_bytes() <= end;
        itr += cudf::detail::warp_size) {
     if (d_target.compare(d_str.data() + itr, d_target.size_bytes()) == 0) {
@@ -152,7 +150,7 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
     // the final result needs to be fixed up convert max() to -1
     // and a byte position to a character position
     d_results[str_idx] =
-      ((result < std::numeric_limits<size_type>::max()) && (result >= begin))
+      ((result < cuda::std::numeric_limits<size_type>::max()) && (result >= begin))
         ? start_char_pos + characters_in_string(d_str.data() + begin, result - begin)
         : -1;
   }
@@ -164,7 +162,8 @@ void find_utility(strings_column_view const& input,
                   column& output,
                   size_type start,
                   size_type stop,
-                  rmm::cuda_stream_view stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
   auto d_results = output.mutable_view().data<size_type>();
@@ -174,13 +173,14 @@ void find_utility(strings_column_view const& input,
     constexpr thread_index_type warp_size = cudf::detail::warp_size;
     cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
     finder_warp_parallel_fn<TargetIterator, forward>
-      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+      <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
         *d_strings, target_itr, start, stop, d_results);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::make_counting_iterator<size_type>(0),
-                      thrust::make_counting_iterator<size_type>(input.size()),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{input.size()},
                       d_results,
                       finder_fn<TargetIterator, forward>{*d_strings, target_itr, start, stop});
   }
@@ -191,12 +191,12 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
                                 string_scalar const& target,
                                 size_type start,
                                 size_type stop,
-                                rmm::cuda_stream_view stream,
-                                rmm::device_async_resource_ref mr)
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
 {
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   CUDF_EXPECTS(start >= 0, "Parameter start must be positive integer or zero.");
-  if ((stop > 0) && (start > stop)) CUDF_FAIL("Parameter start must be less than stop.");
+  CUDF_EXPECTS(stop <= 0 or start <= stop, "Parameter start must be less than stop.");
 
   // create output column
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
@@ -214,9 +214,9 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   if (d_target.empty()) {
     auto d_strings = column_device_view::create(input.parent(), stream);
     auto d_results = results->mutable_view().data<size_type>();
-    thrust::transform(rmm::exec_policy_nosync(stream),
-                      thrust::counting_iterator<size_type>(0),
-                      thrust::counting_iterator<size_type>(input.size()),
+    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                      cuda::counting_iterator<size_type>{0},
+                      cuda::counting_iterator<size_type>{input.size()},
                       d_results,
                       empty_target_fn<forward>{*d_strings, start, stop});
     return results;
@@ -225,7 +225,8 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   // find-utility function fills in the results column
   auto target_itr      = cuda::make_constant_iterator(d_target);
   using TargetIterator = decltype(target_itr);
-  find_utility<TargetIterator, forward>(input, target_itr, *results, start, stop, stream);
+  find_utility<TargetIterator, forward>(
+    input, target_itr, *results, start, stop, stream, cudf::get_current_device_resource_ref());
   results->set_null_count(input.null_count());
   return results;
 }
@@ -235,8 +236,8 @@ std::unique_ptr<column> find(strings_column_view const& input,
                              string_scalar const& target,
                              size_type start,
                              size_type stop,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   return find_fn<true>(input, target, start, stop, stream, mr);
 }
@@ -245,8 +246,8 @@ std::unique_ptr<column> rfind(strings_column_view const& input,
                               string_scalar const& target,
                               size_type start,
                               size_type stop,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   return find_fn<false>(input, target, start, stop, stream, mr);
 }
@@ -255,15 +256,19 @@ template <bool forward = true>
 std::unique_ptr<column> find(strings_column_view const& input,
                              strings_column_view const& target,
                              size_type start,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_EXPECTS(start >= 0, "Parameter start must be positive integer or zero.");
   CUDF_EXPECTS(input.size() == target.size(), "input and target columns must be the same size");
 
   // create output column
-  auto results = make_numeric_column(
-    data_type{type_to_id<size_type>()}, input.size(), rmm::device_buffer{}, 0, stream, mr);
+  auto results = make_numeric_column(data_type{type_to_id<size_type>()},
+                                     input.size(),
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                     0,
+                                     stream,
+                                     mr);
   // if input is empty or all-null then we are done
   if (input.size() == input.null_count()) { return results; }
 
@@ -271,7 +276,8 @@ std::unique_ptr<column> find(strings_column_view const& input,
   auto d_targets  = column_device_view::create(target.parent(), stream);
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
-  find_utility<decltype(target_itr), forward>(input, target_itr, *results, start, -1, stream);
+  find_utility<decltype(target_itr), forward>(
+    input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
 
   // AND the bitmasks from input and target
   auto [null_mask, null_count] =
@@ -288,8 +294,8 @@ std::unique_ptr<column> find(strings_column_view const& strings,
                              string_scalar const& target,
                              size_type start,
                              size_type stop,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find(strings, target, start, stop, stream, mr);
@@ -299,8 +305,8 @@ std::unique_ptr<column> rfind(strings_column_view const& strings,
                               string_scalar const& target,
                               size_type start,
                               size_type stop,
-                              rmm::cuda_stream_view stream,
-                              rmm::device_async_resource_ref mr)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::rfind(strings, target, start, stop, stream, mr);
@@ -309,8 +315,8 @@ std::unique_ptr<column> rfind(strings_column_view const& strings,
 std::unique_ptr<column> find(strings_column_view const& input,
                              strings_column_view const& target,
                              size_type start,
-                             rmm::cuda_stream_view stream,
-                             rmm::device_async_resource_ref mr)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find<true>(input, target, start, stream, mr);
@@ -367,8 +373,8 @@ CUDF_KERNEL void contains_warp_parallel_fn(column_device_view const d_strings,
 
 std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
                                                string_scalar const& target,
-                                               rmm::cuda_stream_view stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   auto d_target = string_view(target.data(), target.size());
@@ -384,16 +390,19 @@ std::unique_ptr<column> contains_warp_parallel(strings_column_view const& input,
   // fill the output with `false` unless the `d_target` is empty
   auto results_view = results->mutable_view();
   if (d_target.empty()) {
-    thrust::fill(
-      rmm::exec_policy_nosync(stream), results_view.begin<bool>(), results_view.end<bool>(), true);
+    thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                 results_view.begin<bool>(),
+                 results_view.end<bool>(),
+                 true);
   } else {
     // launch warp per string
     auto const d_strings                   = column_device_view::create(input.parent(), stream);
     constexpr thread_index_type block_size = 256;
     constexpr thread_index_type warp_size  = cudf::detail::warp_size;
     cudf::detail::grid_1d grid{input.size() * warp_size, block_size};
-    contains_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.value()>>>(
+    contains_warp_parallel_fn<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       *d_strings, d_target, results_view.data<bool>());
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
   results->set_null_count(input.null_count());
   return results;
@@ -418,8 +427,8 @@ template <typename BoolFunction>
 std::unique_ptr<column> contains_fn(strings_column_view const& strings,
                                     string_scalar const& target,
                                     BoolFunction pfn,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(type_id::BOOL8);
@@ -427,8 +436,9 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   if (target.size() == 0)  // empty target string returns true
   {
-    auto const true_scalar = make_fixed_width_scalar<bool>(true, stream);
-    auto results           = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
+    auto const true_scalar =
+      make_fixed_width_scalar<bool>(true, stream, cudf::get_current_device_resource_ref());
+    auto results = make_column_from_scalar(*true_scalar, strings.size(), stream, mr);
     results->set_null_mask(cudf::detail::copy_bitmask(strings.parent(), stream, mr),
                            strings.null_count());
     return results;
@@ -447,9 +457,9 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto results_view = results->mutable_view();
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
-  thrust::transform(rmm::exec_policy_nosync(stream),
-                    thrust::make_counting_iterator<size_type>(0),
-                    thrust::make_counting_iterator<size_type>(strings_count),
+  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    cuda::counting_iterator<size_type>{0},
+                    cuda::counting_iterator<size_type>{strings_count},
                     d_results,
                     [d_strings, pfn, d_target] __device__(size_type idx) {
                       return !d_strings.is_null(idx) &&
@@ -478,8 +488,8 @@ template <typename BoolFunction>
 std::unique_ptr<column> contains_fn(strings_column_view const& strings,
                                     strings_column_view const& targets,
                                     BoolFunction pfn,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   if (strings.is_empty()) return make_empty_column(type_id::BOOL8);
 
@@ -501,9 +511,9 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
   auto d_results    = results_view.data<bool>();
   // set the bool values by evaluating the passed function
   thrust::transform(
-    rmm::exec_policy_nosync(stream),
-    thrust::make_counting_iterator<size_type>(0),
-    thrust::make_counting_iterator<size_type>(strings.size()),
+    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cuda::counting_iterator<size_type>{0},
+    cuda::counting_iterator<size_type>{strings.size()},
     d_results,
     [d_strings, pfn, d_targets] __device__(size_type idx) {
       // empty target string returns true
@@ -522,8 +532,8 @@ std::unique_ptr<column> contains_fn(strings_column_view const& strings,
 
 std::unique_ptr<column> contains(strings_column_view const& input,
                                  string_scalar const& target,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   // use warp parallel when the average string width is greater than the threshold
   if ((input.null_count() < input.size()) &&
@@ -544,8 +554,8 @@ std::unique_ptr<column> contains(strings_column_view const& input,
 
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  strings_column_view const& targets,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     for (size_type i = 0; i <= (d_string.size_bytes() - d_target.size_bytes()); ++i) {
@@ -558,8 +568,8 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
 
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     string_scalar const& target,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     return (d_target.size_bytes() <= d_string.size_bytes()) &&
@@ -570,8 +580,8 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     strings_column_view const& targets,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     return (d_target.size_bytes() <= d_string.size_bytes()) &&
@@ -582,8 +592,8 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   string_scalar const& target,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     auto const str_size = d_string.size_bytes();
@@ -597,8 +607,8 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   strings_column_view const& targets,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   auto pfn = [] __device__(string_view d_string, string_view d_target) {
     auto const str_size = d_string.size_bytes();
@@ -616,8 +626,8 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  string_scalar const& target,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(strings, target, stream, mr);
@@ -625,8 +635,8 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
 
 std::unique_ptr<column> contains(strings_column_view const& strings,
                                  strings_column_view const& targets,
-                                 rmm::cuda_stream_view stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains(strings, targets, stream, mr);
@@ -634,8 +644,8 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
 
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     string_scalar const& target,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::starts_with(strings, target, stream, mr);
@@ -643,8 +653,8 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 
 std::unique_ptr<column> starts_with(strings_column_view const& strings,
                                     strings_column_view const& targets,
-                                    rmm::cuda_stream_view stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::starts_with(strings, targets, stream, mr);
@@ -652,8 +662,8 @@ std::unique_ptr<column> starts_with(strings_column_view const& strings,
 
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   string_scalar const& target,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::ends_with(strings, target, stream, mr);
@@ -661,8 +671,8 @@ std::unique_ptr<column> ends_with(strings_column_view const& strings,
 
 std::unique_ptr<column> ends_with(strings_column_view const& strings,
                                   strings_column_view const& targets,
-                                  rmm::cuda_stream_view stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cuda::stream_ref stream,
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::ends_with(strings, targets, stream, mr);

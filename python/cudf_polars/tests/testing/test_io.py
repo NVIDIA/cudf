@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
 from __future__ import annotations
@@ -37,3 +37,47 @@ def test_make_source_invalid_format(tmp_path):
     df = pl.DataFrame({"a": [1, 2]})
     with pytest.raises(ValueError, match="Unsupported format: foo"):
         make_partitioned_source(df, tmp_path / "bad.foo", "foo")
+
+
+@pytest.mark.parametrize("fmt", ["csv", "ndjson", "parquet"])
+def test_make_source_single_file_in_dir(tmp_path, fmt):
+    # When n_files=1 and path is a directory, the file should be created inside it
+    df = pl.DataFrame({"a": [1, 2], "b": ["x", "y"]})
+    make_partitioned_source(df, tmp_path, fmt)
+    expected = tmp_path / f"part.0.{fmt}"
+    assert expected.exists()
+    assert expected.is_file()
+
+
+@pytest.mark.parametrize("fmt", ["csv", "parquet"])
+def test_make_lazy_frame_from_file(tmp_path, fmt):
+    from cudf_polars.testing.io import make_lazy_frame
+
+    df = pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]})
+    lf = make_lazy_frame(df, fmt, path=tmp_path / f"test.{fmt}")
+    result = lf.collect()
+    assert result.shape == (3, 2)
+
+
+def test_make_lazy_frame_from_frame():
+    from cudf_polars.testing.io import make_lazy_frame
+
+    df = pl.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+    lf = make_lazy_frame(df, "frame")
+    assert lf.collect().equals(df)
+
+
+def test_make_lazy_frame_from_frame_with_n_rows():
+    from cudf_polars.testing.io import make_lazy_frame
+
+    df = pl.DataFrame({"a": list(range(10))})
+    lf = make_lazy_frame(df, "frame", n_rows=5)
+    assert lf.collect().shape == (5, 1)
+
+
+def test_make_lazy_frame_from_file_with_n_rows(tmp_path):
+    from cudf_polars.testing.io import make_lazy_frame
+
+    df = pl.DataFrame({"a": list(range(10))})
+    lf = make_lazy_frame(df, "parquet", path=tmp_path / "test.parquet", n_rows=3)
+    assert lf.collect().shape == (3, 1)

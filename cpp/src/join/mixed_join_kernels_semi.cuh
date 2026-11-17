@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,7 +13,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 namespace cudf {
 namespace detail {
@@ -42,6 +42,9 @@ namespace detail {
  * the corresponding index from left table is present in output
  * @param[in] device_expression_data Container of device data required to evaluate the desired
  * expression.
+ * @param[in] config Kernel launch configuration
+ * @param[in] shmem_size_per_block Shared memory size per block
+ * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
 void launch_mixed_join_semi(bool has_nulls,
                             table_device_view left_table,
@@ -54,7 +57,7 @@ void launch_mixed_join_semi(bool has_nulls,
                             cudf::ast::detail::expression_device_view device_expression_data,
                             detail::grid_1d const config,
                             int64_t shmem_size_per_block,
-                            rmm::cuda_stream_view stream);
+                            cuda::stream_ref stream);
 
 }  // namespace detail
 

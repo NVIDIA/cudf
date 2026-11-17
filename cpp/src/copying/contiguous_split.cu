@@ -3307,8 +3307,13 @@ std::unique_ptr<table> materialize_uncompressed(packed_data_view input,
 
 [[nodiscard]] pack_compression select_automatic_compression(compression_region_layout const& layout)
 {
+  // 8- and 16-bit values need asymmetric Cascaded, which packs them several times slower than
+  // symmetric mode packs wider ones.
+  auto const is_narrow = layout.kind == pack_region_kind::data &&
+                         cudf::is_fixed_width(data_type{layout.type}) &&
+                         cudf::size_of(data_type{layout.type}) < sizeof(int32_t);
   if (layout.uncompressed_bytes < automatic_min_region_bytes ||
-      layout.kind == pack_region_kind::string_characters ||
+      layout.kind == pack_region_kind::string_characters || is_narrow ||
       io::detail::nvcomp::is_cascaded_disabled().has_value()) {
     return pack_compression::none;
   }
@@ -4250,8 +4255,12 @@ std::unique_ptr<table> materialize_selection(packed_data_view input,
     };
     if (num_cascaded > 0) {
       auto const [d_in, d_out, d_results] = spans(0, task_offsets[num_cascaded]);
+      std::vector<type_id> types;
+      for (auto const& task : std::span{tasks}.first(num_cascaded)) {
+        types.push_back(task.cascaded_type);
+      }
       io::detail::nvcomp::batched_cascaded_decompress(
-        d_in, d_out, d_results, {task_offsets.data(), num_cascaded + 1}, stream, mr);
+        d_in, d_out, d_results, {task_offsets.data(), num_cascaded + 1}, types, stream, mr);
     }
     for (auto i = num_cascaded; i < tasks.size(); ++i) {
       auto const [d_in, d_out, d_results] = spans(task_offsets[i], task_offsets[i + 1]);

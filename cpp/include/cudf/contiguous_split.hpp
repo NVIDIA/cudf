@@ -318,8 +318,9 @@ namespace experimental {
  */
 enum class pack_compression : int32_t {
   none      = 0,  ///< Preserve the current uncompressed packed representation
-  automatic = 1,  ///< Cascaded, except that string characters and small regions stay
-                  ///< uncompressed, and so do blocks that Cascaded shrinks too little. Every
+  automatic = 1,  ///< Cascaded, except that string characters, 8- and 16-bit values, and small
+                  ///< regions stay uncompressed, and so do blocks that Cascaded shrinks too
+                  ///< little. Every
                   ///< region stays uncompressed when `LIBCUDF_NVCOMP_POLICY` disables nvCOMP. A
                   ///< table whose regions all stay uncompressed uses the uncompressed format.
   cascaded = 2,   ///< nvCOMP Cascaded, on values of each region's native width and signedness.

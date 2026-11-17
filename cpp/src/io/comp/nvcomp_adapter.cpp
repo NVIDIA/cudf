@@ -952,21 +952,37 @@ void load_nvcomp_library()
 
 namespace {
 
-nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(type_id value_type)
+// Symmetric mode, which compresses faster, supports only 32- and 64-bit integers.
+nvcompCascadedCommonOpts_t cascaded_common_options(type_id value_type)
 {
-  auto options    = nvcompBatchedCascadedCompressDefaultOpts;
-  auto& data_type = options.common_opts.data_type;
+  auto options = nvcompBatchedCascadedCompressDefaultOpts.common_opts;
+  auto& type   = options.data_type;
   switch (value_type) {
-    case type_id::INT8: data_type = NVCOMP_TYPE_CHAR; break;
-    case type_id::UINT8: data_type = NVCOMP_TYPE_UCHAR; break;
-    case type_id::INT16: data_type = NVCOMP_TYPE_SHORT; break;
-    case type_id::UINT16: data_type = NVCOMP_TYPE_USHORT; break;
-    case type_id::INT32: data_type = NVCOMP_TYPE_INT; break;
-    case type_id::UINT32: data_type = NVCOMP_TYPE_UINT; break;
-    case type_id::INT64: data_type = NVCOMP_TYPE_LONGLONG; break;
-    case type_id::UINT64: data_type = NVCOMP_TYPE_ULONGLONG; break;
+    case type_id::INT8: type = NVCOMP_TYPE_CHAR; break;
+    case type_id::UINT8: type = NVCOMP_TYPE_UCHAR; break;
+    case type_id::INT16: type = NVCOMP_TYPE_SHORT; break;
+    case type_id::UINT16: type = NVCOMP_TYPE_USHORT; break;
+    case type_id::INT32: type = NVCOMP_TYPE_INT; break;
+    case type_id::UINT32: type = NVCOMP_TYPE_UINT; break;
+    case type_id::INT64: type = NVCOMP_TYPE_LONGLONG; break;
+    case type_id::UINT64: type = NVCOMP_TYPE_ULONGLONG; break;
     default: CUDF_FAIL("Cascaded compression supports only integral value types");
   }
+  if (cudf::size_of(data_type{value_type}) >= 4) { options.mode = NVCOMP_CASCADED_MODE_SYMMETRIC; }
+  return options;
+}
+
+nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(type_id value_type)
+{
+  auto options        = nvcompBatchedCascadedCompressDefaultOpts;
+  options.common_opts = cascaded_common_options(value_type);
+  return options;
+}
+
+nvcompBatchedCascadedDecompressOpts_t cascaded_decompress_options(type_id value_type)
+{
+  auto options        = nvcompBatchedCascadedDecompressDefaultOpts;
+  options.common_opts = cascaded_common_options(value_type);
   return options;
 }
 
@@ -1045,6 +1061,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                  device_span<device_span<uint8_t> const> outputs,
                                  device_span<codec_exec_result> results,
                                  std::span<size_t const> group_offsets,
+                                 std::span<type_id const> group_types,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
@@ -1053,6 +1070,8 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
   CUDF_EXPECTS(
     !group_offsets.empty() && group_offsets.front() == 0 && group_offsets.back() == inputs.size(),
     "group offsets must cover all chunks");
+  CUDF_EXPECTS(group_types.size() + 1 == group_offsets.size(),
+               "every chunk group must have a value type");
   if (inputs.empty()) { return; }
   if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Decompression error: " + *reason); }
 
@@ -1076,7 +1095,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                                   nullptr,
                                                   0,
                                                   args.output_data_ptrs.data() + begin,
-                                                  nvcompBatchedCascadedDecompressDefaultOpts,
+                                                  cascaded_decompress_options(group_types[i]),
                                                   statuses.data() + begin,
                                                   streams[i].get());
   }

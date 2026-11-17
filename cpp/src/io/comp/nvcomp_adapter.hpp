@@ -205,6 +205,8 @@ void batched_compress(compression_type compression,
 /**
  * @brief Device batch compression with nvCOMP Cascaded.
  *
+ * 32- and 64-bit values are compressed in symmetric mode, and narrower values in asymmetric mode.
+ *
  * @param[in] value_type Integral type the data of every chunk is interpreted as; the chunk sizes
  * must be multiples of its size
  * @param[in] inputs List of input buffers
@@ -228,12 +230,14 @@ void batched_cascaded_compress(type_id value_type,
  * nvCOMP decompresses a batch only if all of its chunks were compressed with the same value type,
  * so the chunks are given in groups of one value type each. Group `i` holds the chunks in
  * `[group_offsets[i], group_offsets[i + 1])`, and the groups are decompressed concurrently.
+ * Chunks must have been compressed by `batched_cascaded_compress` with their group's value type.
  *
  * @param[in] inputs List of input buffers
  * @param[out] outputs List of output buffers
  * @param[out] results List of output status structures
  * @param[in] group_offsets Offsets of the chunk groups, starting with 0 and ending with the number
  * of chunks
+ * @param[in] group_types Integral type the chunks of each group were compressed as
  * @param[in] stream CUDA stream to use
  * @param[in] mr Memory resources; only the temporary resource is used
  */
@@ -241,6 +245,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                  device_span<device_span<uint8_t> const> outputs,
                                  device_span<codec_exec_result> results,
                                  std::span<size_t const> group_offsets,
+                                 std::span<type_id const> group_types,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr);
 

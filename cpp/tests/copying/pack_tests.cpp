@@ -769,9 +769,10 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
     return static_cast<int64_t>(x ^ (x >> 31));
   });
   cudf::test::fixed_width_column_wrapper<int32_t> numbers(values.begin(), values.end());
+  cudf::test::fixed_width_column_wrapper<int16_t> shorts(values.begin(), values.end());
   cudf::test::strings_column_wrapper strings(words.begin(), words.end());
   cudf::test::fixed_width_column_wrapper<int64_t> hashes(mixed, mixed + rows);
-  auto const input = cudf::table_view{{numbers, strings, hashes}};
+  auto const input = cudf::table_view{{numbers, shorts, strings, hashes}};
 
   // A 1 MiB staging budget spreads the 33 INT64 blocks over several windows.
   auto options                 = make_options(cx::pack_compression::automatic);
@@ -783,6 +784,7 @@ TEST_F(ExperimentalPackUnpackTest, AutomaticPerRegionCompression)
     auto const expected =
       std::map<cudf::type_id, cx::pack_compression>{
         {cudf::type_id::INT32, cx::pack_compression::cascaded},
+        {cudf::type_id::INT16, cx::pack_compression::none},
         {cudf::type_id::STRING, cx::pack_compression::none},
         {cudf::type_id::INT64, cx::pack_compression::cascaded}}
         .at(static_cast<cudf::type_id>(entry.type));

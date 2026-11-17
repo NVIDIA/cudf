@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import DataFrameScan, Empty, HConcat, IRExecutionContext
@@ -70,3 +71,18 @@ def test_empty_init():
     assert node.schema is schema
     assert node.children == ()
     assert node._non_child_args == (schema,)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Int64(),
+        pl.String(),
+        pl.List(pl.Int64()),
+        pl.Struct({"a": pl.Int32(), "b": pl.String()}),
+    ],
+)
+def test_empty_evaluate(dtype):
+    schema = {"a": DataType(dtype)}
+    result = Empty(schema).evaluate(cache={}, context=IRExecutionContext())
+    assert_frame_equal(result.to_polars(), pl.DataFrame(schema={"a": dtype}))

@@ -332,6 +332,7 @@ void host_compress(compression_type compression,
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
   std::vector<std::future<std::pair<size_t, size_t>>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);
@@ -411,6 +412,26 @@ std::optional<size_t> compress_max_allowed_chunk_size(compression_type compressi
     return nvcomp::compress_max_output_chunk_size(*nvcomp_type, uncompressed_size);
   }
   CUDF_FAIL("Unsupported compression type: " + compression_type_name(compression));
+}
+
+[[nodiscard]] size_t get_compression_scratch_size(compression_type compression,
+                                                  size_t num_chunks,
+                                                  size_t max_uncomp_chunk_size,
+                                                  size_t total_uncomp_size,
+                                                  cuda::stream_ref stream)
+{
+  if (compression == compression_type::NONE or num_chunks == 0 or
+      get_host_engine_state(compression) == host_engine_state::ON) {
+    return 0;
+  }
+
+  auto const nvcomp_type = to_nvcomp_compression(compression);
+  if (nvcomp_type.has_value() and not nvcomp::is_compression_disabled(*nvcomp_type)) {
+    return nvcomp::batched_compress_temp_size(
+      *nvcomp_type, num_chunks, max_uncomp_chunk_size, total_uncomp_size, stream);
+  }
+  // gpu_snap, the only fallback, requires no scratch memory
+  return 0;
 }
 
 std::vector<std::uint8_t> compress(compression_type compression, host_span<uint8_t const> src)

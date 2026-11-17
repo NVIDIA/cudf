@@ -33,6 +33,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -298,7 +299,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
                                               byte_range_info byte_range,
                                               bool strip_delimiters,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -398,7 +399,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
       }
 
       auto tiles_in_launch =
-        cudf::util::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
+        cudf::detail::div_rounding_up_safe(chunk->size(), static_cast<std::size_t>(ITEMS_PER_TILE));
 
       auto row_offsets = row_offset_storage.next_output(scan_stream);
 
@@ -585,7 +586,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
                                               std::string_view delimiter,
                                               parse_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   auto result = detail::multibyte_split(
     source, delimiter, options.byte_range, options.strip_delimiters, stream, mr);

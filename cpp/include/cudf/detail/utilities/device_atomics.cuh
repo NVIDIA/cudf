@@ -22,13 +22,12 @@
 
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/atomic>
 #include <cuda/std/limits>
-#include <cuda/std/type_traits>
 
 namespace cudf {
 namespace detail {
@@ -56,14 +55,14 @@ struct genericAtomicOperationImpl {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceSum> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceSum op)
-    requires(cuda::std::is_arithmetic_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::arithmetic_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_add(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceSum op)
-    requires(!cuda::std::is_arithmetic_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::arithmetic_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -80,14 +79,14 @@ struct genericAtomicOperationImpl<T, DeviceSum> {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceMin> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMin op)
-    requires(cuda::std::is_integral_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_min(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMin op)
-    requires(!cuda::std::is_integral_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -104,14 +103,14 @@ struct genericAtomicOperationImpl<T, DeviceMin> {
 template <typename T>
 struct genericAtomicOperationImpl<T, DeviceMax> {
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMax op)
-    requires(cuda::std::is_integral_v<T> && !cuda::std::is_same_v<T, bool>)
+    requires(cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     return atomic_addr.fetch_max(update_value, cuda::memory_order_relaxed);
   }
 
   __forceinline__ __device__ T operator()(T* addr, T const& update_value, DeviceMax op)
-    requires(!cuda::std::is_integral_v<T> || cuda::std::is_same_v<T, bool>)
+    requires(not cudf::concepts::integral_not_bool<T>)
   {
     cuda::atomic_ref<T> atomic_addr(*addr);
     T old_value = atomic_addr.load(cuda::memory_order_relaxed);
@@ -155,18 +154,16 @@ struct typesAtomicCASImpl {
  *
  * @returns The old value at `address`
  */
-template <typename T, typename BinaryOp>
+template <cudf::concepts::arithmetic T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_numeric<T>())
 {
   auto fun = cudf::detail::genericAtomicOperationImpl<T, BinaryOp>{};
   return T(fun(address, update_value, op));
 }
 
 // specialization for cudf::detail::timestamp types
-template <typename T, typename BinaryOp>
+template <cudf::concepts::timestamp T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_timestamp<T>())
 {
   using R = typename T::rep;
   // Unwrap the input timestamp to its underlying duration value representation.
@@ -177,9 +174,8 @@ T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_
 }
 
 // specialization for cudf::detail::duration types
-template <typename T, typename BinaryOp>
+template <cudf::concepts::duration T, typename BinaryOp>
 T __forceinline__ __device__ genericAtomicOperation(T* address, T const& update_value, BinaryOp op)
-  requires(cudf::is_duration<T>())
 {
   using R = typename T::rep;
   // Unwrap the input duration to its underlying duration value representation.

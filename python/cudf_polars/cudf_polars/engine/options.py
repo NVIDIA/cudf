@@ -141,7 +141,7 @@ class StreamingOptions:
     num_streaming_threads
         Threads used to execute coroutines.
         Env: ``RAPIDSMPF_NUM_STREAMING_THREADS``.
-        Default: ``1``.
+        Default: ``4``.
         Category: rapidsmpf.
     num_streams
         CUDA streams for concurrent GPU execution.
@@ -172,7 +172,8 @@ class StreamingOptions:
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
-        Default: ``True``.
+        Default: ``True`` if the system supports pinned memory resources,
+        otherwise ``False``.
         Category: rapidsmpf.
     pinned_initial_pool_size
         Initial pinned memory pool size (bytes).
@@ -447,11 +448,11 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
@@ -459,7 +460,7 @@ class StreamingOptions:
     parallel_sink_batches: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
     )
-    quent_context: QuentConfig | None | Unspecified = _opt(
+    quent_context: QuentConfig | Unspecified | None = _opt(
         "executor",
     )
 
@@ -675,7 +676,7 @@ class StreamingOptions:
             type=int,
             help=textwrap.dedent("""\
                 Number of threads used to execute coroutines. Must be > 0.
-                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 1."""),
+                Env: RAPIDSMPF_NUM_STREAMING_THREADS. Built-in default: 4."""),
         )
         g.add_argument(
             "--num-streams",
@@ -730,7 +731,7 @@ class StreamingOptions:
             action=argparse.BooleanOptionalAction,
             help=textwrap.dedent("""\
                 Enable pinned host memory if available on the system.
-                Env: RAPIDSMPF_PINNED_MEMORY. Default: true."""),
+                Env: RAPIDSMPF_PINNED_MEMORY. Default: true if supported."""),
         )
         g.add_argument(
             "--pinned-initial-pool-size",

@@ -7,9 +7,9 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -111,7 +111,7 @@ struct device_bloom_filter {
    *
    * @return Mask vector to be used for filtering the table.
    */
-  [[nodiscard]] rmm::device_uvector<bool> contains(cudf::table_view const& values,
+  [[nodiscard]] cuda::device_buffer<bool> contains(cudf::table_view const& values,
                                                    cuda::stream_ref stream,
                                                    rmm::device_async_resource_ref mr) const;
 

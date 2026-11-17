@@ -16,12 +16,14 @@ suite, and is composed of multiple sub-projects:
      - A Python library providing a `pandas <https://pandas.pydata.org/>`_-like DataFrame API and a zero-code change accelerator, :doc:`cudf.pandas <cudf_pandas/index>`, for existing pandas code.
    * - :doc:`cudf-polars <cudf_polars/index>`
      - A Python library providing a GPU engine for `Polars <https://pola.rs/>`_.
-   * - :doc:`dask-cudf <dask-cudf:index>`
+   * - :dask-cudf-doc:`dask-cudf <index.html>`
      - A Python library providing a GPU backend for `Dask <https://www.dask.org/>`_ DataFrames.
    * - :doc:`libcudf <libcudf/index>`
      - A CUDA C++ library with `Apache Arrow <https://arrow.apache.org/>`_ compliant data structures and fundamental algorithms for tabular data.
    * - :doc:`pylibcudf <pylibcudf/index>`
      - A Python library providing `Cython <https://cython.org/>`_ bindings for libcudf.
+   * - :doc:`cuDF Java <java/index>`
+     - A Java library providing JNI bindings for libcudf.
 
 Accelerated Data Engines and Tools
 ----------------------------------
@@ -68,6 +70,7 @@ to get up-and-running with cuDF.
    cudf_polars/index
    libcudf/index
    pylibcudf/index
+   Java <java/index>
 
 .. toctree::
    :maxdepth: 1

@@ -967,6 +967,30 @@ def test_csv_reader_dtype_inference_whitespace():
     assert list(cu_df.columns.values) == list(pd_df.columns.values)
 
 
+@pytest.mark.parametrize(
+    "buffer",
+    [
+        'c0\n"-1"\n',
+        'c0\n"1.5"\n',
+        'c0\n"true"\n"false"\n',
+        'c0\n"inf"\n"-inf"\n',
+        'c0\n1\n"2"\n',
+        'c0\n"1"\n2.5\n',
+        'c0\n"1" \n',
+        'c0\n"1"\nabc\n',
+        'c0,c1,c2\n"1","2.5","x"\n',
+        'c0\n5"\n12"\n',
+        'c0\n "1"\n',
+    ],
+)
+@pytest.mark.parametrize("quoting", [csv.QUOTE_MINIMAL, csv.QUOTE_NONE])
+def test_csv_reader_dtype_inference_quotes(buffer, quoting):
+    cu_df = read_csv(StringIO(buffer), quoting=quoting)
+    pd_df = pd.read_csv(StringIO(buffer), quoting=quoting)
+
+    assert_eq(cu_df, pd_df)
+
+
 def test_csv_reader_empty_dataframe():
     dtypes = ["float64", "int64"]
     buffer = "float_point, integer"

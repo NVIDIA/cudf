@@ -7,6 +7,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/nanoarrow_utils.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column.hpp>
@@ -14,10 +15,12 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/interop.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/interop.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 
 #include <cuda/iterator>
 
@@ -39,13 +42,13 @@ bool is_valid(void const* validity_buffer, cudf::size_type index)
 }  // namespace
 
 struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   void compare_subset(ArrowArrayView const* expected,
                       int64_t start_offset_expected,
                       ArrowArrayView const* actual,
                       int64_t start_offset_actual,
                       int64_t length)
-    requires(cudf::is_fixed_width<T>() and !std::is_same_v<T, bool>)
+    requires(not cudf::concepts::boolean<T>)
   {
     for (int64_t i = 0; i < length; ++i) {
       bool const is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
@@ -59,13 +62,12 @@ struct BaseToArrowHostFixture : public cudf::test::BaseFixture {
     }
   }
 
-  template <typename T>
+  template <cudf::concepts::string_view T>
   void compare_subset(ArrowArrayView const* expected,
                       int64_t start_offset_expected,
                       ArrowArrayView const* actual,
                       int64_t start_offset_actual,
                       int64_t length)
-    requires(std::is_same_v<T, cudf::string_view>)
   {
     for (int64_t i = 0; i < length; ++i) {
       bool const is_null = ArrowArrayViewIsNull(expected, start_offset_expected + i);
@@ -342,6 +344,39 @@ TEST_F(ToArrowHostDeviceTest, EmptyDictionary)
   auto dictionary = got_arrow_host->array.children[0]->dictionary;
   ASSERT_NE(dictionary, nullptr);
   EXPECT_EQ(dictionary->n_children, 0);
+}
+
+TEST_F(ToArrowHostDeviceTest, EmptyDictionaryWithKeys)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b"});
+  auto empty    = cudf::empty_like(input);
+  auto const tv = cudf::table_view({empty->view()});
+
+  auto schema       = cudf::to_arrow_schema(tv, cudf::interop::get_table_metadata(tv));
+  auto arrow        = cudf::to_arrow_host(tv);
+  auto roundtripped = cudf::from_arrow_host(schema.get(), arrow.get());
+  auto const after  = cudf::dictionary_column_view(roundtripped->view().column(0));
+
+  EXPECT_EQ(after.size(), 0);
+  ASSERT_EQ(after.parent().num_children(), 2);
+  EXPECT_EQ(after.keys().type().id(), cudf::type_id::STRING);
+}
+
+TEST_F(ToArrowHostDeviceTest, EmptySlicedDictionary)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b", "c"});
+  auto const tv = cudf::table_view({cudf::slice(input, {1, 1}).front()});
+
+  auto arrow = cudf::to_arrow_host(tv);
+  ASSERT_NE(arrow->array.children[0]->dictionary, nullptr);
+  EXPECT_EQ(arrow->array.children[0]->length, 0);
+  EXPECT_EQ(arrow->array.children[0]->dictionary->length, 0);
+
+  auto schema       = cudf::to_arrow_schema(tv, cudf::interop::get_table_metadata(tv));
+  auto roundtripped = cudf::from_arrow_host(schema.get(), arrow.get());
+  auto const after  = cudf::dictionary_column_view(roundtripped->view().column(0));
+  EXPECT_EQ(after.size(), 0);
+  EXPECT_EQ(after.keys().type().id(), cudf::type_id::STRING);
 }
 
 TEST_F(ToArrowHostDeviceTest, DateTimeTable)
@@ -1262,3 +1297,5 @@ INSTANTIATE_TEST_CASE_P(ToArrowHostDeviceTest,
                                           std::make_tuple(100, 3000),
                                           std::make_tuple(0, 0),
                                           std::make_tuple(0, 3000)));
+
+CUDF_TEST_PROGRAM_MAIN()

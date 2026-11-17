@@ -11,6 +11,7 @@ from polars import __version__
 
 POLARS_VERSION = parse(__version__)
 POLARS_LOWER_BOUND = parse("2.0")
+POLARS_VERSION_LT_21 = parse("2.1") > POLARS_VERSION
 
 
 def _ensure_polars_version() -> None:

@@ -11,7 +11,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/partitioning.hpp>
@@ -438,7 +438,7 @@ void run_fixed_width_test(size_t cols,
 
   // Make a table view of the partition numbers
   constexpr cudf::data_type dtype{cudf::type_id::INT32};
-  auto d_partitions = cudf::detail::make_device_uvector(
+  auto d_partitions = cudf::detail::make_device_buffer(
     partitions, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   cudf::column_view partitions_col(dtype, rows, d_partitions.data(), nullptr, 0);
   cudf::table_view partitions_table({partitions_col});

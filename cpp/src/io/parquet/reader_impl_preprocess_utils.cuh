@@ -8,7 +8,9 @@
 #include "reader_impl_chunking.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 
@@ -69,18 +71,7 @@ void generate_depth_remappings(
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-/**
- * @brief Return the number of total pages from the given column chunks.
- *
- * @param chunks Host-device span of column chunk descriptors
- * @param stream CUDA stream used for device memory operations and kernel launches
- *
- * @return The total number of pages
- */
-[[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        cuda::stream_ref stream);
+  cudf::memory_resources mr);
 
 /**
  * @brief Count the total number of pages using page index information.
@@ -115,17 +106,27 @@ std::string encoding_to_string(Encoding encoding);
                                                      cuda::stream_ref stream);
 
 /**
- * @brief Decode the page information for a given pass.
+ * @brief Count and decode the page headers of a given pass using the offset index
  *
  * @param pass The struct containing pass information
- * @param unsorted_pages Device span of page information to decode
- * @param has_offset_index Boolean indicating if the offset index is available
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Unsorted decoded pages
  */
-void decode_page_headers(pass_intermediate_data& pass,
-                         device_span<PageInfo> unsorted_pages,
-                         bool has_offset_index,
-                         cuda::stream_ref stream);
+[[nodiscard]] cuda::device_buffer<PageInfo> decode_page_headers_with_pgidx(
+  pass_intermediate_data& pass, cuda::stream_ref stream, cudf::memory_resources mr);
+
+/**
+ * @brief Count and decode the page headers of a given pass by walking its column chunks
+ *
+ * @param pass The struct containing pass information
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Unsorted decoded pages
+ */
+[[nodiscard]] cuda::device_buffer<PageInfo> decode_page_headers(pass_intermediate_data& pass,
+                                                                cuda::stream_ref stream,
+                                                                cudf::memory_resources mr);
 
 /**
  * @brief Decode page information using one exact span per logical indexed page
@@ -136,11 +137,13 @@ void decode_page_headers(pass_intermediate_data& pass,
  * @param unsorted_pages Device span of page information to decode
  * @param page_data Host span of page data device spans, one per logical indexed page
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
  */
-void decode_page_headers(pass_intermediate_data& pass,
-                         device_span<PageInfo> unsorted_pages,
-                         std::span<cudf::device_span<uint8_t const> const> page_data,
-                         cuda::stream_ref stream);
+void decode_sparse_page_headers(pass_intermediate_data& pass,
+                                device_span<PageInfo> unsorted_pages,
+                                std::span<cudf::device_span<uint8_t const> const> page_data,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr);
 
 /**
  * @brief Check if the column chunk has a string (byte array or FLBA) type

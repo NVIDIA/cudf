@@ -5,8 +5,6 @@
 
 #pragma once
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/stream>
 
 namespace cudf {

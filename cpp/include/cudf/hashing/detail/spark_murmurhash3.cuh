@@ -9,10 +9,11 @@
 #include <cudf/hashing/detail/hash_functions.cuh>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 
 #include <cuda/std/array>
 #include <cuda/std/bit>
+#include <cuda/std/concepts>
 #include <cuda/std/cstddef>
 #include <cuda/std/type_traits>
 
@@ -22,7 +23,7 @@
 namespace cudf::hashing::detail {
 
 template <typename Key>
-  requires(not cudf::is_nested<Key>())
+  requires(not cudf::concepts::nested<Key>)
 struct Spark_MurmurHash3_x86_32 {
  private:
   static constexpr std::size_t BLOCK_SIZE = 4;
@@ -91,7 +92,7 @@ struct Spark_MurmurHash3_x86_32 {
    * matching Spark's tail-byte handling.
    */
   template <typename BlockFn, typename ByteFn>
-    requires(cuda::std::is_same_v<int8_t, cuda::std::invoke_result_t<ByteFn, std::size_t>>)
+    requires(cuda::std::same_as<int8_t, cuda::std::invoke_result_t<ByteFn, std::size_t>>)
   [[nodiscard]] __device__ inline uint32_t hash_blocks(std::size_t length,
                                                        BlockFn extract_block,
                                                        ByteFn extract_byte) const
@@ -142,8 +143,7 @@ struct Spark_MurmurHash3_x86_32 {
    * Four-byte blocks are mixed whole. Leftover bytes are sign-extended and mixed individually,
    * matching Spark's tail-byte handling without staging an intermediate byte buffer.
    */
-  template <typename T>
-    requires(cuda::std::is_integral_v<T>)
+  template <cuda::std::integral T>
   [[nodiscard]] uint32_t __device__ inline hash_low_bytes(T value, std::size_t length) const
   {
     return hash_blocks(

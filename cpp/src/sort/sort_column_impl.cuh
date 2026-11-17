@@ -10,6 +10,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/indexalator.cuh>
+#include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -22,8 +23,10 @@
 
 #include <cub/device/device_merge_sort.cuh>
 #include <cuda/buffer>
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/execution>
+#include <cuda/std/optional>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/gather.h>
@@ -163,14 +166,16 @@ template <sort_method method>
 struct column_sorted_order_fn {
  private:
   template <typename Comparator>
-  void merge_sort(mutable_column_view& indices, Comparator comp, cuda::stream_ref stream)
+  void merge_sort(mutable_column_view& indices,
+                  Comparator comp,
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
   {
     auto in_keys  = cuda::counting_iterator<cudf::size_type>{0};
     auto out_keys = indices.begin<size_type>();
     auto env      = cuda::std::execution::env{
       cuda::std::execution::prop{cuda::get_stream_t{}, stream},
-      cuda::std::execution::prop{cuda::mr::get_memory_resource_t{},
-                                 cudf::get_current_device_resource_ref()}};
+      cuda::std::execution::prop{cuda::mr::get_memory_resource_t{}, temp_mr}};
     if constexpr (method == sort_method::STABLE) {
       CUDF_CUDA_TRY(
         cub::DeviceMergeSort::StableSortKeysCopy(in_keys, out_keys, indices.size(), comp, env));
@@ -186,12 +191,12 @@ struct column_sorted_order_fn {
                                 mutable_column_view& indices,
                                 bool ascending,
                                 null_order null_precedence,
-                                cuda::stream_ref stream)
+                                cuda::stream_ref stream,
+                                rmm::device_async_resource_ref temp_mr)
   {
-    auto prefixes = cuda::device_buffer<PrefixKey>(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-    auto rows = cuda::counting_iterator<cudf::size_type>{0};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    auto prefixes = cuda::device_buffer<PrefixKey>(stream, temp_mr, input.size(), cuda::no_init);
+    auto rows     = cuda::counting_iterator<cudf::size_type>{0};
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
                       rows,
                       rows + input.size(),
                       prefixes.begin(),
@@ -199,7 +204,7 @@ struct column_sorted_order_fn {
 
     auto comp = string_prefix_comparator<PrefixKey, has_nulls>{
       keys, prefixes.data(), ascending, null_precedence};
-    merge_sort(indices, comp, stream);
+    merge_sort(indices, comp, stream, temp_mr);
   }
 
   template <typename PrefixKey>
@@ -207,27 +212,28 @@ struct column_sorted_order_fn {
                            mutable_column_view& indices,
                            bool ascending,
                            null_order null_precedence,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           rmm::device_async_resource_ref temp_mr)
   {
     // A non-null strings column with no chars buffer contains only empty strings. Checking the
     // buffer pointer avoids the host synchronization required to read the terminal offset.
     auto const all_values_equal =
       not input.has_nulls() and strings_column_view{input}.chars_begin(stream) == nullptr;
     if (input.size() < 2 or input.null_count() == input.size() or all_values_equal) {
-      thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::sequence(rmm::exec_policy_nosync(stream, temp_mr),
                        indices.begin<size_type>(),
                        indices.end<size_type>(),
                        size_type{0});
       return;
     }
 
-    auto keys = column_device_view::create(input, stream);
+    auto keys = column_device_view::create(input, stream, temp_mr);
     if (input.has_nulls()) {
       prefix_sorted_order_impl<PrefixKey, true>(
-        input, *keys, indices, ascending, null_precedence, stream);
+        input, *keys, indices, ascending, null_precedence, stream, temp_mr);
     } else {
       prefix_sorted_order_impl<PrefixKey, false>(
-        input, *keys, indices, ascending, null_precedence, stream);
+        input, *keys, indices, ascending, null_precedence, stream, temp_mr);
     }
   }
 
@@ -248,14 +254,15 @@ struct column_sorted_order_fn {
                     mutable_column_view& indices,
                     bool ascending,
                     null_order null_precedence,
-                    cuda::stream_ref stream)
+                    cuda::stream_ref stream,
+                    rmm::device_async_resource_ref temp_mr)
   {
     if constexpr (std::is_same_v<T, string_view>) {
-      prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream);
+      prefix_sorted_order<uint64_t>(input, indices, ascending, null_precedence, stream, temp_mr);
     } else {
-      auto keys = column_device_view::create(input, stream);
+      auto keys = column_device_view::create(input, stream, temp_mr);
       auto comp = simple_comparator<T>{*keys, input.has_nulls(), ascending, null_precedence};
-      merge_sort(indices, comp, stream);
+      merge_sort(indices, comp, stream, temp_mr);
     }
   }
 
@@ -265,14 +272,20 @@ struct column_sorted_order_fn {
                   mutable_column_view& indices,
                   bool ascending,
                   null_order null_precedence,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
   {
-    sorted_order<T>(input, indices, ascending, null_precedence, stream);
+    sorted_order<T>(input, indices, ascending, null_precedence, stream, temp_mr);
   }
 
   template <typename T>
     requires(not cudf::is_relationally_comparable<T, T>())
-  void operator()(column_view const&, mutable_column_view&, bool, null_order, cuda::stream_ref)
+  void operator()(column_view const&,
+                  mutable_column_view&,
+                  bool,
+                  null_order,
+                  cuda::stream_ref,
+                  cudf::memory_resources)
   {
     CUDF_FAIL("Column type must be relationally comparable");
   }
@@ -283,41 +296,54 @@ struct column_sorted_order_fn {
                   mutable_column_view& indices,
                   bool ascending,
                   null_order null_precedence,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  rmm::device_async_resource_ref temp_mr)
   {
     auto const keys = dictionary_column_view(input).keys();
     // For the keys we do an arg-sort of arg-sort to get the rank and use that as a map
     // to sort the indices in rank order.
     // First, get sorted-order of just the keys (slow but expect keys.size <<< indices.size)
-    auto temp_mr = cudf::get_current_device_resource_ref();
-    auto ordered_indices =
-      cudf::detail::sorted_order<method>(keys, order::ASCENDING, null_precedence, stream, temp_mr);
+    auto ordered_indices = cudf::detail::sorted_order<method>(
+      keys, order::ASCENDING, null_precedence, stream, {temp_mr, temp_mr});
     // Now, sort the ordered indices to get their ordered positions (very fast integer sort)
     ordered_indices = cudf::detail::sorted_order<method>(
-      ordered_indices->view(), order::ASCENDING, null_precedence, stream, temp_mr);
-    // And use the result as a map over the dictionary indices
+      ordered_indices->view(), order::ASCENDING, null_precedence, stream, {temp_mr, temp_mr});
+    // And use the result as a map over the dictionary indices.
+    // The annotated indices include the input's offset and null mask; null rows are not
+    // used to access the map since their index values are undefined (and the keys may be empty)
     auto map = ordered_indices->view().template data<size_type>();
-    auto itr = cudf::detail::indexalator_factory::make_input_iterator(
-      dictionary_column_view(input).indices());
-    auto mapped_indices = cuda::device_buffer<size_type>(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-    thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                   itr,
-                   itr + input.size(),
-                   map,
-                   mapped_indices.begin());
+    auto itr = cudf::detail::indexalator_factory::make_input_optional_iterator(
+      dictionary_column_view(input).get_indices_annotated());
+    auto mapped_indices =
+      cuda::device_buffer<size_type>(stream, temp_mr, input.size(), cuda::no_init);
+    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+                      itr,
+                      itr + input.size(),
+                      mapped_indices.begin(),
+                      cuda::proclaim_return_type<size_type>(
+                        [map] __device__(cuda::std::optional<size_type> const& idx) -> size_type {
+                          return idx.has_value() ? map[idx.value()] : size_type{0};
+                        }));
+
+    // The mapped values begin at offset 0 so the null mask of a sliced input must be copied
+    // to align with them
+    auto const copy_mask   = input.offset() > 0 && input.has_nulls();
+    auto const null_mask   = copy_mask
+                               ? cudf::detail::copy_bitmask(input, stream, {temp_mr, temp_mr})
+                               : cuda::device_buffer<bitmask_type>(stream, temp_mr, 0, cuda::no_init);
+    auto const d_null_mask = copy_mask ? null_mask.data() : input.null_mask();
 
     // Finally, sort-order the dictionary indices using mapped values
     auto mapped_view = column_view(data_type{type_to_id<size_type>()},
                                    input.size(),
                                    mapped_indices.data(),
-                                   input.null_mask(),
+                                   d_null_mask,
                                    input.null_count());
     // these should be very fast since they are sorting integers
     if (input.has_nulls()) {
-      sorted_order<size_type>(mapped_view, indices, ascending, null_precedence, stream);
+      sorted_order<size_type>(mapped_view, indices, ascending, null_precedence, stream, temp_mr);
     } else {
-      sorted_order_radix(mapped_view, indices, ascending, stream);
+      sorted_order_radix(mapped_view, indices, ascending, stream, temp_mr);
     }
   }
 };

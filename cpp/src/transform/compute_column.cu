@@ -19,6 +19,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -31,9 +32,9 @@ namespace detail {
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
-  if (get_context().use_jit()) { return compute_column_jit(table, expr, stream, mr); }
+  if (get_context().use_jit()) { return compute_column_jit(table, expr, {}, stream, mr); }
 
   // If evaluating the expression may produce null outputs we create a nullable
   // output column and follow the null-supporting expression evaluation code
@@ -115,7 +116,7 @@ std::unique_ptr<column> compute_column(table_view const& table,
 std::unique_ptr<column> compute_column(table_view const& table,
                                        ast::expression const& expr,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::compute_column(table, expr, stream, mr);

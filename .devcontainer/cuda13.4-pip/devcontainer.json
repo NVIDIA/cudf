@@ -5,7 +5,7 @@
     "args": {
       "CUDA": "13.4",
       "PYTHON_PACKAGE_MANAGER": "pip",
-      "BASE": "rapidsai/devcontainers:26.12-cpp-cuda13.4-ucx1.21.0-openmpi5.0.10"
+      "BASE": "rapidsai/devcontainers:26.12-cpp-cuda13.4-ucx1.21.1-openmpi5.0.10"
     },
     "cacheFrom": [
       "ghcr.io/nvidia/cudf/devcontainer:26.12-cuda13.4-pip"

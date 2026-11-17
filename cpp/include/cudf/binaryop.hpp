@@ -110,34 +110,40 @@ enum class binary_operator : int32_t {
 template <typename L, typename R>
 struct binary_op_common_type {};
 
-/// @cond
-// Sphinx cannot parse constrained partial specializations or requires expressions
+/// Binary operation common type specialization
 template <typename L, typename R>
   requires(has_common_type_v<L, R>)
 struct binary_op_common_type<L, R> {
+  /// The common type of the template parameters
   using type = std::common_type_t<L, R>;
 };
 
+/// Binary operation common type specialization
 template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
 struct binary_op_common_type<L, R> {
+  /// The common type of the template parameters
   using type = L;
 };
 
+/// Binary operation common type specialization
 template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
 struct binary_op_common_type<L, R> {
+  /// The common type of the template parameters
   using type = R;
 };
-/// @endcond
 
 /// Binary operation common type helper
 template <typename L, typename R>
 using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
 
-/// @cond
+namespace detail {
 template <typename L, typename R>
-constexpr inline bool binary_op_has_common_type_v =
-  requires { typename binary_op_common_type_t<L, R>; };
-/// @endcond
+concept binary_op_has_common_type_impl = requires { typename binary_op_common_type_t<L, R>; };
+}  // namespace detail
+
+/// Checks if binary operation types have a common type
+template <typename L, typename R>
+constexpr inline bool binary_op_has_common_type_v = detail::binary_op_has_common_type_impl<L, R>;
 
 /**
  * @brief Performs a binary operation between a scalar and a column.

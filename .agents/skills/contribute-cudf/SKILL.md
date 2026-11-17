@@ -78,9 +78,9 @@ Keep test code small by extending and reusing what exists. Follow how the tests 
 
 Read `git diff $BASE` hunk by hunk, leaving code it only moves as it was.
 
-- Every hunk must be needed for the PR's one purpose. Revert drive-by refactors, restyled statements, include churn, files your tools left behind, and anything added for a later PR.
+- Keep the PR to one purpose. A small cleanup in code you are already changing is fine; keep such changes to a few percent of the diff and move anything larger to its own PR. Revert restyled statements, include churn, files your tools left behind, and anything added for a later PR.
 - For each guard, fallback, cast, default, optional parameter, and branch the diff adds, name the caller or input that reaches it, and delete it if there is none. Users are the callers of a public API, so its argument checks, defaults, and unsupported-type failures stay. Delete unused includes, parameters, and locals, functions with no caller, and anything left from an approach you abandoned.
-- Outside the Doxygen and docstrings the guidelines require, write a comment only where the code cannot explain itself, and keep it to a line or two of why. Delete comments that restate the code or narrate the change, the bug, or the previous code. Re-check `@param`, `@return`, and docstrings against the final signatures.
+- Public APIs need the Doxygen or docstring the guides require. Internal and local helpers need no documentation beyond a comment where the code cannot explain itself, a line or two of why. Delete comments that restate the code or narrate the change, the bug, or the previous code.
 
 ## 5. Verify before pushing
 

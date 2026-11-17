@@ -8,6 +8,7 @@
 
 #include <cuda/numeric>
 
+#include <array>
 #include <charconv>
 #include <cstdint>
 #include <format>
@@ -36,24 +37,25 @@ std::uint64_t parse_size(std::string_view input, std::string_view identifier, bo
                std::format("{} must be nonzero. Received '{}'", identifier, input),
                std::invalid_argument);
 
-  constexpr struct {
+  struct unit {
     std::string_view name;
     std::uint64_t bytes;
-  } units[] = {{"", 1},
-               {"B", 1},
-               {"kB", 1'000},
-               {"KB", 1'000},
-               {"MB", 1'000'000},
-               {"GB", 1'000'000'000},
-               {"TB", 1'000'000'000'000},
-               {"PB", 1'000'000'000'000'000},
-               {"EB", 1'000'000'000'000'000'000},
-               {"KiB", std::uint64_t{1} << 10},
-               {"MiB", std::uint64_t{1} << 20},
-               {"GiB", std::uint64_t{1} << 30},
-               {"TiB", std::uint64_t{1} << 40},
-               {"PiB", std::uint64_t{1} << 50},
-               {"EiB", std::uint64_t{1} << 60}};
+  };
+  constexpr auto units = std::to_array<unit>({{"", 1},
+                                              {"B", 1},
+                                              {"kB", 1'000},
+                                              {"KB", 1'000},
+                                              {"MB", 1'000'000},
+                                              {"GB", 1'000'000'000},
+                                              {"TB", 1'000'000'000'000},
+                                              {"PB", 1'000'000'000'000'000},
+                                              {"EB", 1'000'000'000'000'000'000},
+                                              {"KiB", std::uint64_t{1} << 10},
+                                              {"MiB", std::uint64_t{1} << 20},
+                                              {"GiB", std::uint64_t{1} << 30},
+                                              {"TiB", std::uint64_t{1} << 40},
+                                              {"PiB", std::uint64_t{1} << 50},
+                                              {"EiB", std::uint64_t{1} << 60}});
 
   auto suffix = input.substr(end - input.data());
 

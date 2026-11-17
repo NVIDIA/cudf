@@ -346,6 +346,9 @@ class data_profile {
         if constexpr (cuda::std::floating_point<T>) {
           return bounded_round(value, range);
         } else {
+          if constexpr (cuda::std::unsigned_integral<T>) {
+            if (value > static_cast<__uint128_t>(range.second)) { return range.second; }
+          }
           return std::clamp(static_cast<__int128_t>(value), range.first, range.second);
         }
       };

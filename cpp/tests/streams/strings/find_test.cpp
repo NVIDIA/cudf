@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -24,6 +24,8 @@ TEST_F(StringsFindTest, Find)
   auto const target = cudf::string_scalar("é", true, cudf::test::get_default_stream());
   cudf::strings::find(view, target, 0, -1, cudf::test::get_default_stream());
   cudf::strings::rfind(view, target, 0, -1, cudf::test::get_default_stream());
+  cudf::strings::find_bytes(view, target, 0, -1, cudf::test::get_default_stream());
+  cudf::strings::rfind_bytes(view, target, 0, -1, cudf::test::get_default_stream());
   cudf::strings::find(view, view, 0, cudf::test::get_default_stream());
   cudf::strings::find_multiple(view, view, cudf::test::get_default_stream());
   cudf::strings::contains(view, target, cudf::test::get_default_stream());
@@ -38,4 +40,5 @@ TEST_F(StringsFindTest, Find)
   auto const prog    = cudf::strings::regex_program::create(pattern);
   cudf::strings::findall(view, *prog, cudf::test::get_default_stream());
   cudf::strings::find_re(view, *prog, cudf::test::get_default_stream());
+  cudf::strings::find_re_bytes(view, *prog, cudf::test::get_default_stream());
 }

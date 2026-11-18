@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libcpp.memory cimport unique_ptr
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -18,6 +18,12 @@ cdef extern from "cudf/strings/findall.hpp" namespace "cudf::strings" nogil:
         device_async_resource_ref mr) except +libcudf_exception_handler
 
     cdef unique_ptr[column] find_re(
+        column_view input,
+        regex_program prog,
+        cudaStream_t stream,
+        device_async_resource_ref mr) except +libcudf_exception_handler
+
+    cdef unique_ptr[column] find_re_bytes(
         column_view input,
         regex_program prog,
         cudaStream_t stream,

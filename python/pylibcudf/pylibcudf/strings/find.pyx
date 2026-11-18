@@ -21,7 +21,15 @@ from cython.operator import dereference
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from cuda.bindings.cyruntime cimport cudaStream_t
 
-__all__ = ["contains", "ends_with", "find", "rfind", "starts_with"]
+__all__ = [
+    "contains",
+    "ends_with",
+    "find",
+    "find_bytes",
+    "rfind",
+    "rfind_bytes",
+    "starts_with",
+]
 
 cpdef Column find(
     Column input,
@@ -137,6 +145,112 @@ cpdef Column rfind(
     cdef column_view c_input = input.view()
     with nogil:
         result = cpp_find.rfind(
+            c_input,
+            dereference(<string_scalar*>(target.c_obj.get())),
+            start,
+            stop,
+            _cs,
+            mr.get_mr()
+        )
+    return Column.from_libcudf(move(result), _stream, mr)
+
+
+cpdef Column find_bytes(
+    Column input,
+    Scalar target,
+    size_type start=0,
+    size_type stop=-1,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Returns a column of byte offsets where the target string is first found
+    in each string.
+
+    This is the same as :py:func:`find` except that ``start``, ``stop`` and
+    the returned values are byte offsets instead of character positions.
+
+    For details, see :cpp:func:`find_bytes`.
+
+    Parameters
+    ----------
+    input : Column
+        The input strings
+    target : Scalar
+        String to search for in each string
+    start : size_type
+        First byte offset to include in the search
+    stop : size_type
+        Last byte offset (exclusive) to include in the search. Default of -1
+        will search to the end of the string.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+
+    Returns
+    -------
+    pylibcudf.Column
+        New integer column with byte offset values
+    """
+    cdef unique_ptr[column] result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
+    with nogil:
+        result = cpp_find.find_bytes(
+            c_input,
+            dereference(<string_scalar*>(target.c_obj.get())),
+            start,
+            stop,
+            _cs,
+            mr.get_mr()
+        )
+    return Column.from_libcudf(move(result), _stream, mr)
+
+
+cpdef Column rfind_bytes(
+    Column input,
+    Scalar target,
+    size_type start=0,
+    size_type stop=-1,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """
+    Returns a column of byte offsets where the target string is first found
+    searching from the end of each string.
+
+    This is the same as :py:func:`rfind` except that ``start``, ``stop`` and
+    the returned values are byte offsets instead of character positions.
+
+    For details, see :cpp:func:`rfind_bytes`.
+
+    Parameters
+    ----------
+    input : Column
+        The input strings
+    target : Scalar
+        String to search for in each string
+    start : size_type
+        First byte offset to include in the search
+    stop : size_type
+        Last byte offset (exclusive) to include in the search. Default of -1
+        will search to the end of the string.
+    stream : Stream | None
+        CUDA stream on which to perform the operation.
+
+    Returns
+    -------
+    pylibcudf.Column
+        New integer column with byte offset values
+    """
+    cdef unique_ptr[column] result
+    cdef Stream _stream = _get_stream(stream)
+    cdef cudaStream_t _cs = _stream.view().get()
+    mr = _get_memory_resource(mr)
+    cdef column_view c_input = input.view()
+    with nogil:
+        result = cpp_find.rfind_bytes(
             c_input,
             dereference(<string_scalar*>(target.c_obj.get())),
             start,

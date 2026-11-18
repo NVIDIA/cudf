@@ -178,6 +178,115 @@ TEST_F(StringsFindTest, FindLongStrings)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
 }
 
+TEST_F(StringsFindTest, FindBytes)
+{
+  cudf::test::strings_column_wrapper input({"ÄbÇ", "日本b", "abc", "x", "", "ÄbÇb", ""},
+                                           {true, true, true, true, true, true, false});
+  auto view = cudf::strings_column_view(input);
+
+  auto results  = cudf::strings::find_bytes(view, cudf::string_scalar("b"));
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {2, 6, 1, -1, -1, 2, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  results  = cudf::strings::rfind_bytes(view, cudf::string_scalar("b"));
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {2, 6, 1, -1, -1, 5, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // a multi-byte target
+  results  = cudf::strings::find_bytes(view, cudf::string_scalar("Ç"));
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {3, -1, -1, -1, -1, 3, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // start and stop are byte offsets too
+  results  = cudf::strings::find_bytes(view, cudf::string_scalar("b"), 3);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {-1, 6, -1, -1, -1, 5, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  results  = cudf::strings::rfind_bytes(view, cudf::string_scalar("b"), 0, 5);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {2, -1, 1, -1, -1, 2, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // empty target
+  results  = cudf::strings::find_bytes(view, cudf::string_scalar(""), 1);
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {1, 1, 1, 1, -1, 1, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  results  = cudf::strings::rfind_bytes(view, cudf::string_scalar(""));
+  expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {5, 7, 3, 1, 0, 6, -1}, {true, true, true, true, true, true, false});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+namespace {
+/**
+ * @brief Host reference for find_bytes/rfind_bytes: std::string positions are byte offsets
+ */
+cudf::size_type find_bytes_reference(
+  std::string const& str, std::string const& tgt, int start, int stop, bool forward)
+{
+  auto const size = static_cast<int>(str.size());
+  auto const end  = (stop < 0 || stop > size) ? size : stop;
+  if (tgt.empty()) {
+    if (start > size) { return -1; }
+    return forward ? start : end;
+  }
+  if (start + static_cast<int>(tgt.size()) > end) { return -1; }
+  auto const range = str.substr(0, end);
+  auto const pos   = forward ? range.find(tgt, start) : range.rfind(tgt);
+  return (pos == std::string::npos || static_cast<int>(pos) < start)
+           ? -1
+           : static_cast<cudf::size_type>(pos);
+}
+}  // namespace
+
+TEST_F(StringsFindTest, FindBytesReference)
+{
+  // Short rows use the thread-per-row path and long rows the warp-per-row path
+  std::vector<std::string> const pieces{"a", "b", "é", "日本", "ab", "𝞃", " ", "xyz"};
+  std::vector<std::string> const targets{"b", "é", "日本", "ab", "bé", "𝞃 ", "z"};
+  std::mt19937 rng(17);
+  for (auto row_pieces : {4, 120}) {
+    std::vector<std::string> h_strings;
+    for (int i = 0; i < 40; ++i) {
+      std::string str;
+      auto const count = std::uniform_int_distribution<int>(0, row_pieces)(rng);
+      for (int j = 0; j < count; ++j) {
+        str += pieces[std::uniform_int_distribution<std::size_t>(0, pieces.size() - 1)(rng)];
+      }
+      h_strings.push_back(str);
+    }
+    cudf::test::strings_column_wrapper input(h_strings.begin(), h_strings.end());
+    auto view = cudf::strings_column_view(input);
+
+    for (auto const& tgt : targets) {
+      for (auto start : {0, 1, 2, 5, 40}) {
+        for (auto stop : {-1, 3, 10, 61, 200}) {
+          if (stop >= 0 && start > stop) { continue; }
+          for (auto forward : {true, false}) {
+            std::vector<cudf::size_type> h_expected;
+            for (auto const& str : h_strings) {
+              h_expected.push_back(find_bytes_reference(str, tgt, start, stop, forward));
+            }
+            auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+              h_expected.begin(), h_expected.end());
+            auto const target = cudf::string_scalar(tgt);
+            auto results      = forward ? cudf::strings::find_bytes(view, target, start, stop)
+                                        : cudf::strings::rfind_bytes(view, target, start, stop);
+            SCOPED_TRACE("target='" + tgt + "' start=" + std::to_string(start) +
+                         " stop=" + std::to_string(stop) + " forward=" + std::to_string(forward) +
+                         " row_pieces=" + std::to_string(row_pieces));
+            CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(StringsFindTest, Contains)
 {
   cudf::test::strings_column_wrapper strings(
@@ -555,6 +664,12 @@ TEST_F(StringsFindTest, ErrorCheck)
 
   EXPECT_THROW(cudf::strings::find(strings_view, cudf::string_scalar(""), 2, 1), cudf::logic_error);
   EXPECT_THROW(cudf::strings::rfind(strings_view, cudf::string_scalar(""), 2, 1),
+               cudf::logic_error);
+  EXPECT_THROW(cudf::strings::find_bytes(strings_view, cudf::string_scalar(""), 2, 1),
+               cudf::logic_error);
+  EXPECT_THROW(cudf::strings::rfind_bytes(strings_view, cudf::string_scalar(""), 2, 1),
+               cudf::logic_error);
+  EXPECT_THROW(cudf::strings::find_bytes(strings_view, cudf::string_scalar("1"), -1),
                cudf::logic_error);
   EXPECT_THROW(cudf::strings::find(strings_view, targets_view), cudf::logic_error);
   EXPECT_THROW(cudf::strings::find(strings_view, strings_view, -1), cudf::logic_error);

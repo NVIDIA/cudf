@@ -18,7 +18,7 @@ See the [installation guide](https://docs.nvidia.com/datascience/install/) for t
 - [Dask cuDF documentation](https://docs.nvidia.com/dask-cudf)
 - [Best practices](https://docs.nvidia.com/dask-cudf/latest/best_practices/)
 - [cuDF documentation](https://docs.nvidia.com/cudf/)
-- [10 Minutes to cuDF and Dask cuDF](https://docs.nvidia.com/cudf/latest/cudf/10min/)
+- [10 Minutes to Dask-cuDF](https://docs.nvidia.com/cudf/latest/cudf/10min_dask_cudf/)
 - [Dask-CUDA documentation](https://docs.nvidia.com/dask-cuda/)
 - [Deployment](https://docs.nvidia.com/datascience/deployment/latest/)
 - [Community resources](https://rapids.ai/learn-more/#get-involved): Get help, contribute, and collaborate.

@@ -21,6 +21,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -37,7 +38,6 @@
 #include <thrust/host_vector.h>
 
 #include <algorithm>
-#include <concepts>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -101,9 +101,8 @@ struct fixed_width_type_converter {
    * @param element Source value
    * @return The converted target value, same as source value
    */
-  template <typename FromT>
+  template <cuda::std::same_as<To> FromT>
   constexpr To operator()(FromT element) const
-    requires(std::same_as<FromT, To>)
   {
     return element;
   }
@@ -117,8 +116,8 @@ struct fixed_width_type_converter {
    */
   template <typename FromT>
   constexpr To operator()(FromT element) const
-    requires(!std::same_as<FromT, To> &&
-             (std::convertible_to<FromT, To> || std::constructible_from<To, FromT>))
+    requires(not cuda::std::same_as<FromT, To> and
+             (cuda::std::convertible_to<FromT, To> or cuda::std::constructible_from<To, FromT>))
   {
     return static_cast<To>(element);
   }
@@ -130,9 +129,9 @@ struct fixed_width_type_converter {
    * @param element Source value
    * @return The converted target `timestamp` value
    */
-  template <typename FromT>
+  template <cuda::std::integral FromT>
   constexpr To operator()(FromT element) const
-    requires(cuda::std::integral<FromT> && cudf::is_timestamp<To>())
+    requires(cudf::concepts::timestamp<To>)
   {
     return To{typename To::duration{element}};
   }
@@ -150,10 +149,7 @@ struct fixed_width_type_converter {
  * @param mr Memory resources used to allocate the returned buffer
  * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
  */
-template <typename ElementTo,
-          typename ElementFrom,
-          typename InputIterator,
-          std::enable_if_t<not cudf::is_fixed_point<ElementTo>()>* = nullptr>
+template <typename ElementTo, typename ElementFrom, typename InputIterator>
 rmm::device_buffer make_elements(InputIterator begin,
                                  InputIterator end,
                                  cuda::stream_ref stream,
@@ -170,7 +166,7 @@ rmm::device_buffer make_elements(InputIterator begin,
 }
 
 // The two signatures below are identical to the above overload apart from
-// SFINAE so doxygen sees it as a duplicate.
+// constraints so doxygen sees it as a duplicate.
 //! @cond Doxygen_Suppress
 /**
  * @brief Creates a `device_buffer` containing the elements in the range `[begin,end)`.
@@ -185,11 +181,7 @@ rmm::device_buffer make_elements(InputIterator begin,
  * @param mr Memory resources used to allocate the returned buffer
  * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
  */
-template <typename ElementTo,
-          typename ElementFrom,
-          typename InputIterator,
-          std::enable_if_t<not cudf::is_fixed_point<ElementFrom>() and
-                           cudf::is_fixed_point<ElementTo>()>* = nullptr>
+template <cudf::concepts::fixed_point ElementTo, typename ElementFrom, typename InputIterator>
 rmm::device_buffer make_elements(InputIterator begin,
                                  InputIterator end,
                                  cuda::stream_ref stream,
@@ -216,11 +208,9 @@ rmm::device_buffer make_elements(InputIterator begin,
  * @param mr Memory resources used to allocate the returned buffer
  * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
  */
-template <typename ElementTo,
-          typename ElementFrom,
-          typename InputIterator,
-          std::enable_if_t<cudf::is_fixed_point<ElementFrom>() and
-                           cudf::is_fixed_point<ElementTo>()>* = nullptr>
+template <cudf::concepts::fixed_point ElementTo,
+          cudf::concepts::fixed_point ElementFrom,
+          typename InputIterator>
 rmm::device_buffer make_elements(InputIterator begin,
                                  InputIterator end,
                                  cuda::stream_ref stream,
@@ -1504,7 +1494,7 @@ class lists_column_wrapper : public detail::column_wrapper {
   lists_column_wrapper(std::initializer_list<Element> elements,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    requires(cudf::is_fixed_width<T>() && std::is_convertible_v<Element, SourceElementT>)
+    requires(cudf::concepts::fixed_width<T> and std::is_convertible_v<Element, SourceElementT>)
     : lists_column_wrapper(elements.begin(), elements.end(), stream, mr)
   {
   }
@@ -1524,8 +1514,9 @@ class lists_column_wrapper : public detail::column_wrapper {
    */
   template <typename First, typename... Rest>
   lists_column_wrapper(First first, Rest... rest)
-    requires(cudf::is_fixed_width<T>() && (std::is_convertible_v<First, SourceElementT> && ... &&
-                                           std::is_convertible_v<Rest, SourceElementT>))
+    requires(cudf::concepts::fixed_width<T> and
+             (std::is_convertible_v<First, SourceElementT> and ... and
+              std::is_convertible_v<Rest, SourceElementT>))
     : lists_column_wrapper(std::initializer_list<SourceElementT>{
         static_cast<SourceElementT>(first), static_cast<SourceElementT>(rest)...})
   {
@@ -1579,7 +1570,7 @@ class lists_column_wrapper : public detail::column_wrapper {
                        ValidityIterator v,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    requires(cudf::is_fixed_width<T>() && std::is_convertible_v<Element, SourceElementT>)
+    requires(cudf::concepts::fixed_width<T> and std::is_convertible_v<Element, SourceElementT>)
     : lists_column_wrapper(elements.begin(), elements.end(), v, stream, mr)
   {
   }
@@ -1632,7 +1623,7 @@ class lists_column_wrapper : public detail::column_wrapper {
   lists_column_wrapper(std::initializer_list<Element> elements,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    requires(std::is_same_v<T, cudf::string_view> && std::is_constructible_v<std::string, Element>)
+    requires(cudf::concepts::string_view<T> and std::is_constructible_v<std::string, Element>)
     : lists_column_wrapper(elements.begin(), elements.end(), stream, mr)
   {
   }
@@ -1658,7 +1649,7 @@ class lists_column_wrapper : public detail::column_wrapper {
                        ValidityIterator v,
                        cuda::stream_ref stream   = cudf::test::get_default_stream(),
                        cudf::memory_resources mr = cudf::get_current_device_resource_ref())
-    requires(std::is_same_v<T, cudf::string_view> && std::is_constructible_v<std::string, Element>)
+    requires(cudf::concepts::string_view<T> and std::is_constructible_v<std::string, Element>)
     : lists_column_wrapper(elements.begin(), elements.end(), v, stream, mr)
   {
   }

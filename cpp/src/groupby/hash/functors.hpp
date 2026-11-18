@@ -10,7 +10,6 @@
 #include <cudf/detail/groupby/groupby_helper.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <cuda/stream>
 
@@ -21,13 +20,11 @@ namespace cudf {
 namespace groupby {
 namespace detail {
 /**
- * @brief Functor to dispatch aggregation with
+ * @brief Base functor that computes aggregations on one values column and caches the results
  *
- * This functor is to be used with `aggregation_dispatcher` to compute the
- * appropriate aggregation. If the values on which to run the aggregation are
- * unchanged, then this functor should be re-used. This is because it stores
- * memoised sorted and/or grouped values and re-using will save on computation
- * of these values.
+ * Derived functors are used with `aggregation_dispatcher`. Reuse one instance for every
+ * aggregation on the same values: it memoizes the grouped and sorted values so later
+ * aggregations do not compute them again.
  */
 struct store_result_functor {
   store_result_functor(column_view const& values,
@@ -46,18 +43,6 @@ struct store_result_functor {
   [[nodiscard]] bool is_presorted() const { return helper.is_presorted(); }
 
   /**
-   * @brief Check if the input values can be used as grouped values without a gather
-   *
-   * Presorted keys leave the values in grouped order. Nested values are still gathered because
-   * aggregations such as MERGE_M2 and MERGE_LISTS read their children without the offset of a
-   * sliced input.
-   */
-  [[nodiscard]] bool values_are_grouped() const
-  {
-    return is_presorted() && !cudf::is_nested(values.type());
-  }
-
-  /**
    * @brief Borrow grouped values in their original order within each group.
    *
    * Computes the grouped values from @p values on first invocation and returns
@@ -66,7 +51,8 @@ struct store_result_functor {
    */
   column_view get_grouped_values()
   {
-    if (values_are_grouped()) { return values; }
+    // Presorted keys leave the values in grouped order.
+    if (is_presorted()) { return values; }
     if (grouped_values_view) { return *grouped_values_view; }
 
     // Positional aggregations and host UDFs need input order within every group,
@@ -86,9 +72,7 @@ struct store_result_functor {
    */
   std::unique_ptr<column> release_grouped_values()
   {
-    if (values_are_grouped()) {
-      return std::make_unique<column>(values, stream, mr.get_output_mr());
-    }
+    if (is_presorted()) { return std::make_unique<column>(values, stream, mr.get_output_mr()); }
     if (!grouped_values) { grouped_values = helper.grouped_values(values, stream, mr); }
     grouped_values_view = grouped_values->view();
     return std::move(grouped_values);
@@ -104,7 +88,7 @@ struct store_result_functor {
    */
   column_view get_unordered_grouped_values()
   {
-    if (values_are_grouped()) { return values; }
+    if (is_presorted()) { return values; }
     if (grouped_values_view) { return *grouped_values_view; }
     if (grouped_values) { return grouped_values->view(); }
     if (sorted_values) { return sorted_values->view(); }

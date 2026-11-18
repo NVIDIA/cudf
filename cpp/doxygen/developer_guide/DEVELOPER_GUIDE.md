@@ -1436,13 +1436,21 @@ struct integral_or_floating_point {
 ```
 
 When several overloads are viable, the compiler picks the most constrained one, so the fallback
-overload needs no constraint. A constraint that is more than a single concept goes in a `requires`
-clause:
+overload needs no constraint. When a single concept is not enough, constrain the template parameter
+with the main concept and put the rest in a `requires` clause:
+
+```c++
+template <cudf::concepts::fixed_width ColumnType>
+  requires(not cudf::concepts::chrono<ColumnType>)
+void operator()() { std::cout << "fixed-width, but not a timestamp or duration\n"; }
+```
+
+A disjunction cannot be split this way, so it goes entirely in the `requires` clause:
 
 ```c++
 template <typename ColumnType>
-  requires(cudf::concepts::fixed_width<ColumnType> and not cudf::concepts::chrono<ColumnType>)
-void operator()() { std::cout << "fixed-width, but not a timestamp or duration\n"; }
+  requires(cudf::concepts::chrono<ColumnType> or cudf::concepts::fixed_point<ColumnType>)
+void operator()() { std::cout << "timestamp, duration, or fixed-point\n"; }
 ```
 
 Do not use `CUDF_ENABLE_IF` or `std::enable_if_t` in new code.

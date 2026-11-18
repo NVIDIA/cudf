@@ -110,27 +110,24 @@ enum class binary_operator : int32_t {
 template <typename L, typename R>
 struct binary_op_common_type {};
 
-/// Binary operation common type specialization
+/// @cond
+// Doxygen merges partial specializations that share an argument list, which breaks the Sphinx build
 template <typename L, typename R>
   requires(has_common_type_v<L, R>)
 struct binary_op_common_type<L, R> {
-  /// The common type of the template parameters
   using type = std::common_type_t<L, R>;
 };
 
-/// Binary operation common type specialization
 template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
 struct binary_op_common_type<L, R> {
-  /// The common type of the template parameters
   using type = L;
 };
 
-/// Binary operation common type specialization
 template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
 struct binary_op_common_type<L, R> {
-  /// The common type of the template parameters
   using type = R;
 };
+/// @endcond
 
 /// Binary operation common type helper
 template <typename L, typename R>

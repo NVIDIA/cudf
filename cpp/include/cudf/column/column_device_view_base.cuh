@@ -120,6 +120,22 @@ inline constexpr bool is_repr_element = false;
 template <typename T>
 inline constexpr bool is_repr_element<repr_element<T>> = true;
 
+namespace concepts {
+/**
+ * @brief Satisfied if `T` is a `dictionary_element` type.
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept dictionary_element = is_dictionary_encoded<T>;
+
+/**
+ * @brief Satisfied if `T` is a `repr_element` type.
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept repr_element = is_repr_element<T>;
+}  // namespace concepts
+
 namespace detail {
 /**
  * @brief An immutable, non-owning view of device data as a column of elements
@@ -534,16 +550,15 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    *
    * This function accounts for the offset.
    *
-   * This function does not participate in overload resolution if `is_dictionary_encoded<T>` is
-   * false.
+   * This function does not participate in overload resolution unless `T` satisfies
+   * `cudf::concepts::dictionary_element`.
    *
    * @tparam T The element type, e.g., `dictionary_element<int32_t, float>` for a dictionary column
    * with `int32_t` indices and `float` keys
    * @param element_index Position of the desired element
    * @return The element at the specified index
    */
-  template <typename T>
-    requires(is_dictionary_encoded<T>)
+  template <cudf::concepts::dictionary_element T>
   [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     auto const& indices = child(dictionary_indices_column_index);
@@ -557,12 +572,11 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @brief Reads a raw child value.
    *
    * The child must be valid. Use nullable_element<T>() to check child validity.
-   * @tparam T The raw child type, satisfying `is_repr_element<T>`
+   * @tparam T The raw child type, satisfying `cudf::concepts::repr_element`
    * @param element_index Position of the desired element in `[0, size())`
    * @return The child value
    */
-  template <typename T>
-    requires(is_repr_element<T>)
+  template <cudf::concepts::repr_element T>
   [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     return static_cast<typename T::value_type const*>(_data)[_offset + element_index];
@@ -798,12 +812,11 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @brief Reads a raw child value.
    *
    * The child must be valid. Use nullable_element<T>() to check child validity.
-   * @tparam T The raw child type, satisfying `is_repr_element<T>`
+   * @tparam T The raw child type, satisfying `cudf::concepts::repr_element`
    * @param element_index Position of the desired element in `[0, size())`
    * @return The child value
    */
-  template <typename T>
-    requires(is_repr_element<T>)
+  template <cudf::concepts::repr_element T>
   [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
   {
     return static_cast<typename T::value_type*>(const_cast<void*>(_data))[_offset + element_index];
@@ -877,8 +890,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired element
    * @param value The value to assign
    */
-  template <typename T>
-    requires(is_repr_element<T>)
+  template <cudf::concepts::repr_element T>
   __device__ void assign(size_type element_index, typename T::value_type value) const noexcept
   {
     static_cast<typename T::value_type*>(const_cast<void*>(_data))[_offset + element_index] = value;

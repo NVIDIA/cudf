@@ -104,5 +104,7 @@ filterwarnings = [
     # https://github.com/dask/partd/blob/main/partd/pandas.py#L198
     "ignore:Passing a BlockManager to DataFrame is deprecated and will raise in a future version. Use public APIs instead.:DeprecationWarning",
     "ignore:String support for `aggregate_files` is experimental. Behavior may change in the future.:FutureWarning:dask",
+    # NVML CPU affinity queries are not supported on WSL; dask-cuda falls back to all CPUs.
+    "ignore:Cannot get CPU affinity for device:UserWarning",
 ]
 xfail_strict = true

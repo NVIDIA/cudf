@@ -31,8 +31,7 @@ std::unique_ptr<cudf::scalar> min(column_view const& col,
       (input_type.id() == type_id::FLOAT32 || input_type.id() == type_id::FLOAT64)) {
     auto const decoded =
       cudf::is_dictionary(col.type())
-        ? cudf::dictionary::detail::decode(
-            dictionary_column_view(col), stream, cudf::get_current_device_resource_ref())
+        ? cudf::dictionary::detail::decode(dictionary_column_view(col), stream, mr.as_temporary())
         : nullptr;
     auto const input      = decoded ? decoded->view() : col;
     using ordered_reducer = simple::detail::same_element_type_dispatcher<op::min_totally_ordered>;

@@ -33,6 +33,8 @@
 #include <cuda/std/tuple>
 
 #include <algorithm>
+#include <array>
+#include <bitset>
 #include <cmath>
 #include <cstdint>
 #include <format>
@@ -180,6 +182,34 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
   return cuda::std::nullopt;
 }
 
+namespace {
+
+/**
+ * @brief Check if two logical types have the same time unit.
+ */
+bool time_units_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const unit = [](auto const& t) {
+    return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
+  };
+  return unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type);
+}
+
+/**
+ * @brief Check if two logical types are identical in everything the reader uses.
+ */
+bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
+{
+  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
+  return lhs.type == rhs.type and time_units_match(lhs, rhs) and
+         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
+         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
+         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+}
+
+}  // namespace
+
 /**
  * @brief Lookup schema children by name or field ID across multiple sources.
  */
@@ -291,6 +321,52 @@ struct schema_child_lookup {
   bool match_schema_by_field_id;
   std::unordered_map<std::uint64_t, schema_idx_cache> schema_idx_caches;
 };
+
+/**
+ * @brief Checks if a schema element is a FILE group whose children follow the FILE spec: each is a
+ * unique, OPTIONAL `uri`, `offset`, `size`, `content_type`, `checksum` or `inline` leaf of the
+ * expected physical and logical type
+ *
+ * @param group Schema element to check
+ * @param children Child schema elements of `group`
+ * @return Boolean indicating if `group` is a valid FILE group
+ */
+[[nodiscard]] bool is_valid_file_group(SchemaElement const& group,
+                                       std::ranges::input_range auto&& children)
+{
+  if (not group.logical_type.has_value() or group.logical_type->type != LogicalType::FILE) {
+    return false;
+  }
+
+  struct file_field {
+    std::string_view name;
+    Type type;
+    LogicalType::Type logical_type;
+  };
+  static constexpr std::array file_fields{
+    file_field{"uri", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"offset", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"size", Type::INT64, LogicalType::UNDEFINED},
+    file_field{"content_type", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"checksum", Type::BYTE_ARRAY, LogicalType::STRING},
+    file_field{"inline", Type::BYTE_ARRAY, LogicalType::UNDEFINED}};
+
+  std::bitset<file_fields.size()> seen;
+  return std::ranges::all_of(children, [&](SchemaElement const& child) {
+    auto const field =
+      std::ranges::find(file_fields, std::string_view{child.name}, &file_field::name);
+    if (field == file_fields.end()) { return false; }
+    auto const field_idx = std::distance(file_fields.begin(), field);
+    if (seen.test(field_idx)) { return false; }
+    seen.set(field_idx);
+    auto const child_logical_type = child.logical_type.value_or(LogicalType{});
+    // INT64 fields may also carry an equivalent signed 64-bit INTEGER (or legacy INT_64) annotation
+    auto const is_signed_int64 = child.type == Type::INT64 and child_logical_type.is_signed() and
+                                 child_logical_type.bit_width() == 64;
+    return child.repetition_type == FieldRepetitionType::OPTIONAL and child.type == field->type and
+           (child_logical_type.type == field->logical_type or is_signed_int64);
+  });
+}
 
 }  // namespace
 
@@ -480,6 +556,14 @@ void metadata::sanitize_schema()
         struct_elem.children_idx         = std::move(schema_elem.children_idx);
         for (auto const child_idx : struct_elem.children_idx) {
           schema[child_idx].parent_idx = struct_node_idx;
+        }
+
+        // Move a non-nested annotation of the repeated group (e.g. FILE) to its struct element
+        if (schema_elem.logical_type.has_value() and
+            schema_elem.logical_type->type != LogicalType::LIST and
+            schema_elem.logical_type->type != LogicalType::MAP) {
+          struct_elem.logical_type         = schema_elem.logical_type;
+          struct_elem.logical_type_payload = schema_elem.logical_type_payload;
         }
 
         schema_elem.converted_type  = ConvertedType::LIST;
@@ -959,13 +1043,27 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     // Validate that all sources have the same schema unless we are reading select columns
     // from mismatched sources, in which case, we will only check the projected columns later.
     if (not has_cols_from_mismatched_srcs) {
+      // `SchemaElement::operator==` ignores logical types, so compare FILE groups separately
+      auto const is_file_group = [](std::vector<SchemaElement> const& tree, size_t idx) {
+        return is_valid_file_group(
+          tree[idx],
+          tree[idx].children_idx |
+            std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
+      };
+      auto const same_file_groups = [&](std::vector<SchemaElement> const& other) {
+        return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
+          return is_file_group(schema, idx) == is_file_group(other, idx);
+        });
+      };
+
       // Verify that the input files have matching numbers of columns and schema.
       for (auto const& pfm : per_file_metadata) {
         if (pfm.row_groups.size() > 0) {
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema, "All sources must have the same schema");
+        CUDF_EXPECTS(schema == pfm.schema and same_file_groups(pfm.schema),
+                     "All sources must have the same schema");
       }
 
       // Record fields that are nullable in any source other than the first one
@@ -2066,6 +2164,13 @@ aggregate_reader_metadata::select_columns(
       // store the index of this element if inserted in out_col_array
       nesting.push_back(static_cast<int>(out_col_array.size()));
       output_col.name = schema_elem.name;
+      output_col.is_file =
+        col_type == type_id::STRUCT and
+        is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx);
+          }));
 
       // build each child
       bool path_is_valid = false;
@@ -2086,6 +2191,15 @@ aggregate_reader_metadata::select_columns(
                          output_col.children,
                          has_list_parent || col_type == type_id::LIST);
         }
+      }
+
+      // Flag the `inline` child of a valid FILE group so that `make_column` materializes it as
+      // `list<uint8>` instead of strings.
+      if (output_col.is_file) {
+        auto const inline_col = std::ranges::find(output_col.children,
+                                                  std::string_view{"inline"},
+                                                  &cudf::io::detail::inline_column_buffer::name);
+        if (inline_col != output_col.children.end()) { inline_col->string_as_binary = true; }
       }
 
       // if I have no children, we're at a leaf and I'm an input column (that is, one with actual
@@ -2148,9 +2262,17 @@ aggregate_reader_metadata::select_columns(
       (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
         ? lhs.field_id == rhs.field_id
         : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
-    return lhs.type == rhs.type and lhs.converted_type == rhs.converted_type and
-           lhs.type_length == rhs.type_length and identities_match and
-           lhs.decimal_scale == rhs.decimal_scale and
+    // Writers may emit the deprecated converted type, the logical type, or both for the same
+    // column. The time units must always agree when both sources have a logical type, because
+    // the values are copied without conversion. Otherwise sources match if their converted types
+    // are equal or their logical types are identical.
+    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
+                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
+                                         (lhs.converted_type == rhs.converted_type or
+                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
+                                     : lhs.converted_type == rhs.converted_type;
+    return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
+           identities_match and lhs.decimal_scale == rhs.decimal_scale and
            lhs.decimal_precision == rhs.decimal_precision;
   };
 
@@ -2173,6 +2295,22 @@ aggregate_reader_metadata::select_columns(
         std::format(
           "Encountered mismatching data type or schema across the Parquet sources for column '{}'",
           src_schema_elem.name),
+        std::invalid_argument);
+
+      // A valid FILE group must be a valid FILE group in all sources so that its children are read
+      // in the same representation
+      auto const is_file_group = [&](SchemaElement const& schema_elem, int const pfm_idx) {
+        return is_valid_file_group(
+          schema_elem,
+          schema_elem.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+            return get_schema(idx, pfm_idx);
+          }));
+      };
+      CUDF_EXPECTS(
+        is_file_group(src_schema_elem, 0) == is_file_group(dst_schema_elem, src_idx),
+        std::format("Encountered mismatching FILE logical type across the Parquet sources for "
+                    "column '{}'",
+                    src_schema_elem.name),
         std::invalid_argument);
 
       // Get the schema_idx_map for this data source (pfm)

@@ -226,8 +226,8 @@ std::unique_ptr<Base> make_product_aggregation();
  * @brief Factory to create a MIN aggregation
  *
  * For floating-point values, MIN follows the IEEE 754-2019 `minimum` operation: the result is NaN
- * if any value is NaN, and -0.0 is less than +0.0. A NaN result is the canonical quiet NaN; the
- * sign and payload of the input NaNs are not preserved.
+ * if any value is NaN, and -0.0 is less than +0.0. The sign and payload of a NaN result are not
+ * specified and may differ from those of the input NaNs.
  *
  * @return A MIN aggregation object
  */
@@ -238,8 +238,8 @@ std::unique_ptr<Base> make_min_aggregation();
  * @brief Factory to create a MAX aggregation
  *
  * For floating-point values, MAX follows the IEEE 754-2019 `maximum` operation: the result is NaN
- * if any value is NaN, and +0.0 is greater than -0.0. A NaN result is the canonical quiet NaN; the
- * sign and payload of the input NaNs are not preserved.
+ * if any value is NaN, and +0.0 is greater than -0.0. The sign and payload of a NaN result are not
+ * specified and may differ from those of the input NaNs.
  *
  * @return A MAX aggregation object
  */

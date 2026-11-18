@@ -868,6 +868,42 @@ TEST_F(RollingSumEdgeCaseTest, SumInt64PrefixOverflow)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
 }
 
+template <typename T>
+struct RollingMinMaxNaNTest : public cudf::test::BaseFixture {};
+TYPED_TEST_SUITE(RollingMinMaxNaNTest, cudf::test::FloatingPointTypes);
+
+TYPED_TEST(RollingMinMaxNaNTest, AllNaNWindows)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+
+  // A window of only NaNs (ignoring nulls) must produce NaN, not the +/-infinity identity
+  auto const input = cudf::test::fixed_width_column_wrapper<T>{
+    {NaN, NaN, T{1}, NaN, NaN, T{2}, NaN, T{0}}, {1, 1, 1, 1, 1, 1, 1, 0}};
+  // window of the current and previous rows
+  auto const expected = cudf::test::fixed_width_column_wrapper<T>{
+    {NaN, NaN, T{1}, T{1}, NaN, T{2}, T{2}, NaN}, {1, 1, 1, 1, 1, 1, 1, 1}};
+
+  auto const fixed_min =
+    cudf::rolling_window(input, 2, 0, 1, *cudf::make_min_aggregation<cudf::rolling_aggregation>());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, fixed_min->view());
+  auto const fixed_max =
+    cudf::rolling_window(input, 2, 0, 1, *cudf::make_max_aggregation<cudf::rolling_aggregation>());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, fixed_max->view());
+
+  // the same windows specified per row exercise the variable-size window path
+  auto const preceding =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{{1, 2, 2, 2, 2, 2, 2, 2}};
+  auto const following =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>{{0, 0, 0, 0, 0, 0, 0, 0}};
+  auto const variable_min = cudf::rolling_window(
+    input, preceding, following, 1, *cudf::make_min_aggregation<cudf::rolling_aggregation>());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, variable_min->view());
+  auto const variable_max = cudf::rolling_window(
+    input, preceding, following, 1, *cudf::make_max_aggregation<cudf::rolling_aggregation>());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, variable_max->view());
+}
+
 TYPED_TEST(RollingVarStdTest, SimpleStaticVarianceStd)
 {
 #define XXX 0  // NULL stub

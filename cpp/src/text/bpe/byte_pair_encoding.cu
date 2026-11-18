@@ -37,6 +37,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/limits>
 #include <cuda/stream>

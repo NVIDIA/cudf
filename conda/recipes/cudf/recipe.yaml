@@ -5,12 +5,8 @@ schema_version: 1
 context:
   version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
   minor_version: ${{ (version | split("."))[:2] | join(".") }}
-  cuda_version: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[:2] | join(".") }}
-  cuda_major: ${{ (env.get("RAPIDS_CUDA_VERSION") | split("."))[0] }}
   datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
   head_rev: ${{ git.head_rev(".")[:8] }}
-  py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
-  py_buildstring: ${{ py_abi_min | version_to_buildstring }}
 
 package:
   name: cudf
@@ -20,84 +16,21 @@ source:
   path: ../../..
 
 build:
-  python:
-    version_independent: true
-  string: cuda${{ cuda_major }}_cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
+  noarch: python
+  string: ${{ datetime_string }}_${{ head_rev }}
   script:
     content: |
-      # Versioned debug-prefix maps invalidate otherwise identical cached native objects.
-      for flags_name in CFLAGS CXXFLAGS; do
-          [[ -v "${flags_name}" ]] || continue
-          flags_value="${!flags_name}"
-          while [[ "${flags_value}" =~ -fdebug-prefix-map[^[:space:]]* ]]; do
-              flags_value="${flags_value/"${BASH_REMATCH[0]}"/}"
-          done
-          export "${flags_name}=${flags_value}"
-      done
       ./build.sh cudf
-    secrets:
-      - AWS_ACCESS_KEY_ID
-      - AWS_SECRET_ACCESS_KEY
-      - AWS_SESSION_TOKEN
-      - SCCACHE_DIST_AUTH_TOKEN
     env:
-      CMAKE_C_COMPILER_LAUNCHER: ${{ env.get("CMAKE_C_COMPILER_LAUNCHER") }}
-      CMAKE_CUDA_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CUDA_COMPILER_LAUNCHER") }}
-      CMAKE_CXX_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CXX_COMPILER_LAUNCHER") }}
-      CMAKE_GENERATOR: ${{ env.get("CMAKE_GENERATOR") }}
-      NVCC_APPEND_FLAGS: ${{ env.get("NVCC_APPEND_FLAGS", default="") }}
-      PARALLEL_LEVEL: ${{ env.get("PARALLEL_LEVEL", default="8") }}
-      RAPIDS_ARTIFACTS_DIR: ${{ env.get("RAPIDS_ARTIFACTS_DIR", default="") }}
       RAPIDS_CUDA_VERSION: ${{ env.get("RAPIDS_CUDA_VERSION") }}
-      RAPIDS_PY_VERSION: ${{ py_abi_min }}
-      SCCACHE_BUCKET: ${{ env.get("SCCACHE_BUCKET", default="") }}
-      SCCACHE_CONF: ${{ env.get("SCCACHE_CONF", default="") }}
-      SCCACHE_DIST_AUTH_TYPE: ${{ env.get("SCCACHE_DIST_AUTH_TYPE", default="token") }}
-      SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE: ${{ env.get("SCCACHE_DIST_FALLBACK_TO_LOCAL_COMPILE", default="false") }}
-      SCCACHE_DIST_MAX_RETRIES: ${{ env.get("SCCACHE_DIST_MAX_RETRIES", default="inf") }}
-      SCCACHE_DIST_REQUEST_TIMEOUT: ${{ env.get("SCCACHE_DIST_REQUEST_TIMEOUT", default="7140") }}
-      SCCACHE_DIST_SCHEDULER_URL: ${{ env.get("SCCACHE_DIST_SCHEDULER_URL", default="") }}
-      SCCACHE_ERROR_LOG: ${{ env.get("SCCACHE_ERROR_LOG", default="/tmp/sccache.log") }}
-      SCCACHE_IDLE_TIMEOUT: ${{ env.get("SCCACHE_IDLE_TIMEOUT", default="0") }}
-      SCCACHE_NO_CACHE: ${{ env.get("SCCACHE_NO_CACHE", default="") }}
-      SCCACHE_RECACHE: ${{ env.get("SCCACHE_RECACHE", default="") }}
-      SCCACHE_REGION: ${{ env.get("SCCACHE_REGION", default="") }}
-      SCCACHE_S3_KEY_PREFIX: cudf-${{ env.get("RAPIDS_CONDA_ARCH") }}
-      SCCACHE_S3_NO_CREDENTIALS: ${{ env.get("SCCACHE_S3_NO_CREDENTIALS", default="false") }}
-      SCCACHE_S3_PREPROCESSOR_CACHE_KEY_PREFIX: cudf-${{ env.get("RAPIDS_CONDA_ARCH") }}-cuda${{ cuda_major }}-conda-preprocessor-cache
-      SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE: ${{ env.get("SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE", default="true") }}
-      SCCACHE_S3_USE_SSL: ${{ env.get("SCCACHE_S3_USE_SSL", default="true") }}
-      SCCACHE_SERVER_LOG: ${{ env.get("SCCACHE_SERVER_LOG", default="sccache=debug") }}
-      SCCACHE_SERVER_PORT: ${{ env.get("SCCACHE_SERVER_PORT", default="4226") }}
 
 requirements:
-  build:
-    - cmake ${{ cmake_version }}
-    - ninja
-    - ${{ compiler("c") }}
-    - ${{ compiler("cxx") }}
-    - ${{ compiler("cuda") }}
-    - cuda-version =${{ cuda_version }}
-    - ${{ stdlib("c") }}
   host:
-    - cython >=3.2.2,<3.3.0a0
+    - python >=3.12
     - pip
-    - python =${{ py_abi_min }}
-    - python-abi3 ${{ py_abi_min }}.*
     - rapids-build-backend >=0.4.0,<0.5.0
-    - scikit-build-core>=0.11.0
-    - dlpack >=0.8,<1.0
-    - libcudf =${{ version }}
-    - pylibcudf =${{ version }}
-    - rmm =${{ minor_version }}
-    - cuda-cudart-dev
-    - cuda-nvrtc
-    - if: linux and x86_64
-      then:
-        - libcufile-dev
-    - cuda-version =${{ cuda_version }}
+    - setuptools>=77.0.0
   run:
-    - librmm =${{ minor_version }}
     - python
     - pandas >=3.0.0,<3.1.0
     - cupy >=14.0.1,!=14.1.0
@@ -107,26 +40,18 @@ requirements:
     - pyarrow>=19.0.0
     - libcudf =${{ version }}
     - pylibcudf =${{ version }}
-    - ${{ pin_compatible("rmm", upper_bound="x.x") }}
+    - librmm =${{ minor_version }}
+    - rmm =${{ minor_version }}
+    # cuda-bindings' per-CUDA builds each depend on a matching cuda-version, so a
+    # single range resolves the correct major from the environment's cuda-version
+    # (no per-CUDA branch is needed for this noarch package).
+    - cuda-bindings >=12.9.3,<14.0a0
+    - cuda-version >=12.0,<14.0a0
     - fsspec >=0.6.0
-    - if: cuda_major == "12"
-      then: cuda-bindings >=12.9.3,<13.0
-      else: cuda-bindings >=13.0.2,<14.0
-    - if: linux and x86_64
-      then:
-        - libcufile
-    - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     - nvtx >=0.2.1
     - packaging
     - cachetools
     - rich
-  ignore_run_exports:
-    from_package:
-      - cuda-cudart-dev
-      - if: linux and x86_64
-        then: libcufile-dev
-    by_name:
-      - cuda-version
 
 about:
   homepage: ${{ load_from_file("python/cudf/pyproject.toml").project.urls.Homepage }}

@@ -12,6 +12,8 @@
 
 #include <cuda/iterator>
 
+#include <algorithm>
+
 namespace cudf {
 namespace detail {
 
@@ -47,7 +49,7 @@ bool has_nonempty_null_rows(cudf::column_view const& input,
 
   auto const row_begin = cuda::counting_iterator<cudf::size_type>{0};
   auto const row_end   = row_begin + input.size();
-  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr.as_temporary()) > 0;
+  return cudf::detail::count_if(row_begin, row_end, is_dirty_row, stream, mr) > 0;
 }
 
 }  // namespace
@@ -72,7 +74,7 @@ bool has_nonempty_nulls(cudf::column_view const& input,
 
   // For complex types, check if child columns need purging.
   if ((type == type_id::STRUCT || type == type_id::LIST) &&
-      std::any_of(input.child_begin(), input.child_end(), [stream, mr](auto const& child) {
+      std::ranges::any_of(input.child_begin(), input.child_end(), [stream, mr](auto const& child) {
         return cudf::detail::has_nonempty_nulls(child, stream, mr);
       })) {
     return true;

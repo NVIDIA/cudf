@@ -35,4 +35,11 @@ public class RmmAllocationMode {
    * peer accessible with read-write access
    */
   public static final int CUDA_ASYNC_FABRIC = 0x00000010;
+  /**
+   * Use CUDA async suballocation strategy with a pool that supports POSIX file descriptor
+   * handles, so the pool can be exported with cudaMemPoolExportToShareableHandle and imported
+   * by another process on the same host. The pool handle is available from
+   * {@link RmmCudaAsyncMemoryResource#getPoolHandle()}.
+   */
+  public static final int CUDA_ASYNC_POSIX_FD = 0x00000020;
 }

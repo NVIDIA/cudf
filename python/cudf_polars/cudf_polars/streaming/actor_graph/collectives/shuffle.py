@@ -185,7 +185,11 @@ class ShuffleManager:
             )
 
         async def insert_index(
-            self, chunk: TableChunk, partition_map: TableChunk
+            self,
+            chunk: TableChunk,
+            partition_map: TableChunk,
+            *,
+            ir_context: IRExecutionContext,
         ) -> None:
             """
             Partition chunk by a separate single-column partition-map and insert.
@@ -199,6 +203,9 @@ class ShuffleManager:
                 Single-column ``TableChunk`` whose integer values give the
                 target partition ID for each row. Must be row-aligned with
                 ``chunk``.
+            ir_context
+                The IR execution context that provides the stream for the
+                reorder.
             """
             br = self._manager.context.br()
             # As in `insert_hash_keys`, this covers the reorder plus the pack.
@@ -213,7 +220,7 @@ class ShuffleManager:
                 chunk.table_view(), chunk.stream, br
             )
             with stream_ordered_after(
-                br.stream_pool.get_stream,
+                ir_context.get_cuda_stream,
                 upstreams=(chunk.stream, partition_map.stream),
             ) as stream:
                 partition_map_col = partition_map.table_view().columns()[0]
@@ -393,6 +400,7 @@ class LocalRepartitioner:
         *,
         partition_col: int,
         stream: Stream,
+        ir_context: IRExecutionContext,
         drop_partition_col: bool = True,
     ) -> None:
         """
@@ -405,6 +413,9 @@ class LocalRepartitioner:
             local partition ID for each row.
         stream
             CUDA stream for the unpack operation.
+        ir_context
+            The IR execution context that provides the stream for the
+            reorder in ``insert_index``.
         drop_partition_col
             If ``True`` (default), the partition column is stripped from the
             payload before inserting. If ``False``, it is kept in the output.
@@ -433,7 +444,9 @@ class LocalRepartitioner:
                     exclusive_view=False,
                     br=self._br,
                 )
-                await inserter.insert_index(payload, partition_map)
+                await inserter.insert_index(
+                    payload, partition_map, ir_context=ir_context
+                )
                 del cols, table, payload, partition_map
 
     def local_partitions(self) -> list[int]:

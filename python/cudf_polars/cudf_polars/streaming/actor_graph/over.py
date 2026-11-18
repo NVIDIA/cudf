@@ -601,7 +601,7 @@ async def _evaluate_and_route_to_origin(
                         )
                     del payload
                 else:
-                    await inserter.insert_index(*routed)
+                    await inserter.insert_index(*routed, ir_context=ir_context)
             del routed
 
 
@@ -622,11 +622,13 @@ async def _reassemble_input_chunks(
     n_exprs = len(ir.exprs)
     chunk_index_column = n_exprs
 
-    # TODO: thread ir_context through repartition_by_index so each
-    # PackedData piece moves on its own pool stream rather than sharing one.
+    # TODO: unpack each PackedData piece in repartition_by_index on its own
+    # pool stream rather than sharing one.
     local = LocalRepartitioner(return_shuffle, local_count=n_chunks)
     await local.repartition_by_index(
-        partition_col=chunk_index_column, stream=ir_context.get_cuda_stream()
+        partition_col=chunk_index_column,
+        stream=ir_context.get_cuda_stream(),
+        ir_context=ir_context,
     )
 
     for chunk_index, sequence_number in zip(

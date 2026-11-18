@@ -313,6 +313,8 @@ jobs:
         fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_kafka ||
         fromJSON(needs.changed-files.outputs.changed_file_groups).test_cpp_streaming)
         && 'ci/build_cpp.sh' || 'ci/build_cpp_runtime.sh' }}
+      # TEMPORARY: amd64 only, revert before merge
+      matrix_filter: map(select(.ARCH == "amd64"))
       matrix_type: pull-request
   cmake-tests:
     needs: [checks, changed-files]
@@ -491,7 +493,8 @@ jobs:
       build-datetime: ${{ needs.build-details.outputs.build-datetime }}
       script: ci/build_python.sh
       # Build a conda package for each CUDA x ARCH x minimum supported Python version
-      matrix_filter: group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
+      # TEMPORARY: amd64 only, revert before merge
+      matrix_filter: map(select(.ARCH == "amd64")) | group_by({CUDA_VER, ARCH}) | map(min_by(.PY_VER | split(".") | map(tonumber)))
       matrix_type: pull-request
   conda-python-build-noarch:
     needs: [build-details, checks]

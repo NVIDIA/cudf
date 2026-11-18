@@ -17,6 +17,8 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/utility>
+
 #include <random>
 #include <string>
 #include <string_view>
@@ -161,6 +163,14 @@ cudf::io::parquet::OffsetIndex read_offset_index(
  * @brief Returns the statistics of a column chunk
  */
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk);
+
+/**
+ * @brief Encodes an INT96 timestamp as in Parquet statistics
+ *
+ * @param int96 Nanoseconds of the day and Julian day number
+ * @return The 12 bytes of the INT96 value
+ */
+std::vector<uint8_t> to_int96_bytes(cuda::std::pair<int64_t, int32_t> int96);
 
 /**
  * @brief Reads and parses the page header at `page_loc`

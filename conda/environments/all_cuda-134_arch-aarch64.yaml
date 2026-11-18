@@ -14,11 +14,12 @@ dependencies:
 - cachetools
 - clang-tools==20.1.8
 - clang==20.1.8
-- cmake>=4.0
+- cmake>=4.0,<4.5
 - cramjam
 - croaring==4.4.2
 - cuda-bindings>=13.0.2,<13.5
 - cuda-bindings>=13.0.2,<14.0
+- cuda-core>=1.0,<2
 - cuda-cudart-dev
 - cuda-cupti-dev
 - cuda-nvcc

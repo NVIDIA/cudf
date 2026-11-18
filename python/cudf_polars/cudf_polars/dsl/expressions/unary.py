@@ -9,7 +9,7 @@ import math
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, assert_never, cast
 
 import polars as pl
-from polars.exceptions import ComputeError
+from polars.exceptions import ComputeError, InvalidOperationError
 
 import pylibcudf as plc
 
@@ -88,6 +88,23 @@ class Cast(Expr):
         """Evaluate this expression given a dataframe for context."""
         (child,) = self.children
         column = child.evaluate(df, context=context)
+        if isinstance(self.dtype.polars_type, pl.Null) and not isinstance(
+            child.dtype.polars_type, pl.Null
+        ):
+            # Null is stored as INT8, so a libcudf cast would keep the values.
+            if self.strict and column.null_count != column.size:
+                raise pl.exceptions.InvalidOperationError(
+                    f"conversion from `{child.dtype.polars_type._string_repr()}` "
+                    "to `null` failed"
+                )
+            return Column(
+                plc.Column.from_scalar(
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    column.size,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
         result = column.astype(self.dtype, stream=df.stream, strict=self.strict)
         if (
             not self.strict
@@ -159,6 +176,38 @@ class Len(Expr):
     @property
     def agg_request(self) -> plc.aggregation.Aggregation:  # noqa: D102
         return plc.aggregation.count(plc.types.NullPolicy.INCLUDE)
+
+
+def _polars_dtype_name(dtype: pl.DataType) -> str:
+    """Name a dtype the way Polars' error messages do (e.g. ``u32``)."""
+    if isinstance(dtype, pl.Datetime):
+        unit = {"ms": "ms", "us": "μs", "ns": "ns"}[dtype.time_unit]
+        if dtype.time_zone is not None:
+            return f"datetime[{unit}, {dtype.time_zone}]"
+        return f"datetime[{unit}]"
+    return {
+        pl.UInt8: "u8",
+        pl.UInt16: "u16",
+        pl.UInt32: "u32",
+        pl.UInt64: "u64",
+        pl.Boolean: "bool",
+        pl.Date: "date",
+        pl.String: "str",
+    }.get(type(dtype), str(dtype))
+
+
+def _check_negate_supported(dtype: DataType) -> None:
+    """Raise as Polars does for dtypes that libcudf cannot negate."""
+    plc_type = dtype.plc_type
+    if (
+        plc.traits.is_unsigned(plc_type)
+        or plc.traits.is_boolean(plc_type)
+        or plc.traits.is_timestamp(plc_type)
+        or plc_type.id() == plc.TypeId.STRING
+    ):
+        raise InvalidOperationError(
+            f"`neg` operation not supported for dtype `{_polars_dtype_name(dtype.polars_type)}`"
+        )
 
 
 class UnaryFunction(Expr):
@@ -540,7 +589,7 @@ class UnaryFunction(Expr):
         column: Column, out_type: DataType, df: DataFrame
     ) -> Column:
         """Cast a ``replace`` operand, mapping an all-null operand onto ``out_type``."""
-        if column.obj.type().id() == plc.TypeId.EMPTY:
+        if column.null_count == column.size:
             return Column(
                 plc.Column.from_scalar(
                     plc.Scalar.from_py(None, out_type.plc_type, stream=df.stream),
@@ -1500,8 +1549,19 @@ class UnaryFunction(Expr):
             )
         elif self.name == "drop_nulls":
             (column,) = (child.evaluate(df, context=context) for child in self.children)
-            if column.null_count == 0:
+            if (null_count := column.null_count) == 0:
                 return column
+            if column.is_sorted == plc.types.Sorted.YES:
+                bounds = (
+                    [null_count, column.size]
+                    if sorting.nulls_at_start(column)
+                    else [0, column.size - null_count]
+                )
+                (sliced,) = plc.copying.slice(column.obj, bounds, stream=df.stream)
+                if sliced.null_count() == 0:
+                    return Column(
+                        sliced.copy(stream=df.stream), dtype=self.dtype
+                    ).sorted_like(column)
             return Column(
                 plc.stream_compaction.drop_nulls(
                     plc.Table([column.obj]), [0], 1, stream=df.stream
@@ -2216,6 +2276,8 @@ class UnaryFunction(Expr):
                 return Column(signed, dtype=self.dtype)
         elif self.name in self._OP_MAPPING:
             column = self.children[0].evaluate(df, context=context)
+            if self.name == "negate":
+                _check_negate_supported(column.dtype)
             if column.dtype.plc_type.id() != self.dtype.id():
                 arg = plc.unary.cast(column.obj, self.dtype.plc_type, stream=df.stream)
             else:

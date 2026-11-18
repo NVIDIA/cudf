@@ -34,6 +34,7 @@
 #include <thrust/sequence.h>
 #include <thrust/unique.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace cudf {
@@ -186,6 +187,12 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
   CUDF_EXPECTS(
     not targets.is_empty(), "Must specify at least one target string.", std::invalid_argument);
   CUDF_EXPECTS(not targets.has_nulls(), "Target strings cannot be null", std::invalid_argument);
+
+  if (input.is_empty()) {
+    auto results = std::vector<std::unique_ptr<column>>(targets.size());
+    std::generate(results.begin(), results.end(), [] { return make_empty_column(type_id::BOOL8); });
+    return std::make_unique<table>(std::move(results));
+  }
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
   auto const d_targets = column_device_view::create(targets.parent(), stream);

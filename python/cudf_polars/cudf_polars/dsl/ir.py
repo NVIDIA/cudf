@@ -3331,6 +3331,12 @@ class AsofJoin(IR):
     ) -> DataFrame:
         """Sort the right keys, probe them, and gather the matching payload."""
         zlice, suffix, coalesce = options
+        discarded = set(right_by)
+        if coalesce and left_on.name == right_on.name:
+            discarded.add(right_on.name)
+        if right.column_names_set <= discarded:
+            return left.slice(zlice)
+
         right_on_col = broadcast(
             right_on.value.evaluate(right),
             target_length=right.num_rows,
@@ -3374,12 +3380,7 @@ class AsofJoin(IR):
                     stream=stream,
                 )
 
-        discarded = set(right_by)
-        if coalesce and left_on.name == right_on.name:
-            discarded.add(right_on.name)
         right_payload = right.discard_columns(discarded)
-        if right_payload.num_columns == 0:
-            return left.slice(zlice)
 
         left_on_col = broadcast(
             left_on.value.evaluate(left),

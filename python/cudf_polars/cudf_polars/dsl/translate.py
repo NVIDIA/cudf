@@ -806,18 +806,12 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
                 "Only backward as-of joins with exact matches and no tolerance "
                 "are supported"
             )
-        if len(left_on) != 1 or len(right_on) != 1:
+        if len(left_on) != 1 or len(right_on) != 1:  # pragma: no cover
             raise NotImplementedError("As-of joins require one ordered key per side")
         left_by = tuple(left_by or ())
         right_by = tuple(right_by or ())
-        if len(left_by) != len(right_by):
+        if len(left_by) != len(right_by):  # pragma: no cover
             raise NotImplementedError("As-of grouping keys must match on both sides")
-        if _contains_categorical_key(left_on + right_on) or any(
-            _contains_dtype(frame.schema[name].polars_type, (pl.Categorical, pl.Enum))
-            for frame, names in ((inp_left, left_by), (inp_right, right_by))
-            for name in names
-        ):
-            raise NotImplementedError("Categorical/Enum as-of keys are not supported")
         if not all(
             plc.traits.is_integral_not_bool(key.value.dtype.plc_type)
             or plc.traits.is_timestamp(key.value.dtype.plc_type)
@@ -825,7 +819,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             for key in (left_on[0], right_on[0])
         ):
             raise NotImplementedError("Unsupported as-of ordered key dtype")
-        if left_on[0].value.dtype != right_on[0].value.dtype:
+        if left_on[0].value.dtype != right_on[0].value.dtype:  # pragma: no cover
             raise NotImplementedError("As-of ordered key dtypes must match")
         if any(
             inp_left.schema[left_name] != inp_right.schema[right_name]
@@ -882,7 +876,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             node, translator, schema, inp_left, inp_right, left_on, right_on
         )
     else:
-        if how[0] != "IEJoin":  # pragma: no cover; asof joins not yet exposed
+        if how[0] != "IEJoin":  # pragma: no cover
             raise NotImplementedError(f"Unsupported join type {how}")
         _, op1, op2 = how
         if op2 is None:

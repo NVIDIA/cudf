@@ -46,7 +46,7 @@ def test_asof_join_backward(engine: pl.GPUEngine, by: str | None, coalesce):
     right = pl.LazyFrame(
         {
             "sym": ["a", "a", "a", "b", "b"],
-            "time": [1, 3, 3, 1, 4],
+            "time": [1, 3, 3, 3, 4],
             "quote": [20, 21, 22, 23, 24],
         }
     ).sort(["sym", "time"] if by else "time")
@@ -61,6 +61,39 @@ def test_asof_join_empty_right(engine: pl.GPUEngine):
         {"time": pl.Series([], dtype=pl.Int64), "value": pl.Series([], dtype=pl.Int64)}
     )
     assert_gpu_result_equal(left.join_asof(right, on="time"), engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+def test_asof_join_no_right_payload(engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [1, 2]})
+    assert_gpu_result_equal(left.join_asof(right, on="time").slice(1, 1), engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory"])
+def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
+    left = pl.LazyFrame(
+        {
+            "group_left": ["a", "b"],
+            "time_left": pl.Series([2, 3], dtype=pl.Datetime("ns")),
+            "value_left": [10, 11],
+        }
+    ).sort(["group_left", "time_left"])
+    right = pl.LazyFrame(
+        {
+            "group_right": ["a", "b"],
+            "time_right": pl.Series([1, 2], dtype=pl.Datetime("ns")),
+            "value_right": [20, 21],
+        }
+    ).sort(["group_right", "time_right"])
+    query = left.join_asof(
+        right,
+        left_on="time_left",
+        right_on="time_right",
+        by_left="group_left",
+        by_right="group_right",
+    ).slice(1, 1)
+    assert_gpu_result_equal(query, engine=engine)
 
 
 @pytest.mark.parametrize(
@@ -78,7 +111,39 @@ def test_asof_join_unsupported_options(kwargs):
         frame.join_asof(frame, on="time", **kwargs)._ldf.visit(), engine
     )
     translator.translate_ir()
-    assert any(isinstance(error, NotImplementedError) for error in translator.errors)
+    assert any(
+        isinstance(error, NotImplementedError)
+        and str(error).startswith("Only backward as-of joins")
+        for error in translator.errors
+    )
+
+
+@pytest.mark.parametrize(
+    "left,right,by",
+    [
+        ({"time": [1.0]}, {"time": [1.0]}, None),
+        (
+            {"time": [1], "sym": pl.Series(["a"], dtype=pl.Categorical)},
+            {"time": [1], "sym": pl.Series(["a"], dtype=pl.Categorical)},
+            "sym",
+        ),
+        ({"time": [1], "sym": [1]}, {"time": [1], "sym": ["a"]}, "sym"),
+    ],
+)
+def test_asof_join_unsupported_keys(left, right, by):
+    query = pl.LazyFrame(left).join_asof(pl.LazyFrame(right), on="time", by=by)
+    engine = pl.GPUEngine(executor_options={"min_device_size": 1_000_000_000})
+    translator = Translator(query._ldf.visit(), engine)
+    translator.translate_ir()
+    message = (
+        "Unsupported as-of ordered key dtype"
+        if by is None
+        else "Unsupported as-of grouping key dtype"
+    )
+    assert any(
+        isinstance(error, NotImplementedError) and str(error) == message
+        for error in translator.errors
+    )
 
 
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])

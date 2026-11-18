@@ -52,7 +52,9 @@ def profile(function_profile, line_profile, fn):
         raise RuntimeError("Enabling the profiler requires a script name.")
     if line_profile:
         with open(fn) as f:
-            lines = f.readlines()
+            # lines_with_profiling joins the lines with "\n", so they must not
+            # keep their own line endings (the cell magic splits on "\n" too).
+            lines = f.read().split("\n")
 
         with tempfile.NamedTemporaryFile(mode="w+b", suffix=".py") as f:
             f.write(lines_with_profiling(lines, function_profile).encode())

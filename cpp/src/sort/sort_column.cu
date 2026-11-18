@@ -26,11 +26,13 @@ std::unique_ptr<column> sorted_order<sort_method::UNSTABLE>(column_view const& i
                                                             cuda::stream_ref stream,
                                                             cudf::memory_resources mr)
 {
-  auto sorted_indices              = cudf::make_numeric_column(data_type(type_to_id<size_type>()),
+  auto sorted_indices = cudf::make_numeric_column(data_type(type_to_id<size_type>()),
                                                   input.size(),
                                                   mask_state::UNALLOCATED,
                                                   stream,
                                                   mr.get_output_mr());
+  if (input.is_empty()) { return sorted_indices; }
+
   mutable_column_view indices_view = sorted_indices->mutable_view();
   if (is_radix_sortable(input)) {
     sorted_order_radix(
@@ -59,11 +61,13 @@ std::unique_ptr<column> sorted_order<sort_method::STABLE>(column_view const& inp
                                                           cuda::stream_ref stream,
                                                           cudf::memory_resources mr)
 {
-  auto sorted_indices              = cudf::make_numeric_column(data_type(type_to_id<size_type>()),
+  auto sorted_indices = cudf::make_numeric_column(data_type(type_to_id<size_type>()),
                                                   input.size(),
                                                   mask_state::UNALLOCATED,
                                                   stream,
                                                   mr.get_output_mr());
+  if (input.is_empty()) { return sorted_indices; }
+
   mutable_column_view indices_view = sorted_indices->mutable_view();
   if (is_radix_sortable(input)) {
     sorted_order_radix(

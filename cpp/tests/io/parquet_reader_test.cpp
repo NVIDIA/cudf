@@ -1828,7 +1828,7 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
       .build());
 
-  auto footer =
+  auto const footer =
     cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
                                      cudf::host_span<char const>{buffer.data(), buffer.size()}}))
       .front();
@@ -1838,24 +1838,14 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
            enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
   }));
 
-  auto& schema             = footer.schema[1];
-  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
-  schema.decimal_scale     = scale;
-  schema.decimal_precision = precision;
-  schema.logical_type      = cudf::io::parquet::LogicalType{
-    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
-
-  // Swap the trailing footer for the annotated one, keeping the data pages
-  uint32_t footer_len{};
-  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
-  auto const new_footer = parquet_delta_test::serialize_footer(footer);
-  buffer.resize(buffer.size() - 8 - footer_len);
-  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
-  footer_len = new_footer.size();
-  buffer.insert(buffer.end(),
-                reinterpret_cast<char const*>(&footer_len),
-                reinterpret_cast<char const*>(&footer_len + 1));
-  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+  edit_footer(buffer, [&](cudf::io::parquet::FileMetaData& fmd) {
+    auto& schema             = fmd.schema[1];
+    schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+    schema.decimal_scale     = scale;
+    schema.decimal_precision = precision;
+    schema.logical_type      = cudf::io::parquet::LogicalType{
+      cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+  });
 
   auto const result = cudf::io::read_parquet(
     cudf::io::parquet_reader_options::builder(

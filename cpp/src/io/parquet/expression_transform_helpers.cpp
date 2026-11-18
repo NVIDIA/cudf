@@ -374,7 +374,7 @@ post_read_filter::post_read_filter(ast::expression const& expr,
                                    size_type offset,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr)
-  : _input{std::move(input)}, _offset{offset}, _stream{stream}, _mr{mr}, _expr{expr}
+  : _input{std::move(input)}, _offset{offset}, _stream{stream}, _mr{std::move(mr)}, _expr{expr}
 {
   if (offset != 0 or
       std::ranges::any_of(_input, [](auto const& col) { return cudf::is_nested(col.type()); })) {

@@ -434,18 +434,14 @@ async def _broadcast_join_large_chunk(
     context: Context,
     ir: Join,
     ir_context: IRExecutionContext,
-    ch_out: Channel[TableChunk],
     small_dfs: list[DataFrame],
     small_child: IR,
     large_chunk: TableChunk,
     large_child: IR,
-    seq_num: int,
     small_size: int,
     broadcast_side: Literal["left", "right"],
-    *,
-    tracer: ActorTracer | None,
-) -> int:
-    """Join one large-side chunk with the small DataFrame(s) and send the result."""
+) -> TableChunk:
+    """Join one large-side chunk with the small DataFrame(s)."""
     large_df = chunk_to_frame(large_chunk, large_child)
     large_chunk_size = large_chunk.data_alloc_size()
 
@@ -473,13 +469,9 @@ async def _broadcast_join_large_chunk(
         df = _concat(*join_results, context=ir_context)
         del join_results
 
-    output_chunk = TableChunk.from_pylibcudf_table(
+    return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
-    del df, large_df
-    output_rows = output_chunk.shape[0]
-    await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
-    return output_rows
 
 
 async def broadcast_join(
@@ -569,21 +561,22 @@ async def broadcast_join(
             net_memory_delta=missing_net_memory_delta,
         )
         input_rows += large_chunk.shape[0]
-        output_rows += await _broadcast_join_large_chunk(
+        output_chunk = await _broadcast_join_large_chunk(
             context,
             ir,
             ir_context,
-            ch_out,
             small_dfs,
             small_child,
             large_chunk,
             large_child,
-            msg.sequence_number,
             small_size,
             broadcast_side,
-            tracer=tracer,
         )
         del large_chunk
+        output_rows += output_chunk.shape[0]
+        await send_chunk(
+            context, ch_out, output_chunk, msg.sequence_number, tracer=tracer
+        )
 
     if prefilter_statistics is not None:
         prefilter_statistics.input_rows = input_rows

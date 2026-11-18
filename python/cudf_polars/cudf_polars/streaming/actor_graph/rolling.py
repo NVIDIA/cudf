@@ -183,6 +183,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             ir_context=self.ir_context,
             already_available=True,
         )
+        del evaluation_chunk
         (table,) = plc.copying.slice(
             result.table_view(),
             [cursor.row_start - start, cursor.row_stop - start],

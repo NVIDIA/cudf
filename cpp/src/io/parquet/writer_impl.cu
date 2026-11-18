@@ -38,7 +38,6 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuda/buffer>
@@ -977,11 +976,11 @@ struct parquet_column_view {
 
   // List-related members
   bool _is_list;
-  rmm::device_uvector<size_type>
+  cuda::device_buffer<size_type>
     _dremel_offsets;  ///< For each row, the absolute offset into the repetition and definition
                       ///< level vectors. O(num rows)
-  rmm::device_uvector<uint8_t> _rep_level;
-  rmm::device_uvector<uint8_t> _def_level;
+  cuda::device_buffer<uint8_t> _rep_level;
+  cuda::device_buffer<uint8_t> _def_level;
   std::vector<uint8_t> _nullability;
   size_type _data_count = 0;
 };
@@ -992,9 +991,9 @@ parquet_column_view::parquet_column_view(schema_tree_node const& schema_node,
                                          cudf::memory_resources mr)
   : schema_node(schema_node),
     _d_nullability(stream, mr.get_output_mr(), 0, cuda::no_init),
-    _dremel_offsets(0, stream, mr.get_output_mr()),
-    _rep_level(0, stream, mr.get_output_mr()),
-    _def_level(0, stream, mr.get_output_mr())
+    _dremel_offsets(stream, mr.get_output_mr(), 0, cuda::no_init),
+    _rep_level(stream, mr.get_output_mr(), 0, cuda::no_init),
+    _def_level(stream, mr.get_output_mr(), 0, cuda::no_init)
 {
   // Construct single inheritance column_view from linked_column_view
   auto curr_col                           = schema_node.leaf_column.get();
@@ -1193,7 +1192,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
 
   chunks.host_to_device_async(stream);
   // Calculate number of pages and store in respective chunks
@@ -1499,7 +1498,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   cuda::device_buffer<statistics_merge_group> page_stats_mrg(
     stream, cudf::get_current_device_resource_ref(), num_stats_bfr, cuda::no_init);
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
   chunks.host_to_device_async(stream);
   InitEncoderPages(chunks,
                    pages,

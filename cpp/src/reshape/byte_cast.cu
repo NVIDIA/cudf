@@ -45,7 +45,7 @@ struct byte_list_conversion_dispatcher {
   std::unique_ptr<column> operator()(column_view const& input,
                                      flip_endianness configuration,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
+                                     cudf::memory_resources mr) const
   {
     return byte_list_conversion_fn<T>::invoke(input, configuration, stream, mr);
   }
@@ -56,7 +56,7 @@ struct byte_list_conversion_fn<T> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness configuration,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
@@ -112,7 +112,7 @@ struct byte_list_conversion_fn<T> {
   static std::unique_ptr<column> invoke(column_view const& input,
                                         flip_endianness,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
   {
     if (input.size() == 0) { return cudf::lists::detail::make_empty_lists_column(output_type); }
     if (input.size() == input.null_count()) {
@@ -161,7 +161,7 @@ struct byte_list_conversion_fn<T> {
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   return type_dispatcher(
     input.type(), byte_list_conversion_dispatcher{}, input, endian_configuration, stream, mr);
@@ -172,7 +172,7 @@ std::unique_ptr<column> byte_cast(column_view const& input,
 std::unique_ptr<column> byte_cast(column_view const& input,
                                   flip_endianness endian_configuration,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::byte_cast(input, endian_configuration, stream, mr);

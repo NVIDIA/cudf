@@ -45,7 +45,7 @@ struct all_fn {
   template <cudf::concepts::arithmetic T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto const d_dict = cudf::column_device_view::create(input, stream);
     auto const iter   = [&] {
@@ -63,9 +63,7 @@ struct all_fn {
     return std::make_unique<numeric_scalar<bool>>(d_result.value(stream), true, stream, mr);
   }
   template <typename T>
-  std::unique_ptr<scalar> operator()(column_view const&,
-                                     cuda::stream_ref,
-                                     rmm::device_async_resource_ref)
+  std::unique_ptr<scalar> operator()(column_view const&, cuda::stream_ref, cudf::memory_resources)
   {
     CUDF_FAIL("Unexpected key type for dictionary in reduction all()");
   }
@@ -77,7 +75,7 @@ std::unique_ptr<cudf::scalar> all(column_view const& col,
                                   cudf::data_type const output_dtype,
                                   std::optional<std::reference_wrapper<scalar const>> init,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(output_dtype == cudf::data_type(cudf::type_id::BOOL8),
                "all() operation can be applied with output type `BOOL8` only");

@@ -29,9 +29,9 @@ template <typename Set>
 rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
                                                       size_type num_rows,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
-  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr);
+  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
 
   auto const iter = cuda::counting_iterator<cudf::size_type>{0};
   set.insert_async(iter, iter + num_rows, stream.get());
@@ -45,9 +45,9 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
                                                                   size_type num_rows,
                                                                   duplicate_keep_option keep,
                                                                   cuda::stream_ref stream,
-                                                                  rmm::device_async_resource_ref mr)
+                                                                  cudf::memory_resources mr)
 {
-  auto output_indices    = rmm::device_uvector<size_type>(num_rows, stream, mr);
+  auto output_indices    = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
   auto reduction_results = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   initialize_reduction_results(

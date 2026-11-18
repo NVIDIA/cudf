@@ -20,7 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -297,7 +296,7 @@ struct build_tree_result {
                                            bool is_array_of_arrays,
                                            cudf::io::json_reader_options const& options,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr);
+                                           cudf::memory_resources mr);
 
 void scatter_offsets(tree_meta_t const& tree,
                      device_span<NodeIndexT const> col_ids,
@@ -368,7 +367,7 @@ void make_device_json_column(device_span<SymbolT const> input,
                              bool collect_schema_mismatch_rows,
                              cudf::io::json_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();
@@ -541,7 +540,7 @@ void make_device_json_column(device_span<SymbolT const> input,
                                            bool is_array_of_arrays,
                                            cudf::io::json_reader_options const& options,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   bool const is_enabled_lines                 = options.is_enabled_lines();
   bool const is_enabled_mixed_types_as_string = options.is_enabled_mixed_types_as_string();
@@ -573,8 +572,11 @@ void make_device_json_column(device_span<SymbolT const> input,
       return;
     } else if (column_category == NC_VAL || column_category == NC_STR) {
       auto const num_rows = max_row_offsets[i] + 1;
-      col.string_offsets.resize(num_rows, stream);
-      col.string_lengths.resize(num_rows, stream);
+      // These buffers are empty until this column is initialized.
+      col.string_offsets = cuda::device_buffer<size_type>(
+        stream, col.string_offsets.memory_resource(), num_rows, cuda::no_init);
+      col.string_lengths = cuda::device_buffer<size_type>(
+        stream, col.string_lengths.memory_resource(), num_rows, cuda::no_init);
       thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          num_rows,

@@ -57,7 +57,7 @@ struct sequence_functor {
                                      scalar const& init,
                                      scalar const& step,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
@@ -82,7 +82,7 @@ struct sequence_functor {
   std::unique_ptr<column> operator()(size_type size,
                                      scalar const& init,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto result = make_fixed_width_column(init.type(), size, mask_state::UNALLOCATED, stream, mr);
     auto result_device_view = mutable_column_device_view::create(*result, stream);
@@ -115,7 +115,7 @@ std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(init, step),
                "init and step must be of the same type.",
@@ -132,7 +132,7 @@ std::unique_ptr<column> sequence(size_type size,
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(size >= 0, "size must be >= 0", std::invalid_argument);
   CUDF_EXPECTS(is_numeric(init.type()), "init scalar type must be numeric", cudf::data_type_error);
@@ -147,7 +147,7 @@ std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sequence(size, init, step, stream, mr);
@@ -156,7 +156,7 @@ std::unique_ptr<column> sequence(size_type size,
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sequence(size, init, stream, mr);

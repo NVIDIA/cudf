@@ -353,8 +353,8 @@ struct streaming_groupby::impl {
 
   [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
                                                           cudf::memory_resources mr) const;
-  [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(
-    cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(cuda::stream_ref stream,
+                                                            cudf::memory_resources mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
   finalize_gathered(std::unique_ptr<table> keys,

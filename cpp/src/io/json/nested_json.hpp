@@ -148,8 +148,8 @@ struct device_json_column {
   // The inferred type of this column (list, struct, or value/string column)
   json_col_t type = json_col_t::Unknown;
 
-  rmm::device_uvector<row_offset_t> string_offsets;
-  rmm::device_uvector<row_offset_t> string_lengths;
+  cuda::device_buffer<row_offset_t> string_offsets;
+  cuda::device_buffer<row_offset_t> string_lengths;
 
   // Row offsets (LIST offsets child data; always 32-bit)
   rmm::device_uvector<int32_t> child_offsets;
@@ -189,11 +189,11 @@ struct device_json_column {
    * @param stream The CUDA stream to which kernels are dispatched
    * @param mr Optional, resource with which to allocate
    */
-  device_json_column(cuda::stream_ref stream, rmm::device_async_resource_ref mr)
-    : string_offsets(0, stream),
-      string_lengths(0, stream),
-      child_offsets(0, stream, mr),
-      validity(stream, mr)
+  device_json_column(cuda::stream_ref stream, cudf::memory_resources mr)
+    : string_offsets(stream, mr.get_temporary_mr(), 0, cuda::no_init),
+      string_lengths(stream, mr.get_temporary_mr(), 0, cuda::no_init),
+      child_offsets(0, stream, mr.get_output_mr()),
+      validity(stream, mr.get_output_mr())
   {
   }
 };
@@ -285,7 +285,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
  * @return Returns the post-processed token stream
  */
 CUDF_EXPORT
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
   cuda::stream_ref stream,
@@ -325,7 +325,7 @@ tree_meta_t get_tree_representation(device_span<PdaTokenT const> tokens,
                                     device_span<SymbolOffsetT const> token_indices,
                                     bool is_strict_nested_boundaries,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+                                    cudf::memory_resources mr);
 
 /**
  * @brief Traverse the tree representation of the JSON input in records orient format and populate
@@ -350,7 +350,7 @@ records_orient_tree_traversal(device_span<SymbolT const> d_input,
                               bool is_enabled_lines,
                               bool is_enabled_experimental,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              cudf::memory_resources mr);
 
 /**
  * @brief Searches for and selects nodes at level `row_array_children_level`. For each selected
@@ -429,7 +429,7 @@ void make_device_json_column(device_span<SymbolT const> input,
                              bool collect_schema_mismatch_rows,
                              cudf::io::json_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 /**
  * @brief Retrieves the parse_options to be used for type inference and type casting
@@ -456,7 +456,7 @@ CUDF_EXPORT
 table_with_metadata device_parse_nested_json(device_span<SymbolT const> input,
                                              cudf::io::json_reader_options const& options,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr);
+                                             cudf::memory_resources mr);
 
 /**
  * @brief Result of `device_parse_nested_json_with_diagnostics`.
@@ -485,7 +485,7 @@ device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
   cudf::io::json_reader_options const& options,
   bool collect_schema_mismatch_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /**
  * @brief Create empty column of a given nested schema
@@ -497,7 +497,7 @@ device_parse_nested_json_result device_parse_nested_json_with_diagnostics(
  */
 std::unique_ptr<column> make_empty_column(schema_element const& schema,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr);
+                                          cudf::memory_resources mr);
 
 /**
  * @brief Create all null column of a given nested schema
@@ -511,7 +511,7 @@ std::unique_ptr<column> make_empty_column(schema_element const& schema,
 std::unique_ptr<column> make_all_nulls_column(schema_element const& schema,
                                               size_type num_rows,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr);
+                                              cudf::memory_resources mr);
 
 /**
  * @brief Create metadata for a column of a given schema

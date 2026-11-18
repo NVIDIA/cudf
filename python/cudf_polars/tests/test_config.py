@@ -397,6 +397,8 @@ def test_kvikio_resolvers_accept_enum_values(
         ("kvikio_reactor_count", 0, "must be positive"),
         ("kvikio_request_ceiling", object(), "must be an int"),
         ("kvikio_request_ceiling", -1, "must be non-negative"),
+        ("cucascade_cache_bytes", object(), "must be an int"),
+        ("cucascade_cache_bytes", -1, "must be non-negative"),
     ],
 )
 def test_validate_kvikio_options(option: str, value: object, match: str) -> None:

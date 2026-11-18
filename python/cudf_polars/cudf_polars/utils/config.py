@@ -385,6 +385,16 @@ def resolve_kvikio_request_ceiling(executor_options: dict[str, Any]) -> int:
     )
 
 
+def resolve_cucascade_cache_bytes(executor_options: dict[str, Any]) -> int:
+    """Resolve the cuCascade host cache size in bytes, with env var fallback."""
+    return int(
+        executor_options.get(
+            "cucascade_cache_bytes",
+            os.environ.get("CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES", "0"),
+        )
+    )
+
+
 def resolve_kvikio_executor_options(executor_options: dict[str, Any]) -> dict[str, Any]:
     """
     Resolve every ``kvikio_*`` executor option in place, via ``setdefault``.
@@ -1207,6 +1217,16 @@ class StreamingExecutor:
         - the ``CUDF_POLARS__EXECUTOR__KVIKIO_REQUEST_CEILING`` environment variable
         - the ``KVIKIO_REMOTE_IO_MAX_CONCURRENT_REQUESTS`` environment variable
           (lower precedence)
+    cucascade_cache_bytes
+        Size, in bytes, of the host-memory cache that serves remote (``s3://``)
+        parquet reads through cuCascade, so a column read by one query is served
+        from host memory by the next. 0 (default) disables the cache and reads
+        through kvikio. The cache is pinned when the engine is created. Requires
+        the cuCascade glue module and AWS credentials in the environment. Only the
+        SPMD engine supports it. This can be set via
+
+        - ``executor_options`` passed to ``polars.GPUEngine``
+        - the ``CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES`` environment variable
     quent_context
         Quent tracing context. When ``None`` (default), Quent tracing is disabled.
         Pass a :class:`~cudf_polars.quent.QuentConfig` instance to enable tracing.
@@ -1314,6 +1334,9 @@ class StreamingExecutor:
     )
     kvikio_request_ceiling: int = dataclasses.field(
         default_factory=lambda: resolve_kvikio_request_ceiling({})
+    )
+    cucascade_cache_bytes: int = dataclasses.field(
+        default_factory=lambda: resolve_cucascade_cache_bytes({})
     )
 
     min_device_size: int | None = None
@@ -1451,6 +1474,10 @@ class StreamingExecutor:
             raise TypeError("kvikio_request_ceiling must be an int")
         if self.kvikio_request_ceiling < 0:
             raise ValueError("kvikio_request_ceiling must be non-negative")
+        if not isinstance(self.cucascade_cache_bytes, int):
+            raise TypeError("cucascade_cache_bytes must be an int")
+        if self.cucascade_cache_bytes < 0:
+            raise ValueError("cucascade_cache_bytes must be non-negative")
 
     def __hash__(self) -> int:  # noqa: D105
         # dynamic_planning factory, a dataclass, isn't natively hashable. We'll dump it

@@ -10,6 +10,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/utilities.hpp>
@@ -20,6 +21,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cub/device/device_memcpy.cuh>
+#include <cub/device/device_scan.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -168,6 +170,75 @@ std::pair<std::unique_ptr<column>, int64_t> make_offsets_child_column(InputItera
   }
 
   return std::pair(std::move(offsets_column), total_bytes);
+}
+
+// The size function is stored directly, avoiding a second counting iterator in
+// lazily generated sizes such as gathered string lengths.
+template <typename SizeFunction, typename Offset>
+struct padded_string_sizes {
+  SizeFunction size_at;
+  size_type rows;
+
+  __device__ Offset operator()(size_type index) const
+  {
+    return index == rows ? Offset{0} : static_cast<Offset>(size_at(index));
+  }
+};
+
+/**
+ * @brief Create a strings offsets child when the sum of the input sizes is already known.
+ *
+ * Avoids reading the total back from the device, allowing callers to synchronize sizes
+ * for multiple columns together. The caller must provide non-negative sizes and their
+ * exact sum. The output offset width and column-size limit follow the same policy as
+ * the overload that computes the total.
+ *
+ * Keep lazily generated sizes as a callable instead of re-indexing a transform/counting
+ * iterator inside it, which retains an extra index base in the scan kernel. This overload
+ * constructs the scan iterator and supplies its final zero itself; `size_at` only needs
+ * to accept indices in `[0, rows)`.
+ *
+ * @tparam SizeFunction Device callable returning the byte size of a row
+ * @param size_at Returns the byte size for row indices in `[0, rows)`
+ * @param rows Number of strings
+ * @param total_bytes Sum of the input sizes
+ * @param stream CUDA stream used for device operations
+ * @param mr Memory resources for temporary allocations and the returned column
+ * @return Offsets column
+ * @throw std::overflow_error if the output exceeds the column size limit
+ */
+template <typename SizeFunction>
+std::unique_ptr<column> make_offsets_child_column(SizeFunction size_at,
+                                                  size_type rows,
+                                                  int64_t total_bytes,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
+{
+  CUDF_EXPECTS(rows >= 0 && rows < std::numeric_limits<size_type>::max(),
+               "Size of output exceeds the column size limit",
+               std::overflow_error);
+  CUDF_EXPECTS(total_bytes >= 0, "Total string size must be non-negative");
+  auto const threshold = cudf::strings::get_offset64_threshold();
+  CUDF_EXPECTS(total_bytes < threshold || cudf::strings::is_large_strings_enabled(),
+               "Size of output exceeds the column size limit",
+               std::overflow_error);
+  auto build = [&]<typename Offset>() {
+    auto offsets = make_numeric_column(
+      data_type{type_to_id<Offset>()}, rows + 1, mask_state::UNALLOCATED, stream, mr);
+    auto output = offsets->mutable_view().template data<Offset>();
+    if (total_bytes == 0) {
+      CUDF_CUDA_TRY(cudaMemsetAsync(
+        output, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Offset), stream.get()));
+    } else {
+      auto const sizes = cudf::detail::make_counting_transform_iterator(
+        0, padded_string_sizes<SizeFunction, Offset>{size_at, rows});
+      CUDF_CUDA_TRY(
+        cub::DeviceScan::ExclusiveSum(sizes, output, rows + 1, cudf::detail::make_env(stream, mr)));
+    }
+    return offsets;
+  };
+  return total_bytes >= threshold ? build.template operator()<int64_t>()
+                                  : build.template operator()<size_type>();
 }
 
 /**

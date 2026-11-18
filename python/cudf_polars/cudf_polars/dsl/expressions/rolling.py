@@ -603,9 +603,8 @@ class GroupedWindow(Expr):
                 )
             res_col = res_tbl.columns()[0]
             if res_col.type() != out_dtype.plc_type:
-                res_tbl = plc.Table(
-                    [plc.unary.cast(res_col, out_dtype.plc_type, stream=df.stream)]
-                )
+                column = Column(res_col, dtype=DataType(pl.Int64()))
+                res_tbl = plc.Table([column.astype(out_dtype, df.stream).obj])
             result_tables.append(res_tbl)
         return out_names, out_dtypes, result_tables
 

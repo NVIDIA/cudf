@@ -817,6 +817,16 @@ def test_cum_sum_over_order_by_dtype(
     assert_gpu_result_equal(q, engine=engine, check_dtypes=True)
 
 
+def test_cum_sum_over_order_by_large_int32_overflow(engine: pl.GPUEngine) -> None:
+    """Test cum_sum().over(order_by=...) wraps identically to CPU Polars on large Int32 values."""
+    lf = pl.LazyFrame(
+        {"a": [2147483647, 2147483647, 2147483647], "i": [0, 1, 2]},
+        schema={"a": pl.Int32, "i": pl.Int64},
+    )
+    q = lf.select(pl.col("a").cum_sum().over(order_by="i"))
+    assert_gpu_result_equal(q, engine=engine, check_dtypes=True)
+
+
 @pytest.mark.parametrize("n", [1, -1, 2])
 @pytest.mark.parametrize(
     "expr,group_key",

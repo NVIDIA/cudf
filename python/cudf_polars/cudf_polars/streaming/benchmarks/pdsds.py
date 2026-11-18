@@ -76,9 +76,7 @@ class PDSDSPolarsQueries(PDSDSQueries):
     q_impl = "polars_impl"
     # Queries expected to fail on GPU due to known bugs. Keys are query numbers;
     # values are reasons for the failures. These queries will be skipped in GPU runs.
-    EXPECTED_FAILURES_TPCDS: ClassVar[dict[int, str]] = {
-        5: "GPU execution failure (packed data cannot be empty): https://github.com/rapidsai/cudf/issues/22073",
-    }
+    EXPECTED_FAILURES_TPCDS: ClassVar[dict[int, str]] = {}
     # See comments for EXPECTED_CASTS and EXPECTED_CASTS_DECIMAL
     # in cudf/python/cudf_polars/cudf_polars/streaming/benchmarks/pdsh.py
     # for more details.

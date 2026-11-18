@@ -42,7 +42,7 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       ProgDevice& d_prog,
                                       size_type strings_count,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 /**
  * @brief Returns a column of regex match counts for each string in the given column.
@@ -61,7 +61,7 @@ std::unique_ptr<column> count_matches(column_device_view const& d_strings,
 std::unique_ptr<column> count_matches(column_device_view const& d_strings,
                                       regex_program const& prog,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace strings

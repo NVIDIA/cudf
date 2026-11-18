@@ -76,7 +76,7 @@ struct extract_fn {
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   // create device object from regex_program
   auto d_prog = regex_device_builder::create_prog_device(prog, stream);
@@ -91,7 +91,11 @@ std::unique_ptr<table> extract(strings_column_view const& input,
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
   if (!input.is_empty()) {
-    launch_for_each_kernel(extract_fn{*d_strings, d_indices}, *d_prog, input.size(), stream);
+    launch_for_each_kernel(extract_fn{*d_strings, d_indices},
+                           *d_prog,
+                           input.size(),
+                           stream,
+                           cudf::get_current_device_resource_ref());
   }
 
   // build a result column for each group
@@ -147,7 +151,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
@@ -165,8 +169,12 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
 
   auto const d_strings = column_device_view::create(input.parent(), stream);
 
-  launch_transform_kernel(
-    extract_single_fn{*d_strings, group}, *d_prog, indices.data(), input.size(), stream);
+  launch_transform_kernel(extract_single_fn{*d_strings, group},
+                          *d_prog,
+                          indices.data(),
+                          input.size(),
+                          stream,
+                          cudf::get_current_device_resource_ref());
 
   return cudf::make_strings_column(indices, stream, mr);
 }
@@ -178,7 +186,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
 std::unique_ptr<table> extract(strings_column_view const& input,
                                regex_program const& prog,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::extract(input, prog, stream, mr);
@@ -188,7 +196,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
                                        regex_program const& prog,
                                        size_type group,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::extract_single(input, prog, group, stream, mr);

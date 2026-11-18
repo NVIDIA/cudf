@@ -41,7 +41,7 @@ void segmented_update_validity(column& result,
                                null_policy null_handling,
                                std::optional<std::reference_wrapper<scalar const>> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr);
+                               cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace reduction

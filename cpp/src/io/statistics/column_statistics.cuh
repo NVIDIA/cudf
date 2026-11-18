@@ -14,6 +14,8 @@
 #include "temp_storage_wrapper.cuh"
 #include "typed_statistics_chunk.cuh"
 
+#include <cuda/std/type_traits>
+
 namespace cudf {
 namespace io {
 
@@ -85,7 +87,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO != detail::io_file_format::PARQUET or !std::is_same_v<T, list_view>))
+             (IO != detail::io_file_format::PARQUET or !cuda::std::is_same_v<T, list_view>))
   {
     // Temporarily disable stats writing for int96 timestamps
     // TODO: https://github.com/NVIDIA/cudf/issues/10438
@@ -105,8 +107,12 @@ struct calculate_group_statistics_functor {
       uint32_t row = r + s.group.start_row;
       if (r < s.group.num_rows) {
         if (s.col.leaf_column->is_valid(row)) {
-          auto converted_value = type_convert::convert(get_element<T>(s, row));
-          chunk.reduce(converted_value);
+          auto const element = get_element<T>(s, row);
+          if constexpr (cuda::std::is_same_v<CT, detail::timestamp_ns128>) {
+            chunk.reduce(detail::to_wall_clock_ns(element, s.col.ut_offsets));
+          } else {
+            chunk.reduce(type_convert::convert(element));
+          }
         } else {
           chunk.null_count++;
         }
@@ -127,7 +133,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
   {
     operator()<statistics::byte_array_view>(s, t);
   }
@@ -189,11 +195,18 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO == detail::io_file_format::ORC or !std::is_same_v<T, list_view>))
+             (IO == detail::io_file_format::ORC or !cuda::std::is_same_v<T, list_view>))
   {
     detail::storage_wrapper<block_size> storage(temp_storage);
 
-    typed_statistics_chunk<T, detail::statistics_type_category<T, IO>::include_aggregate> chunk;
+    // The chunks hold values of the type the gathering kernel converted to, which decides the union
+    // member the extrema live in. Only that type matters here, so the int96 choice is irrelevant:
+    // it changes the unit of a Parquet timestamp, not how it is stored.
+    using type_convert =
+      detail::type_conversion<detail::conversion_map<IO, detail::is_int96_timestamp::NO>>;
+    using CT = typename type_convert::template type<T>;
+
+    typed_statistics_chunk<CT, detail::statistics_type_category<T, IO>::include_aggregate> chunk;
 
     for (uint32_t i = t; i < num_chunks; i += block_size) {
       chunk.reduce(chunks[i]);
@@ -217,7 +230,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
   {
     operator()<statistics::byte_array_view>(s, chunks, num_chunks, t);
   }

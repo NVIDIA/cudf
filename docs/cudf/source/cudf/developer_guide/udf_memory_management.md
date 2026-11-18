@@ -18,11 +18,11 @@ generally as one would in python:
 
 ```python
 def udf(string):
-  if len(string) > 2:
-    result = string.upper() # new allocation
-  else:
-    result = string + string # new allocation
-  return result + 'abc'
+    if len(string) > 2:
+        result = string.upper()  # new allocation
+    else:
+        result = string + string  # new allocation
+    return result + "abc"
 ```
 
 
@@ -66,26 +66,26 @@ that owns the string data and a pointer to a ``MemInfo`` object, which the NRT A
 uses for reference counting.
 
 ```python
-
 from cudf.core.udf.strings_typing import ManagedUDFString
 from numba.cuda.descriptor import cuda_target
 
+
 @register_model(ManagedUDFString)
 class managed_udf_string_model(models.StructModel):
-  _members = (("meminfo", types.voidptr), ("udf_string", udf_string))
+    _members = (("meminfo", types.voidptr), ("udf_string", udf_string))
 
-  def __init__(self, dmm, fe_type):
-      super().__init__(dmm, fe_type, self._members)
+    def __init__(self, dmm, fe_type):
+        super().__init__(dmm, fe_type, self._members)
 
-  def has_nrt_meminfo(self):
-      return True
+    def has_nrt_meminfo(self):
+        return True
 
-  def get_nrt_meminfo(self, builder, value):
-      # effectively returns self.meminfo in IR form
-      udf_str_and_meminfo = numba.core.cgutils.create_struct_proxy(ManagedUDFString())(
-          cuda_target.target_context, builder, value=value
-      )
-      return udf_str_and_meminfo.meminfo
+    def get_nrt_meminfo(self, builder, value):
+        # effectively returns self.meminfo in IR form
+        udf_str_and_meminfo = numba.core.cgutils.create_struct_proxy(
+            ManagedUDFString()
+        )(cuda_target.target_context, builder, value=value)
+        return udf_str_and_meminfo.meminfo
 ```
 
 The actual NRT APIs for adjusting the reference count of an object expect to operate
@@ -251,9 +251,10 @@ udf_str_ptr = builder.gep(managed_ptr, [ir.IntType(32)(0), ir.IntType(32)(1)])
 **2.1 Shim Function Call**
 ```python
 meminfo = context.compile_internal(
-    builder, call_concat_string_view,
+    builder,
+    call_concat_string_view,
     types.voidptr(_UDF_STRING_PTR, _STR_VIEW_PTR, _STR_VIEW_PTR),
-    (udf_str_ptr, lhs_ptr, rhs_ptr)
+    (udf_str_ptr, lhs_ptr, rhs_ptr),
 )
 ```
 

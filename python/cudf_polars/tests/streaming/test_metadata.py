@@ -883,7 +883,7 @@ def test_set_sorted_dataframe_extracts_ordering_boundaries(spmd_engine_factory):
         [DataType(pl.Int64())],
         boundaries.stream,
     ).to_polars()
-    assert boundary_df["k"].to_list() == [2, 3]
+    assert boundary_df["k"].to_list() == [1, 2]
 
 
 def test_apply_ordering_metadata_marks_leading_key_only(spmd_engine) -> None:

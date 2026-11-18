@@ -62,8 +62,12 @@ void table_to_array_impl(table_view const& input,
 
   cuda::constant_iterator<size_t> sizes(static_cast<size_t>(item_size * num_rows));
 
-  cudf::detail::batched_memcpy_async(
-    d_srcs.data(), d_dsts.data(), sizes, num_columns, stream.get());
+  cudf::detail::batched_memcpy_async(d_srcs.data(),
+                                     d_dsts.data(),
+                                     sizes,
+                                     num_columns,
+                                     stream.get(),
+                                     cudf::get_current_device_resource_ref());
   cudf::detail::sync_stream(
     stream);  // ensures h_srcs and h_dsts are not destroyed before the copy is done
 }

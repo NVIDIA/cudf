@@ -25,18 +25,37 @@ namespace kvikio_integration {
  */
 
 /**
+ * @brief KvikIO's compatibility mode, which decides whether file reads use GPUDirect Storage.
+ *
+ * Even for a file that uses GPUDirect Storage, a read smaller than KvikIO's GDS threshold uses
+ * POSIX I/O. The threshold is set with the KVIKIO_GDS_THRESHOLD environment variable; its
+ * default is documented at `kvikio::defaults::gds_threshold()`.
+ */
+enum class compat_mode : int32_t {
+  ON,   ///< Always use POSIX I/O
+  OFF,  ///< Use GPUDirect Storage; opening a file it cannot read fails
+  AUTO  ///< Use GPUDirect Storage where it works for a file, else POSIX I/O
+};
+
+/**
  * @brief Set KvikIO parameters
  *
  * Parameters include:
- * - Compatibility mode, according to the environment variable KVIKIO_COMPAT_MODE. If
- *   KVIKIO_COMPAT_MODE is not set, enable it by default, which enforces the use of POSIX I/O.
+ * - Compatibility mode. If @p mode is provided, it is used directly. Otherwise, the value is read
+ *   from the environment variable KVIKIO_COMPAT_MODE. If KVIKIO_COMPAT_MODE is not set, it
+ *   defaults to `ON`, which enforces the use of POSIX I/O.
  * - Thread pool size. If @p nthreads is provided, it is used directly. Otherwise, the value is
  *   read from the environment variable KVIKIO_NTHREADS, defaulting to 4 if unset.
  *
- * @param nthreads Optional thread pool size override. If provided, supersedes KVIKIO_NTHREADS.
+ * @param nthreads Thread pool size. Defaults to KVIKIO_NTHREADS, or 4 if it is unset.
+ * @param mode Compatibility mode. Defaults to KVIKIO_COMPAT_MODE, or `ON` if it is unset.
+ *
+ * @note Only the first call takes effect, including the implicit call made when cuDF first opens a
+ * file source or sink. To apply @p nthreads or @p mode, call this before any cuDF I/O; later calls
+ * are ignored.
  */
-void set_up_kvikio(std::optional<uint32_t> nthreads = std::nullopt);
-
+void set_up_kvikio(std::optional<uint32_t> nthreads = std::nullopt,
+                   std::optional<compat_mode> mode  = std::nullopt);
 }  // namespace kvikio_integration
 
 //! `nvCOMP`

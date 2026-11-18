@@ -41,6 +41,7 @@ A mock example of a deprecation:
 ```python
 import warnings
 
+
 def foo(self):
     """
     Return a result from foo
@@ -51,7 +52,7 @@ def foo(self):
     warnings.warn(
         "`Series.foo` is deprecated and will be removed in a future version of cudf. "
         "Use `Series.new_foo` instead.",
-        FutureWarning
+        FutureWarning,
     )
 ```
 

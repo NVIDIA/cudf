@@ -63,7 +63,7 @@ struct executor_jit {
     cuda::stream_ref stream           = cudf::get_default_stream(),
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
-    return cudf::compute_column_jit(table, expr, stream, mr);
+    return cudf::compute_column_jit(table, expr, {}, stream, mr);
   }
 };
 
@@ -75,7 +75,7 @@ struct executor_transform_program {
     rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
   {
     std::reference_wrapper<cudf::ast::expression const> expressions[] = {expr};
-    cudf::transform_program program{table, expressions, stream, mr};
+    cudf::transform_program program{table, expressions, {}, stream, mr};
     return std::move(program.run(table, stream, mr)->release().front());
   }
 };
@@ -969,6 +969,25 @@ TYPED_TEST(TransformTest, PyMod)
 
   auto result   = Executor::compute_column(table, expression);
   auto expected = column_wrapper<double>{1.0, 0.0, 1.0, 0.0};
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+}
+
+TYPED_TEST(TransformTest, PyModFloatingEdgeCases)
+{
+  using Executor = TypeParam;
+
+  auto const inf = std::numeric_limits<double>::infinity();
+  auto c_0       = column_wrapper<double>{1.0, -1.0, 1.0, -1.0, -1e-20, 1e-20};
+  auto c_1       = column_wrapper<double>{inf, inf, -1e18, -1e18, 1.0, -1.0};
+  auto table     = cudf::table_view{{c_0, c_1}};
+
+  auto col_ref_0  = cudf::ast::column_reference(0);
+  auto col_ref_1  = cudf::ast::column_reference(1);
+  auto expression = cudf::ast::operation(cudf::ast::ast_operator::PYMOD, col_ref_0, col_ref_1);
+
+  auto result   = Executor::compute_column(table, expression);
+  auto expected = column_wrapper<double>{1.0, inf, -1e18, -1.0, 1.0, -1.0};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }

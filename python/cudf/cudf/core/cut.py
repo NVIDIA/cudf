@@ -187,6 +187,8 @@ def cut(
         # if right and include lowest we adjust the first
         # bin edge to make sure it is included
         if right and include_lowest:
+            if isinstance(bins, Sequence):
+                bins = list(bins)
             bins[0] = bins[0] - 10 ** (-precision)
 
         # adjust bin edges decimal precision
@@ -205,9 +207,11 @@ def cut(
     elif labels is None:
         if duplicates == "drop" and len(bins) == 1 and len(old_bins) != 1:
             if right and include_lowest:
-                old_bins[0] = old_bins[0] - 10 ** (-precision)
                 interval_labels = interval_range(
-                    old_bins[0], old_bins[1], periods=1, closed=closed
+                    old_bins[0] - 10 ** (-precision),
+                    old_bins[1],
+                    periods=1,
+                    closed=closed,
                 )
             else:
                 interval_labels = IntervalIndex.from_breaks(

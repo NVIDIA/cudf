@@ -747,9 +747,22 @@ class UnaryFunction(Expr):
             # Polars ignores NaN unless every non-null value is NaN, while libcudf
             # argmin/argmax select the first NaN, so mask the NaNs out first
             is_float = plc.traits.is_floating_point(column.dtype.plc_type)
-            source = column.mask_nans(stream=df.stream) if is_float else column
+            arg_input = (
+                column.mask_nans(stream=df.stream).obj if is_float else column.obj
+            )
+            if is_float:
+                # Polars treats -0.0 and +0.0 as equal and selects the first zero, while
+                # libcudf argmin/argmax select the -0.0 or +0.0 that MIN/MAX return.
+                # Adding +0.0 turns -0.0 into +0.0 and keeps nulls and row positions.
+                arg_input = plc.binaryop.binary_operation(
+                    arg_input,
+                    plc.Scalar.from_py(0.0, column.dtype.plc_type, stream=df.stream),
+                    plc.binaryop.BinaryOperator.ADD,
+                    column.dtype.plc_type,
+                    stream=df.stream,
+                )
             index = plc.reduce.reduce(
-                source.obj,
+                arg_input,
                 arg_agg,
                 plc.DataType(plc.TypeId.INT32),
                 stream=df.stream,

@@ -136,27 +136,6 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                  cudf::io::parquet::FileMetaData* file_meta_data);
 
 /**
- * @brief Returns the `size` low bytes of `value` in big-endian order, as Parquet stores
- * BYTE_ARRAY and FIXED_LEN_BYTE_ARRAY decimals
- */
-[[nodiscard]] std::string big_endian_bytes(__int128_t value, std::size_t size);
-
-/**
- * @brief Annotates a top-level BYTE_ARRAY column of a Parquet footer as decimal
- *
- * No writer produces BYTE_ARRAY decimals, so tests write binary columns and annotate them.
- *
- * @param footer Footer to update
- * @param column Index of the top-level column
- * @param precision Decimal precision
- * @param scale Parquet decimal scale, the negated cudf scale
- */
-void annotate_byte_array_decimal(cudf::io::parquet::FileMetaData& footer,
-                                 int column,
-                                 int32_t precision,
-                                 int32_t scale);
-
-/**
  * @brief Rewrites the footer of an in-memory Parquet file
  *
  * Decodes the trailing footer of `buffer`, applies `edit` to it, and replaces it with the

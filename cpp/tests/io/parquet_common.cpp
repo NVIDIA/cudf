@@ -257,28 +257,6 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                                                  file_meta_data);
 }
 
-std::string big_endian_bytes(__int128_t value, std::size_t size)
-{
-  std::string out(size, '\0');
-  for (std::size_t b = 0; b < size; ++b) {
-    out[size - 1 - b] = static_cast<char>(value >> (8 * b));
-  }
-  return out;
-}
-
-void annotate_byte_array_decimal(cudf::io::parquet::FileMetaData& footer,
-                                 int column,
-                                 int32_t precision,
-                                 int32_t scale)
-{
-  auto& schema             = footer.schema[column + 1];
-  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
-  schema.decimal_scale     = scale;
-  schema.decimal_precision = precision;
-  schema.logical_type      = cudf::io::parquet::LogicalType{
-    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
-}
-
 void edit_footer(std::vector<char>& buffer,
                  std::function<void(cudf::io::parquet::FileMetaData&)> const& edit)
 {

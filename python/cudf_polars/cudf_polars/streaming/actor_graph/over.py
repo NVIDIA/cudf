@@ -650,7 +650,8 @@ async def _reassemble_input_chunks(
                     net_memory_delta=0,
                 )
             ):
-                sorted_tbl = plc.sorting.stable_sort_by_key(
+                sorted_tbl = await ir_context.to_thread(
+                    plc.sorting.stable_sort_by_key,
                     tbl,
                     plc.Table([tbl.columns()[n_exprs]]),
                     [plc.types.Order.ASCENDING],

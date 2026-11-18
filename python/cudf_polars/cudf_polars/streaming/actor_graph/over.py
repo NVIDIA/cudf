@@ -355,12 +355,14 @@ def _split_off_origin_rank(
 
     stream = result.stream
     columns = result.table.columns()
+    # Pass-through and stamp columns can be views of the evaluated partition,
+    # so the chunks do not own their data exclusively.
     return (
         TableChunk.from_pylibcudf_table(
-            plc.Table(columns[:-1]), stream, exclusive_view=True, br=br
+            plc.Table(columns[:-1]), stream, exclusive_view=False, br=br
         ),
         TableChunk.from_pylibcudf_table(
-            plc.Table([columns[-1]]), stream, exclusive_view=True, br=br
+            plc.Table([columns[-1]]), stream, exclusive_view=False, br=br
         ),
     )
 
@@ -505,13 +507,18 @@ async def _distribute_by_group(
     await ch_in.shutdown_metadata(context)
 
     sequence_numbers: list[int] = []
-    chunk_index = 0
     async with forward_shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
+            chunk_index = len(sequence_numbers)
+            sequence_numbers.append(msg.sequence_number)
+            if skip_insert:
+                # Insert duplicated input only once so each logical row
+                # participates once in its window group. The return shuffle
+                # restores the result to all ranks owning the input rows.
+                del msg
+                continue
             chunk = TableChunk.from_message(msg, br=context.br())
-            stamp_bytes = (
-                0 if skip_insert else _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
-            )
+            stamp_bytes = _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
             # The chunk's data moves into shuffler-owned packed buffers, so the
             # stamp columns _append_origin_stamps allocates below are both the
             # extra we need and the only lasting addition.
@@ -521,24 +528,17 @@ async def _distribute_by_group(
                 reserve_extra=stamp_bytes,
                 net_memory_delta=stamp_bytes,
             )
-            sequence_numbers.append(msg.sequence_number)
-            if not skip_insert:
-                # Insert duplicated input only once so each logical row
-                # participates once in its window group. The return shuffle
-                # restores the result to all ranks owning the input rows.
-                with opaque_memory_usage(extra):
-                    stamped = await ir_context.to_thread(
-                        _append_origin_stamps,
-                        chunk,
-                        chunk_index,
-                        comm.rank,
-                        chunk.stream,
-                        context.br(),
-                    )
-                await inserter.insert_hash(stamped, key_indices)
-                del stamped
-            del chunk
-            chunk_index += 1
+            with opaque_memory_usage(extra):
+                stamped = await ir_context.to_thread(
+                    _append_origin_stamps,
+                    chunk,
+                    chunk_index,
+                    comm.rank,
+                    chunk.stream,
+                    context.br(),
+                )
+            await inserter.insert_hash(stamped, key_indices)
+            del stamped, chunk
     return sequence_numbers
 
 

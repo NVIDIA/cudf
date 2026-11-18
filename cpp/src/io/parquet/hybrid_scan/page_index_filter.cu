@@ -101,6 +101,9 @@ struct page_stats_caster : public stats_caster_base {
           }
           return 0;
         }();
+        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
+        auto const& schema             = per_file_metadata[src_idx].schema[mapped_schema_idx];
+        auto const is_narrowing_column = is_column_wider_than<T>(schema.type, schema.type_length);
 
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
@@ -150,7 +153,7 @@ struct page_stats_caster : public stats_caster_base {
               // Check if the page is completely null
               if (column_index.null_pages[page_idx]) {
                 host_column<T>::set_min_max(
-                  min, max, column_page_idx, std::nullopt, std::nullopt, {});
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
                 all_null.val[column_page_idx] = true;
                 has_nan.set_value(column_page_idx, false);
                 return;
@@ -160,7 +163,7 @@ struct page_stats_caster : public stats_caster_base {
               if (ignore_int96_min_max or
                   int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
                 host_column<T>::set_min_max(
-                  min, max, column_page_idx, std::nullopt, std::nullopt, {});
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
               } else {
                 // Translate binary data to Type then to <T>
                 host_column<T>::set_min_max(min,
@@ -168,6 +171,7 @@ struct page_stats_caster : public stats_caster_base {
                                             column_page_idx,
                                             min_value,
                                             max_value,
+                                            is_narrowing_column,
                                             colchunk.meta_data.type,
                                             ts_scale);
               }

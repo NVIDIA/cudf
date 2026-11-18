@@ -37,6 +37,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 
@@ -83,45 +84,6 @@ class stats_caster_base {
     CUDF_EXPECTS(stats_size > 0, "Parquet reader encountered an empty decimal statistics vector");
 
     return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
-  }
-
-  /**
-   * @brief Whether an optional binary stats value of a signed integral type `T` (including
-   * decimal storage types) fits in `T` without truncation
-   */
-  template <typename T>
-  [[nodiscard]] static inline bool fits_in_type(
-    std::optional<std::vector<uint8_t>> const& binary_value, Type const type)
-  {
-    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
-      if (binary_value.has_value()) {
-        auto const value = convert<__int128_t>(binary_value->data(), binary_value->size(), type);
-        return cuda::std::in_range<T>(value);
-      }
-    }
-    return true;
-  }
-
-  /**
-   * @brief Whether values of the Parquet physical `type` may not fit in a signed integral type `T`
-   * (including decimal storage types)
-   *
-   * @param binary_value Binary stats value, used for the byte length of FIXED_LEN_BYTE_ARRAY values
-   * @param type Parquet physical type
-   */
-  template <typename T>
-  [[nodiscard]] static inline bool may_truncate(std::vector<uint8_t> const& binary_value,
-                                                Type const type)
-  {
-    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
-      switch (type) {
-        case Type::INT32: return sizeof(T) < sizeof(int32_t);
-        case Type::INT64: return sizeof(T) < sizeof(int64_t);
-        case Type::FIXED_LEN_BYTE_ARRAY: return sizeof(T) < binary_value.size();
-        default: return true;  // BYTE_ARRAY values have no fixed length
-      }
-    }
-    return false;
   }
 
   template <typename T>
@@ -173,6 +135,24 @@ class stats_caster_base {
     } else {
       return false;
     }
+  }
+
+  /**
+   * @brief Whether column values of the physical `type` may be wider than `T`
+   */
+  template <typename T>
+  [[nodiscard]] static inline bool is_column_wider_than(Type const type, int32_t const type_length)
+  {
+    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
+      switch (type) {
+        case Type::INT32: return sizeof(T) < sizeof(int32_t);
+        case Type::INT64: return sizeof(T) < sizeof(int64_t);
+        case Type::FIXED_LEN_BYTE_ARRAY: return std::cmp_less(sizeof(T), type_length);
+        case Type::BYTE_ARRAY: return true;
+        default: return false;
+      }
+    }
+    return false;
   }
 
   template <typename ToType, typename FromType>
@@ -309,39 +289,47 @@ class stats_caster_base {
     }
 
     /**
-     * @brief Sets the min and max statistics, or nulls both if either does not fit in `T`
+     * @brief Sets the min and max statistics
      *
      * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
-     * order, so neither bound is valid. A lone bound is also nulled if values may be truncated, as
-     * the missing bound may not fit
+     * order, so if the column can truncate, both are nulled unless both are present and fit in `T`
      *
      * @param min Min statistics column
      * @param max Max statistics column
      * @param index Row of the column chunk or page in this column
      * @param min_value Optional binary min value
      * @param max_value Optional binary max value
+     * @param is_narrowing_column Whether values may be truncated to `T`
      * @param type Parquet physical type
      * @param ts_scale Timestamp scale
      */
     static inline void set_min_max(host_column& min,
                                    host_column& max,
                                    size_type index,
-                                   std::optional<std::vector<uint8_t>> const& min_value,
-                                   std::optional<std::vector<uint8_t>> const& max_value,
+                                   std::optional<std::span<uint8_t const>> min_value,
+                                   std::optional<std::span<uint8_t const>> max_value,
+                                   bool is_narrowing_column,
                                    Type const type,
                                    int32_t ts_scale = 0)
     {
-      auto const lone_bound_may_truncate =
-        min_value.has_value() != max_value.has_value() and
-        may_truncate<T>(min_value.has_value() ? *min_value : *max_value, type);
-      if (not lone_bound_may_truncate and fits_in_type<T>(min_value, type) and
-          fits_in_type<T>(max_value, type)) {
-        min.set_index(index, min_value, type, ts_scale);
-        max.set_index(index, max_value, type, ts_scale);
-      } else {
+      // Truncated values lose their order, so use the stats only if both bounds are present and fit
+      auto const value_fits_in_type = [&](auto const& value) {
+        if constexpr (cuda::std::signed_integral<T>) {
+          return value.has_value() and
+                 cuda::std::in_range<T>(convert<__int128_t>(value->data(), value->size(), type));
+        }
+        return true;
+      };
+
+      auto const are_stats_unusable = is_narrowing_column and not(value_fits_in_type(min_value) and
+                                                                  value_fits_in_type(max_value));
+      if (are_stats_unusable) {
         min.set_index(index, std::nullopt, type);
         max.set_index(index, std::nullopt, type);
+        return;
       }
+      min.set_index(index, min_value, type, ts_scale);
+      max.set_index(index, max_value, type, ts_scale);
     }
 
     /**
@@ -422,7 +410,7 @@ class stats_caster_base {
 
    private:
     void inline set_index(size_type index,
-                          std::optional<std::vector<uint8_t>> const& binary_value,
+                          std::optional<std::span<uint8_t const>> binary_value,
                           Type const type,
                           int32_t ts_scale = 0)
     {

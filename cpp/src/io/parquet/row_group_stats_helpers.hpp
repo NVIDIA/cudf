@@ -104,6 +104,9 @@ struct row_group_stats_caster : public stats_caster_base {
           }
           return 0;
         }();
+        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
+        auto const& schema             = source_metadata.schema[mapped_schema_idx];
+        auto const is_narrowing_column = is_column_wider_than<T>(schema.type, schema.type_length);
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(
@@ -135,11 +138,18 @@ struct row_group_stats_caster : public stats_caster_base {
                                  std::distance(row_group.columns.begin(), col)) or
               int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
             if (ignore_int96_min_max) {
-              host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, {});
+              host_column<T>::set_min_max(
+                min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             } else {
               // translate binary data to Type then to <T>
-              host_column<T>::set_min_max(
-                min, max, stats_idx, *min_value, *max_value, colchunk.meta_data.type, ts_scale);
+              host_column<T>::set_min_max(min,
+                                          max,
+                                          stats_idx,
+                                          *min_value,
+                                          *max_value,
+                                          is_narrowing_column,
+                                          colchunk.meta_data.type,
+                                          ts_scale);
             }
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
@@ -165,7 +175,7 @@ struct row_group_stats_caster : public stats_caster_base {
             }
           } else {
             // Mark it null if the column chunk is absent from this row group.
-            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, {});
+            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             if (with_null_and_nan_stats) {
               is_null->set_value(stats_idx, std::nullopt);
               has_nan->set_value(stats_idx, std::nullopt);

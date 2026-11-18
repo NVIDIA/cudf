@@ -31,6 +31,76 @@ def snapshot(data):
 
 
 class ActionTests(unittest.TestCase):
+    def test_confirmed_conflict_routes_concrete_action_to_author(self):
+        data = python_item()
+        review(data, "APPROVED")
+        data["pull_request"]["mergeable"] = False
+        actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+        self.assertEqual(
+            [(a["kind"], a["owner"]) for a in actions],
+            [("Resolve conflicts", "author")],
+        )
+        self.assertEqual(actions[0]["since"], NOW)
+        self.assertFalse(actions[0]["overdue"])
+
+    def test_conflict_does_not_hide_independent_requested_reviews(self):
+        data = python_item()
+        request(data, "other")
+        data["pull_request"]["mergeable"] = False
+        actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+        self.assertEqual(
+            {(a["kind"], a["owner"]) for a in actions},
+            {("Resolve conflicts", "author"), ("Review", "other")},
+        )
+
+    def test_failed_ci_and_unknown_mergeability_do_not_assign_author_work(
+        self,
+    ):
+        for mergeable in [True, None]:
+            data = python_item()
+            review(data, "APPROVED")
+            data["pull_request"]["mergeable"] = mergeable
+            data["check_runs"] = [
+                {
+                    "name": "build",
+                    "conclusion": "failure",
+                    "status": "completed",
+                }
+            ]
+            actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+            self.assertEqual(
+                [(a["kind"], a["owner"]) for a in actions],
+                [("Inspect blockers", "vyasr")],
+            )
+
+    def test_bot_author_conflict_requires_human_routing(self):
+        data = python_item()
+        review(data, "APPROVED")
+        data["issue"]["user"] = {"login": "automation[bot]", "type": "Bot"}
+        data["pull_request"]["mergeable"] = False
+        actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+        self.assertEqual(
+            [(a["kind"], a["owner"]) for a in actions],
+            [("Inspect blockers", "vyasr")],
+        )
+
+    def test_conflict_clock_survives_refresh_and_unknown_mergeability(self):
+        data = python_item()
+        review(data, "APPROVED")
+        data["pull_request"]["mergeable"] = False
+        first = preview(snapshot(data), POLICY, CONFIG)["actions"]
+        later = snapshot(data)
+        later["collected_at"] = "2026-11-25T12:00:00Z"
+        for mergeable in [False, None]:
+            later["items"][0]["pull_request"]["mergeable"] = mergeable
+            actions = preview(later, POLICY, CONFIG, routing_history=first)[
+                "actions"
+            ]
+            self.assertEqual(actions[0]["key"], first[0]["key"])
+            self.assertEqual(actions[0]["since"], NOW)
+            self.assertTrue(actions[0]["overdue"])
+            self.assertEqual(actions[0]["kind"], "Resolve conflicts")
+
     def test_reviewers_have_independent_cards_and_clocks(self):
         data = python_item()
         request(data, "first", REQUESTED)

@@ -12,6 +12,7 @@
       {"name": "Assign reviewer", "color": "YELLOW"},
       {"name": "Review", "color": "BLUE"},
       {"name": "Respond", "color": "ORANGE"},
+      {"name": "Resolve conflicts", "color": "ORANGE"},
       {"name": "Inspect blockers", "color": "RED"},
       {"name": "Clarify handoff", "color": "GRAY"}
     ]},

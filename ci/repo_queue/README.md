@@ -151,6 +151,24 @@ an existing named reviewer prevents a redundant team-routing action.
 An outstanding reviewer action remains visible while a different person owes
 an author response on the same PR.
 
+The action-routing policy sends GitHub-confirmed merge conflicts to the PR
+author as Resolve conflicts actions, replacing generic primary-contact
+inspection/clarification cards. Requested reviewers retain their independent
+actions. Failed CI alone does not identify the next owner. The underlying
+report retains its lifecycle classification and lists CI/conflict observations
+separately; the action planner determines the concrete work and owner.
+
+The conflict clock starts at the first confirmed observation and uses the
+7-calendar-day author threshold. Project metadata preserves this episode
+across runs and temporarily unknown mergeability; approval dates are not
+conflict start dates. For offline replay across snapshots, pass a prior pilot
+run's `routing-history.json` using `actions.py --routing-history FILE`. A later
+confirmed conflict-free result completes the author action. A new conflict
+after that resolution starts a new episode.
+If blocker inspection is still needed after conflict resolution, it also
+starts a new handoff episode rather than inheriting the old fallback's
+notification history.
+
 Stable action keys identify a handoff episode. New commits do not reset a
 review request; an explicit re-request starts a new episode. The output retains
 exact timestamps and source SHA alongside Project date-field proposals.

@@ -4,6 +4,7 @@
   "parked_labels": [],
   "waiting_for_author_labels": [],
   "bot_logins": ["rapids-bot"],
+  "routing": {"merge_conflicts": "author"},
   "thresholds": {
     "Needs triage": {"days": 3, "business_days": true},
     "Needs reviewer assignment": {"days": 0, "business_days": true},

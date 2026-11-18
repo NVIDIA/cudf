@@ -18,6 +18,7 @@ from report import (
     escape,
     event_link,
     human_reviews,
+    is_human,
     parse_time,
     ready_since,
     requested_key,
@@ -163,7 +164,7 @@ def make_action(
     }
 
 
-def candidates(item, config, policy, now):
+def candidates(item, config, policy, now, routing_history=None):
     issue = item["issue"]
     labels = {label["name"] for label in issue["labels"]}
     if not labels.intersection(config["scope"]["labels"]):
@@ -179,6 +180,47 @@ def candidates(item, config, policy, now):
     primary = config["primary_contact"]
     result = []
     pr = item.get("pull_request")
+    previous_conflict = next(
+        (
+            action
+            for action in routing_history or []
+            if action["source"] == issue["html_url"]
+            and action["kind"] == "Resolve conflicts"
+            and not action.get("resolved_at")
+            and action["owner"].casefold() == issue["user"]["login"].casefold()
+        ),
+        None,
+    )
+    author_conflict = (
+        pr is not None
+        and is_human(issue["user"], policy)
+        and policy.get("routing", {}).get("merge_conflicts") == "author"
+        and (
+            pr.get("mergeable") is False
+            or (pr.get("mergeable") is None and previous_conflict is not None)
+        )
+    )
+    if author_conflict:
+        # Approval dates and commit dates cannot establish when a conflict began.
+        since = previous_conflict["since"] if previous_conflict else now
+        action = make_action(
+            item,
+            row,
+            config,
+            policy,
+            now,
+            "Resolve conflicts",
+            issue["user"]["login"],
+            since,
+            issue["html_url"],
+            "Update the PR branch and resolve its merge conflicts, then request re-review if needed",
+            queue="Waiting for author",
+        )
+        action["uncertainty"] = [
+            *action["uncertainty"],
+            "Clock starts at the first confirmed conflict observation; the actual conflict start is unknown",
+        ]
+        result.append(action)
     if pr:
         events = sorted(
             (event for event in item["timeline"] if event.get("created_at")),
@@ -239,7 +281,30 @@ def candidates(item, config, policy, now):
             )
     if row["queue"] in QUEUE_ACTIONS:
         kind, description = QUEUE_ACTIONS[row["queue"]]
+        if author_conflict and kind in {
+            "Inspect blockers",
+            "Clarify handoff",
+            "Assign reviewer",
+        }:
+            return result, None
         owner = issue["user"]["login"] if kind == "Respond" else primary
+        since = row["since"]
+        if kind == "Inspect blockers":
+            resolved = [
+                action.get("resolved_at") or now
+                for action in routing_history or []
+                if action["source"] == issue["html_url"]
+                and action["kind"] == "Resolve conflicts"
+                and (
+                    action.get("resolved_at")
+                    or (pr and pr.get("mergeable") is True)
+                )
+            ]
+            if resolved:
+                # Resuming inspection after author work is a new handoff episode.
+                since = max(
+                    [*resolved, *([since] if since else [])], key=parse_time
+                )
         evidence = (
             row["evidence"][0]["url"] if row["evidence"] else issue["html_url"]
         )
@@ -252,7 +317,7 @@ def candidates(item, config, policy, now):
                 now,
                 kind,
                 owner,
-                row["since"],
+                since,
                 evidence,
                 description,
             )
@@ -311,7 +376,14 @@ def slack_text(action, config, project_state):
     return "\n".join(lines)
 
 
-def preview(snapshot, policy, config, project_state=None, history=None):
+def preview(
+    snapshot,
+    policy,
+    config,
+    project_state=None,
+    history=None,
+    routing_history=None,
+):
     if snapshot.get("schema_version") != 1:
         raise ValueError("unsupported snapshot schema_version")
     if snapshot["repository"] != config["repository"]:
@@ -320,7 +392,9 @@ def preview(snapshot, policy, config, project_state=None, history=None):
     now = snapshot["collected_at"]
     actions, omitted = [], []
     for item in snapshot["items"]:
-        selected, reason = candidates(item, config, policy, now)
+        selected, reason = candidates(
+            item, config, policy, now, routing_history
+        )
         actions.extend(selected)
         if reason:
             omitted.append(
@@ -405,6 +479,11 @@ def main():
     parser.add_argument("--policy", type=Path, default=ROOT / "policy.json")
     parser.add_argument("--project-state", type=Path)
     parser.add_argument(
+        "--routing-history",
+        type=Path,
+        help="Saved routing history, preserving conflict and resumed-inspection clocks",
+    )
+    parser.add_argument(
         "--history",
         type=Path,
         help="Successful notification records keyed by action key",
@@ -425,6 +504,9 @@ def main():
         json.loads(args.config.read_text()),
         state.get("project", state) if state else None,
         json.loads(args.history.read_text()) if args.history else None,
+        json.loads(args.routing_history.read_text())
+        if args.routing_history
+        else None,
     )
     content = (
         json.dumps(plan, indent=2) + "\n"

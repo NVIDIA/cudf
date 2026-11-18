@@ -21,6 +21,19 @@ assignees identify the action owner; assignment of the underlying PR or
 issue is unaffected. Team review requests go to the primary contact to
 select a person; teams are retained as routing evidence.
 
+Concrete author work goes to the PR author. A merge conflict confirmed by
+GitHub creates a **Resolve conflicts** action asking the author to update
+the branch and resolve conflicts. This replaces a generic blocker-inspection
+or unclear-handoff action for the primary contact. Explicit reviewer actions
+remain independent. CI failures alone do not establish author responsibility;
+unknown requirements and ownership still go to the primary contact.
+
+Conflict clocks start when automation first confirms the conflict, using the
+7-calendar-day author threshold. They are not backdated to an approval or a
+commit. Refreshes preserve the clock, including while GitHub temporarily
+reports unknown mergeability. A later confirmation of no conflicts completes
+that action without claiming the PR satisfies other merge requirements.
+
 ## Handoffs and clocks
 
 **Awaiting action** means responsibility has been established but the
@@ -47,8 +60,10 @@ their notification rather than sending two mentions.
 
 ## Pilot state
 
-Slack delivery is disabled during preview. Planned notifications target
-`#swrapids-etl-scrum`, with one thread per action card. Draft item assignments
+Production Slack delivery is disabled during preview. The manual DM pilot
+delivers test messages only to the primary contact and keeps its history
+separate from production notification clocks. Planned production messages
+target `#swrapids-etl-scrum`, with one thread per action card. Draft item assignments
 do not provide GitHub assignment notifications; Slack delivery will supply
 the notification once the pilot is enabled.
 

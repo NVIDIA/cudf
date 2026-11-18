@@ -117,6 +117,15 @@ def disposition(old, item, current, omitted, config):
         return None
     if omitted in {"Draft", "Explicitly deferred"}:
         return "Deferred", "Source is " + omitted.lower() + "."
+    if old["kind"] == "Resolve conflicts":
+        if item.get("pull_request", {}).get("mergeable") is True:
+            return "Complete", (
+                "GitHub reports the branch can be merged without conflicts; "
+                "other merge requirements may remain. Evidence: "
+                + issue["html_url"]
+            )
+        # A replacement reviewer action does not prove that an author fixed a conflict.
+        return None
     if old["kind"] == "Review" and old["since"]:
         for review in reversed(item.get("reviews", [])):
             if (
@@ -195,6 +204,15 @@ class ProjectCards:
             if values.get("Action key", key) != key:
                 raise ValueError("Card body and Action key disagree")
             self.cards[key] = {"item": item, "data": data, "values": values}
+
+    def routing_history(self):
+        return [
+            {
+                **deepcopy(card["data"]["action"]),
+                "resolved_at": card["data"].get("resolved_at"),
+            }
+            for card in self.cards.values()
+        ]
 
     def mutate(self, name, input_type, value, selection):
         return self.github.graphql(
@@ -359,6 +377,8 @@ class ProjectCards:
                 status, reason = result
                 data = deepcopy(card["data"])
                 data["resolution"] = reason
+                if status == "Complete":
+                    data["resolved_at"] = snapshot["collected_at"]
                 self.save(
                     key,
                     data,

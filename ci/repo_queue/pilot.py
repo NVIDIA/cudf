@@ -193,12 +193,26 @@ def main():
             "collected_at": timestamp(),
         }
         save_json(args.output_dir / "snapshot.json", snapshot)
-        plan = preview(snapshot, policy, config, state)
+        plan = preview(
+            snapshot,
+            policy,
+            config,
+            state,
+            routing_history=cards.routing_history(),
+        )
         cards.reconcile(plan, snapshot)
         dm_plan = preview(
-            snapshot, policy, config, state, delivery_history(cards, route)
+            snapshot,
+            policy,
+            config,
+            state,
+            delivery_history(cards, route),
+            cards.routing_history(),
         )
         save_json(args.output_dir / "dm-plan.json", dm_plan)
+        save_json(
+            args.output_dir / "routing-history.json", cards.routing_history()
+        )
         summary = {
             "project": config["project"]["url"],
             "dm_recipient": member,

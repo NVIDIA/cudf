@@ -145,10 +145,102 @@ class SyncTests(unittest.TestCase):
         return ProjectCards(self.github, self.config, STATE, apply)
 
     def sync(self):
-        plan = preview(snapshot(self.data), POLICY, self.config)
         cards = self.cards()
+        plan = preview(
+            snapshot(self.data),
+            POLICY,
+            self.config,
+            routing_history=cards.routing_history(),
+        )
         cards.reconcile(plan, snapshot(self.data))
         return cards, plan
+
+    def test_author_conflict_supersedes_fallback_and_survives_unknown(self):
+        self.data["pull_request"]["requested_reviewers"] = []
+        review(self.data, "APPROVED")
+        cards, plan = self.sync()
+        original = plan["actions"][0]["key"]
+        self.assertEqual(plan["actions"][0]["owner"], "vyasr")
+        self.data["pull_request"]["mergeable"] = False
+        cards, plan = self.sync()
+        conflict = plan["actions"][0]["key"]
+        self.assertEqual(cards.cards[original]["values"]["Status"], "Complete")
+        self.assertIn(
+            "Superseded", cards.cards[original]["data"]["resolution"]
+        )
+        self.assertEqual(
+            cards.cards[conflict]["data"]["action"]["owner"], "author"
+        )
+        self.data["pull_request"]["mergeable"] = None
+        cards, plan = self.sync()
+        self.assertEqual(plan["actions"][0]["key"], conflict)
+        self.assertEqual(
+            cards.cards[conflict]["values"]["Status"], "Awaiting action"
+        )
+        self.data["pull_request"]["mergeable"] = True
+        cards, plan = self.sync()
+        self.assertEqual(cards.cards[conflict]["values"]["Status"], "Complete")
+        self.assertIn(
+            "without conflicts", cards.cards[conflict]["data"]["resolution"]
+        )
+
+    def test_new_conflict_after_resolution_starts_new_episode(self):
+        self.data["pull_request"]["mergeable"] = False
+        cards, plan = self.sync()
+        old = next(
+            a for a in plan["actions"] if a["kind"] == "Resolve conflicts"
+        )
+        self.data["pull_request"]["mergeable"] = True
+        self.sync()
+        self.data["pull_request"]["mergeable"] = False
+        saved = snapshot(self.data)
+        saved["collected_at"] = "2026-11-25T12:00:00Z"
+        cards = self.cards()
+        plan = preview(
+            saved, POLICY, self.config, routing_history=cards.routing_history()
+        )
+        new = next(
+            a for a in plan["actions"] if a["kind"] == "Resolve conflicts"
+        )
+        self.assertNotEqual(old["key"], new["key"])
+        self.assertEqual(new["since"], saved["collected_at"])
+
+    def test_resumed_inspection_has_new_stable_handoff_and_delivery_clock(
+        self,
+    ):
+        self.data["pull_request"]["requested_reviewers"] = []
+        review(self.data, "APPROVED")
+        cards, plan = self.sync()
+        original = plan["actions"][0]["key"]
+        self.data["pull_request"]["mergeable"] = False
+        self.sync()
+        self.data["pull_request"]["mergeable"] = True
+        resolved = "2026-11-20T12:00:00Z"
+        saved = snapshot(self.data)
+        saved["collected_at"] = resolved
+        cards = self.cards()
+        plan = preview(
+            saved, POLICY, self.config, routing_history=cards.routing_history()
+        )
+        cards.reconcile(plan, saved)
+        resumed = plan["actions"][0]
+        self.assertEqual(resumed["kind"], "Inspect blockers")
+        self.assertNotEqual(resumed["key"], original)
+        self.assertEqual(resumed["since"], resolved)
+        self.assertEqual(
+            cards.cards[resumed["key"]]["values"]["Status"], "Awaiting action"
+        )
+        for now in [resolved, "2026-11-23T12:00:00Z"]:
+            saved["collected_at"] = now
+            cards = self.cards()
+            plan = preview(
+                saved,
+                POLICY,
+                self.config,
+                routing_history=cards.routing_history(),
+            )
+            self.assertEqual(plan["actions"][0]["key"], resumed["key"])
+            cards.reconcile(plan, saved)
 
     def test_dry_run_then_create_then_rerun_without_mutations(self):
         plan = preview(snapshot(self.data), POLICY, self.config)

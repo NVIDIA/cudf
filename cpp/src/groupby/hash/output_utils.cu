@@ -14,6 +14,7 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
@@ -41,11 +42,11 @@ namespace {
 struct result_column_creator {
   size_type output_size;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   explicit result_column_creator(size_type output_size_,
                                  cuda::stream_ref stream_,
-                                 rmm::device_async_resource_ref mr_)
+                                 cudf::memory_resources mr_)
     : output_size{output_size_}, stream{stream_}, mr{mr_}
   {
   }
@@ -63,9 +64,9 @@ struct result_column_creator {
     auto const make_uninitialized_column = [&](data_type d_type, size_type size, mask_state state) {
       auto const type_size = cudf::size_of(d_type);
       if (type_size < 4) {
-        auto adjusted_size    = cudf::detail::round_up_safe(size, static_cast<size_type>(4));
-        auto buffer           = rmm::device_buffer(adjusted_size * type_size, stream, mr);
-        auto mask             = create_null_mask(size, state, stream, mr);
+        auto adjusted_size = cudf::detail::round_up_safe(size, static_cast<size_type>(4));
+        auto buffer = rmm::device_buffer(adjusted_size * type_size, stream, mr.get_output_mr());
+        auto mask   = create_null_mask(size, state, stream, mr);
         auto const null_count = state_null_count(state, size);
         return std::make_unique<column>(
           d_type, size, std::move(buffer), std::move(mask), null_count);
@@ -110,7 +111,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values.num_columns() == static_cast<size_type>(agg_kinds.size()),
                "The number of values columns and size of agg_kinds vector must be the same.");

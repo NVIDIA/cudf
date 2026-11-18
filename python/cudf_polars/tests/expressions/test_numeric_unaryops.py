@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
-from datetime import timedelta
+import re
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,6 +15,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.testing.engine_utils import is_streaming_engine
 
 if TYPE_CHECKING:
     from cudf_polars.typing import RankMethod, RoundMethod
@@ -109,6 +111,42 @@ def test_log(engine: pl.GPUEngine, ldf, natural):
 def test_negate(engine: pl.GPUEngine, ldf, col):
     q = ldf.select(-pl.col(col))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.UInt8,
+        pl.UInt32,
+        pl.UInt64,
+        pl.Boolean,
+        pl.Date,
+        pl.Datetime("us"),
+        pl.Datetime("ns", "UTC"),
+        pl.String,
+    ],
+)
+def test_negate_unsupported_dtype_raises(engine: pl.GPUEngine, dtype) -> None:
+    values_by_dtype: dict[type[pl.DataType], list[object]] = {
+        pl.Boolean: [True, None],
+        pl.Date: [date(2020, 1, 1), None],
+        pl.Datetime: [datetime(2020, 1, 1), None],
+        pl.String: ["a", None],
+    }
+    values = values_by_dtype.get(dtype.base_type(), [1, None])
+    q = pl.LazyFrame({"t": pl.Series(values, dtype=dtype)}).select(-pl.col("t"))
+    with pytest.raises(pl.exceptions.InvalidOperationError) as cpu_exc:
+        q.collect()
+    # Polars appends the failing expression after the first line.
+    match = re.escape(str(cpu_exc.value).splitlines()[0])
+    if is_streaming_engine(engine):
+        with pytest.RaisesGroup(
+            pytest.RaisesExc(pl.exceptions.InvalidOperationError, match=match)
+        ):
+            q.collect(engine=engine)
+    else:
+        with pytest.raises(pl.exceptions.InvalidOperationError, match=match):
+            q.collect(engine=engine)
 
 
 @pytest.mark.parametrize(

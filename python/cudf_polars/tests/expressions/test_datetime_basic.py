@@ -168,6 +168,54 @@ def test_strftime_timestamp(engine: pl.GPUEngine, format):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def _name_dates() -> pl.Series:
+    # Every weekday and month, in both halves of the day.
+    return pl.Series(
+        [
+            datetime.datetime(2024, 1, 1, 0, 30) + datetime.timedelta(days=i * 17)
+            for i in range(24)
+        ]
+    )
+
+
+@pytest.mark.parametrize("format", ["%A", "%a", "%B", "%b", "%A, %d %B %Y"])
+def test_strftime_names(engine: pl.GPUEngine, format):
+    dtypes = {
+        "date": pl.Date(),
+        "us": pl.Datetime("us"),
+        "ns_utc": pl.Datetime("ns", "UTC"),
+    }
+    ldf = pl.LazyFrame({name: _name_dates().cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("format", ["%p", "%a %b %d %I:%M %p"])
+def test_strftime_am_pm(engine: pl.GPUEngine, format):
+    # Half of the values fall before noon, half after.
+    values = _name_dates() + pl.Series(
+        [datetime.timedelta(hours=13 * (i % 2)) for i in range(24)]
+    )
+    dtypes = {"us": pl.Datetime("us"), "ns_utc": pl.Datetime("ns", "UTC")}
+    ldf = pl.LazyFrame({name: values.cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("format", ["%A", "%b", "%H", "%A %H:%M"])
+def test_strftime_non_utc_time_zone(engine: pl.GPUEngine, format):
+    # 2023-12-31 16:30 in Los Angeles is already 2024-01-01 in UTC.
+    values = pl.Series(
+        [datetime.datetime(2023, 12, 31, 16, 30), datetime.datetime(2024, 7, 4, 1, 15)]
+    ).cast(pl.Datetime("us"))
+    zones = {"la": "America/Los_Angeles", "tokyo": "Asia/Tokyo"}
+    ldf = pl.LazyFrame(
+        {name: values.dt.replace_time_zone(tz) for name, tz in zones.items()}
+    )
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in zones)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("format", ["iso", "polars"])
 def test_strftime_duration(engine: pl.GPUEngine, format):
     ldf = pl.LazyFrame(
@@ -1291,3 +1339,50 @@ def test_datetime_combine_integer_time_unsupported(in_memory_engine: pl.GPUEngin
     ldf = pl.LazyFrame({"a": [datetime.date(2024, 1, 1)], "b": [1]})
     q = ldf.select(pl.col("a").dt.combine(pl.col("b")))
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("time_zone", ["Asia/Kathmandu", "America/New_York"])
+@pytest.mark.parametrize(
+    "func",
+    [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "weekday",
+        "ordinal_day",
+        "quarter",
+        "week",
+        "iso_year",
+        "date",
+        "is_leap_year",
+        "days_in_month",
+        "century",
+        "millennium",
+    ],
+)
+def test_datetime_fields_read_local_wall_clock(
+    engine: pl.GPUEngine, time_zone: str, func: str
+):
+    # Fields come from the local wall clock of the column's zone, so instants
+    # near midnight, a year end and a DST change land on different local values.
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2020, 1, 1, 0, 0),
+                    datetime.datetime(2019, 12, 31, 23, 30),
+                    datetime.datetime(2020, 2, 29, 21, 15, 7),
+                    datetime.datetime(2021, 3, 14, 6, 59, 59),
+                    datetime.datetime(2021, 3, 14, 7, 0, 0),
+                    datetime.datetime(2021, 12, 31, 20, 0, 0),
+                    None,
+                ],
+                dtype=pl.Datetime("us", time_zone="UTC"),
+            )
+        }
+    )
+    local = pl.col("a").dt.convert_time_zone(time_zone)
+    assert_gpu_result_equal(ldf.select(getattr(local.dt, func)()), engine=engine)

@@ -111,7 +111,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
   column_view const& offsets,
   size_type num_child_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
   auto input_device_view = column_device_view::create(input, stream);

@@ -12,6 +12,7 @@ from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import polars as pl
 from polars.exceptions import ComputeError
 
 import pylibcudf as plc
@@ -156,8 +157,7 @@ class Agg(Expr):
                 raise NotImplementedError("Median with temporal data types")
             req = plc.aggregation.median()
         elif name == "n_unique":
-            if children[0].dtype.plc_type.id() == plc.TypeId.EMPTY:
-                # libcudf cannot reduce a column of the (EMPTY) Null dtype.
+            if isinstance(children[0].dtype.polars_type, pl.Null):
                 raise NotImplementedError("n_unique of a Null dtype column")
             # TODO: datatype of result
             req = plc.aggregation.nunique(
@@ -230,6 +230,7 @@ class Agg(Expr):
         elif name in {
             "sum",
             "product",
+            "n_unique",
             "first",
             "last",
             "item",
@@ -360,6 +361,32 @@ class Agg(Expr):
                 dtype=self.dtype,
             )
         return self._reduce(column, request=plc.aggregation.product(), stream=stream)
+
+    def _n_unique(self, column: Column, stream: Stream) -> Column:
+        drop_nulls = bool(self.options)
+        if column.null_count == column.size:
+            value = int(column.size > 0 and not drop_nulls)
+        elif column.is_sorted == plc.types.Sorted.YES:
+            value = plc.reduce.unique_count(
+                column.obj,
+                plc.types.NullPolicy.EXCLUDE
+                if drop_nulls
+                else plc.types.NullPolicy.INCLUDE,
+                plc.types.NanPolicy.NAN_IS_VALID,
+                stream=stream,
+            )
+        else:
+            assert self.request is not None
+            return self._reduce(column, request=self.request, stream=stream)
+        return Column(
+            plc.Column.from_scalar(
+                plc.Scalar.from_py(value, self.dtype.plc_type, stream=stream),
+                1,
+                stream=stream,
+            ),
+            name=column.name,
+            dtype=self.dtype,
+        )
 
     def _min(self, column: Column, *, propagate_nans: bool, stream: Stream) -> Column:
         nan_count = column.nan_count(stream=stream)

@@ -26,7 +26,7 @@ std::unique_ptr<column> merge(dictionary_column_view const& lcol,
                               dictionary_column_view const& rcol,
                               cudf::detail::index_vector const& row_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   auto const lcol_iter = cudf::detail::indexalator_factory::make_input_iterator(lcol.indices());
   auto const rcol_iter = cudf::detail::indexalator_factory::make_input_iterator(rcol.indices());

@@ -443,7 +443,7 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
   for (auto const num_rows : {50, 150}) {
     SCOPED_TRACE(std::to_string(num_rows) + " rows");
     std::vector<std::string> strings(num_rows, "a");
-    strings[0]        = std::string(100, 'x');
+    strings[0]        = std::string(1000, 'x');
     auto const valids = cudf::detail::make_counting_transform_iterator(
       0, [](auto i) { return i < first_null or i >= first_null + num_nulls; });
     auto const col = cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids};

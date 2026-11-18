@@ -919,6 +919,91 @@ public class ColumnVectorTest extends CudfTestBase {
     }
   }
 
+  // Trino's xxhash64(VARBINARY) is XXH64 with seed 0, returned as the hash's 8 big-endian bytes,
+  // and NULL for a NULL input. VARCHAR is hashed as its UTF-8 bytes (to_utf8). The first two
+  // vectors are from Trino's TestVarbinaryFunctions.testXxhash64; the rest are from Python's
+  // xxhash.
+  private static final long[] TRINO_XXHASH64_EXPECTED = {
+      Long.parseUnsignedLong("EF46DB3751D8E999", 16),  // ''
+      Long.parseUnsignedLong("F9D96E0E1165E892", 16),  // 'hashme'
+      Long.parseUnsignedLong("2C364158B90EBE4C", 16),  // X'80FF007F'
+      Long.parseUnsignedLong("F5DA40F1B11741E9", 16)}; // X'00010203...27' (40 bytes)
+
+  private static List<Byte> trinoXXHash64Bytes(int row) {
+    switch (row) {
+      case 0: return Arrays.asList();
+      case 1: {
+        List<Byte> bytes = new ArrayList<>();
+        for (byte b : "hashme".getBytes(StandardCharsets.UTF_8)) {
+          bytes.add(b);
+        }
+        return bytes;
+      }
+      case 2: return Arrays.asList((byte) 0x80, (byte) 0xff, (byte) 0x00, (byte) 0x7f);
+      default: {
+        List<Byte> bytes = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+          bytes.add((byte) i);
+        }
+        return bytes;
+      }
+    }
+  }
+
+  // Trino-compatible xxhash64 of a VARBINARY column stored as LIST<INT8> or LIST<UINT8>. That
+  // layout matches STRING (INT32 offsets plus a byte buffer), so the bytes are hashed as a STRING
+  // view of the same buffers. getOffsets() ignores a slice offset, so the input must not be sliced.
+  private static ColumnVector trinoXXHash64Varbinary(ColumnView varbinary) {
+    try (ColumnView bytes = varbinary.getChildColumnView(0);
+         ColumnView asStrings = new ColumnView(DType.STRING, varbinary.getRowCount(),
+             Optional.of(varbinary.getNullCount()), bytes.getData(), varbinary.getValid(),
+             varbinary.getOffsets());
+         ColumnVector hashes = ColumnVector.xxhash64(0, asStrings)) {
+      return hashes.mergeAndSetValidity(BinaryOp.BITWISE_AND, varbinary);
+    }
+  }
+
+  @Test
+  void testXXHash64TrinoVarchar() {
+    try (ColumnVector varchar = ColumnVector.fromStrings("", "hashme", null);
+         ColumnVector hashes = ColumnVector.xxhash64(0, varchar);
+         ColumnVector result = hashes.mergeAndSetValidity(BinaryOp.BITWISE_AND, varchar);
+         ColumnVector expected = ColumnVector.fromBoxedUnsignedLongs(
+             TRINO_XXHASH64_EXPECTED[0], TRINO_XXHASH64_EXPECTED[1], null)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testXXHash64TrinoVarbinary() {
+    for (DType byteType : new DType[]{DType.UINT8, DType.INT8}) {
+      try (ColumnVector varbinary = ColumnVector.fromLists(
+               new HostColumnVector.ListType(true, new HostColumnVector.BasicType(false, byteType)),
+               trinoXXHash64Bytes(0), trinoXXHash64Bytes(1), null, trinoXXHash64Bytes(2),
+               trinoXXHash64Bytes(3));
+           ColumnVector result = trinoXXHash64Varbinary(varbinary);
+           ColumnVector expected = ColumnVector.fromBoxedUnsignedLongs(
+               TRINO_XXHASH64_EXPECTED[0], TRINO_XXHASH64_EXPECTED[1], null,
+               TRINO_XXHASH64_EXPECTED[2], TRINO_XXHASH64_EXPECTED[3])) {
+        assertColumnsAreEqual(expected, result, byteType.toString());
+      }
+    }
+  }
+
+  @Test
+  void testXXHash64TrinoVarcharMatchesVarbinary() {
+    try (ColumnVector varchar = ColumnVector.fromStrings(
+             "", "hashme", null, "Pi\u0119kna \u0142\u0105ka",
+             "abcdefghijklmnopqrstuvwxyz0123456789");
+         ColumnVector varbinary = varchar.asByteList();
+         ColumnVector varcharHashes = ColumnVector.xxhash64(0, varchar);
+         ColumnVector varcharResult =
+             varcharHashes.mergeAndSetValidity(BinaryOp.BITWISE_AND, varchar);
+         ColumnVector varbinaryResult = trinoXXHash64Varbinary(varbinary)) {
+      assertColumnsAreEqual(varcharResult, varbinaryResult);
+    }
+  }
+
   @Test
   void testMurmurHash3x64_128Strings() {
     // mmh3.hash64 returns the two 64-bit halves of MurmurHash3_x64_128 and takes a 32-bit seed.

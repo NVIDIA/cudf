@@ -896,6 +896,7 @@ add_library(
   src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
+  src/join/asof_join.cu
   src/join/conditional_join.cu
   src/join/cross_join.cu
   src/join/direct_join.cu
@@ -1125,12 +1126,14 @@ add_library(
   src/strings/replace/replace_slice.cu
   src/strings/reverse.cu
   src/strings/scan/scan_inclusive.cu
+  src/strings/search/contains.cu
   src/strings/search/contains_multiple.cu
   src/strings/search/count.cu
   src/strings/search/findall.cu
   src/strings/search/find.cu
   src/strings/search/find_instance.cu
   src/strings/search/find_multiple.cu
+  src/strings/search/starts_with.cu
   src/strings/slice.cu
   src/strings/split/partition.cu
   src/strings/split/split.cu
@@ -1161,6 +1164,7 @@ add_library(
   src/text/minhash.cu
   src/text/ngrams_tokenize.cu
   src/text/normalize.cu
+  src/text/normalize_spaces.cu
   src/text/replace.cu
   src/text/stemmer.cu
   src/text/bpe/byte_pair_encoding.cu

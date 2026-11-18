@@ -24,7 +24,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 #include <cuda/stream>

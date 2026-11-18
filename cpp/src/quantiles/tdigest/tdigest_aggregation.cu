@@ -36,6 +36,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/span>
 #include <cuda/std/tuple>
 #include <cuda/stream>

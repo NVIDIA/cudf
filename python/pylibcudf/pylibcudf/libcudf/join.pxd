@@ -14,7 +14,10 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport null_equality, size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport (
+    any_device_resource,
+    device_resource_ref,
+)
 
 from rmm.librmm.device_uvector cimport device_uvector
 from pylibcudf.libcudf.utilities.span cimport device_span
@@ -78,6 +81,45 @@ cdef extern from "cudf/join/join.hpp" namespace "cudf" nogil:
         cudaStream_t stream,
         device_resource_ref mr
     ) except +libcudf_exception_handler
+
+    cpdef enum class nullable_join(bool):
+        NO
+        YES
+
+cdef extern from "cudf/join/hash_join.hpp" namespace "cudf" nogil:
+    cdef cppclass hash_join:
+        hash_join(
+            const table_view& right,
+            null_equality compare_nulls,
+            cudaStream_t stream,
+            any_device_resource mr,
+        ) except +libcudf_exception_handler
+        hash_join(
+            const table_view& right,
+            nullable_join has_nulls,
+            null_equality compare_nulls,
+            double load_factor,
+            cudaStream_t stream,
+            any_device_resource mr,
+        ) except +libcudf_exception_handler
+        gather_map_pair_type inner_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_resource_ref mr
+        ) except +libcudf_exception_handler
+        gather_map_pair_type left_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_resource_ref mr
+        ) except +libcudf_exception_handler
+        gather_map_pair_type full_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_resource_ref mr
+        ) except +libcudf_exception_handler
 
 cdef extern from "cudf/join/conditional_join.hpp" namespace "cudf" nogil:
     cdef gather_map_pair_type conditional_inner_join(
@@ -217,17 +259,18 @@ cdef extern from "cudf/join/mixed_join.hpp" namespace "cudf" nogil:
 
 cdef extern from "cudf/join/filtered_join.hpp" namespace "cudf" nogil:
     cdef cppclass filtered_join:
-        filtered_join() except +
-        filtered_join(
-            const table_view right,
-            null_equality compare_nulls,
-            cudaStream_t stream
-        ) except +libcudf_exception_handler
         filtered_join(
             const table_view right,
             null_equality compare_nulls,
             double load_factor,
-            cudaStream_t stream
+            cudaStream_t stream,
+            any_device_resource mr,
+        ) except +libcudf_exception_handler
+        filtered_join(
+            const table_view right,
+            null_equality compare_nulls,
+            cudaStream_t stream,
+            any_device_resource mr,
         ) except +libcudf_exception_handler
         gather_map_type semi_join(
             const table_view left,

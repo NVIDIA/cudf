@@ -102,7 +102,7 @@ if [[ "${RUN_PYLIBCUDF_TESTS}" == "true" || "${RUN_CUDF_TESTS}" == "true" ]]; th
   fi
 
   if [[ "${RUN_CUDF_TESTS}" == "true" ]]; then
-    CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+    CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
     RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
     RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/

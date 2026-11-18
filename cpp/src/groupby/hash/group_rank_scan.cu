@@ -18,12 +18,14 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/scan.h>
+#include <thrust/scatter.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -319,6 +321,29 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
 
   ranks->set_null_count(0);
   return ranks;
+}
+
+std::unique_ptr<column> scatter_rank(column_view const& rank,
+                                     column_view const& scatter_map,
+                                     cuda::stream_ref stream,
+                                     cuda::mr::device_resource_ref mr)
+{
+  // Every row is written, so the output needs no initialization.
+  auto result =
+    make_fixed_width_column(rank.type(), rank.size(), mask_state::UNALLOCATED, stream, mr);
+  auto const scatter = [&]<typename T>() {
+    thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+                    rank.begin<T>(),
+                    rank.end<T>(),
+                    scatter_map.begin<size_type>(),
+                    result->mutable_view().begin<T>());
+  };
+  if (rank.type().id() == type_id::FLOAT64) {
+    scatter.template operator()<double>();
+  } else {
+    scatter.template operator()<size_type>();
+  }
+  return result;
 }
 
 }  // namespace detail

@@ -39,8 +39,8 @@ struct dispatch_to_arrow_type {
                  column_metadata const& metadata,
                  ArrowSchema* out)
   {
-    cudf::type_id const id = input.type.id();
-    auto timezone          = metadata.timezone.c_str();
+    auto const id = input.type.id();
+    auto timezone = metadata.timezone.c_str();
     switch (id) {
       case cudf::type_id::TIMESTAMP_SECONDS:
         return ArrowSchemaSetTypeDateTime(

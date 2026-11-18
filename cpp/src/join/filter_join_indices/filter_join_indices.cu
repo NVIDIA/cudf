@@ -5,6 +5,7 @@
 
 #include "join/filter_join_indices/filter_join_indices_kernel.hpp"
 #include "join/filter_join_indices/filter_join_indices_output_size_kernel.hpp"
+#include "join/filter_join_indices/filter_passing_set.cuh"
 #include "join/filter_join_indices/full_join.hpp"
 #include "join/join_common_utils.hpp"
 
@@ -35,7 +36,6 @@
 
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_transform.cuh>
-#include <cuco/static_set.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -272,23 +272,16 @@ filter_join_indices(cudf::table_view const& left,
   } else if (join_kind == join_kind::LEFT_JOIN) {
     // LEFT_JOIN: Keep pairs that pass predicate, add one unmatched entry per left row with no
     // matches
-    using hash_function  = cuda::hash<size_type, cuda::hash_algorithm::xxhash_32>;
-    using probing_scheme = cuco::double_hashing<1, hash_function>;
-    using SetType        = cuco::static_set<size_type,
-                                            cuco::extent<std::size_t>,
-                                            cuda::thread_scope_device,
-                                            cuda::std::equal_to<size_type>,
-                                            probing_scheme,
-                                            rmm::mr::polymorphic_allocator<char>>;
-    SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
-                                   cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                   cuco::empty_key{-1},
-                                   {},
-                                   probing_scheme{hash_function{0}, hash_function{1}},
-                                   {},
-                                   {},
-                                   {},
-                                   stream.get()};
+    filter_passing_set_type filter_passing_indices{
+      cuco::extent{static_cast<std::size_t>(left.num_rows())},
+      cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+      cuco::empty_key{-1},
+      {},
+      filter_passing_probing_scheme_type{filter_passing_hash_type{0}, filter_passing_hash_type{1}},
+      {},
+      {},
+      {},
+      stream.get()};
 
     auto predicate_func = [predicate_results_ptr] __device__(std::size_t idx) -> bool {
       return static_cast<bool>(predicate_results_ptr[idx]);

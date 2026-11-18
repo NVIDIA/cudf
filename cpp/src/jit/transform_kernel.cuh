@@ -14,7 +14,7 @@
 #include <cudf/utilities/bit.hpp>
 
 #include <cuda/atomic>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/utility>
 
 #include <jit/column_accessor.cuh>

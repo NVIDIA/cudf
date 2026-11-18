@@ -1359,6 +1359,7 @@ class SPMDEngine(StreamingEngine):
             self.comm,
             self.py_executor,
             self._quent_worker_runtime,
+            self._quent_runtime,
         )
         return execute_persisted_query(self, lf, backend, self._store_uid)
 
@@ -1373,12 +1374,24 @@ class SpmdPersistedBackend(PersistedBackend):
         comm: Communicator,
         py_executor: ThreadPoolExecutor,
         quent_worker_runtime: QuentWorkerRuntime | None,
+        quent_controller_runtime: QuentControllerRuntime | None,
     ) -> None:
         self._uid = uid
         self._ctx = ctx
         self._comm = comm
         self._py_executor = py_executor
         self._quent_worker_runtime = quent_worker_runtime
+        self._quent_controller_runtime = quent_controller_runtime
+
+    def prepare_query_id(self, query_id: uuid.UUID) -> uuid.UUID:
+        """Use rank 0's query ID when Quent tracing is enabled."""
+        if self._quent_worker_runtime is None:
+            return query_id
+        return synchronize_quent_query_id(
+            comm=self._comm,
+            context=self._ctx,
+            query_id=query_id,
+        )
 
     def execute_persisted(
         self,
@@ -1393,7 +1406,19 @@ class SpmdPersistedBackend(PersistedBackend):
         if config_options.executor.quent_context is not None:
             assert self._quent_worker_runtime is not None
             query_scope = self._quent_worker_runtime.query(query_id)
-        with query_scope as quent_query_worker_state:
+            if self._comm.rank == 0:
+                assert self._quent_controller_runtime is not None
+                controller_query_scope: contextlib.AbstractContextManager = (
+                    self._quent_controller_runtime.query(
+                        query_id,
+                        query_config=config_options.executor.quent_context.query,
+                    )
+                )
+            else:
+                controller_query_scope = contextlib.nullcontext()
+        else:
+            controller_query_scope = contextlib.nullcontext()
+        with controller_query_scope, query_scope as quent_query_worker_state:
             rank = persisted_result.evaluate_and_persist(
                 self._uid,
                 self._ctx,

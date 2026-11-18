@@ -102,16 +102,28 @@ class RayPersistedBackend(PersistedBackend):
     ) -> list[int]:
         """Run the query on every actor (see :class:`PersistedBackend`)."""
         actor_config_options = config_options.drop_unserializable()
+        quent_context = config_options.executor.quent_context
+        ray_context = config_options.executor.ray_context
+        assert ray_context is not None
+        quent_runtime = ray_context.quent_controller_runtime
+        if quent_context is not None:
+            assert quent_runtime is not None
+            query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+                query_id, query_config=quent_context.query
+            )
+        else:
+            query_scope = contextlib.nullcontext()
         ir_ref = ray.put(ir)
         try:
-            return ray.get(
-                [
-                    actor.execute_persisted.remote(
-                        self._uid, ir_ref, actor_config_options, query_id=query_id
-                    )
-                    for actor in self._rank_actors
-                ]
-            )
+            with query_scope:
+                return ray.get(
+                    [
+                        actor.execute_persisted.remote(
+                            self._uid, ir_ref, actor_config_options, query_id=query_id
+                        )
+                        for actor in self._rank_actors
+                    ]
+                )
         except Exception:
             # An actor may have failed after others already stored their
             # partition. Drop the query on every actor (idempotent) to avoid

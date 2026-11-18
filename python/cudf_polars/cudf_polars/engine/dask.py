@@ -228,14 +228,26 @@ class DaskPersistedBackend(PersistedBackend):
     ) -> list[int]:
         """Run the query on every worker (see :class:`PersistedBackend`)."""
         worker_config = config_options.drop_unserializable()
+        quent_context = config_options.executor.quent_context
+        dask_context = config_options.executor.dask_context
+        assert dask_context is not None
+        quent_runtime = dask_context.quent_controller_runtime
+        if quent_context is not None:
+            assert quent_runtime is not None
+            query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+                query_id, query_config=quent_context.query
+            )
+        else:
+            query_scope = contextlib.nullcontext()
         # {worker_address: rank}; the partition for that rank stays there.
         try:
-            rank_map = self._client.run(
-                functools.partial(_worker_evaluate_persisted, uid=self._uid),
-                ir,
-                worker_config,
-                query_id=query_id,
-            )
+            with query_scope:
+                rank_map = self._client.run(
+                    functools.partial(_worker_evaluate_persisted, uid=self._uid),
+                    ir,
+                    worker_config,
+                    query_id=query_id,
+                )
         except Exception:
             # A worker may have failed after others already stored their
             # partition. _addresses is still empty (client.run raised before

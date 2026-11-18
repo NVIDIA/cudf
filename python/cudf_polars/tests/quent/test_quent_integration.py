@@ -188,6 +188,15 @@ def test_quent_lifecycle(
         current_context,
         query=dataclasses.replace(
             current_context.query,
+            query_name="Persisted iteration",
+        ),
+    )
+    engine.config["executor_options"]["quent_context"] = current_context
+    engine.execute(query).release()  # type: ignore[call-arg,attr-defined]
+    current_context = dataclasses.replace(
+        current_context,
+        query=dataclasses.replace(
+            current_context.query,
             query_name="Iteration 2",
         ),
     )
@@ -253,7 +262,7 @@ def test_quent_lifecycle(
         == "Updated Query Group"
     )
     query_events = _of_type(events, "Query")
-    assert len(query_events) == 12
+    assert len(query_events) == 16
     assert _of_type(events, "Plan")
     operator_declarations = [
         event["data"]["Operator"]["Declared"]
@@ -428,11 +437,16 @@ def test_quent_lifecycle(
         if isinstance(event["data"]["Query"], dict)
         and "Initialized" in event["data"]["Query"]
     ]
-    assert len({event["id"] for event in initialized_queries}) == 3
+    assert len({event["id"] for event in initialized_queries}) == 4
     assert [
         event["data"]["Query"]["Initialized"]["instance_name"]
         for event in initialized_queries
-    ] == ["Iteration 1", "Iteration 2", "Failed iteration"]
+    ] == [
+        "Iteration 1",
+        "Persisted iteration",
+        "Iteration 2",
+        "Failed iteration",
+    ]
     events_by_query = {
         initialized["id"]: [
             next(iter(event["data"]["Query"]))
@@ -444,6 +458,7 @@ def test_quent_lifecycle(
     assert list(events_by_query.values()) == [
         ["Initialized", "Planning", "Executing", "Completed"],
         ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Completed"],
         ["Initialized", "Planning", "Executing", "Failed"],
     ]
 
@@ -452,7 +467,7 @@ def test_quent_lifecycle(
         for event in _of_type(events, "Plan")
         if event["data"]["Plan"]["Declared"]["instance_name"] == "logical"
     ]
-    assert len({event["id"] for event in logical_plans}) == 3
+    assert len({event["id"] for event in logical_plans}) == 4
 
     resource_ids = [
         event["id"]

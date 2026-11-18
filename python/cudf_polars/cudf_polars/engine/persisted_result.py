@@ -387,6 +387,10 @@ class PersistedSource(RankAwareSource):
 class PersistedBackend(abc.ABC):
     """Engine hook for running the produce/drop steps on every rank-process."""
 
+    def prepare_query_id(self, query_id: uuid.UUID) -> uuid.UUID:
+        """Return the query ID to use across this backend's ranks."""
+        return query_id
+
     @abc.abstractmethod
     def execute_persisted(
         self,
@@ -596,7 +600,7 @@ def execute_persisted_query(
         raise NotImplementedError(
             "Persisting query results containing Time columns is not supported"
         )
-    query_id = uuid.uuid4()
+    query_id = backend.prepare_query_id(uuid.uuid4())
     ranks = backend.execute_persisted(ir, translator.config_options, query_id)
     schema = {name: dtype.polars_type for name, dtype in ir.schema.items()}
     return PersistedQueryResult(backend, uid, query_id, ranks, schema)

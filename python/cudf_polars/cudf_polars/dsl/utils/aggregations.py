@@ -50,6 +50,13 @@ def _contains_window_only_unary(value: expr.Expr) -> bool:
     )
 
 
+def _is_literal_column_expr(value: expr.Expr) -> bool:
+    leaves = tuple(node for node in traversal([value]) if not node.children)
+    return all(
+        isinstance(node, (expr.Literal, expr.LiteralColumn)) for node in leaves
+    ) and any(isinstance(node, expr.LiteralColumn) for node in leaves)
+
+
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
     """
     Replace nulls with the given scalar if at top level.
@@ -118,6 +125,10 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
+    if not agg.is_pointwise and any(map(_is_literal_column_expr, agg.children)):
+        raise NotImplementedError(
+            "Aggregating a list or Series literal in groupby/rolling"
+        )
     if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
         if context != ExecutionContext.GROUPBY:
             raise NotImplementedError(
@@ -633,6 +644,10 @@ def decompose_single_agg(
                 raise NotImplementedError(
                     "Broadcasting aggregated expressions in groupby/rolling"
                 )
+            if any(isinstance(child, expr.LiteralColumn) for child in agg.children):
+                raise NotImplementedError(
+                    "Combining aggregations with a list or Series literal in groupby/rolling"
+                )
             # Any pointwise expression can be handled either by
             # post-evaluation (if outside an aggregation).
             return (
@@ -647,6 +662,10 @@ def decompose_single_agg(
             # An expression built only from scalar literals is itself a
             # scalar: it yields one value per group rather than a list.
             return [], named_expr
+        elif _is_literal_column_expr(agg):
+            raise NotImplementedError(
+                "Expressions of only list or Series literals in groupby/rolling"
+            )
         else:
             # Or pre-evaluation if inside an aggregation.
             return (

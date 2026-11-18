@@ -202,6 +202,19 @@ def test_unsupported_agg(in_memory_engine):
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("values").sum() + pl.lit(pl.Series([7])),
+        pl.lit(pl.Series([1, 2])).sum(),
+    ],
+)
+def test_rolling_series_literal_raises(in_memory_engine, expr):
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(expr)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

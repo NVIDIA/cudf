@@ -99,11 +99,10 @@ def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
         {"allow_exact_matches": False},
     ],
 )
-def test_asof_join_unsupported_options(kwargs):
+def test_asof_join_unsupported_options(kwargs, in_memory_engine: pl.GPUEngine):
     frame = pl.LazyFrame({"time": [1, 2]}).sort("time")
-    engine = pl.GPUEngine(executor_options={"min_device_size": 1_000_000_000})
     translator = Translator(
-        frame.join_asof(frame, on="time", **kwargs)._ldf.visit(), engine
+        frame.join_asof(frame, on="time", **kwargs)._ldf.visit(), in_memory_engine
     )
     translator.translate_ir()
     assert any(
@@ -125,10 +124,9 @@ def test_asof_join_unsupported_options(kwargs):
         ({"time": [1], "sym": [1]}, {"time": [1], "sym": ["a"]}, "sym"),
     ],
 )
-def test_asof_join_unsupported_keys(left, right, by):
+def test_asof_join_unsupported_keys(left, right, by, in_memory_engine: pl.GPUEngine):
     query = pl.LazyFrame(left).join_asof(pl.LazyFrame(right), on="time", by=by)
-    engine = pl.GPUEngine(executor_options={"min_device_size": 1_000_000_000})
-    translator = Translator(query._ldf.visit(), engine)
+    translator = Translator(query._ldf.visit(), in_memory_engine)
     translator.translate_ir()
     message = (
         "Unsupported as-of ordered key dtype"

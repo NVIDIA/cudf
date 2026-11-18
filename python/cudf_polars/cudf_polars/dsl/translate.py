@@ -796,6 +796,8 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             exact_matches,
             _check_sortedness,
         ) = how
+        # The join accepts unordered left keys and sorts right keys if needed.
+        # Polars' validation-only sortedness check is intentionally not repeated.
         if (
             strategy != "backward"
             or tolerance is not None

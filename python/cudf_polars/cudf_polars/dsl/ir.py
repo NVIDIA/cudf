@@ -3363,25 +3363,24 @@ class AsofJoin(IR):
             )
         else:
             keys = plc.Table([*right_by_cols, right_on_col.obj])
-            with context.stream_ordered_after(right) as stream:
-                columns = plc.sorting.stable_sort_by_key(
-                    plc.Table([*right.table.columns(), *keys.columns()]),
-                    keys,
-                    [plc.types.Order.ASCENDING] * (len(right_by) + 1),
-                    [plc.types.NullOrder.BEFORE] * (len(right_by) + 1),
-                    stream=stream,
-                ).columns()
-                right = DataFrame.from_table(
-                    plc.Table(columns[: right.num_columns]),
-                    right.column_names,
-                    right.dtypes,
-                    stream=stream,
-                )
-                joiner = plc.join.AsofJoin(
-                    plc.Table(columns[right.num_columns : -1]),
-                    columns[-1],
-                    stream=stream,
-                )
+            columns = plc.sorting.stable_sort_by_key(
+                plc.Table([*right.table.columns(), *keys.columns()]),
+                keys,
+                [plc.types.Order.ASCENDING] * (len(right_by) + 1),
+                [plc.types.NullOrder.BEFORE] * (len(right_by) + 1),
+                stream=right.stream,
+            ).columns()
+            right = DataFrame.from_table(
+                plc.Table(columns[: right.num_columns]),
+                right.column_names,
+                right.dtypes,
+                stream=right.stream,
+            )
+            joiner = plc.join.AsofJoin(
+                plc.Table(columns[right.num_columns : -1]),
+                columns[-1],
+                stream=right.stream,
+            )
 
         right_payload = right.discard_columns(discarded)
 

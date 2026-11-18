@@ -72,27 +72,22 @@ def test_asof_join_no_right_payload(engine: pl.GPUEngine):
 
 @pytest.mark.engine_params(["in-memory"])
 def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
-    left = pl.LazyFrame(
-        {
-            "group_left": ["a", "b"],
-            "time_left": pl.Series([2, 3], dtype=pl.Datetime("ns")),
-            "value_left": [10, 11],
-        }
-    ).sort(["group_left", "time_left"])
+    dtype = pl.Duration("ns")
+    left = pl.LazyFrame({"sym_l": ["a", "b"], "time_l": pl.Series([2, 3], dtype=dtype)})
     right = pl.LazyFrame(
-        {
-            "group_right": ["a", "b"],
-            "time_right": pl.Series([1, 2], dtype=pl.Datetime("ns")),
-            "value_right": [20, 21],
-        }
-    ).sort(["group_right", "time_right"])
-    query = left.join_asof(
-        right,
-        left_on="time_left",
-        right_on="time_right",
-        by_left="group_left",
-        by_right="group_right",
-    ).slice(1, 1)
+        {"sym_r": ["a", "b"], "time_r": pl.Series([1, 2], dtype=dtype), "v": [20, 21]}
+    )
+    query = (
+        left.sort(["sym_l", "time_l"])
+        .join_asof(
+            right.sort(["sym_r", "time_r"]),
+            left_on="time_l",
+            right_on="time_r",
+            by_left="sym_l",
+            by_right="sym_r",
+        )
+        .slice(1, 1)
+    )
     assert_gpu_result_equal(query, engine=engine)
 
 

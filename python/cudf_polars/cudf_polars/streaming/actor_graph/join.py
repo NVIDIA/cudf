@@ -800,15 +800,11 @@ def _make_ordered_strategy(
     if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
         return None
 
-    left_scheme = left_partitioning.inter_rank_scheme
-    right_scheme = right_partitioning.inter_rank_scheme
-    if not isinstance(left_scheme, OrderScheme) or not isinstance(
-        right_scheme, OrderScheme
-    ):
+    left_ordering = left_partitioning.get_ordering(level="flat")
+    right_ordering = right_partitioning.get_ordering(level="flat")
+    if left_ordering is None or right_ordering is None:
         return None
 
-    left_ordering = left_scheme.orderings[0]
-    right_ordering = right_scheme.orderings[0]
     # adjust_ordering needs a strict target partitioning. Prefer the left side
     # for output metadata, then fall back to the right side if only it is strict.
     reference = left_ordering if left_ordering.strict_boundaries else right_ordering

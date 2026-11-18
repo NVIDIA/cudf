@@ -13,6 +13,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/cmath>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 

@@ -191,6 +191,7 @@ ConfigureTest(
 # * join tests ------------------------------------------------------------------------------------
 ConfigureTest(
   JOIN_TEST
+  join/asof_join_tests.cpp
   join/join_tests.cpp
   join/conditional_join_tests.cu
   join/cross_join_tests.cpp
@@ -469,6 +470,7 @@ ConfigureTest(
   utilities_tests/io_utilities_tests.cpp
   utilities_tests/lists_column_wrapper_tests.cpp
   utilities_tests/memory_resource_tests.cpp
+  utilities_tests/parse_size_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
   utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp

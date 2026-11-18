@@ -1459,7 +1459,9 @@ The concepts in `include/cudf/utilities/concepts.hpp` (namespace `cudf::concepts
 traits in `include/cudf/utilities/traits.hpp`. For example, `cudf::concepts::arithmetic` matches
 any numeric type, and `cudf::concepts::fixed_width` any fixed-width type. Use the standard concepts,
 such as `cuda::std::integral` and `cuda::std::floating_point`, where libcudf does not define its
-own. Prefer concepts over the `is_*<T>()` trait functions in constraints: the compiler can compare
+own. Use the `cuda::std` concepts rather than their `std` counterparts; `std::integral` and the
+other integral concepts disagree with `cuda::std` on `__int128_t` and are rejected by pre-commit.
+Prefer concepts over the `is_*<T>()` trait functions in constraints: the compiler can compare
 constraints written with concepts, so an overload constrained with `cudf::concepts::fixed_point` is
 preferred over one constrained with `cudf::concepts::fixed_width` for decimal types, whereas
 `requires(cudf::is_fixed_point<T>())` and `requires(cudf::is_fixed_width<T>())` are ambiguous.

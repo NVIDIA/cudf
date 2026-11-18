@@ -3168,6 +3168,7 @@ class ConditionalJoin(IR):
             self.predicate = predicate
             stream = get_cuda_stream()
             ast_result = to_ast(predicate, stream=stream)
+            # The AST's literal scalars are later read on other streams.
             stream.synchronize()
             if ast_result is None:
                 raise NotImplementedError(

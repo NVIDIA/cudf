@@ -28,10 +28,19 @@
 
 namespace cudf::groupby::detail::hash {
 
+/**
+ * @brief Returns whether `kind` can be computed by the fused sums reduction
+ *
+ * The single-pass MEAN is a sum in the MEAN result type, so it fuses like SUM. Fused runs must
+ * still share one accumulator type, which the caller checks.
+ *
+ * @param kind The single-pass aggregation kind
+ * @return `true` if `kind` is one of the fusable additive aggregations
+ */
 constexpr bool is_fusable_sum(aggregation::Kind kind)
 {
-  return kind == aggregation::SUM || kind == aggregation::SUM_OF_SQUARES ||
-         kind == aggregation::COUNT_VALID;
+  return kind == aggregation::SUM || kind == aggregation::MEAN ||
+         kind == aggregation::SUM_OF_SQUARES || kind == aggregation::COUNT_VALID;
 }
 
 constexpr bool is_fusable_minmax_sum(aggregation::Kind kind)
@@ -78,6 +87,8 @@ std::unique_ptr<column> compute_reduction(reduction_context const& ctx,
 // Suppress implicit instantiation in the frontend and other reducer translation units.
 extern template std::unique_ptr<column> compute_reduction<aggregation::SUM>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
+extern template std::unique_ptr<column> compute_reduction<aggregation::MEAN>(
+  reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
 extern template std::unique_ptr<column> compute_reduction<aggregation::PRODUCT>(
   reduction_context const& ctx, cuda::stream_ref stream, cudf::memory_resources mr);
 extern template std::unique_ptr<column> compute_reduction<aggregation::SUM_OF_SQUARES>(
@@ -100,6 +111,11 @@ std::vector<std::unique_ptr<column>> compute_reductions(host_span<reduction_cont
                                                         cudf::memory_resources mr);
 
 extern template std::vector<std::unique_ptr<column>> compute_reductions<aggregation::SUM>(
+  host_span<reduction_context const>,
+  std::span<int8_t const>,
+  cuda::stream_ref,
+  cudf::memory_resources);
+extern template std::vector<std::unique_ptr<column>> compute_reductions<aggregation::MEAN>(
   host_span<reduction_context const>,
   std::span<int8_t const>,
   cuda::stream_ref,

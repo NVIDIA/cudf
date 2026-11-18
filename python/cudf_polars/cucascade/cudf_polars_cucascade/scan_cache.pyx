@@ -53,9 +53,9 @@ cdef class ScanCacheConfig:
         Share of the cache that admitted columns may fill, counted in whole chunks.
     min_advise_bytes : int, default 262144
         Reads smaller than this are not cached. 0 caches nothing.
-    reactors : int, default 16
+    reactors : int, default 4
         REST reactor threads.
-    connections : int, default 128
+    connections : int, default 256
         Connections each reactor drives.
     stall_seconds : int, default 5
         A request that moves under 64 KiB/s for this long is aborted and retried.
@@ -80,8 +80,8 @@ cdef class ScanCacheConfig:
         double eviction_batch=0.02,
         double admission_budget=0.96,
         size_t min_advise_bytes=262144,
-        size_t reactors=16,
-        size_t connections=128,
+        size_t reactors=4,
+        size_t connections=256,
         long stall_seconds=5,
         size_t pinning_threads=8,
         numa_node=None,

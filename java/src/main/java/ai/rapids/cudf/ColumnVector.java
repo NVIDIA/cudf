@@ -745,6 +745,20 @@ public final class ColumnVector extends ColumnView {
     return new ColumnVector(concatListByRow(columnViews, ignoreNull));
   }
 
+  private static long[] getNativeViews(String hashName, ColumnView... columns) {
+    if (columns.length < 1) {
+      throw new IllegalArgumentException(hashName + " hashing requires at least 1 column of input");
+    }
+    long[] columnViews = new long[columns.length];
+    long size = columns[0].getRowCount();
+    for (int i = 0; i < columns.length; i++) {
+      assert columns[i] != null : "Column vectors passed may not be null";
+      assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
+      columnViews[i] = columns[i].getNativeView();
+    }
+    return columnViews;
+  }
+
   /**
    * Create a new vector containing the MD5 hash of each row in the table.
    *
@@ -752,20 +766,12 @@ public final class ColumnVector extends ColumnView {
    * @return the new ColumnVector of 32 character hex strings representing each row's hash value.
    */
   public static ColumnVector md5Hash(ColumnView... columns) {
-    if (columns.length < 1) {
-      throw new IllegalArgumentException("MD5 hashing requires at least 1 column of input");
-    }
-    long[] columnViews = new long[columns.length];
-    long size = columns[0].getRowCount();
-
-    for(int i = 0; i < columns.length; i++) {
-      assert columns[i] != null : "Column vectors passed may not be null";
-      assert columns[i].getRowCount() == size : "Row count mismatch, all columns must be the same size";
-      assert !columns[i].getType().isDurationType() : "Unsupported column type Duration";
-      assert !columns[i].getType().isTimestampType() : "Unsupported column type Timestamp";
-      assert !columns[i].getType().isNestedType() || columns[i].getType().equals(DType.LIST) :
+    long[] columnViews = getNativeViews("MD5", columns);
+    for (ColumnView column : columns) {
+      assert !column.getType().isDurationType() : "Unsupported column type Duration";
+      assert !column.getType().isTimestampType() : "Unsupported column type Timestamp";
+      assert !column.getType().isNestedType() || column.getType().equals(DType.LIST) :
           "Unsupported nested type column";
-      columnViews[i] = columns[i].getNativeView();
     }
     return new ColumnVector(md5(columnViews));
   }
@@ -777,16 +783,7 @@ public final class ColumnVector extends ColumnView {
    * @return the new ColumnVector of 40 character hex strings representing each row's hash value.
    */
   public static ColumnVector sha1Hash(ColumnView... columns) {
-    if (columns.length < 1) {
-      throw new IllegalArgumentException("Sha1 hashing requires at least 1 column of input");
-    }
-    long[] columnViews = new long[columns.length];
-
-    for(int i = 0; i < columns.length; i++) {
-      assert columns[i] != null : "Column vectors passed may not be null";
-      columnViews[i] = columns[i].getNativeView();
-    }
-    return new ColumnVector(sha1(columnViews));
+    return new ColumnVector(sha1(getNativeViews("Sha1", columns)));
   }
 
   /**
@@ -885,18 +882,6 @@ public final class ColumnVector extends ColumnView {
    */
   public static ColumnVector xxhash64(long seed, ColumnView... columns) {
     return new ColumnVector(xxHash64(seed, getNativeViews("xxHash64", columns)));
-  }
-
-  private static long[] getNativeViews(String hashName, ColumnView... columns) {
-    if (columns.length < 1) {
-      throw new IllegalArgumentException(hashName + " hashing requires at least 1 column of input");
-    }
-    long[] columnViews = new long[columns.length];
-    for (int i = 0; i < columns.length; i++) {
-      assert columns[i] != null : "Column vectors passed may not be null";
-      columnViews[i] = columns[i].getNativeView();
-    }
-    return columnViews;
   }
 
   /**

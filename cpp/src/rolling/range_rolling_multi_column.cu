@@ -163,7 +163,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(orderby.num_columns() > 0, "orderby must be non-empty");

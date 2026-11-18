@@ -13,6 +13,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/tuple>
 
 namespace cudf::io::parquet::detail {
@@ -1351,12 +1352,8 @@ inline __device__ bool setup_local_page_info(auto* const s,
           case Encoding::PLAIN_DICTIONARY:
           case Encoding::RLE_DICTIONARY: {
             // RLE-packed dictionary indices, first byte indicates index length in bits
-            auto const is_decimal = s->setup.col.logical_type.has_value() and
-                                    s->setup.col.logical_type->type == LogicalType::DECIMAL;
-            if ((s->setup.col.physical_type == Type::BYTE_ARRAY or
-                 s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) and
-                not is_decimal and s->setup.col.str_dict_index != nullptr) {
-              // String dictionary: use index
+            if (s->setup.col.str_dict_index != nullptr) {
+              // String dictionary (incl. BYTE_ARRAY decimals): use index
               s->stream.dict_base = reinterpret_cast<uint8_t const*>(s->setup.col.str_dict_index);
               s->stream.dict_size =
                 s->setup.col.dict_page->num_input_values * sizeof(string_index_pair);

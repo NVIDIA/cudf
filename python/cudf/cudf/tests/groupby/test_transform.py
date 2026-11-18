@@ -139,16 +139,25 @@ def test_transform_scan_lambda():
     assert_eq(expect, got)
 
 
-def test_transform_singleton_groups_index():
+@pytest.mark.parametrize("agg", ["first", "last", "mean", "max"])
+@pytest.mark.parametrize(
+    "ids",
+    [[3.0, 1.0, 2.0], [1.0, 2.0, 3.0]],
+    ids=["unsorted-keys", "sorted-keys"],
+)
+def test_transform_singleton_groups_index(ids, agg):
     # every group a singleton with sort=True: the result must still be
-    # relabeled with the original index, not the group keys
+    # relabeled with the original index, not the group keys. With the keys
+    # already in sorted order the aggregated index equals the grouping
+    # keys, so _broadcast skips alignment; that path used to leak the
+    # group labels as the result index.
     pdf = pd.DataFrame(
-        {"id": [3.0, 1.0, 2.0], "val": [10.0, 20.0, 30.0]},
+        {"id": ids, "val": [10.0, 20.0, 30.0]},
         index=["r0", "r1", "r2"],
     )
     gdf = cudf.DataFrame(pdf)
 
-    expect = pdf.groupby("id", sort=True)["val"].transform("mean")
-    got = gdf.groupby("id", sort=True)["val"].transform("mean")
+    expect = pdf.groupby("id", sort=True)["val"].transform(agg)
+    got = gdf.groupby("id", sort=True)["val"].transform(agg)
 
     assert_eq(expect, got)

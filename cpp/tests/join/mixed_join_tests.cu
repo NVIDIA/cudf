@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/ast/expressions.hpp>
@@ -1063,9 +1064,8 @@ TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
   auto hash_result = hash_joiner.inner_join(left_equality);
 
   // transform/fragments/ast_udf_callees.cu
-  auto const range        = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
   auto const fragments    = std::array{cudf::lto_fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::files.subspan(range[0], range[1])}};
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udf_callees)}};
   auto const type         = cudf::data_type{cudf::type_id::INT32};
   auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
 
@@ -2433,3 +2433,5 @@ INSTANTIATE_TEST_SUITE_P(JoinKinds,
                          ::testing::Values(cudf::join_kind::INNER_JOIN,
                                            cudf::join_kind::LEFT_JOIN,
                                            cudf::join_kind::FULL_JOIN));
+
+CUDF_TEST_PROGRAM_MAIN()

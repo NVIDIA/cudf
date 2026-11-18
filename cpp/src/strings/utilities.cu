@@ -59,9 +59,10 @@ void populate_string_views(strings_column_view input,
  * @copydoc create_string_vector_from_column
  */
 cuda::device_buffer<string_view> create_string_vector_from_column(
-  cudf::strings_column_view const input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  cudf::strings_column_view const input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto strings_vector = cuda::device_buffer<string_view>(stream, mr, input.size(), cuda::no_init);
+  auto strings_vector =
+    cuda::device_buffer<string_view>(stream, mr.get_output_mr(), input.size(), cuda::no_init);
   populate_string_views(input, strings_vector, stream);
   return strings_vector;
 }
@@ -72,7 +73,7 @@ cuda::device_buffer<string_view> create_string_vector_from_column(
 std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     size_type count,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref mr)
+                                                    cudf::memory_resources mr)
 {
   auto const threshold = get_offset64_threshold();
   if (!is_large_strings_enabled()) {
@@ -212,12 +213,11 @@ std::pair<int64_t, int64_t> get_first_and_last_offset(cudf::strings_column_view 
 }  // namespace detail
 
 rmm::device_uvector<string_view> create_string_vector_from_column(
-  cudf::strings_column_view const strings,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::strings_column_view const strings, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  auto strings_vector = rmm::device_uvector<string_view>(strings.size(), stream, mr);
+  auto strings_vector =
+    rmm::device_uvector<string_view>(strings.size(), stream, mr.get_output_mr());
   detail::populate_string_views(strings, strings_vector, stream);
   return strings_vector;
 }

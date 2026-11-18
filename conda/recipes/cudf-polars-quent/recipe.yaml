@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+schema_version: 1
+
+context:
+  version: ${{ env.get("RAPIDS_PACKAGE_VERSION") }}
+  datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
+  head_rev: ${{ git.head_rev(".")[:8] }}
+  py_abi_min: ${{ env.get("RAPIDS_PY_VERSION") }}
+  py_buildstring: ${{ py_abi_min | version_to_buildstring }}
+
+package:
+  name: cudf-polars-quent
+  version: ${{ version }}
+
+source:
+  path: ../../..
+
+# This package is compiled Rust (PyO3, abi3) and has no CUDA dependency, so unlike
+# pylibcudf/cudf-streaming the build string has no CUDA component.
+build:
+  python:
+    version_independent: true
+  string: cp${{ py_buildstring }}_abi3_${{ datetime_string }}_${{ head_rev }}
+  script:
+    content: |
+      # maturin takes the package version from Cargo.toml, which must be SemVer.
+      ./ci/utils/set_cargo_version.sh "${RAPIDS_PACKAGE_VERSION}" python/cudf_polars/quent/bridge/Cargo.toml
+      # Link with the conda compiler instead of the system `cc` so the build uses the conda sysroot.
+      export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="${CC}"
+      export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${CC}"
+      ./build.sh cudf_polars_quent --release -v
+    env:
+      CARGO_INCREMENTAL: "0"
+      # build.sh requires a CUDA version even though this package does not use CUDA.
+      RAPIDS_CUDA_VERSION: ${{ env.get("RAPIDS_CUDA_VERSION") }}
+      RAPIDS_PACKAGE_VERSION: ${{ version }}
+
+requirements:
+  build:
+    # Keep the rust version in sync with RUSTUP_TOOLCHAIN in ci/build_wheel_cudf_polars_quent.sh.
+    - rust =1.97
+    - ${{ compiler("c") }}
+    - ${{ stdlib("c") }}
+  host:
+    # Keep the maturin pin in sync with [build-system] in python/cudf_polars/quent/bridge/pyproject.toml.
+    - maturin >=1.14,<2
+    - pip
+    - python =${{ py_abi_min }}
+    - python-abi3 ${{ py_abi_min }}.*
+  run:
+    - python
+
+about:
+  homepage: ${{ load_from_file("python/cudf_polars/quent/bridge/pyproject.toml").project.urls.Homepage }}
+  license: ${{ load_from_file("python/cudf_polars/quent/bridge/pyproject.toml").project.license }}
+  summary: ${{ load_from_file("python/cudf_polars/quent/bridge/pyproject.toml").project.description }}

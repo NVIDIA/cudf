@@ -128,9 +128,13 @@ requests when the file size is already known (for example from object-store meta
 import pylibcudf as plc
 
 content_length = ...  # from external metadata
-sources = plc.io.SourceInfo([
-    plc.io.FilepathSource("s3://bucket/object.parquet", size=content_length),
-])
+sources = plc.io.SourceInfo(
+    [
+        plc.io.FilepathSource(
+            "s3://bucket/object.parquet", size=content_length
+        ),
+    ]
+)
 table = plc.io.parquet.read_parquet(
     plc.io.parquet.ParquetReaderOptions.builder(sources).build()
 )

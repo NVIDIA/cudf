@@ -493,7 +493,7 @@ bool inline sha_leaf_type_check(data_type dt)
 template <typename Hasher>
 std::unique_ptr<column> sha_hash(table_view const& input,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   if (input.num_rows() == 0) { return cudf::make_empty_column(cudf::type_id::STRING); }
 
@@ -510,7 +510,7 @@ std::unique_ptr<column> sha_hash(table_view const& input,
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
-  auto chars   = rmm::device_uvector<char>(bytes, stream, mr);
+  auto chars   = rmm::device_uvector<char>(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   auto const device_input = table_device_view::create(input, stream);

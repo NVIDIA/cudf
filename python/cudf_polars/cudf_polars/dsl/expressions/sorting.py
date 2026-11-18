@@ -43,10 +43,18 @@ class Sort(Expr):
         order, null_order = sorting.sort_order(
             [descending], nulls_last=[nulls_last], num_keys=1
         )
-        do_sort = plc.sorting.stable_sort if stable else plc.sorting.sort
-        table = do_sort(plc.Table([column.obj]), order, null_order, stream=df.stream)
+        if column.is_sorted == plc.types.Sorted.YES and column.check_sorted(
+            order=order[0], null_order=null_order[0], stream=df.stream
+        ):
+            result = column.obj
+        else:
+            do_sort = plc.sorting.stable_sort if stable else plc.sorting.sort
+            table = do_sort(
+                plc.Table([column.obj]), order, null_order, stream=df.stream
+            )
+            result = table.columns()[0]
         return Column(
-            table.columns()[0],
+            result,
             is_sorted=plc.types.Sorted.YES,
             order=order[0],
             null_order=null_order[0],

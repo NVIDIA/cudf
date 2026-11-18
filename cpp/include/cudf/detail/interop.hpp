@@ -34,6 +34,9 @@ DLManagedTensor* to_dlpack(table_view const& input,
 /**
  * @brief The properties of a column that determine its Arrow schema
  *
+ * Holds no column data, so it can describe a column whose data is not in device memory, such as a
+ * column of a table packed in host memory. A `column_view` cannot replace it there.
+ *
  * The children follow the children of the column, so a list has its offsets and its child, and
  * a dictionary has its indices and its keys.
  */

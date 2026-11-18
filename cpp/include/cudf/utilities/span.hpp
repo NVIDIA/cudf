@@ -309,8 +309,8 @@ namespace detail {
 template <typename T, template <typename, std::size_t> typename RowType>
 class base_2dspan {
  public:
-  using size_type =
-    std::pair<size_t, size_t>;  ///< Type used to represent the dimension of the span
+  /// Type used to represent the dimension of the span
+  using size_type = std::pair<size_t, size_t>;
 
   constexpr base_2dspan() noexcept = default;
   /**

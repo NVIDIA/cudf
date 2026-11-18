@@ -14,6 +14,7 @@ from itertools import accumulate, pairwise
 from typing import TYPE_CHECKING
 
 import pylibcudf as plc
+from cudf_streaming.partition_utils import split_and_pack_cost
 from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
@@ -681,10 +682,11 @@ class RowCountOverlapPolicy(_OverlapPolicy[BufferedChunk]):
             [start - cursor.row_start, cursor.num_rows],
             stream=stream,
         )
+        # The copy holds only the trailing rows. A slice reports the size of
+        # its parent's buffers, so size the copy from its packed size.
+        copy_bytes = split_and_pack_cost(table, stream, context.br())
         with opaque_memory_usage(
-            await reserve_memory(
-                context, size=cursor.chunk.data_alloc_size(), net_memory_delta=0
-            )
+            await reserve_memory(context, size=copy_bytes, net_memory_delta=0)
         ):
             table = table.copy(stream=stream, mr=context.br().device_mr)
         return BufferedChunk(

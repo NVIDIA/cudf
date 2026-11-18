@@ -146,15 +146,15 @@ void decode_sparse_page_headers(pass_intermediate_data& pass,
                                 cudf::memory_resources mr);
 
 /**
- * @brief Check if the column chunk has a string (byte array or FLBA) type
+ * @brief Check if the column chunk needs a string dictionary index: any byte array (including
+ * decimals, which are variable width) or a non-decimal FLBA
  */
-__device__ constexpr inline bool is_string_chunk(ColumnChunkDesc const& chunk)
+__device__ constexpr inline bool needs_str_dict_index(ColumnChunkDesc const& chunk)
 {
   auto const is_decimal =
     chunk.logical_type.has_value() and chunk.logical_type->type == LogicalType::DECIMAL;
-  auto const is_binary =
-    chunk.physical_type == Type::BYTE_ARRAY or chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY;
-  return is_binary and not is_decimal;
+  return chunk.physical_type == Type::BYTE_ARRAY or
+         (chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY and not is_decimal);
 }
 
 /**
@@ -168,7 +168,7 @@ struct set_str_dict_index_count {
   {
     auto const& chunk = chunks[page.chunk_idx];
     if ((page.flags & PAGEINFO_FLAGS_DICTIONARY) != 0 and chunk.num_dict_pages > 0 and
-        is_string_chunk(chunk)) {
+        needs_str_dict_index(chunk)) {
       // there is only ever one dictionary page per chunk, so this is safe to do in parallel.
       str_dict_index_count[page.chunk_idx] = page.num_input_values;
     }
@@ -191,7 +191,7 @@ struct set_str_dict_index_ptr {
     if (sparse_page_io and (chunk.dict_page == nullptr or chunk.dict_page->page_data == nullptr)) {
       return;
     }
-    if (chunk.num_dict_pages > 0 and is_string_chunk(chunk)) {
+    if (chunk.num_dict_pages > 0 and needs_str_dict_index(chunk)) {
       chunk.str_dict_index = base + str_dict_index_offsets[i];
     }
   }

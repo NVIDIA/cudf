@@ -14,8 +14,8 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.streaming.actor_graph.utils import ChunkStore
@@ -154,9 +154,7 @@ class SparseExchange:
                 net_memory_delta=0,
             )
         else:
-            reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-                0, net_memory_delta=0
-            )
+            reservation = await reserve_memory(self.context, size=0, net_memory_delta=0)
         self._exchange.insert(destination, chunk.into_packed_data(reservation))
 
     def start_finish(self) -> None:

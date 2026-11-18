@@ -7,10 +7,14 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <nanoarrow/nanoarrow.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
 
 namespace cudf {
 namespace detail {
@@ -139,6 +143,46 @@ dictionary_indices_types get_dictionary_indices_types(ArrowType storage_type, in
  * @return nanoarrow status code, should be NANOARROW_OK if there are no errors
  */
 int initialize_array(ArrowArray* arr, ArrowType storage_type, cudf::column_view column);
+
+/**
+ * @brief Validate the number of rows of an Arrow array and return it as a cudf row count
+ *
+ * @throw std::invalid_argument if `num_rows` is negative
+ * @throw std::overflow_error if the column, or its offsets child when `requires_offsets_child`,
+ * would have more rows than `size_type` can hold
+ *
+ * @param num_rows Number of rows of the Arrow array
+ * @param requires_offsets_child Whether the cudf column needs an offsets child, which always has
+ * `num_rows + 1` rows
+ * @return `num_rows` as a `size_type`
+ */
+size_type checked_row_count(int64_t num_rows, bool requires_offsets_child = false);
+
+/**
+ * @brief Copy the offsets of a string or list Arrow array, rebased to start at zero
+ *
+ * Writes `num_rows + 1` offsets, from row `first_row` of `offsets`, to `out`.
+ *
+ * @throw std::overflow_error if a rebased offset does not fit in `Out`
+ *
+ * @param offsets Arrow offsets buffer
+ * @param first_row First row to copy, including the array's own offset
+ * @param num_rows Number of rows
+ * @param out Output for `num_rows + 1` offsets
+ */
+template <typename In, typename Out>
+void rebase_offsets(In const* offsets, int64_t first_row, int64_t num_rows, Out* out)
+{
+  // The offsets are assumed to be non-decreasing, so only the last one is range checked.
+  auto const first = offsets[first_row];
+  CUDF_EXPECTS(static_cast<int64_t>(offsets[first_row + num_rows] - first) <=
+                 static_cast<int64_t>(std::numeric_limits<Out>::max()),
+               "offsets exceed the bounds of the cudf offsets type",
+               std::overflow_error);
+  std::transform(offsets + first_row, offsets + first_row + num_rows + 1, out, [first](In o) {
+    return static_cast<Out>(o - first);
+  });
+}
 
 }  // namespace detail
 }  // namespace cudf

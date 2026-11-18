@@ -759,6 +759,7 @@ if packaging.version.parse(sqlite3.sqlite_version) <= packaging.version.parse("3
 
 STREAMING_ENGINE_TESTS_TO_SKIP: Mapping[str, str] = {
     "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[UInt32-expr0]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/io/test_order_keeping_pushdown.py::test_expression_that_raises_is_evaluated[Date-expr1]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/operations/test_sort.py::test_sort_by_scalar_key_29583_29760": "Correct polars.exceptions.InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/sql/test_subqueries.py::test_scalar_subquery_multi_row_errors": "Correct polars.exceptions.ComputeError raised but it's in an ExceptionGroup",

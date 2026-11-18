@@ -26,7 +26,7 @@ source rapids-rattler-channel-string
 
 PARALLEL_OUTPUT_DIR="${RAPIDS_CONDA_BLD_OUTPUT_DIR}-parallel"
 builds=()
-for package in dask-cudf cudf-polars custreamz; do
+for package in cudf dask-cudf cudf-polars custreamz; do
   run_logged_build "${package}-parallel-build.log" \
     build_conda_package "${package}" "${PARALLEL_OUTPUT_DIR}/${package}" &
   builds+=("$!" "${package}-parallel-build.log")

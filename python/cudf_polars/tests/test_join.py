@@ -32,6 +32,55 @@ MISMATCHED_DECIMAL_SCALE_XFAIL = pytest.mark.xfail(
 )
 
 
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+@pytest.mark.parametrize("by", [None, "sym"])
+@pytest.mark.parametrize("coalesce", [False, True])
+def test_asof_join_backward(engine: pl.GPUEngine, by: str | None, coalesce):
+    left = pl.LazyFrame(
+        {
+            "sym": ["a", "a", "b", "b", "b"],
+            "time": [0, 3, 2, 5, 6],
+            "trade": [10, 11, 12, 13, 14],
+        }
+    ).sort(["sym", "time"] if by else "time")
+    right = pl.LazyFrame(
+        {
+            "sym": ["a", "a", "a", "b", "b"],
+            "time": [1, 3, 3, 1, 4],
+            "quote": [20, 21, 22, 23, 24],
+        }
+    ).sort(["sym", "time"] if by else "time")
+    query = left.join_asof(right, on="time", by=by, coalesce=coalesce)
+    assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+def test_asof_join_empty_right(engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame(
+        {"time": pl.Series([], dtype=pl.Int64), "value": pl.Series([], dtype=pl.Int64)}
+    )
+    assert_gpu_result_equal(left.join_asof(right, on="time"), engine=engine)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"strategy": "forward"},
+        {"tolerance": 1},
+        {"allow_exact_matches": False},
+    ],
+)
+def test_asof_join_unsupported_options(kwargs):
+    frame = pl.LazyFrame({"time": [1, 2]}).sort("time")
+    engine = pl.GPUEngine(executor_options={"min_device_size": 1_000_000_000})
+    translator = Translator(
+        frame.join_asof(frame, on="time", **kwargs)._ldf.visit(), engine
+    )
+    translator.translate_ir()
+    assert any(isinstance(error, NotImplementedError) for error in translator.errors)
+
+
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])
 def nulls_equal(request):
     return request.param

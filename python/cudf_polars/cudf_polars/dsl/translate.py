@@ -785,10 +785,73 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             translate_named_expr(translator, n=e, schema=inp_right.schema)
             for e in node.right_on
         ]
+    if isinstance(how := node.options[0], tuple) and how[0] == "AsOf":
+        (
+            _,
+            strategy,
+            tolerance,
+            tolerance_str,
+            left_by,
+            right_by,
+            exact_matches,
+            _check_sortedness,
+        ) = how
+        if (
+            strategy != "backward"
+            or tolerance is not None
+            or tolerance_str is not None
+            or not exact_matches
+        ):
+            raise NotImplementedError(
+                "Only backward as-of joins with exact matches and no tolerance "
+                "are supported"
+            )
+        if len(left_on) != 1 or len(right_on) != 1:
+            raise NotImplementedError("As-of joins require one ordered key per side")
+        left_by = tuple(left_by or ())
+        right_by = tuple(right_by or ())
+        if len(left_by) != len(right_by):
+            raise NotImplementedError("As-of grouping keys must match on both sides")
+        if _contains_categorical_key(left_on + right_on) or any(
+            _contains_dtype(frame.schema[name].polars_type, (pl.Categorical, pl.Enum))
+            for frame, names in ((inp_left, left_by), (inp_right, right_by))
+            for name in names
+        ):
+            raise NotImplementedError("Categorical/Enum as-of keys are not supported")
+        if not all(
+            plc.traits.is_integral_not_bool(key.value.dtype.plc_type)
+            or plc.traits.is_timestamp(key.value.dtype.plc_type)
+            or plc.traits.is_duration(key.value.dtype.plc_type)
+            for key in (left_on[0], right_on[0])
+        ):
+            raise NotImplementedError("Unsupported as-of ordered key dtype")
+        if left_on[0].value.dtype != right_on[0].value.dtype:
+            raise NotImplementedError("As-of ordered key dtypes must match")
+        if any(
+            inp_left.schema[left_name] != inp_right.schema[right_name]
+            or not (
+                plc.traits.is_fixed_width(inp_left.schema[left_name].plc_type)
+                or inp_left.schema[left_name].plc_type.id() == plc.types.TypeId.STRING
+            )
+            for left_name, right_name in zip(left_by, right_by, strict=True)
+        ):
+            raise NotImplementedError("Unsupported as-of grouping key dtype")
+        _, _, zlice, suffix, coalesce, _maintain_order = node.options
+        return ir.AsofJoin(
+            schema,
+            left_on[0],
+            right_on[0],
+            left_by,
+            right_by,
+            (zlice, suffix, coalesce),
+            inp_left,
+            inp_right,
+        )
+
     if _contains_categorical_key(left_on) or _contains_categorical_key(right_on):
         raise NotImplementedError("Joining on Categorical/Enum keys is not supported")
 
-    if (how := node.options[0]) in {
+    if how in {
         "Inner",
         "Left",
         "Right",

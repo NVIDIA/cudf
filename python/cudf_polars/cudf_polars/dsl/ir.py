@@ -97,6 +97,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "IR",
+    "AsofJoin",
     "Cache",
     "CallbackSink",
     "ConditionalJoin",
@@ -3284,6 +3285,132 @@ class ConditionalJoin(IR):
             result = left_result.with_columns(right_result.columns, stream=stream)
 
         return result.slice(zlice)
+
+
+class AsofJoin(IR):
+    """Join each left row to the last matching right row at or before its key."""
+
+    __slots__ = ("left_by", "left_on", "options", "right_by", "right_on")
+    _non_child = ("schema", "left_on", "right_on", "left_by", "right_by", "options")
+    _n_non_child_args = 5
+
+    def __init__(
+        self,
+        schema: Schema,
+        left_on: expr.NamedExpr,
+        right_on: expr.NamedExpr,
+        left_by: tuple[str, ...],
+        right_by: tuple[str, ...],
+        options: tuple[Zlice | None, str, bool],
+        left: IR,
+        right: IR,
+    ) -> None:
+        self.schema = schema
+        self.left_on = left_on
+        self.right_on = right_on
+        self.left_by = left_by
+        self.right_by = right_by
+        self.options = options
+        self.children = (left, right)
+        self._non_child_args = (left_on, right_on, left_by, right_by, options)
+
+    @classmethod
+    @log_do_evaluate
+    @nvtx_annotate_cudf_polars(message="AsofJoin")
+    def do_evaluate(
+        cls,
+        left_on: expr.NamedExpr,
+        right_on: expr.NamedExpr,
+        left_by: tuple[str, ...],
+        right_by: tuple[str, ...],
+        options: tuple[Zlice | None, str, bool],
+        left: DataFrame,
+        right: DataFrame,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Sort the right keys, probe them, and gather the matching payload."""
+        zlice, suffix, coalesce = options
+        right_on_col = broadcast(
+            right_on.value.evaluate(right),
+            target_length=right.num_rows,
+            stream=right.stream,
+        )[0]
+        right_by_cols = [right.column_map[name].obj for name in right_by]
+        right_key = (
+            right.column_map[right_on.value.name]
+            if not right_by and isinstance(right_on.value, expr.Col)
+            else None
+        )
+        already_sorted = (
+            right_key is not None
+            and right_key.is_sorted == plc.types.Sorted.YES
+            and right_key.order == plc.types.Order.ASCENDING
+            and right_key.null_order == plc.types.NullOrder.BEFORE
+        )
+        if already_sorted:
+            joiner = plc.join.AsofJoin(
+                plc.Table(right_by_cols), right_on_col.obj, stream=right.stream
+            )
+        else:
+            keys = plc.Table([*right_by_cols, right_on_col.obj])
+            with context.stream_ordered_after(right) as stream:
+                columns = plc.sorting.stable_sort_by_key(
+                    plc.Table([*right.table.columns(), *keys.columns()]),
+                    keys,
+                    [plc.types.Order.ASCENDING] * (len(right_by) + 1),
+                    [plc.types.NullOrder.BEFORE] * (len(right_by) + 1),
+                    stream=stream,
+                ).columns()
+                right = DataFrame.from_table(
+                    plc.Table(columns[: right.num_columns]),
+                    right.column_names,
+                    right.dtypes,
+                    stream=stream,
+                )
+                joiner = plc.join.AsofJoin(
+                    plc.Table(columns[right.num_columns : -1]),
+                    columns[-1],
+                    stream=stream,
+                )
+
+        discarded = set(right_by)
+        if coalesce and left_on.name == right_on.name:
+            discarded.add(right_on.name)
+        right_payload = right.discard_columns(discarded)
+        if right_payload.num_columns == 0:
+            return left.slice(zlice)
+
+        left_on_col = broadcast(
+            left_on.value.evaluate(left),
+            target_length=left.num_rows,
+            stream=left.stream,
+        )[0]
+        with context.stream_ordered_after(left, right) as stream:
+            gather_map = joiner.join(
+                plc.Table([left.column_map[name].obj for name in left_by]),
+                left_on_col.obj,
+                stream=stream,
+            )
+            gathered = DataFrame.from_table(
+                plc.copying.gather(
+                    right_payload.table,
+                    gather_map,
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
+                    stream=stream,
+                ),
+                right_payload.column_names,
+                right_payload.dtypes,
+                stream=stream,
+            )
+            gathered = gathered.rename_columns(
+                {
+                    name: f"{name}{suffix}"
+                    for name in gathered.column_names
+                    if name in left.column_names_set
+                }
+            )
+            return left.with_columns(gathered.columns, stream=stream).slice(zlice)
 
 
 class Join(IR):

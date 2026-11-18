@@ -102,8 +102,10 @@ struct page_stats_caster : public stats_caster_base {
           return 0;
         }();
         // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
-        auto const& schema             = per_file_metadata[src_idx].schema[mapped_schema_idx];
-        auto const is_narrowing_column = is_column_wider_than<T>(schema.type, schema.type_length);
+        auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+        auto const is_narrowing_column =
+          cuda::std::signed_integral<T> and
+          is_column_wider_than(schema.type, schema.type_length, sizeof(T));
 
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];

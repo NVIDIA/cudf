@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -527,5 +528,21 @@ class equality_literals_collector : public parquet_expression_simplifier {
   std::reference_wrapper<ast::expression const> ast_expr,
   std::span<std::vector<size_type> const> input_row_group_indices,
   cuda::stream_ref stream);
+
+/**
+ * @brief Whether column values of the physical `type` may be wider than `width` bytes
+ */
+[[nodiscard]] inline bool is_column_wider_than(Type const type,
+                                               int32_t const type_length,
+                                               std::size_t const width)
+{
+  switch (type) {
+    case Type::INT32: return width < sizeof(int32_t);
+    case Type::INT64: return width < sizeof(int64_t);
+    case Type::FIXED_LEN_BYTE_ARRAY: return std::cmp_less(width, type_length);
+    case Type::BYTE_ARRAY: return width < sizeof(__int128_t);
+    default: return false;
+  }
+}
 
 }  // namespace cudf::io::parquet::detail

@@ -32,7 +32,9 @@
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/chrono>
+#include <cuda/std/climits>
 #include <cuda/std/concepts>
+#include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -125,7 +127,11 @@ __device__ bool probe_key(BloomFilter const& filter,
   // Decimals are big-endian two's complement, sign-extended to the column's `type_length`,
   // so the value is the trailing `type_length` bytes of the byte-swapped 128-bit integer
   else if constexpr (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    auto const big_endian = cuda::std::byteswap(static_cast<__int128_t>(literal.value<Rep>()));
+    auto const value = static_cast<__int128_t>(literal.value<Rep>());
+    // No stored value can equal a wider literal that does not fit in `type_length` bytes
+    auto const magnitude = static_cast<__uint128_t>(value < 0 ? ~value : value);
+    if (cuda::std::bit_width(magnitude) >= type_length * CHAR_BIT) { return false; }
+    auto const big_endian = cuda::std::byteswap(value);
     auto const bytes      = reinterpret_cast<char const*>(&big_endian);
     return filter.contains(
       cudf::string_view{bytes + sizeof(__int128_t) - type_length, type_length});
@@ -133,7 +139,13 @@ __device__ bool probe_key(BloomFilter const& filter,
 
   // INT32, INT64 and BYTE_ARRAY
   else {
-    return filter.contains(static_cast<typename BloomFilter::key_type>(literal.value<Rep>()));
+    using key_type   = typename BloomFilter::key_type;
+    auto const value = literal.value<Rep>();
+    // No stored value can equal a wider literal that does not fit the physical type
+    if constexpr (cuda::std::is_integral_v<key_type> and sizeof(Rep) > sizeof(key_type)) {
+      if (not cuda::std::in_range<key_type>(value)) { return false; }
+    }
+    return filter.contains(static_cast<key_type>(value));
   }
 }
 
@@ -264,14 +276,14 @@ struct bloom_filter_caster {
     auto const physical_type = parquet_types[equality_col_idx];
     auto const d_literal     = literal->get_value();
 
-    // INT32 also stores 8 and 16-bit integers, and TIME(MILLIS) which is read as a 64-bit duration
-    if constexpr (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>()) {
-      if (physical_type == Type::INT32) {
-        return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
-      }
+    // INT32 also stores 8 and 16-bit integers, TIME(MILLIS) which is read as a 64-bit duration and
+    // decimals read with a wider `decimal_width`
+    if (physical_type == Type::INT32 and (sizeof(rep_type) <= sizeof(int32_t) or
+                                          cudf::is_duration<T>() or cudf::is_fixed_point(dtype))) {
+      return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
     }
-    // INT64 values are stored as 64-bit integers
-    if constexpr (sizeof(rep_type) == sizeof(int64_t)) {
+    // INT64 also stores decimals read with a wider `decimal_width`
+    if constexpr (sizeof(rep_type) >= sizeof(int64_t)) {
       if (physical_type == Type::INT64) {
         return query_bloom_filter<rep_type, Type::INT64>(equality_col_idx, d_literal, stream, mr);
       }
@@ -533,6 +545,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::calc_bloom_hash_mismatch_ma
   for (std::size_t col_idx = 0; col_idx < output_dtypes.size(); ++col_idx) {
     auto const dtype = output_dtypes[col_idx];
     if (not cudf::is_timestamp(dtype) and not cudf::is_fixed_point(dtype)) { continue; }
+    auto const width = cudf::size_of(dtype);
     // Sources may store the column with different precisions or widths across sources
     mismatched[col_idx] =
       std::any_of(cuda::counting_iterator<std::size_t>{0},
@@ -543,8 +556,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::calc_bloom_hash_mismatch_ma
                       static_cast<int>(src_idx));
                     // Narrowing may truncate values to the literal, but their hashes won't match
                     if (cudf::is_fixed_point(dtype)) {
-                      return schema.type == Type::FIXED_LEN_BYTE_ARRAY and
-                             std::cmp_greater(schema.type_length, cudf::size_of(dtype));
+                      return is_column_wider_than(schema.type, schema.type_length, width);
                     }
                     return schema.logical_type.has_value() and
                            calc_timestamp_scale(schema.logical_type,

@@ -137,24 +137,6 @@ class stats_caster_base {
     }
   }
 
-  /**
-   * @brief Whether column values of the physical `type` may be wider than `T`
-   */
-  template <typename T>
-  [[nodiscard]] static inline bool is_column_wider_than(Type const type, int32_t const type_length)
-  {
-    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
-      switch (type) {
-        case Type::INT32: return sizeof(T) < sizeof(int32_t);
-        case Type::INT64: return sizeof(T) < sizeof(int64_t);
-        case Type::FIXED_LEN_BYTE_ARRAY: return std::cmp_less(sizeof(T), type_length);
-        case Type::BYTE_ARRAY: return true;
-        default: return false;
-      }
-    }
-    return false;
-  }
-
   template <typename ToType, typename FromType>
   static inline ToType target_type(FromType value, int32_t ts_scale = 0)
   {

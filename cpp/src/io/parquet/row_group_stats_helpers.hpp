@@ -105,8 +105,10 @@ struct row_group_stats_caster : public stats_caster_base {
           return 0;
         }();
         // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
-        auto const& schema             = source_metadata.schema[mapped_schema_idx];
-        auto const is_narrowing_column = is_column_wider_than<T>(schema.type, schema.type_length);
+        auto const& schema = source_metadata.schema[mapped_schema_idx];
+        auto const is_narrowing_column =
+          cuda::std::signed_integral<T> and
+          is_column_wider_than(schema.type, schema.type_length, sizeof(T));
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(

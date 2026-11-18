@@ -29,10 +29,10 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
@@ -512,8 +512,8 @@ async def evaluate_chunk(
     if already_available:
         if not chunk.is_available():
             raise ValueError("already_available=True requires an available TableChunk")
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            chunk.data_alloc_size(), net_memory_delta=0
+        reservation = await reserve_memory(
+            context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
     else:
         chunk, reservation = await make_table_chunks_available_or_wait(

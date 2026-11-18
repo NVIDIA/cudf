@@ -18,6 +18,8 @@
 #include <cudf/copying.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/groupby.hpp>
+#include <cudf/lists/lists_column_view.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -682,14 +684,39 @@ TEST_F(groupby_key_shape_test, PresortedNestedKeyBoundaries)
 
 TEST_F(groupby_key_shape_test, PresortedSlicedNestedValues)
 {
-  // Presorted keys leave the values in grouped order, but sliced nested values are still
-  // gathered: MERGE_LISTS and MERGE_M2 read the children of their input without its offset.
+  // Presorted keys leave the values in grouped order, so sliced nested values are read in place.
   cudf::test::fixed_width_column_wrapper<int32_t> keys{0, 1, 1, 2, 2};
   cudf::test::lists_column_wrapper<int32_t> lists{{9, 9}, {4}, {5}, {6, 7}, {8}};
   cudf::test::fixed_width_column_wrapper<int64_t> counts{9, 1, 1, 2, 2};
   cudf::test::fixed_width_column_wrapper<double> means{9, 1, 3, 5, 7};
   cudf::test::fixed_width_column_wrapper<double> m2s{9, 0, 0, 2, 2};
   cudf::test::structs_column_wrapper partials{{counts, means, m2s}};
+
+  // Each row holds one histogram entry and one tdigest centroid.
+  auto const row_offsets = [] {
+    return cudf::test::fixed_width_column_wrapper<cudf::size_type>{0, 1, 2, 3, 4, 5}.release();
+  };
+  cudf::test::fixed_width_column_wrapper<int32_t> histogram_values{9, 5, 5, 6, 7};
+  cudf::test::fixed_width_column_wrapper<int64_t> histogram_counts{9, 1, 2, 1, 1};
+  auto const histograms = cudf::make_lists_column(
+    5,
+    row_offsets(),
+    cudf::test::structs_column_wrapper{{histogram_values, histogram_counts}}.release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  cudf::test::fixed_width_column_wrapper<double> centroid_means{9, 4, 5, 6, 8};
+  cudf::test::fixed_width_column_wrapper<double> centroid_weights{1, 1, 1, 1, 1};
+  std::vector<std::unique_ptr<cudf::column>> tdigest_children;
+  tdigest_children.push_back(cudf::make_lists_column(
+    5,
+    row_offsets(),
+    cudf::test::structs_column_wrapper{{centroid_means, centroid_weights}}.release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED)));
+  tdigest_children.push_back(std::make_unique<cudf::column>(centroid_means));
+  tdigest_children.push_back(std::make_unique<cudf::column>(centroid_means));
+  auto const tdigests = cudf::make_structs_column(
+    5, std::move(tdigest_children), 0, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{1, 2};
   cudf::test::lists_column_wrapper<int32_t> expected_lists{{4, 5}, {6, 7, 8}};
@@ -699,19 +726,76 @@ TEST_F(groupby_key_shape_test, PresortedSlicedNestedValues)
   cudf::test::structs_column_wrapper expected_partials{
     {expected_counts, expected_means, expected_m2s}};
 
-  std::vector<cudf::groupby::aggregation_request> requests(2);
-  requests[0].values = cudf::slice(lists, {1, 5}).front();
-  requests[0].aggregations.push_back(
-    cudf::make_merge_lists_aggregation<cudf::groupby_aggregation>());
-  requests[1].values = cudf::slice(partials, {1, 5}).front();
-  requests[1].aggregations.push_back(cudf::make_merge_m2_aggregation<cudf::groupby_aggregation>());
-  cudf::groupby::groupby gb(cudf::table_view{{cudf::slice(keys, {1, 5}).front()}},
-                            cudf::null_policy::EXCLUDE,
-                            cudf::sorted::YES);
-  auto const [result_keys, results] = gb.aggregate(requests);
+  auto const sliced_keys = cudf::slice(keys, {1, 5}).front();
+  auto const aggregate   = [&](cudf::column_view const& group_keys,
+                             std::vector<cudf::column_view> const& values) {
+    std::vector<cudf::groupby::aggregation_request> requests(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      requests[i].values = values[i];
+    }
+    requests[0].aggregations.push_back(
+      cudf::make_merge_lists_aggregation<cudf::groupby_aggregation>());
+    requests[0].aggregations.push_back(
+      cudf::make_merge_sets_aggregation<cudf::groupby_aggregation>());
+    requests[1].aggregations.push_back(
+      cudf::make_merge_m2_aggregation<cudf::groupby_aggregation>());
+    requests[2].aggregations.push_back(
+      cudf::make_merge_histogram_aggregation<cudf::groupby_aggregation>());
+    requests[3].aggregations.push_back(
+      cudf::make_merge_tdigest_aggregation<cudf::groupby_aggregation>(1000));
+    cudf::groupby::groupby gb(
+      cudf::table_view{{group_keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+    return gb.aggregate(requests);
+  };
+  // Unsliced copies give the expected results of the aggregations without a simple literal form.
+  auto const aggregate_slices = [&](cudf::size_type begin, cudf::size_type end) {
+    std::vector<cudf::size_type> const range{begin, end};
+    std::vector<cudf::column_view> const sliced_values{
+      cudf::slice(lists, range).front(),
+      cudf::slice(partials, range).front(),
+      cudf::slice(histograms->view(), range).front(),
+      cudf::slice(tdigests->view(), range).front()};
+    std::vector<std::unique_ptr<cudf::column>> copies;
+    std::vector<cudf::column_view> copied_values;
+    for (auto const& values : sliced_values) {
+      copies.push_back(std::make_unique<cudf::column>(values));
+      copied_values.push_back(copies.back()->view());
+    }
+    auto const group_keys = cudf::slice(keys, range).front();
+    auto result           = aggregate(group_keys, sliced_values);
+    auto const expected   = aggregate(group_keys, copied_values);
+    for (std::size_t i = 0; i < result.second.size(); ++i) {
+      for (std::size_t j = 0; j < result.second[i].results.size(); ++j) {
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected.second[i].results[j],
+                                       *result.second[i].results[j]);
+      }
+    }
+    return result;
+  };
+  // A prefix slice has no offset, but its children still hold the rows after its end.
+  aggregate_slices(0, 1);
+  auto const [result_keys, results] = aggregate_slices(1, 5);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_keys, result_keys->get_column(0));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_lists, *results[0].results[0]);
+  // Column comparisons accept list offsets that do not start at 0, so check them directly.
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::lists_column_view(expected_lists).offsets(),
+                                 cudf::lists_column_view(results[0].results[0]->view()).offsets());
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_partials, *results[1].results[0]);
+
+  // The struct MIN scan gathers the children of its input and pushes down its null mask.
+  cudf::test::fixed_width_column_wrapper<int32_t> struct_child{9, 3, 1, 2, 4};
+  cudf::test::structs_column_wrapper structs({struct_child}, {true, false, true, true, false});
+  auto const scan = [&](cudf::column_view values) {
+    std::vector<cudf::groupby::scan_request> requests(1);
+    requests[0].values = values;
+    requests[0].aggregations.push_back(
+      cudf::make_min_aggregation<cudf::groupby_scan_aggregation>());
+    cudf::groupby::groupby gb(
+      cudf::table_view{{sliced_keys}}, cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+    return std::move(gb.scan(requests).second[0].results[0]);
+  };
+  auto const sliced_structs = cudf::slice(structs, {1, 5}).front();
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*scan(cudf::column(sliced_structs)), *scan(sliced_structs));
 }
 
 TEST_F(groupby_key_shape_test, StableGroupedRows)

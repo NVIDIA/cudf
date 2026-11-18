@@ -21,7 +21,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/cmath>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>

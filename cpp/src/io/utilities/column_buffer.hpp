@@ -164,6 +164,8 @@ class column_buffer_base {
   uint32_t user_data{0};  // arbitrary user data
   // Materialize a STRING/BYTE_ARRAY-backed buffer as a `list<uint8>` column
   bool string_as_binary{false};
+  // Struct buffer read from a Parquet FILE logical type group
+  bool is_file{false};
   std::string name;
 
   std::vector<string_policy> children;

@@ -662,7 +662,7 @@ def decompose_single_agg(
             # An expression built only from scalar literals is itself a
             # scalar: it yields one value per group rather than a list.
             return [], named_expr
-        elif _is_literal_column_expr(agg):
+        elif is_top and _is_literal_column_expr(agg):
             raise NotImplementedError(
                 "Expressions of only list or Series literals in groupby/rolling"
             )

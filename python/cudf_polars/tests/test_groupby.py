@@ -1062,7 +1062,9 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
         pl.lit(pl.Series([None], dtype=pl.Int64)).null_count(),
     ],
 )
-def test_groupby_list_or_series_literal_raises(in_memory_engine, expr):
+def test_groupby_list_or_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
     df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
     q = df.group_by("g").agg(expr)
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
@@ -1070,9 +1072,15 @@ def test_groupby_list_or_series_literal_raises(in_memory_engine, expr):
 
 @pytest.mark.parametrize(
     "expr",
-    [pl.col("j").is_in([1, 3]).sum(), (pl.col("j") + pl.lit(pl.Series([7]))).sum()],
+    [
+        pl.col("j").is_in([1, 3]).sum(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum(),
+        (pl.lit(pl.Series([7])) + 1 + pl.col("j")).sum(),
+    ],
 )
-def test_groupby_column_with_list_or_series_literal(engine: pl.GPUEngine, expr):
+def test_groupby_column_with_list_or_series_literal(
+    engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
     df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
     q = df.group_by("g", maintain_order=True).agg(expr)
     assert_gpu_result_equal(q, engine=engine)

@@ -207,9 +207,12 @@ def test_unsupported_agg(in_memory_engine):
     [
         pl.col("values").sum() + pl.lit(pl.Series([7])),
         pl.lit(pl.Series([1, 2])).sum(),
+        pl.col("values").sum().is_in(pl.Series([1, 7])),
     ],
 )
-def test_rolling_series_literal_raises(in_memory_engine, expr):
+def test_rolling_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
     df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
     q = df.rolling("orderby", period="3i").agg(expr)
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)

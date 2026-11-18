@@ -22,6 +22,7 @@ from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.utils.naming import names_to_indices
@@ -680,10 +681,11 @@ class RowCountOverlapPolicy(_OverlapPolicy[BufferedChunk]):
             [start - cursor.row_start, cursor.num_rows],
             stream=stream,
         )
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            cursor.chunk.data_alloc_size(), net_memory_delta=0
-        )
-        with opaque_memory_usage(reservation):
+        with opaque_memory_usage(
+            await reserve_memory(
+                context, size=cursor.chunk.data_alloc_size(), net_memory_delta=0
+            )
+        ):
             table = table.copy(stream=stream, mr=context.br().device_mr)
         return BufferedChunk(
             TableChunk.from_pylibcudf_table(

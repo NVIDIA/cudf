@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Any
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import TableChunk
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 from cudf_polars.dsl.ir import IR, Rolling
 from cudf_polars.streaming.actor_graph.collectives.overlap import (
@@ -153,12 +153,13 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         if len(pieces) == 1:
             evaluation_chunk = pieces[0]
         else:
-            reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-                sum(piece.data_alloc_size() for piece in pieces),
-                net_memory_delta=0,
-            )
+            concat_bytes = sum(piece.data_alloc_size() for piece in pieces)
             with (
-                opaque_memory_usage(reservation),
+                opaque_memory_usage(
+                    await reserve_memory(
+                        self.context, size=concat_bytes, net_memory_delta=0
+                    )
+                ),
                 stream_ordered_after(
                     self.ir_context.get_cuda_stream,
                     [piece.stream for piece in pieces],
@@ -187,10 +188,11 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             [cursor.row_start - start, cursor.row_stop - start],
             stream=result.stream,
         )
-        reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-            result.data_alloc_size(), net_memory_delta=0
-        )
-        with opaque_memory_usage(reservation):
+        with opaque_memory_usage(
+            await reserve_memory(
+                self.context, size=result.data_alloc_size(), net_memory_delta=0
+            )
+        ):
             table = table.copy(result.stream, self.context.br().device_mr)
         return TableChunk.from_pylibcudf_table(
             table,

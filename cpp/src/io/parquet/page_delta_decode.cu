@@ -1299,8 +1299,14 @@ CUDF_HOST_DEVICE inline bool takes_no_null_path(ColumnChunkDesc const& chunk)
 }
 
 /**
- * @brief Decodes a page `takes_no_null_path` accepts, writing its values straight to the output.
+ * @brief Decodes a page which has no nulls, writing its values straight to the output.
  *
+ * @param warp The warp to decode the page
+ * @param page The page to decode
+ * @param chunk The chunk to decode
+ * @param min_row The minimum row to decode
+ * @param num_rows The number of rows to decode
+ * @param storage Buffer in shared memory
  * @return 0 or the decode error
  */
 __device__ __forceinline__ kernel_error::value_type decode_required_page(
@@ -1422,6 +1428,12 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
  *
  * @tparam NoNulls Whether to decode the pages `takes_no_null_path` accepts, or the remaining mapped
  * pages
+ * @param pages The pages to decode
+ * @param chunks Chunk descriptors
+ * @param min_row The minimum row to decode
+ * @param num_rows The number of rows to decode
+ * @param page_mask The mask of pages to decode
+ * @param error_code The error code to set
  */
 template <bool NoNulls>
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1)
@@ -2153,7 +2165,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
     if (has_general_page) { launch.template operator()<false>(); }
   }
 
-  // Skip the launch when every DELTA_BINARY page has a map, since every block would just return.
+  // Skip the launch when every DELTA_BINARY page has a map, they have already been decoded.
   if (not needs_level_decoder) { return; }
 
   if (level_type_size == 1) {

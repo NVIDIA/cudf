@@ -198,7 +198,18 @@ def _agg_sum(value: pl.Expr, e: expr.Agg) -> pl.Expr:
     The sum of an empty or all-null input is null in a group by, as in
     libcudf, and when ``e.options`` is set, as in ``Agg.do_evaluate``.
     Otherwise it is zero.
+
+    The sum accumulates in the libcudf type: 64-bit integers for an integer
+    group by sum, and the result type for a reduction.
     """
+    if e.context == ExecutionContext.GROUPBY:
+        child_type = e.children[0].dtype.plc_type
+        if plc.traits.is_integral_not_bool(child_type):
+            value = value.cast(
+                pl.UInt64 if plc.traits.is_unsigned(child_type) else pl.Int64
+            )
+    else:
+        value = value.cast(e.dtype.polars_type)
     if e.options or e.context == ExecutionContext.GROUPBY:
         return pl.when(value.count() > 0).then(value.sum())
     return value.sum()
@@ -235,7 +246,9 @@ def _(e: expr.Agg) -> pl.Expr:
     except KeyError:
         raise NotImplementedError(f"Aggregation {e.name}") from None
     (child,) = e.children
-    return func(expr_to_polars(child), e).cast(e.dtype.polars_type)
+    # Like libcudf, wrap an integer result that is out of range of e.dtype,
+    # such as a grouped Int32 sum.
+    return func(expr_to_polars(child), e).cast(e.dtype.polars_type, wrap_numerical=True)
 
 
 def _named(exprs: tuple[expr.NamedExpr, ...]) -> list[pl.Expr]:

@@ -255,6 +255,10 @@ def edge_cases():
             "j": [2, 3, -1, 0, 4, None, 1, 2],
             "b": [True, False, None, True, False, True, None, False],
             "c": [False, False, True, None, True, None, None, True],
+            # Sums of these overflow Int32, except for the null group of "b".
+            "k": pl.Series(
+                [2**30, 2**30, 1, -3, None, 2**30, 2, 2**30], dtype=pl.Int32
+            ),
         }
     )
 
@@ -362,6 +366,11 @@ def test_binary_ops_match(edge_cases, streaming_engine_factory, cpu_calls, op, c
             {"Agg.min", "Agg.max"},
             id="nan-min-max",
         ),
+        pytest.param(
+            [pl.col("k").sum(), pl.col("k").mean().alias("k_mean")],
+            {"Agg.sum"},
+            id="int32-sum-mean",
+        ),
     ],
 )
 def test_select_matches_gpu(
@@ -415,6 +424,8 @@ def test_groupby_matches_gpu(
         .agg(
             pl.col("i").sum(),
             pl.col("j").mean().alias("j_mean"),
+            pl.col("k").mean().alias("k_mean"),
+            pl.col("k").sum().alias("k_sum"),
             pl.col("i").n_unique().alias("i_n"),
             pl.col("f").count().alias("f_count"),
             pl.col("j").first(),

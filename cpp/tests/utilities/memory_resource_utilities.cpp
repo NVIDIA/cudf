@@ -5,9 +5,11 @@
 
 #include <cudf_test/memory_resource_utilities.hpp>
 
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/error.hpp>
+#include <rmm/mr/callback_memory_resource.hpp>
 
 #include <cuda/stream>
 
@@ -44,12 +46,34 @@ void print_allocation_stacktrace()
   std::cerr.flush();
 }
 
+cuda::mr::any_resource<cuda::mr::device_accessible> make_poisoning_resource(
+  cuda::mr::any_resource<cuda::mr::device_accessible> upstream)
+{
+  return rmm::mr::callback_memory_resource{
+    [upstream](
+      cuda::stream_ref stream, std::size_t bytes, std::size_t alignment, void*) mutable -> void* {
+      auto ptr = upstream.allocate(stream, bytes, alignment);
+      CUDF_CUDA_TRY(cudaMemsetAsync(ptr, poison_byte, bytes, stream.get()));
+      return ptr;
+    },
+    [upstream](
+      cuda::stream_ref stream, void* ptr, std::size_t bytes, std::size_t alignment, void*) mutable {
+      CUDF_CUDA_TRY(cudaMemsetAsync(ptr, poison_byte, bytes, stream.get()));
+      CUDF_CUDA_TRY(cudaStreamSynchronize(stream.get()));
+      upstream.deallocate(stream, ptr, bytes, alignment);
+    }};
+}
+
 }  // namespace
 
-memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream)
+memory_resource_test_harness::memory_resource_test_harness(rmm::device_async_resource_ref upstream,
+                                                           temporary_memory_checks temporary_checks)
   : _setup_mr{upstream},
     _output_mr{upstream},
-    _temporary_mr{upstream},
+    _temporary_mr{
+      temporary_checks == temporary_memory_checks::POISON
+        ? make_poisoning_resource(cuda::mr::any_resource<cuda::mr::device_accessible>{upstream})
+        : cuda::mr::any_resource<cuda::mr::device_accessible>{upstream}},
     _failing_mr{[](cuda::stream_ref, std::size_t, std::size_t, void*) -> void* {
                   print_allocation_stacktrace();
                   throw rmm::bad_alloc{"Unexpected allocation from the current device resource"};

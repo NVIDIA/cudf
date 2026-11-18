@@ -70,21 +70,10 @@ def memory_resource_sampler(
         If the background thread raises an exception.
     """
     stop_event = threading.Event()
-
-    # Declare one sampler FSM per resource on the main thread. A single
-    # background thread advances all of them.
-    fsms = {
-        resource_id: (
-            quent_session.binding_context.memory_resource_sampler_observer()
-            .handle()
-            .sampling(
-                query=query_id,
-                memory=memory_resource_usage(resource_id, read_allocated()),
-            )
-        )
-        for resource_id, read_allocated in resources.items()
-    }
+    fsms: dict[uuid.UUID, quent_bindings.MemoryResourceSamplerSamplingHandle] = {}
     errors: list[BaseException] = []
+    thread: threading.Thread | None = None
+    thread_started = False
 
     def run() -> None:
         try:
@@ -98,20 +87,47 @@ def memory_resource_sampler(
             errors.append(error)
             stop_event.set()
 
-    # Start the background monitoring thread.
-    thread = threading.Thread(
-        target=run, name="cudf-polars-memory-sampler", daemon=True
-    )
-    thread.start()
-
     def stop() -> None:
         stop_event.set()
-        thread.join()
+        if thread_started:
+            try:
+                assert thread is not None
+                thread.join()
+            except BaseException as error:
+                errors.append(error)
         for fsm in fsms.values():
             try:
                 fsm.stopped()
             except BaseException as error:
                 errors.append(error)
+
+    try:
+        # Declare one sampler FSM per resource on the main thread, recording
+        # each one before starting the next. A single background thread
+        # advances all of them.
+        for resource_id, read_allocated in resources.items():
+            fsm = (
+                quent_session.binding_context.memory_resource_sampler_observer()
+                .handle()
+                .sampling(
+                    query=query_id,
+                    memory=memory_resource_usage(resource_id, read_allocated()),
+                )
+            )
+            fsms[resource_id] = fsm
+
+        thread = threading.Thread(
+            target=run, name="cudf-polars-memory-sampler", daemon=True
+        )
+        thread.start()
+        thread_started = True
+    except BaseException as startup_error:
+        stop()
+        if errors:
+            raise BaseExceptionGroup(
+                "memory resource sampler startup failed", [startup_error, *errors]
+            ) from None
+        raise
 
     try:
         yield

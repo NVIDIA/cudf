@@ -568,6 +568,7 @@ _ROUNDING_FREQUENCIES = (
     (_NANOSECONDS_PER_UNIT["ns"], plc.datetime.RoundingFrequency.NANOSECOND, False),
 )
 _INT64 = plc.DataType(plc.TypeId.INT64)
+_INT64_DTYPE = DataType(pl.Int64())
 _UINT64 = plc.DataType(plc.TypeId.UINT64)
 _AST = plc.expressions.ASTOperator
 
@@ -1592,13 +1593,12 @@ class TemporalFunction(Expr):
             (ticks,) = self.options
             shifted = _wrapping(
                 plc.binaryop.BinaryOperator.ADD,
-                plc.unary.bit_cast(column.obj, _INT64, stream=df.stream),
+                column.astype(_INT64_DTYPE, stream=df.stream).obj,
                 ticks,
                 df.stream,
             )
-            return Column(
-                plc.unary.bit_cast(shifted, column.obj.type(), stream=df.stream),
-                dtype=self.dtype,
+            return Column(shifted, dtype=_INT64_DTYPE).astype(
+                self.dtype, stream=df.stream
             )
         elif self.name is TemporalFunction.Name.Truncate:
             (column, _) = columns

@@ -142,6 +142,11 @@ void compute_groupby(std::span<aggregation_request const> requests,
     results = compute_single_pass_aggs(
       values, agg_kinds, agg_semantics, is_agg_intermediate, grouped, stream, mr);
   }
+  std::vector<mutable_column_view> result_views;
+  result_views.reserve(results.size());
+  std::ranges::transform(
+    results, std::back_inserter(result_views), [](auto& result) { return result->mutable_view(); });
+  finalize_means(values, agg_kinds, mutable_table_view{result_views}, cache, stream);
   for (std::size_t i = 0; i < results.size(); ++i) {
     cache->add_result(values.column(i), *aggs[i], std::move(results[i]));
   }

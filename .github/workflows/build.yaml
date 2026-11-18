@@ -339,7 +339,7 @@ jobs:
       package-type: python
       publish-wheel-search-key: cudf_wheel_python_pylibcudf
   wheel-publish-cudf:
-    needs: wheel-build
+    needs: wheel-python-build-noarch
     permissions:
       actions: read
       contents: read

@@ -645,6 +645,7 @@ ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
+  large_strings/find_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
   large_strings/bpe_tests.cpp

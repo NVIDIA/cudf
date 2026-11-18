@@ -57,9 +57,14 @@ def expr_to_polars(e: expr.Expr) -> pl.Expr:
     raise NotImplementedError(f"No Polars conversion for {type(e).__name__}")
 
 
+def _col(name: str) -> pl.Expr:
+    """Select the column ``name``, which ``pl.col`` reads as a regex if it is ``^...$``."""
+    return cs.by_name(name).as_expr()
+
+
 @expr_to_polars.register
 def _(e: expr.Col) -> pl.Expr:
-    return pl.col(e.name)
+    return _col(e.name)
 
 
 @expr_to_polars.register
@@ -277,10 +282,10 @@ def _conform(df: pl.LazyFrame, schema: Schema) -> pl.LazyFrame:
     return _select(
         df,
         [
-            pl.col(name)
+            _col(name)
             if isinstance(actual[name], pl.List)
             and not isinstance(dtype.polars_type, pl.List)
-            else pl.col(name).cast(dtype.polars_type)
+            else _col(name).cast(dtype.polars_type)
             for name, dtype in schema.items()
         ],
     )
@@ -318,8 +323,8 @@ def _(node: ir.Filter) -> Callable[..., pl.LazyFrame]:
 
 @_cpu_plan.register
 def _(node: ir.Projection) -> Callable[..., pl.LazyFrame]:
-    names = list(node.schema)
-    return lambda df: _select(df, names)
+    columns = [_col(name) for name in node.schema]
+    return lambda df: _select(df, columns)
 
 
 @_cpu_plan.register

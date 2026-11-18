@@ -147,9 +147,14 @@ def test_sort(left, engine, cpu_calls, descending, nulls_last):
 
 @pytest.mark.parametrize("keep", ["first", "last", "none", "any"])
 def test_distinct(left, engine, cpu_calls, keep):
-    q = left.unique(subset=["s"], keep=keep, maintain_order=True)
     if keep == "any":
-        q = q.select("s")
+        # Which duplicate "any" keeps is undefined, so the duplicates are
+        # adjacent and only "s" is selected, which fixes the result.
+        q = pl.LazyFrame({"s": ["x", "x", "y", "y", "z", "z"]}).unique(
+            keep=keep, maintain_order=True
+        )
+    else:
+        q = left.unique(subset=["s"], keep=keep, maintain_order=True)
     assert_gpu_result_equal(q, engine=engine)
     assert cpu_calls["Distinct"] > 0
 
@@ -281,7 +286,7 @@ def _collect(q, streaming_engine_factory, mode: str) -> pl.DataFrame:
 def _compare_backends(q, streaming_engine_factory, cpu_calls, node):
     """Check that ``q`` gives the same result on the GPU and the CPU."""
     expect = _collect(q, streaming_engine_factory, "never")
-    assert cpu_calls[node] == 0
+    assert not cpu_calls
     assert_frame_equal(_collect(q, streaming_engine_factory, "always"), expect)
     assert cpu_calls[node] > 0
 
@@ -301,7 +306,7 @@ def test_binary_ops_match(
     q = edge_cases.select(BINARY_OPS[op](left, right).alias("out"))
     try:
         translated = _translated_exprs(q, in_memory_engine)
-        q.collect()
+        q.collect(engine="in-memory")
     except pl.exceptions.PolarsError:
         pytest.skip(f"Polars rejects {op.name} for {columns}")
     if not any(isinstance(n, expr.BinOp) and n.op == op for n in translated):
@@ -373,6 +378,11 @@ def test_binary_ops_match(
             [pl.col("k").sum(), pl.col("k").mean().alias("k_mean")],
             {"Agg.sum"},
             id="int32-sum-mean",
+        ),
+        pytest.param(
+            [pl.col("i").alias("^i$"), pl.col("j").alias("j_alias")],
+            {"Col"},
+            id="regex-shaped-name",
         ),
     ],
 )

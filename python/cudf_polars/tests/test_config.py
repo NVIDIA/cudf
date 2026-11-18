@@ -315,7 +315,8 @@ def test_validate_fallback_mode() -> None:
         )
 
 
-def test_validate_rank_local_cpu_compute() -> None:
+def test_validate_rank_local_cpu_compute(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE", raising=False)
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
     assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.NEVER
 

@@ -8,7 +8,6 @@ import warnings
 from pickle import dumps
 from typing import TYPE_CHECKING, Any
 
-import cachetools
 import cupy as cp
 import llvmlite.binding as ll
 import numpy as np
@@ -83,9 +82,6 @@ JIT_SUPPORTED_TYPES = (
 )
 LIBCUDF_BITMASK_TYPE = numpy_support.from_dtype(SIZE_TYPE_DTYPE)
 MASK_BITSIZE = SIZE_TYPE_DTYPE.itemsize * 8
-
-precompiled: cachetools.LRUCache = cachetools.LRUCache(maxsize=32)
-
 
 DEPRECATED_SM_REGEX = "Architectures prior to '<compute/sm>_75' are deprecated"
 

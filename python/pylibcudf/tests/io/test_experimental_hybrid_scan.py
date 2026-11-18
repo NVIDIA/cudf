@@ -1229,6 +1229,155 @@ def test_hybrid_scan_short_flba_decimals(arrow_type, literal_type) -> None:
     assert got.tbl.to_arrow()[0].to_pylist() == table["c"].to_pylist()
 
 
+# Decimal physical types: arrow type, writer options and physical size in bytes
+_DECIMAL_PHYSICAL_TYPES = [
+    pytest.param(
+        pa.decimal128(9, 2), {"store_decimal_as_integer": True}, 4, id="INT32"
+    ),
+    pytest.param(
+        pa.decimal128(18, 2), {"store_decimal_as_integer": True}, 8, id="INT64"
+    ),
+    pytest.param(pa.decimal128(9, 2), {}, 4, id="FLBA4"),
+    pytest.param(pa.decimal128(18, 2), {}, 8, id="FLBA8"),
+    pytest.param(pa.decimal128(38, 2), {}, 16, id="FLBA16"),
+]
+
+# `decimal_width` options and the arrow types of their literals
+_DECIMAL_WIDTHS = [
+    pytest.param(plc.TypeId.DECIMAL32, pa.decimal32(9, 2), id="DECIMAL32"),
+    pytest.param(plc.TypeId.DECIMAL64, pa.decimal64(18, 2), id="DECIMAL64"),
+    pytest.param(plc.TypeId.DECIMAL128, pa.decimal128(38, 2), id="DECIMAL128"),
+]
+
+
+def _decimal_width_reader(
+    arrow_type, write_kwargs, physical_size, decimal_width
+) -> tuple[bytes, plc.io.parquet.ParquetReaderOptions, HybridScanReader]:
+    """Two row groups of -3.00, -1.00, 2.00 and of 0.07, 0.05, each with a
+    null. Physical types wider than 4 bytes hold 42949672.97 instead of 0.05,
+    which is truncated to 0.05 when read as DECIMAL32.
+    """
+    odd = 5 if physical_size == 4 else 2**32 + 5
+    buf = io.BytesIO()
+    with pq.ParquetWriter(
+        buf,
+        pa.schema([("c", arrow_type)]),
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
+        **write_kwargs,
+    ) as writer:
+        for values in ([-300, -100, 200, None], [7, odd, None]):
+            decimals = [
+                None if v is None else decimal.Decimal(v).scaleb(-2)
+                for v in values * 100
+            ]
+            writer.write_table(pa.table({"c": pa.array(decimals, arrow_type)}))
+    parquet_bytes = buf.getvalue()
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([parquet_bytes])
+        )
+        .decimal_width(decimal_width)
+        .build()
+    )
+    reader = HybridScanReader(extract_parquet_footer(parquet_bytes), options)
+    return parquet_bytes, options, reader
+
+
+def _decimal_filter(op, unscaled, literal_type) -> Operation:
+    literal = pa.scalar(decimal.Decimal(unscaled).scaleb(-2), literal_type)
+    return Operation(
+        op, ColumnNameReference("c"), Literal(plc.Scalar.from_arrow(literal))
+    )
+
+
+@pytest.mark.parametrize("decimal_width,literal_type", _DECIMAL_WIDTHS)
+@pytest.mark.parametrize(
+    "arrow_type,write_kwargs,physical_size", _DECIMAL_PHYSICAL_TYPES
+)
+def test_hybrid_scan_decimal_width_stats_and_dictionary_pages(
+    arrow_type, write_kwargs, physical_size, decimal_width, literal_type
+) -> None:
+    """Stats are sign extended when widened and ignored when narrowed if a
+    bound does not fit. Dictionary values are sign extended when widened and
+    truncated when narrowed, as decoded values are.
+    """
+    parquet_bytes, options, reader = _decimal_width_reader(
+        arrow_type, write_kwargs, physical_size, decimal_width
+    )
+    stats_ignored = physical_size > 4 and literal_type.byte_width == 4
+    has_5 = physical_size == 4 or literal_type.byte_width == 4
+    for op, value, expected in [
+        (ASTOperator.LESS, -200, [0, 1] if stats_ignored else [0]),
+        (ASTOperator.EQUAL, 5, [0, 1] if has_5 else [0]),
+    ]:
+        reader.reset_column_selection()
+        options.set_filter(_decimal_filter(op, value, literal_type))
+        assert (
+            reader.filter_row_groups_with_stats(
+                reader.all_row_groups(options), options
+            )
+            == expected
+        )
+    for value, expected in [(-300, [0]), (5, [1] if has_5 else [])]:
+        assert (
+            _filter_row_groups_with_dictionary_pages(
+                reader,
+                options,
+                parquet_bytes,
+                _decimal_filter(ASTOperator.EQUAL, value, literal_type),
+            )
+            == expected
+        )
+
+
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize("decimal_width,literal_type", _DECIMAL_WIDTHS)
+@pytest.mark.parametrize(
+    "arrow_type,write_kwargs,physical_size", _DECIMAL_PHYSICAL_TYPES
+)
+def test_read_parquet_decimal_width_bloom_filters(
+    arrow_type, write_kwargs, physical_size, decimal_width, literal_type
+) -> None:
+    """Bloom filters hash literals of `decimal_width` as the physical type, and
+    cannot prune values narrowed by `decimal_width` as they may truncate to the
+    literal.
+    """
+    # Both row groups span -3.00 to 3.00 so that stats cannot prune them. Row
+    # group 0 holds 0.05, or 42949672.97 that truncates to it as DECIMAL32
+    odd = 5 if physical_size == 4 else 2**32 + 5
+    buf = io.BytesIO()
+    with pq.ParquetWriter(
+        buf,
+        pa.schema([("c", arrow_type)]),
+        bloom_filter_options={"c": BLOOM_FILTER_OPTIONS},
+        **write_kwargs,
+    ) as writer:
+        for values in ([-300, 300, odd], [-300, 300, 7]):
+            decimals = [decimal.Decimal(v).scaleb(-2) for v in values * 100]
+            writer.write_table(pa.table({"c": pa.array(decimals, arrow_type)}))
+    parquet_bytes = buf.getvalue()
+
+    narrowed = physical_size > literal_type.byte_width
+    has_5 = physical_size == 4 or literal_type.byte_width == 4
+    for value, num_row_groups in [(7, 1), (5, 1 if has_5 else 0)]:
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo([parquet_bytes])
+            )
+            .decimal_width(decimal_width)
+            .build()
+        )
+        options.set_filter(
+            _decimal_filter(ASTOperator.EQUAL, value, literal_type)
+        )
+        result = plc.io.parquet.read_parquet(options)
+        if narrowed:
+            assert result.num_row_groups_after_bloom_filter in (None, 2)
+        else:
+            assert result.num_row_groups_after_bloom_filter == num_row_groups
+        assert result.tbl.num_rows() == (100 if value == 7 or has_5 else 0)
+
+
 def test_hybrid_scan_metadata_with_page_index(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,

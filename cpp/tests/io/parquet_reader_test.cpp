@@ -17,6 +17,7 @@
 #include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -25,12 +26,14 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
@@ -41,6 +44,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -1791,6 +1795,27 @@ TEST_F(ParquetReaderTest, DecimalRead)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(2), col2);
   }
 }
+
+namespace {
+
+// AST literal of a decimal type, whose scalar is kept alive in `scalars`
+cudf::ast::literal decimal_literal(cudf::data_type type,
+                                   int32_t value,
+                                   std::vector<std::unique_ptr<cudf::scalar>>& scalars)
+{
+  auto const make = [&]<typename T>() {
+    scalars.push_back(cudf::make_fixed_point_scalar<T>(value, numeric::scale_type{type.scale()}));
+    return cudf::ast::literal{static_cast<cudf::fixed_point_scalar<T>&>(*scalars.back())};
+  };
+  switch (type.id()) {
+    case cudf::type_id::DECIMAL32: return make.template operator()<numeric::decimal32>();
+    case cudf::type_id::DECIMAL64: return make.template operator()<numeric::decimal64>();
+    case cudf::type_id::DECIMAL128: return make.template operator()<numeric::decimal128>();
+    default: CUDF_FAIL("Not a decimal type");
+  }
+}
+
+}  // namespace
 
 template <typename T>
 struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
@@ -6901,43 +6926,157 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
   }
 }
 
+// Decimals of each physical type read at every `decimal_width` must match casting them
 TEST_F(ParquetReaderTest, DecimalTypeOption)
 {
-  auto const data = std::vector<int32_t>{1000, 2000, 3000, 4000, 5000};
-  auto col        = cudf::test::fixed_point_column_wrapper<int32_t>(
-    data.begin(), data.end(), numeric::scale_type{-2});
+  using cudf::io::column_encoding;
+  auto const scale = numeric::scale_type{-2};
 
-  auto expected_table = cudf::table_view{{col}};
+  // Values beyond int32 or int64 are truncated when read narrower
+  auto const values    = std::vector<__int128_t>{-(__int128_t{1} << 100) - 7,
+                                                 -(__int128_t{1} << 40) - 7,
+                                                 -999'999'999,
+                                                 -1,
+                                                 0,
+                                                 1,
+                                                 999'999'999,
+                                                 (__int128_t{1} << 40) + 5,
+                                                 (__int128_t{1} << 100) + 5};
+  auto const truncated = [&](auto rep) {
+    auto out = std::vector<decltype(rep)>(values.size());
+    std::ranges::transform(
+      values, out.begin(), [](auto v) { return static_cast<decltype(rep)>(v); });
+    return out;
+  };
+  auto const values32 = truncated(int32_t{});
+  auto const values64 = truncated(int64_t{});
+  auto const validity = cudf::test::iterators::nulls_at({2, 5});
 
-  auto filepath = temp_env->get_temp_filepath("DecimalTypeOption.parquet");
+  // INT32, INT64 and FIXED_LEN_BYTE_ARRAY decimals, then BYTE_ARRAY ones of the same widths
+  auto const dec32 = cudf::test::fixed_point_column_wrapper<int32_t>(
+    values32.begin(), values32.end(), validity, scale);
+  auto const dec64 = cudf::test::fixed_point_column_wrapper<int64_t>(
+    values64.begin(), values64.end(), validity, scale);
+  auto const dec128 = cudf::test::fixed_point_column_wrapper<__int128_t>(
+    values.begin(), values.end(), validity, scale);
+  auto const bytes = [&](auto const& reps) {
+    auto const to_bytes = [](auto v) { return big_endian_bytes(v, sizeof(v)); };
+    return cudf::test::strings_column_wrapper(cuda::make_transform_iterator(reps.begin(), to_bytes),
+                                              cuda::make_transform_iterator(reps.end(), to_bytes),
+                                              validity);
+  };
+  auto const bytes32  = bytes(values32);
+  auto const bytes64  = bytes(values64);
+  auto const bytes128 = bytes(values);
+  auto const written  = cudf::table_view{{dec32, dec64, dec128, bytes32, bytes64, bytes128}};
+  auto const sources  = cudf::table_view{{dec32, dec64, dec128, dec32, dec64, dec128}};
 
-  // Write the table with DECIMAL32
-  {
-    auto options =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected_table)
-        .build();
-    cudf::io::write_parquet(options);
-  }
+  for (auto const encoding : {column_encoding::PLAIN,
+                              column_encoding::DICTIONARY,
+                              column_encoding::DELTA_BINARY_PACKED,
+                              column_encoding::BYTE_STREAM_SPLIT}) {
+    // Only request encodings the writer supports for each physical type
+    cudf::io::table_input_metadata metadata{written};
+    for (auto i = 0; i < written.num_columns(); ++i) {
+      auto const is_binary = written.column(i).type().id() == cudf::type_id::STRING;
+      auto const is_flba   = written.column(i).type().id() == cudf::type_id::DECIMAL128;
+      metadata.column_metadata[i].set_output_as_binary(is_binary);
+      if ((encoding != column_encoding::DELTA_BINARY_PACKED or not(is_binary or is_flba)) and
+          (encoding != column_encoding::BYTE_STREAM_SPLIT or not is_binary)) {
+        metadata.column_metadata[i].set_encoding(encoding);
+      }
+    }
+    auto buffer = std::vector<char>{};
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, written)
+        .metadata(std::move(metadata))
+        .build());
+    // The writer orders binary stats as bytes, so replace them with the decimal min and max
+    edit_footer(buffer, [&](cudf::io::parquet::FileMetaData& footer) {
+      for (auto const [column, precision] : {std::pair{3, 9}, std::pair{4, 18}, std::pair{5, 38}}) {
+        annotate_byte_array_decimal(footer, column, precision, -scale);
+      }
+      auto const set_stats = [&](int column, auto const& reps) {
+        auto valid = std::vector<std::decay_t<decltype(reps.front())>>{};
+        for (std::size_t i = 0; i < reps.size(); ++i) {
+          if (validity[i]) { valid.push_back(reps[i]); }
+        }
+        auto const [min, max] = std::ranges::minmax(valid);
+        auto const to_stat    = [](auto v) {
+          auto const bytes = big_endian_bytes(v, sizeof(v));
+          return std::vector<uint8_t>(bytes.begin(), bytes.end());
+        };
+        auto& stats     = footer.row_groups[0].columns[column].meta_data.statistics;
+        stats.min_value = to_stat(min);
+        stats.max_value = to_stat(max);
+      };
+      set_stats(3, values32);
+      set_stats(4, values64);
+      set_stats(5, values);
+    });
 
-  // Read back with decimal_width set to DECIMAL128
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL128)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+    for (auto const decimal_width : {cudf::type_id::EMPTY,
+                                     cudf::type_id::DECIMAL32,
+                                     cudf::type_id::DECIMAL64,
+                                     cudf::type_id::DECIMAL128}) {
+      SCOPED_TRACE(std::format("encoding {}, decimal_width {}",
+                               static_cast<int>(encoding),
+                               cudf::type_to_name(cudf::data_type{decimal_width})));
+      auto const result = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+          .decimal_width(decimal_width)
+          .build());
+      auto expected_columns = std::vector<std::unique_ptr<cudf::column>>{};
+      for (auto const& source : sources) {
+        expected_columns.push_back(cudf::cast(source,
+                                              decimal_width == cudf::type_id::EMPTY
+                                                ? source.type()
+                                                : cudf::data_type{decimal_width, scale}));
+      }
+      auto const expected = cudf::table{std::move(expected_columns)};
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected.view(), result.tbl->view());
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
-  // Read back with decimal_width set to DECIMAL64
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL64)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+      for (auto i = 0; i < sources.num_columns(); ++i) {
+        SCOPED_TRACE(std::format("filter column {}", i));
+        auto const col_ref = cudf::ast::column_reference(i);
+        auto const type    = expected.get_column(i).type();
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
+        // Filters with literals of the read type match the truncated or widened values
+        for (auto const [op, value] : {std::pair{cudf::ast::ast_operator::EQUAL, 5},
+                                       std::pair{cudf::ast::ast_operator::LESS, 0}}) {
+          auto scalars        = std::vector<std::unique_ptr<cudf::scalar>>{};
+          auto const literal  = decimal_literal(type, value, scalars);
+          auto const filter   = cudf::ast::operation(op, col_ref, literal);
+          auto const filtered = cudf::io::read_parquet(
+            cudf::io::parquet_reader_options::builder(
+              cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+              .decimal_width(decimal_width)
+              .filter(filter)
+              .build());
+          CUDF_TEST_EXPECT_TABLES_EQUIVALENT(
+            cudf::apply_retention_mask(expected, cudf::compute_column(expected, filter)->view())
+              ->view(),
+            filtered.tbl->view());
+        }
+
+        // Literals of the type in the file do not match columns read at another width
+        if (type != sources.column(i).type()) {
+          auto scalars       = std::vector<std::unique_ptr<cudf::scalar>>{};
+          auto const literal = decimal_literal(sources.column(i).type(), 5, scalars);
+          auto const filter =
+            cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+          EXPECT_THROW(
+            std::ignore = cudf::io::read_parquet(
+              cudf::io::parquet_reader_options::builder(
+                cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+                .decimal_width(decimal_width)
+                .filter(filter)
+                .build()),
+            cudf::logic_error);
+        }
+      }
+    }
   }
 }
 

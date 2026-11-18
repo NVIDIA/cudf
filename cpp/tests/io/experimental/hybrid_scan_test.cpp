@@ -1370,55 +1370,6 @@ TEST_F(HybridScanTest, ExtendedFilterExpressionsAST) { extended_filter_expressio
 
 TEST_F(HybridScanTest, ExtendedFilterExpressionsJIT) { extended_filter_expressions_test<true>(); }
 
-TEST_F(HybridScanTest, DecimalTypeOption)
-{
-  auto const data = std::vector<int32_t>{1000, 2000, 3000, 4000, 5000};
-  auto col        = cudf::test::fixed_point_column_wrapper<int32_t>(
-    data.begin(), data.end(), numeric::scale_type{-2});
-
-  std::vector<char> parquet_buffer;
-  {
-    auto const table = cudf::table_view{{col}};
-    auto opts =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&parquet_buffer}, table)
-        .build();
-    cudf::io::write_parquet(opts);
-  }
-
-  auto const stream = cudf::get_default_stream();
-  auto const mr     = cudf::get_current_device_resource_ref();
-  auto datasource   = cudf::io::datasource::create(cudf::host_span<std::byte const>(
-    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
-
-  auto const read_with_decimal_type = [&](cudf::type_id decimal_type_id) {
-    auto options =
-      cudf::io::parquet_reader_options::builder().decimal_width(decimal_type_id).build();
-
-    auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
-    auto reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
-      *footer_buffer, options);
-
-    auto const row_groups           = reader->all_row_groups(options);
-    auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(row_groups, options);
-    auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
-    tasks.get();
-
-    return reader->materialize_all_columns(row_groups, col_data, options, stream, mr);
-  };
-
-  {
-    auto result = read_with_decimal_type(cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
-  {
-    auto result = read_with_decimal_type(cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
-}
-
 TEST_F(HybridScanTest, StructChildFilterColumn)
 {
   // struct<a:int32_t, b:int32_t> column

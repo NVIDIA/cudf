@@ -19,7 +19,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/stream>
 #include <thrust/transform.h>
 

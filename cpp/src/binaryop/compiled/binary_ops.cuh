@@ -110,6 +110,16 @@ struct ops_wrapper {
         type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
       TypeCommon y =
         type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+      if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
+                    cuda::std::is_same_v<TypeCommon, float>) {
+        // TrueDiv divides in double. When the result is stored as float anyway, a float division
+        // is bit-identical (double rounding is innocuous for division because 53 >= 2 * 24 + 2)
+        // and avoids the low-throughput fp64 division sequence.
+        if (out.type().id() == type_id::FLOAT32) {
+          out.element<float>(i) = x / y;
+          return;
+        }
+      }
       auto result = [&]() {
         if constexpr (cuda::std::is_same_v<BinaryOperator, ops::NullEquals> or
                       cuda::std::is_same_v<BinaryOperator, ops::NullNotEquals> or

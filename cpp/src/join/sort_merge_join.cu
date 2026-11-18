@@ -39,7 +39,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/std/tuple>
@@ -871,8 +871,8 @@ void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref 
   bool_mask->set_null_mask(_validity_mask.value(), _num_nulls.value(), stream);
 
   // Use the internal apply_mask directly to avoid the public API overhead (NVTX range).
-  _null_processed_table =
-    detail::apply_mask(_table_view, *bool_mask, detail::mask_type::RETENTION, stream, temp_mr);
+  _null_processed_table = detail::apply_mask(
+    _table_view, *bool_mask, detail::mask_type::RETENTION, null_policy::EXCLUDE, stream, temp_mr);
   _null_processed_table_view = _null_processed_table.value()->view();
 }
 

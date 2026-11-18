@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,7 +8,7 @@
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/types.hpp>
 
-#include <cuda/ptx>
+#include <cuda/ptxs/elect_sync.h>
 #include <cuda/std/bit>
 
 namespace cudf {

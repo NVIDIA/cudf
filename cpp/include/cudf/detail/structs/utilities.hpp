@@ -250,7 +250,7 @@ class flattened_table {
  *
  * @param input The input (possibly STRUCT) column whose nulls need to be pushed to its children
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate new device memory
+ * @param mr Device memory resources used for new null masks, sanitized columns, and scratch
  * @return A pair of:
  *         1. column_view with nulls pushed down to child columns, as appropriate.
  *         2. An instance of `temporary_nullable_data` holding the temporary data that needs
@@ -277,7 +277,7 @@ class flattened_table {
  * @param input The table_view of (possibly STRUCT) columns whose nulls need to be pushed to their
  *        children
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate new device memory
+ * @param mr Device memory resources used for new null masks, sanitized columns, and scratch
  * @return A pair of:
  *         1. table_view of columns with nulls pushed down to child columns, as appropriate.
  *         2. An instance of `temporary_nullable_data` holding the temporary data that needs

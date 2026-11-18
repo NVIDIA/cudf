@@ -480,9 +480,14 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
     }
   }
   {
-    // Host decompression forced on where supported
+    // Host decompression forced on where supported: only Brotli has no host decompressor, so every
+    // other element must not need device scratch space
     tmp_env_var const host_decomp{host_decomp_env_var, "ON"};
-    check();
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "STABLE"};
+    auto const sizes = check();
+    for (size_t i = 0; i < infos.size(); ++i) {
+      if (infos[i].type != compression_type::BROTLI) { EXPECT_EQ(sizes[i], 0) << "element " << i; }
+    }
   }
   {
     // nvCOMP disabled: libcudf kernels, only the Brotli kernel needs scratch space. Compare against

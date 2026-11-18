@@ -29,6 +29,9 @@ def test_sparse_exchange_close_survives_cancellation(
                 await release.wait()
                 finished.set()
 
+            async def aclose(self) -> None:
+                pass
+
         monkeypatch.setattr(
             slice_exchange,
             "SparseAlltoall",

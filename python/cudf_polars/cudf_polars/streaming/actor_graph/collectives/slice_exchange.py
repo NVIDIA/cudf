@@ -212,7 +212,16 @@ class SparseExchange:
             return
         try:
             await self.finish()
+        except BaseException:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                with suppress(BaseException):
+                    await exchange.aclose()
+            raise
+        else:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                await exchange.aclose()
         finally:
             self._closed = True
-            self._exchange = None
             self._pending_sources.clear()

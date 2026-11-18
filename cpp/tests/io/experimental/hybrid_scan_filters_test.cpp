@@ -19,6 +19,7 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/stream_compaction.hpp>
+#include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -30,17 +31,19 @@
 #include <src/io/parquet/parquet_gpu.hpp>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
-#include <optional>
+#include <ranges>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2456,6 +2459,129 @@ INSTANTIATE_TEST_SUITE_P(Compression,
                          DictionaryFilterGapTest,
                          ::testing::Values(cudf::io::compression_type::NONE,
                                            cudf::io::compression_type::ZSTD));
+
+template <typename T>
+struct ByteArrayDecimalWidthTest : public HybridScanFiltersTest {};
+
+TYPED_TEST_SUITE(ByteArrayDecimalWidthTest, cudf::test::FixedPointTypes);
+
+// BYTE_ARRAY decimals of each precision filtered with literals of the `decimal_width` TypeParam
+TYPED_TEST(ByteArrayDecimalWidthTest, FilterRowGroups)
+{
+  using T = TypeParam;
+
+  auto constexpr scale = 2;
+  auto stream          = cudf::get_default_stream();
+  auto mr              = cudf::get_current_device_resource_ref();
+
+  // Row groups of -3.00, -1.00, 2.00 and of 0.07, 0.05, each with a null, as BYTE_ARRAY decimals
+  // of precision 9, 18 and 38. The wider precisions hold 42949672.97 instead of 0.05, which is
+  // truncated to 0.05 when read as DECIMAL32
+  auto constexpr precisions = std::array<int32_t, 3>{9, 18, 38};
+  auto const row_groups =
+    std::array{std::vector<int64_t>{-300, -100, 200, 0}, std::vector<int64_t>{7, 5, 0}};
+  auto const odd = [](int32_t precision) { return precision == 9 ? 5 : (int64_t{1} << 32) + 5; };
+  auto const value_at = [&](int32_t precision, int64_t v) { return v == 5 ? odd(precision) : v; };
+
+  auto tables = std::vector<cudf::table>{};
+  for (auto const& values : row_groups) {
+    // The last value of each row group is null
+    auto const num_rows = static_cast<cudf::size_type>(values.size() * 100);
+    auto const validity = cudf::detail::make_counting_transform_iterator(
+      0, [&](auto i) { return static_cast<std::size_t>(i) % values.size() != values.size() - 1; });
+    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+    for (auto const precision : precisions) {
+      auto const bytes = cudf::detail::make_counting_transform_iterator(0, [&](auto i) {
+        return big_endian_bytes(value_at(precision, values[i % values.size()]), 16);
+      });
+      columns.push_back(
+        cudf::test::strings_column_wrapper(bytes, bytes + num_rows, validity).release());
+    }
+    tables.emplace_back(std::move(columns));
+  }
+
+  std::vector<char> buffer;
+  {
+    auto metadata = cudf::io::table_input_metadata{tables.front().view()};
+    for (std::size_t col = 0; col < precisions.size(); ++col) {
+      metadata.column_metadata[col].set_name(std::format("dec{}", col)).set_output_as_binary(true);
+    }
+    auto writer = cudf::io::chunked_parquet_writer(
+      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{&buffer})
+        .metadata(std::move(metadata))
+        .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+        .build());
+    for (auto const& table : tables) {
+      writer.write(table.view());
+    }
+    writer.close();
+  }
+
+  // Annotate the binary columns as decimals, with stats ordered as decimals, not as bytes
+  edit_footer(buffer, [&](cudf::io::parquet::FileMetaData& footer) {
+    for (std::size_t col = 0; col < precisions.size(); ++col) {
+      auto const precision = precisions[col];
+      annotate_byte_array_decimal(footer, static_cast<int>(col), precision, scale);
+      for (std::size_t rg = 0; rg < row_groups.size(); ++rg) {
+        auto const& values    = row_groups[rg];
+        auto const [min, max] = std::ranges::minmax(
+          values | std::views::take(values.size() - 1) |
+          std::views::transform([&](auto v) { return value_at(precision, v); }));
+        auto const to_stat = [](int64_t v) {
+          auto const bytes = big_endian_bytes(v, 16);
+          return std::vector<uint8_t>(bytes.begin(), bytes.end());
+        };
+        auto& stats     = footer.row_groups[rg].columns[col].meta_data.statistics;
+        stats.min_value = to_stat(min);
+        stats.max_value = to_stat(max);
+      }
+    }
+  });
+
+  auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto options =
+    cudf::io::parquet_reader_options::builder().decimal_width(cudf::type_to_id<T>()).build();
+  auto const reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const all_row_groups = reader->all_row_groups(options);
+
+  auto constexpr is_decimal32 = cuda::std::is_same_v<T, numeric::decimal32>;
+  for (std::size_t col = 0; col < precisions.size(); ++col) {
+    SCOPED_TRACE(std::format("precision {}", precisions[col]));
+    // Stats are ignored when a bound does not fit, and dictionaries hold the truncated 0.05
+    auto const stats_ignored = precisions[col] > 9 and is_decimal32;
+    auto const has_5         = precisions[col] == 9 or is_decimal32;
+    auto const col_ref       = cudf::ast::column_name_reference(std::format("dec{}", col));
+
+    auto const filter_row_groups = [&](cudf::ast::ast_operator op, int64_t value, auto filter) {
+      auto literal_value = cudf::fixed_point_scalar<T>(
+        static_cast<typename T::rep>(value), numeric::scale_type{-scale}, true, stream);
+      auto const literal = cudf::ast::literal(literal_value);
+      auto const expr    = cudf::ast::operation(op, col_ref, literal);
+      reader->reset_column_selection();
+      options.set_filter(expr);
+      return filter();
+    };
+    auto const stats = [&] {
+      return reader->filter_row_groups_with_stats(all_row_groups, options, stream);
+    };
+    auto const dictionaries = [&] {
+      return filter_row_groups_with_dictionaries(*datasource, *reader, options, stream, mr);
+    };
+    using row_groups_t = std::vector<cudf::size_type>;
+
+    EXPECT_EQ(filter_row_groups(cudf::ast::ast_operator::LESS, -200, stats),
+              (stats_ignored ? row_groups_t{0, 1} : row_groups_t{0}));
+    EXPECT_EQ(filter_row_groups(cudf::ast::ast_operator::EQUAL, 5, stats),
+              (has_5 ? row_groups_t{0, 1} : row_groups_t{0}));
+    EXPECT_EQ(filter_row_groups(cudf::ast::ast_operator::EQUAL, -300, dictionaries),
+              row_groups_t{0});
+    EXPECT_EQ(filter_row_groups(cudf::ast::ast_operator::EQUAL, 5, dictionaries),
+              (has_5 ? row_groups_t{1} : row_groups_t{}));
+  }
+}
 
 template <typename T>
 struct ByteArrayDecimalDictTest : public HybridScanFiltersTest {};

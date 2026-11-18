@@ -1818,7 +1818,7 @@ dependencies:
           - jinja2
           - lxml
           - matplotlib-base
-          - numba>=0.60.0,<0.65.0
+          - numba
           - numexpr
           - odfpy
           - openpyxl

@@ -7,9 +7,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import logging
 import math
 import operator
 import struct
+import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
@@ -32,10 +34,12 @@ from cudf_streaming.table_chunk import (
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.memory.reservation_events import ReservationContext
 from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
 from cudf_polars.streaming.actor_graph.tracing import (
@@ -67,6 +71,7 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
+    from cudf_polars.quent._context import ActorBoundQuentIRExecutionState
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
     from cudf_polars.typing import Schema
 
@@ -77,6 +82,20 @@ type OrderingMetadata = dict[int, OrderKey]
 CUDF_ROW_LIMIT = 2**31 - 1
 # Stay well below the cuDF row limit when forming a single table/partition.
 MAX_ROWS_PER_PARTITION = CUDF_ROW_LIMIT // 4
+_logger = logging.getLogger(__name__)
+
+
+def reservation_context(
+    quent_state: ActorBoundQuentIRExecutionState | None,
+    site: ReservationSite,
+) -> ReservationContext:
+    """Return the stable worker-session reservation attribution token."""
+    if quent_state is None:
+        return ReservationContext()
+    actor_id = quent_state.actor_id
+    if not isinstance(actor_id, uuid.UUID):
+        raise TypeError("Quent reservation actor_id must be a UUID")
+    return quent_state.reservation_context(site)
 
 
 class ChunkStore:
@@ -262,7 +281,10 @@ async def shutdown_on_error(
         yield ActorScope(tracer=tracer, ir_context=ir_context)
     except BaseException as caught:
         actor_error = caught
-        await shutdown_channels(context, *channels)
+        try:
+            await shutdown_channels(context, *channels)
+        except BaseException:
+            _logger.warning("Actor channel shutdown failed", exc_info=True)
         raise
     finally:
         if (
@@ -276,7 +298,13 @@ async def shutdown_on_error(
             )
             is not None
         ):
-            record_channel_metrics(tracer, chs_in=chs_in, chs_out=chs_out)
+            runtime = quent_ir_execution_state.query_worker_state.runtime
+            try:
+                record_channel_metrics(tracer, chs_in=chs_in, chs_out=chs_out)
+            except BaseException:
+                _logger.warning(
+                    "Quent channel metric finalization failed", exc_info=True
+                )
             values: _quent.OperatorStatisticsDict = {
                 "output_rows": tracer.row_count,
                 "input_bytes": sum(tracer.input_bytes.values()),
@@ -285,47 +313,76 @@ async def shutdown_on_error(
                 "duplicated": tracer.duplicated,
                 "decision": tracer.decision,
             }
-            prefilters: list[_quent.RuntimePrefilterStatisticsDict] = [
-                {
-                    "placement": value.placement,
-                    "method": value.decision.method,
-                    "reason": value.decision.reason,
-                    "target_side": value.target_side,
-                    "domain_side": value.domain_side,
-                    "domain": value.domain,
-                    "target_on": value.target_on,
-                    "domain_on": value.domain_on,
-                    "target_bytes": value.decision.target_bytes,
-                    "domain_rows": value.decision.domain_rows,
-                    "estimated_cardinality": value.decision.estimated_cardinality,
-                    "bloom_bytes": value.decision.bloom_bytes,
-                    "exact_bytes": value.decision.exact_bytes,
-                    "input_rows": value.input_rows,
-                    "output_rows": value.output_rows,
-                }
-                for value in tracer.prefilters
-            ]
-            runtime = quent_ir_execution_state.query_worker_state.runtime
-            operator = runtime.session.binding_context.operator_observer().handle(
-                quent_ir_execution_state.operator_id
-            )
-            for prefilter in prefilters:
-                operator.runtime_prefilter_statistics(
-                    actor=quent_ir_execution_state.actor_id,
-                    values=prefilter,
+            operator: _quent.OperatorHandle | None
+            try:
+                operator = runtime.session.binding_context.operator_observer().handle(
+                    quent_ir_execution_state.operator_id
                 )
-            if actor_error is None:
-                runtime.session._actors.pop(
-                    quent_ir_execution_state.actor_id
-                ).completed(
-                    values=values,
+            except BaseException:
+                operator = None
+                _logger.warning("Quent operator lookup failed", exc_info=True)
+            if operator is not None:
+                for value in tracer.prefilters:
+                    try:
+                        prefilter: _quent.RuntimePrefilterStatisticsDict = {
+                            "placement": value.placement,
+                            "method": value.decision.method,
+                            "reason": value.decision.reason,
+                            "target_side": value.target_side,
+                            "domain_side": value.domain_side,
+                            "domain": value.domain,
+                            "target_on": value.target_on,
+                            "domain_on": value.domain_on,
+                            "target_bytes": value.decision.target_bytes,
+                            "domain_rows": value.decision.domain_rows,
+                            "estimated_cardinality": (
+                                value.decision.estimated_cardinality
+                            ),
+                            "bloom_bytes": value.decision.bloom_bytes,
+                            "exact_bytes": value.decision.exact_bytes,
+                            "input_rows": value.input_rows,
+                            "output_rows": value.output_rows,
+                        }
+                        operator.runtime_prefilter_statistics(
+                            actor=quent_ir_execution_state.actor_id,
+                            values=prefilter,
+                        )
+                    except BaseException:
+                        _logger.warning(
+                            "Quent runtime prefilter finalization failed",
+                            exc_info=True,
+                        )
+            try:
+                if actor_error is None:
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).completed(
+                        values=values,
+                    )
+                else:
+                    runtime.session._actors.pop(
+                        quent_ir_execution_state.actor_id
+                    ).failed(
+                        error=str(actor_error),
+                        values=values,
+                    )
+            except BaseException:
+                _logger.warning("Quent actor finalization failed", exc_info=True)
+            if operator is not None:
+                try:
+                    operator.statistics(values=values)
+                except BaseException:
+                    _logger.warning("Quent operator finalization failed", exc_info=True)
+            try:
+                await ir_context.to_thread(
+                    runtime.complete_actor_reservations,
+                    quent_ir_execution_state.actor_id,
                 )
-            else:
-                runtime.session._actors.pop(quent_ir_execution_state.actor_id).failed(
-                    error=str(actor_error),
-                    values=values,
+            except BaseException:
+                _logger.warning(
+                    "Quent actor reservation finalization failed",
+                    exc_info=True,
                 )
-            operator.statistics(values=values)
 
 
 async def send_metadata(
@@ -513,7 +570,12 @@ async def evaluate_chunk(
         if not chunk.is_available():
             raise ValueError("already_available=True requires an available TableChunk")
         reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            chunk.data_alloc_size(), net_memory_delta=0
+            chunk.data_alloc_size(),
+            net_memory_delta=0,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.EVALUATE_CHUNK,
+            ),
         )
     else:
         chunk, reservation = await make_table_chunks_available_or_wait(
@@ -521,6 +583,10 @@ async def evaluate_chunk(
             chunk,
             reserve_extra=chunk.data_alloc_size(),
             net_memory_delta=0,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.EVALUATE_CHUNK,
+            ),
         )
     with opaque_memory_usage(reservation):
         for single_ir in irs:
@@ -566,7 +632,15 @@ async def allgather_and_reduce(
     -------
     The chunk produced by evaluating ``reduce_ir`` on the gathered result.
     """
-    allgather = AllGatherManager(context, comm, collective_id)
+    allgather = AllGatherManager(
+        context,
+        comm,
+        collective_id,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.ALLGATHER_REDUCE,
+        ),
+    )
     with allgather.inserting() as inserter:
         await inserter.insert(0, local_chunk)
     stream = ir_context.get_cuda_stream()
@@ -608,6 +682,10 @@ async def concat_batch(
         batch,
         reserve_extra=sum(c.data_alloc_size() for c in batch),
         net_memory_delta=0,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.CONCATENATE_BATCH,
+        ),
     )
     with opaque_memory_usage(extra):
         df = await ir_context.to_thread(
@@ -805,6 +883,8 @@ async def aggregate_table_size_stats(
     comm: Communicator,
     samples: tuple[TableSizeStats, ...],
     collective_id: int,
+    *,
+    reservation_context: ReservationContext,
 ) -> tuple[TableSizeStats, ...]:
     """Aggregate table-size and row estimates across ranks."""
     totals = await allgather_reduce(
@@ -821,6 +901,7 @@ async def aggregate_table_size_stats(
                 int(sample.is_complete),
             )
         ),
+        reservation_context=reservation_context,
     )
     totals_iter = iter(totals)
     return tuple(
@@ -909,7 +990,11 @@ class ChunkSampler:
             chunks.insert(Message(msg.sequence_number, chunk))
         return chunks
 
-    async def sample(self) -> TableSizeStats:
+    async def sample(
+        self,
+        *,
+        reservation_context: ReservationContext | None = None,
+    ) -> TableSizeStats:
         """Sample the configured channel and return extrapolated statistics."""
         ch_sampled = self.context.create_channel()
         temporary_channels = [ch_sampled]
@@ -931,6 +1016,7 @@ class ChunkSampler:
                     ch_cardinality,
                     ch_sampled,
                     self.cardinality_columns,
+                    reservation_context=reservation_context,
                 ),
                 self.store_sample(ch_sampled),
                 ch_cardinality.recv(self.context),
@@ -974,18 +1060,24 @@ async def sample_inputs(
     comm: Communicator,
     samplers: Sequence[ChunkSampler],
     collective_id: int,
+    *,
+    reservation_context: ReservationContext,
 ) -> tuple[TableSizeStats, ...]:
     """Sample input channels concurrently and aggregate their statistics."""
     if not samplers:
         return ()
     local_samples = await gather_in_task_group(
-        *(sampler.sample() for sampler in samplers)
+        *(
+            sampler.sample(reservation_context=reservation_context)
+            for sampler in samplers
+        )
     )
     return await aggregate_table_size_stats(
         context,
         comm,
         tuple(local_samples),
         collective_id,
+        reservation_context=reservation_context,
     )
 
 
@@ -998,6 +1090,7 @@ async def _sample_chunks(
     *,
     cardinality_estimator: CardinalityEstimator | None = None,
     cardinality_columns: Sequence[int] = (),
+    reservation_context: ReservationContext | None = None,
 ) -> TableSizeStats:
     """
     Sample chunks from a channel and extrapolate to a per-rank size estimate.
@@ -1020,6 +1113,8 @@ async def _sample_chunks(
     cardinality_columns
         Column indices whose row tuples are counted. An empty sequence selects
         all columns.
+    reservation_context
+        Optional reservation telemetry context for cardinality estimation.
 
     Returns
     -------
@@ -1033,7 +1128,7 @@ async def _sample_chunks(
         ch_in_chunk_count=local_count,
         cardinality_estimator=cardinality_estimator,
         cardinality_columns=tuple(cardinality_columns),
-    ).sample()
+    ).sample(reservation_context=reservation_context)
 
 
 async def replay_buffered_channel(
@@ -1356,6 +1451,7 @@ async def allgather_reduce(
     comm: Communicator,
     op_id: int,
     *local_values: int,
+    reservation_context: ReservationContext | None = None,
 ) -> tuple[int, ...]:
     """
     Allgather local scalar values and sum each across all ranks.
@@ -1370,6 +1466,8 @@ async def allgather_reduce(
         The collective operation ID for this allgather.
     *local_values
         One or more local scalar values to contribute.
+    reservation_context
+        Attributes propagated to the rapidsmpf collective.
 
     Returns
     -------
@@ -1384,7 +1482,7 @@ async def allgather_reduce(
     data = struct.pack(fmt, *local_values)
     packed = PackedData.from_host_bytes(data, context.br())
 
-    allgather = AllGather(context, comm, op_id)
+    allgather = AllGather(context, comm, op_id, reservation_context=reservation_context)
     try:
         allgather.insert(0, packed)
     finally:

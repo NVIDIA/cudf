@@ -21,9 +21,11 @@ use crate::{
         ActorEvent, ColumnSchema, CudfPolars, CudfPolarsEvent, DataFrameSchema, EngineEvent,
         EvaluateEvent, Implementation, JoinFilterPushdownDetails, OperatorEvent, OperatorSchemas,
         OperatorStatistics, PlanEvent, ProcessorEvent, QueryEvent, QueryGroupEvent,
-        RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
+        ReservableMemory, ReservableMemoryBounds, ReservableMemoryEvent, ReservableMemoryUsage,
+        ReservationOccupancyEvent, RuntimePrefilterStatistics, ThreadPoolEvent, WorkerEvent,
     },
-    resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE},
+    reservation::OCCUPANCY_ENTITY_TYPE,
+    resource::{EVALUATE_ENTITY_TYPE, PROCESSOR_RESOURCE_TYPE, reservable_memory_resource_type},
 };
 
 fn entity_list_request(
@@ -67,6 +69,9 @@ fn builds_query_bundle_from_generated_events() {
     let idle_plan_id = Uuid::now_v7();
     let operator_id = Uuid::now_v7();
     let actor_id = Uuid::now_v7();
+    let occupancy_id = Uuid::now_v7();
+    let unattributed_occupancy_id = Uuid::now_v7();
+    let reservable_memory_id = Uuid::now_v7();
     let incomplete_actor_id = Uuid::now_v7();
     let thread_pool_id = Uuid::now_v7();
     let processor_id = Uuid::now_v7();
@@ -237,6 +242,17 @@ fn builds_query_bundle_from_generated_events() {
             }),
         ),
         Event::new(
+            reservable_memory_id,
+            8,
+            CudfPolarsEvent::ReservableMemory(ReservableMemoryEvent::Declared {
+                instance_name: "device reserved-but-unconsumed bytes".to_owned(),
+                worker: EntityRef::new(worker_id, ()),
+                memory_type: "device".to_owned(),
+                limits: ReservableMemoryBounds { bytes: 1_024 },
+                configured_limit: 1_024,
+            }),
+        ),
+        Event::new(
             actor_id,
             9,
             CudfPolarsEvent::Actor(ActorEvent::Started {
@@ -249,6 +265,69 @@ fn builds_query_bundle_from_generated_events() {
             actor_id,
             10,
             CudfPolarsEvent::Actor(ActorEvent::Running { seq: 1 }),
+        ),
+        Event::new(
+            occupancy_id,
+            10,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Created {
+                seq: 0,
+                worker: EntityRef::new(worker_id, ()),
+                actor: Some(EntityRef::new(actor_id, ())),
+                site: Some("test.reserve".to_owned()),
+            }),
+        ),
+        Event::new(
+            occupancy_id,
+            11,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Held {
+                seq: 1,
+                memory: EntityRef::<ReservableMemory, _>::new(
+                    reservable_memory_id,
+                    ReservableMemoryUsage { bytes: 8 },
+                ),
+            }),
+        ),
+        Event::new(
+            occupancy_id,
+            15,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Held {
+                seq: 2,
+                memory: EntityRef::<ReservableMemory, _>::new(
+                    reservable_memory_id,
+                    ReservableMemoryUsage { bytes: 4 },
+                ),
+            }),
+        ),
+        Event::new(
+            occupancy_id,
+            17,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Released { seq: 3 }),
+        ),
+        Event::new(
+            unattributed_occupancy_id,
+            11,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Created {
+                seq: 0,
+                worker: EntityRef::new(worker_id, ()),
+                actor: None,
+                site: None,
+            }),
+        ),
+        Event::new(
+            unattributed_occupancy_id,
+            12,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Held {
+                seq: 1,
+                memory: EntityRef::<ReservableMemory, _>::new(
+                    reservable_memory_id,
+                    ReservableMemoryUsage { bytes: 2 },
+                ),
+            }),
+        ),
+        Event::new(
+            unattributed_occupancy_id,
+            14,
+            CudfPolarsEvent::ReservationOccupancy(ReservationOccupancyEvent::Released { seq: 2 }),
         ),
         Event::new(
             evaluate_id,
@@ -461,6 +540,27 @@ fn builds_query_bundle_from_generated_events() {
             .quantity
             .is_none()
     );
+    let reservation_peak = statistics
+        .custom_statistics
+        .iter()
+        .find(|statistic| statistic.value.key == "peak_reserved_but_unconsumed_bytes.device")
+        .unwrap();
+    assert_eq!(reservation_peak.value.value, Some(DynamicValue::U64(8)));
+    assert_eq!(reservation_peak.quantity.as_deref(), Some("bytes"));
+    let reservation_byte_seconds = statistics
+        .custom_statistics
+        .iter()
+        .find(|statistic| statistic.value.key == "reserved_but_unconsumed_byte_seconds.device")
+        .unwrap();
+    assert_eq!(
+        reservation_byte_seconds.value.value,
+        Some(DynamicValue::F64(40.0 / 1_000_000_000.0))
+    );
+    assert_eq!(
+        reservation_byte_seconds.quantity.as_deref(),
+        Some("byte-seconds")
+    );
+    assert!(bundle.quantity_specs.contains_key("byte-seconds"));
     assert!(bundle.entities.resources.contains_key(&processor_id));
     assert!(
         bundle
@@ -474,28 +574,64 @@ fn builds_query_bundle_from_generated_events() {
             .resource_types
             .contains_key(PROCESSOR_RESOURCE_TYPE)
     );
+    assert!(
+        bundle
+            .entities
+            .resource_types
+            .contains_key(&reservable_memory_resource_type("device"))
+    );
     assert!(bundle.entities.fsm_types.contains_key(EVALUATE_ENTITY_TYPE));
+    assert!(
+        bundle
+            .entities
+            .fsm_types
+            .contains_key(OCCUPANCY_ENTITY_TYPE)
+    );
 
     let response = analyzer
         .bulk_resource_timeline(BulkTimelineRequest {
-            entries: [(
-                "processor:evaluate".to_owned(),
-                TimelineRequest::Resource(quent_ui::timeline::request::ResourceTimelineRequest {
-                    resource_id: processor_id,
-                    long_entities_threshold_s: Some(1e-9),
-                    entity_filter: quent_ui::timeline::request::EntityFilter {
-                        entity_type_name: Some(EVALUATE_ENTITY_TYPE.to_owned()),
-                    },
-                    application: OperatorFilter {
-                        operator_ids: vec![],
-                    },
-                    config: quent_ui::timeline::request::TimelineConfig {
-                        num_bins: 4,
-                        start: 0.0,
-                        end: 20e-9,
-                    },
-                }),
-            )]
+            entries: [
+                (
+                    "processor:evaluate".to_owned(),
+                    TimelineRequest::Resource(
+                        quent_ui::timeline::request::ResourceTimelineRequest {
+                            resource_id: processor_id,
+                            long_entities_threshold_s: Some(1e-9),
+                            entity_filter: quent_ui::timeline::request::EntityFilter {
+                                entity_type_name: Some(EVALUATE_ENTITY_TYPE.to_owned()),
+                            },
+                            application: OperatorFilter {
+                                operator_ids: vec![],
+                            },
+                            config: quent_ui::timeline::request::TimelineConfig {
+                                num_bins: 4,
+                                start: 0.0,
+                                end: 20e-9,
+                            },
+                        },
+                    ),
+                ),
+                (
+                    "reservable-memory:occupancy".to_owned(),
+                    TimelineRequest::Resource(
+                        quent_ui::timeline::request::ResourceTimelineRequest {
+                            resource_id: reservable_memory_id,
+                            long_entities_threshold_s: Some(1e-9),
+                            entity_filter: quent_ui::timeline::request::EntityFilter {
+                                entity_type_name: Some(OCCUPANCY_ENTITY_TYPE.to_owned()),
+                            },
+                            application: OperatorFilter {
+                                operator_ids: vec![],
+                            },
+                            config: quent_ui::timeline::request::TimelineConfig {
+                                num_bins: 4,
+                                start: 0.0,
+                                end: 20e-9,
+                            },
+                        },
+                    ),
+                ),
+            ]
             .into_iter()
             .collect(),
             app_params: QueryFilter { query_id },
@@ -520,6 +656,60 @@ fn builds_query_bundle_from_generated_events() {
     assert_eq!(timeline.long_fsms.len(), 1);
     assert_eq!(timeline.long_fsms[0].id, evaluate_id);
     assert_eq!(timeline.long_fsms[0].instance_name, "Scan-evaluate");
+    let BulkTimelinesResponseEntry::Ok { data, .. } =
+        &response.entries["reservable-memory:occupancy"]
+    else {
+        panic!("occupancy timeline entry failed")
+    };
+    let UiResourceTimeline::BinnedByState(timeline) = data else {
+        panic!("expected a state-keyed occupancy timeline")
+    };
+    assert!(
+        timeline.capacities_states_values["bytes"]["held"]
+            .iter()
+            .any(|&value| value > 0.0)
+    );
+    assert_eq!(timeline.long_fsms.len(), 2);
+    assert!(timeline.long_fsms.iter().any(|fsm| fsm.id == occupancy_id));
+    assert!(
+        timeline
+            .long_fsms
+            .iter()
+            .any(|fsm| fsm.id == unattributed_occupancy_id)
+    );
+    let filtered_timeline = analyzer
+        .bulk_resource_timeline(BulkTimelineRequest {
+            entries: [(
+                "filtered".to_owned(),
+                TimelineRequest::Resource(quent_ui::timeline::request::ResourceTimelineRequest {
+                    resource_id: reservable_memory_id,
+                    long_entities_threshold_s: Some(1e-9),
+                    entity_filter: quent_ui::timeline::request::EntityFilter {
+                        entity_type_name: Some(OCCUPANCY_ENTITY_TYPE.to_owned()),
+                    },
+                    application: OperatorFilter {
+                        operator_ids: vec![operator_id],
+                    },
+                    config: quent_ui::timeline::request::TimelineConfig {
+                        num_bins: 4,
+                        start: 0.0,
+                        end: 20e-9,
+                    },
+                }),
+            )]
+            .into_iter()
+            .collect(),
+            app_params: QueryFilter { query_id },
+        })
+        .unwrap();
+    let BulkTimelinesResponseEntry::Ok { data, .. } = &filtered_timeline.entries["filtered"] else {
+        panic!("filtered occupancy timeline entry failed")
+    };
+    let UiResourceTimeline::BinnedByState(timeline) = data else {
+        panic!("expected a state-keyed occupancy timeline")
+    };
+    assert_eq!(timeline.long_fsms.len(), 1);
+    assert_eq!(timeline.long_fsms[0].id, occupancy_id);
 
     let entities = analyzer
         .list_entities(entity_list_request(
@@ -534,6 +724,49 @@ fn builds_query_bundle_from_generated_events() {
     assert_eq!(entities.total, 1);
     assert_eq!(entities.items[0].entity.fsm.id, evaluate_id);
     assert_eq!(entities.items[0].entity.operator_id, Some(operator_id));
+
+    let mut occupancy_request = entity_list_request(
+        query_id,
+        Some(EntityScope::Resource {
+            resource_id: reservable_memory_id,
+        }),
+        vec![],
+        None,
+    );
+    occupancy_request.entry.filter.entity_type_name = Some(OCCUPANCY_ENTITY_TYPE.to_owned());
+    let occupancies = analyzer.list_entities(occupancy_request).unwrap();
+    assert_eq!(occupancies.total, 2);
+    assert!(occupancies.items.iter().any(|item| {
+        item.entity.fsm.id == occupancy_id && item.entity.operator_id == Some(operator_id)
+    }));
+    assert!(occupancies.items.iter().any(|item| {
+        item.entity.fsm.id == unattributed_occupancy_id && item.entity.operator_id.is_none()
+    }));
+
+    // "All" (no entity type) must also list occupancies, not just Evaluates.
+    let mut all_request = entity_list_request(
+        query_id,
+        Some(EntityScope::Resource {
+            resource_id: reservable_memory_id,
+        }),
+        vec![],
+        None,
+    );
+    all_request.entry.filter.entity_type_name = None;
+    let all_on_reservable = analyzer.list_entities(all_request).unwrap();
+    assert_eq!(all_on_reservable.total, 2);
+
+    let mut all_unscoped_request = entity_list_request(query_id, None, vec![], None);
+    all_unscoped_request.entry.filter.entity_type_name = None;
+    let all_unscoped = analyzer.list_entities(all_unscoped_request).unwrap();
+    let all_ids: Vec<_> = all_unscoped
+        .items
+        .iter()
+        .map(|item| item.entity.fsm.id)
+        .collect();
+    assert!(all_ids.contains(&evaluate_id));
+    assert!(all_ids.contains(&occupancy_id));
+    assert!(all_ids.contains(&unattributed_occupancy_id));
 
     let entities = analyzer
         .list_entities(entity_list_request(

@@ -20,6 +20,7 @@ from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
 from cudf_polars.dsl.ir import IR, Empty, HConcat
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -37,6 +38,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     make_spill_function,
     process_children,
     recv_metadata,
+    reservation_context,
     send_metadata,
     shutdown_on_error,
 )
@@ -237,6 +239,10 @@ async def default_node_multi(
                     for chunk in cast("list[TableChunk]", ready_chunks)
                 ),
                 net_memory_delta=0,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.MULTI_EVALUATE,
+                ),
             )
             dfs = [
                 chunk_to_frame(
@@ -325,6 +331,10 @@ async def fanout_node_bounded(
                 TableChunk.from_message(msg, br=context.br()),
                 reserve_extra=0,
                 net_memory_delta=0,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.FANOUT_BOUNDED,
+                ),
             )
             seq_num = msg.sequence_number
             del msg
@@ -399,7 +409,14 @@ async def fanout_node_unbounded(
 
         # Spillable FIFO buffer for each output channel
         output_buffers: list[SpillableMessages] = [
-            SpillableMessages(context.br()) for _ in chs_out
+            SpillableMessages(
+                context.br(),
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.FANOUT_UNBOUNDED_BUFFER,
+                ),
+            )
+            for _ in chs_out
         ]
         num_outputs = len(chs_out)
 
@@ -517,7 +534,12 @@ async def fanout_node_unbounded(
                             )
                             try:
                                 memory_reservation = context.br().reserve_or_fail(
-                                    total_copy_cost, mem_types
+                                    total_copy_cost,
+                                    mem_types,
+                                    reservation_context=reservation_context(
+                                        ir_context.actor_bound_quent_ir_execution_state,
+                                        ReservationSite.FANOUT_UNBOUNDED_COPY,
+                                    ),
                                 )
                             except RuntimeError:
                                 # Nothing fit. Overbook on host rather than fail the query.
@@ -525,6 +547,10 @@ async def fanout_node_unbounded(
                                     MemoryType.HOST,
                                     total_copy_cost,
                                     allow_overbooking=True,
+                                    reservation_context=reservation_context(
+                                        ir_context.actor_bound_quent_ir_execution_state,
+                                        ReservationSite.FANOUT_UNBOUNDED_COPY,
+                                    ),
                                 )
 
                             # Copy message for each output buffer

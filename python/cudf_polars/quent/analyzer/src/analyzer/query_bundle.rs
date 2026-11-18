@@ -1,23 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use quent_analyzer::{AnalyzerResult, Entity, Span};
+use quent_dynamic_attributes::DynamicAttribute;
 use quent_query_engine_analyzer::{
     EngineEntity, OperatorEntity, PlanEntity, PortEntity, QueryEngineModel, QueryEntity,
     WorkerEntity,
 };
-use quent_query_engine_ui::{EntityRef as UiEntityRef, QueryBundle, QueryEntities};
+use quent_query_engine_ui::{
+    EntityRef as UiEntityRef, OperatorStatistic, OperatorStatistics, QueryBundle, QueryEntities,
+};
 use quent_ui::{
     FsmTypeSelection, Resource, ResourceGroup, ResourceGroupNode, ResourceGroupTypeDecl,
     ResourceTree, ResourceTypeDecl as UiResourceTypeDecl,
     fsm::{FsmStateTypeDecl, FsmTransitionDecl, FsmTypeDecl},
-    quantity::{CapacityDecl as UiCapacityDecl, CapacityKind, QuantitySpec},
+    quantity::{CapacityDecl as UiCapacityDecl, CapacityKind, PrefixSystem, QuantitySpec},
 };
 use uuid::Uuid;
 
 use super::CudfPolarsUiAnalyzer;
+use crate::reservation::OCCUPANCY_ENTITY_TYPE;
+use crate::reservation_metrics::aggregate_operator_occupancy;
 use crate::resource::{
     DATA_CHANNEL_RESOURCE_TYPE, DEVICE_MEMORY_RESOURCE_TYPE, EVALUATE_ENTITY_TYPE,
     PROCESSOR_RESOURCE_TYPE,
@@ -55,7 +60,7 @@ impl CudfPolarsUiAnalyzer {
             })
             .collect();
 
-        let resource_types = [
+        let mut resource_types: HashMap<_, _> = [
             (
                 PROCESSOR_RESOURCE_TYPE.to_owned(),
                 UiResourceTypeDecl {
@@ -101,6 +106,32 @@ impl CudfPolarsUiAnalyzer {
         ]
         .into_iter()
         .collect();
+        let reservable_resource_types: Vec<_> = self
+            .resources
+            .values()
+            .filter(|resource| resources.contains_key(&resource.id))
+            .filter_map(|resource| resource.memory_type.as_ref().map(|_| &resource.type_name))
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        for type_name in &reservable_resource_types {
+            resource_types.insert(
+                type_name.clone(),
+                UiResourceTypeDecl {
+                    name: type_name.clone(),
+                    capacities: vec![UiCapacityDecl {
+                        name: "bytes".to_owned(),
+                        kind: CapacityKind::Occupancy,
+                        quantity: "bytes".to_owned(),
+                    }],
+                    display_order: vec![
+                        FsmTypeSelection::All,
+                        FsmTypeSelection::Type(OCCUPANCY_ENTITY_TYPE.to_owned()),
+                    ],
+                },
+            );
+        }
         let group_type = |name: &str, contains_resource_types: Vec<String>| ResourceGroupTypeDecl {
             name: name.to_owned(),
             display_order: vec![
@@ -109,28 +140,23 @@ impl CudfPolarsUiAnalyzer {
             ],
             contains_resource_types,
         };
+        let grouped_resource_types = [
+            vec![
+                PROCESSOR_RESOURCE_TYPE.to_owned(),
+                DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
+                DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
+            ],
+            reservable_resource_types.clone(),
+        ]
+        .concat();
         let resource_group_types = [
             (
                 "engine".to_owned(),
-                group_type(
-                    "engine",
-                    vec![
-                        PROCESSOR_RESOURCE_TYPE.to_owned(),
-                        DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
-                    ],
-                ),
+                group_type("engine", grouped_resource_types.clone()),
             ),
             (
                 "worker".to_owned(),
-                group_type(
-                    "worker",
-                    vec![
-                        PROCESSOR_RESOURCE_TYPE.to_owned(),
-                        DEVICE_MEMORY_RESOURCE_TYPE.to_owned(),
-                        DATA_CHANNEL_RESOURCE_TYPE.to_owned(),
-                    ],
-                ),
+                group_type("worker", grouped_resource_types),
             ),
             (
                 "thread_pool".to_owned(),
@@ -193,40 +219,110 @@ impl CudfPolarsUiAnalyzer {
                 })
                 .collect(),
         });
-        let fsm_types = [(
-            EVALUATE_ENTITY_TYPE.to_owned(),
-            FsmTypeDecl {
-                name: EVALUATE_ENTITY_TYPE.to_owned(),
-                states: vec![
-                    FsmStateTypeDecl {
-                        name: "queued".to_owned(),
-                        usages: vec![],
-                    },
-                    FsmStateTypeDecl {
-                        name: "running".to_owned(),
-                        usages: vec!["processor".to_owned(), "channel".to_owned()],
-                    },
-                    FsmStateTypeDecl {
-                        name: "completed".to_owned(),
-                        usages: vec![],
-                    },
-                    FsmStateTypeDecl {
-                        name: "failed".to_owned(),
-                        usages: vec![],
-                    },
-                ],
-                transitions: vec![
-                    FsmTransitionDecl::Entry("queued".to_owned()),
-                    FsmTransitionDecl::Transition("queued".to_owned(), "running".to_owned()),
-                    FsmTransitionDecl::Transition("running".to_owned(), "completed".to_owned()),
-                    FsmTransitionDecl::Transition("running".to_owned(), "failed".to_owned()),
-                    FsmTransitionDecl::Exit("completed".to_owned()),
-                    FsmTransitionDecl::Exit("failed".to_owned()),
-                ],
-            },
-        )]
+        let fsm_types = [
+            (
+                EVALUATE_ENTITY_TYPE.to_owned(),
+                FsmTypeDecl {
+                    name: EVALUATE_ENTITY_TYPE.to_owned(),
+                    states: vec![
+                        FsmStateTypeDecl {
+                            name: "queued".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "running".to_owned(),
+                            usages: vec!["processor".to_owned(), "channel".to_owned()],
+                        },
+                        FsmStateTypeDecl {
+                            name: "completed".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "failed".to_owned(),
+                            usages: vec![],
+                        },
+                    ],
+                    transitions: vec![
+                        FsmTransitionDecl::Entry("queued".to_owned()),
+                        FsmTransitionDecl::Transition("queued".to_owned(), "running".to_owned()),
+                        FsmTransitionDecl::Transition("running".to_owned(), "completed".to_owned()),
+                        FsmTransitionDecl::Transition("running".to_owned(), "failed".to_owned()),
+                        FsmTransitionDecl::Exit("completed".to_owned()),
+                        FsmTransitionDecl::Exit("failed".to_owned()),
+                    ],
+                },
+            ),
+            (
+                OCCUPANCY_ENTITY_TYPE.to_owned(),
+                FsmTypeDecl {
+                    name: OCCUPANCY_ENTITY_TYPE.to_owned(),
+                    states: vec![
+                        FsmStateTypeDecl {
+                            name: "created".to_owned(),
+                            usages: vec![],
+                        },
+                        FsmStateTypeDecl {
+                            name: "held".to_owned(),
+                            usages: vec!["memory".to_owned()],
+                        },
+                        FsmStateTypeDecl {
+                            name: "released".to_owned(),
+                            usages: vec![],
+                        },
+                    ],
+                    transitions: vec![
+                        FsmTransitionDecl::Entry("created".to_owned()),
+                        FsmTransitionDecl::Transition("created".to_owned(), "held".to_owned()),
+                        FsmTransitionDecl::Transition("held".to_owned(), "held".to_owned()),
+                        FsmTransitionDecl::Transition("held".to_owned(), "released".to_owned()),
+                        FsmTransitionDecl::Exit("released".to_owned()),
+                    ],
+                },
+            ),
+        ]
         .into_iter()
         .collect();
+
+        let query_operator_ids = view.operators().map(|operator| operator.id()).collect();
+        let mut reservation_metrics = aggregate_operator_occupancy(
+            &self.occupancies,
+            &self.actors,
+            &query_operator_ids,
+            &self.resources,
+        )
+        .into_iter()
+        .collect::<Vec<_>>();
+        reservation_metrics.sort_by(|(left, _), (right, _)| left.cmp(right));
+        let mut operators: HashMap<_, _> = view
+            .operators()
+            .map(|operator| (operator.id(), operator.to_ui(epoch)))
+            .collect();
+        for ((operator_id, memory_type), metrics) in reservation_metrics {
+            let operator = operators
+                .get_mut(&operator_id)
+                .expect("reservation metric operator came from this query");
+            let statistics = operator
+                .statistics
+                .get_or_insert_with(|| OperatorStatistics {
+                    custom_statistics: vec![],
+                });
+            statistics.custom_statistics.extend([
+                OperatorStatistic {
+                    value: DynamicAttribute::u64(
+                        format!("peak_reserved_but_unconsumed_bytes.{memory_type}"),
+                        metrics.peak_bytes,
+                    ),
+                    quantity: Some("bytes".to_owned()),
+                },
+                OperatorStatistic {
+                    value: DynamicAttribute::f64(
+                        format!("reserved_but_unconsumed_byte_seconds.{memory_type}"),
+                        metrics.byte_seconds,
+                    ),
+                    quantity: Some("byte-seconds".to_owned()),
+                },
+            ]);
+        }
 
         let entities = QueryEntities {
             engine: view.engine()?.to_ui()?,
@@ -236,10 +332,7 @@ impl CudfPolarsUiAnalyzer {
                 .map(|worker| (worker.id(), worker.to_ui(epoch)))
                 .collect(),
             plans: view.plans().map(|plan| (plan.id(), plan.to_ui())).collect(),
-            operators: view
-                .operators()
-                .map(|operator| (operator.id(), operator.to_ui(epoch)))
-                .collect(),
+            operators,
             ports: view
                 .ports()
                 .map(|port| (port.id(), port.to_ui(epoch)))
@@ -263,6 +356,16 @@ impl CudfPolarsUiAnalyzer {
             unique_operator_names,
             quantity_specs: [
                 ("bytes".to_owned(), QuantitySpec::bytes()),
+                (
+                    "byte-seconds".to_owned(),
+                    QuantitySpec {
+                        symbol: "B·s".to_owned(),
+                        singular: "byte-second".to_owned(),
+                        plural: "byte-seconds".to_owned(),
+                        occupancy_prefix: PrefixSystem::Iec,
+                        rate_prefix: PrefixSystem::Iec,
+                    },
+                ),
                 ("unit".to_owned(), QuantitySpec::unit()),
             ]
             .into(),

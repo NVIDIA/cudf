@@ -6,6 +6,7 @@ from typing import Self
 
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.communicator import Communicator
+from rapidsmpf.memory.reservation_events import ReservationContext
 from rapidsmpf.streaming.core.channel import Channel
 from rapidsmpf.streaming.core.context import Context
 from rapidsmpf.streaming.core.message import Message
@@ -38,6 +39,8 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[BloomFilterChunk],
         tag: int,
+        *,
+        reservation_context: ReservationContext | None = None,
     ) -> None: ...
     async def apply(
         self,
@@ -46,4 +49,6 @@ class BloomFilter:
         ch_in: Channel[TableChunk],
         ch_out: Channel[TableChunk],
         keys: Iterable[int],
+        *,
+        reservation_context: ReservationContext | None = None,
     ) -> None: ...

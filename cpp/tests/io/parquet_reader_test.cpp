@@ -2777,26 +2777,20 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   file_metadata.child(0).set_name("offset").set_nullability(true);
   file_metadata.child(1).set_name("inline").set_nullability(true).set_output_as_binary(true);
 
-  std::vector<char> buffer;
+  std::vector<char> file_group;
   cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input)
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&file_group}, input)
       .metadata(std::move(input_metadata))
       .build());
+  edit_footer(file_group, [](cudf::io::parquet::FileMetaData& fmd) {
+    EXPECT_EQ(fmd.schema[1].name, "file");
+    EXPECT_EQ(fmd.schema[2].name, "offset");
+    EXPECT_EQ(fmd.schema[3].name, "inline");
+    fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+    // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
+    fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
+  });
 
-  // Returns a copy of `buffer` whose footer retags `file` as FILE and then applies `edit`
-  auto const rewrite_file_footer = [&](auto const& edit) {
-    auto file = buffer;
-    edit_footer(file, [&](cudf::io::parquet::FileMetaData& fmd) {
-      EXPECT_EQ(fmd.schema[1].name, "file");
-      EXPECT_EQ(fmd.schema[2].name, "offset");
-      EXPECT_EQ(fmd.schema[3].name, "inline");
-      fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
-      // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
-      fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
-      edit(fmd);
-    });
-    return file;
-  };
   auto const read_metadata = [](std::span<std::vector<char> const> files,
                                 bool allow_mismatched = true) {
     std::vector<cudf::host_span<std::byte const>> sources;
@@ -2812,14 +2806,13 @@ TEST_F(ParquetReaderTest, FileLogicalType)
       .metadata;
   };
 
-  auto const file_group = rewrite_file_footer([](auto&) {});
-  auto const metadata   = read_metadata(std::array{file_group});
+  auto const metadata = read_metadata(std::array{file_group});
   EXPECT_EQ(metadata.schema_info[0].is_file, true);
   EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
 
   // A FILE group and a plain struct across sources throw, with or without mismatched schemas
-  auto const plain_struct =
-    rewrite_file_footer([](auto& fmd) { fmd.schema[1].logical_type.reset(); });
+  auto plain_struct = file_group;
+  edit_footer(plain_struct, [](auto& fmd) { fmd.schema[1].logical_type.reset(); });
   for (auto const allow_mismatched : {true, false}) {
     EXPECT_THROW(read_metadata(std::array{file_group, plain_struct}, allow_mismatched),
                  std::logic_error);
@@ -2828,8 +2821,9 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   }
 
   // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
-  auto const annotated_inline = rewrite_file_footer(
-    [](auto& fmd) { fmd.schema[3].logical_type = LogicalType{LogicalType::STRING}; });
+  auto annotated_inline = file_group;
+  edit_footer(annotated_inline,
+              [](auto& fmd) { fmd.schema[3].logical_type = LogicalType{LogicalType::STRING}; });
   EXPECT_FALSE(read_metadata(std::array{annotated_inline}).schema_info[0].is_file.has_value());
 }
 

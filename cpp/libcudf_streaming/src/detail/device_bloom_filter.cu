@@ -31,6 +31,7 @@
 
 #include <cudf/hashing.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 
@@ -58,7 +59,7 @@ using key_type = std::uint64_t;
 
 // The keys are already row hashes.
 struct identity_hash {
-  __host__ __device__ constexpr key_type operator()(key_type key) const noexcept { return key; }
+  CUDF_HOST_DEVICE constexpr key_type operator()(key_type key) const noexcept { return key; }
 };
 
 using bloom_filter_policy_type = cudf::arrow_bloom_filter_policy<key_type, identity_hash>;

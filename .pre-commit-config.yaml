@@ -352,7 +352,7 @@ repos:
           (?x)
             ^pyproject[.]toml$
   - repo: https://github.com/KyleFromNVIDIA/rapids-dependency-file-generator
-    rev: 4a42c76999ef986c884c2f57bdc2e48d4b3b7f1a
+    rev: 7ad2dedcb53b173280ba26cb85794e96b1d51585
     hooks:
       - id: rapids-dependency-file-generator
         args: ["--clean", "--warn-all", "--strict"]

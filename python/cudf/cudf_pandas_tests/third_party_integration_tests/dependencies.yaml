@@ -320,6 +320,7 @@ dependencies:
       - output_types: conda
         packages:
           - dask
+          - numba-cuda
           - stumpy
   test_tensorflow:
     common:

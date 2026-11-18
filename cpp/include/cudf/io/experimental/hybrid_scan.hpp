@@ -117,7 +117,7 @@ class hybrid_scan_metadata {
    * @param footer_bytes Host span of Parquet file footer bytes
    * @param options Parquet reader options
    */
-  hybrid_scan_metadata(cudf::host_span<uint8_t const> footer_bytes,
+  hybrid_scan_metadata(std::span<uint8_t const> footer_bytes,
                        parquet_reader_options const& options);
 
   /**
@@ -155,6 +155,17 @@ class hybrid_scan_metadata {
    * @return Reference to this object
    */
   hybrid_scan_metadata& operator=(hybrid_scan_metadata&&) = default;
+
+  /**
+   * @brief Get the parsed Parquet file metadata without copying it
+   *
+   * The metadata contains the materialized page index once `setup_page_index()` has been called
+   * on a reader sharing this handle, which updates it in place.
+   *
+   * @return Reference to the Parquet file metadata, valid while this handle or any reader
+   *         constructed from it is alive
+   */
+  [[nodiscard]] FileMetaData const& parquet_metadata() const;
 
  private:
   std::shared_ptr<hybrid_scan::detail::aggregate_reader_metadata> _metadata;
@@ -419,7 +430,7 @@ class hybrid_scan_reader {
    * @param footer_bytes Host span of parquet file footer bytes
    * @param options Parquet reader options
    */
-  explicit hybrid_scan_reader(cudf::host_span<uint8_t const> footer_bytes,
+  explicit hybrid_scan_reader(std::span<uint8_t const> footer_bytes,
                               parquet_reader_options const& options);
 
   /**
@@ -485,7 +496,7 @@ class hybrid_scan_reader {
    *
    * @param page_index_bytes Host span of Parquet page index buffer bytes
    */
-  void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes) const;
+  void setup_page_index(std::span<uint8_t const> page_index_bytes) const;
 
   /**
    * @brief Get all available row groups from the parquet file
@@ -662,6 +673,7 @@ class hybrid_scan_reader {
    * @param row_group_indices Input row groups indices
    * @param column_chunk_data Device spans of column chunk data of filter columns
    * @param[in,out] row_mask Mutable boolean column indicating surviving rows
+   * (null or false rows are pruned)
    * @param mask_data_pages Whether to build and use a data page mask using the row mask
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -786,6 +798,7 @@ class hybrid_scan_reader {
    * mask to only the rows that exist in the output table
    *
    * @param[in,out] row_mask Mutable boolean column indicating surviving rows from page pruning
+   * (null or false rows are pruned)
    *
    * @return Table chunk of materialized filter columns and metadata
    */

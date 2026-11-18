@@ -26,7 +26,7 @@ namespace detail {
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   if (input.is_empty()) { return cudf::empty_like(input.parent()); }
 
@@ -77,7 +77,7 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
 
 std::unique_ptr<column> reverse(lists_column_view const& input,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::reverse(input, stream, mr);

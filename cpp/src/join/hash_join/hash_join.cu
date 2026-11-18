@@ -229,7 +229,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join::inner_join(cudf::table_view const& left,
                       std::optional<std::size_t> output_size,
                       cuda::stream_ref stream,
-                      rmm::device_async_resource_ref mr) const
+                      cudf::memory_resources mr) const
 {
   return _impl->inner_join(left, output_size, stream, mr);
 }
@@ -239,7 +239,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join::left_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const
+                     cudf::memory_resources mr) const
 {
   return _impl->left_join(left, output_size, stream, mr);
 }
@@ -249,7 +249,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join::full_join(cudf::table_view const& left,
                      std::optional<std::size_t> output_size,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const
+                     cudf::memory_resources mr) const
 {
   return _impl->full_join(left, output_size, stream, mr);
 }
@@ -266,27 +266,28 @@ std::size_t hash_join::left_join_size(cudf::table_view const& left, cuda::stream
 
 std::size_t hash_join::full_join_size(cudf::table_view const& left,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr) const
+                                      cudf::memory_resources mr) const
 {
   return _impl->full_join_size(left, stream, mr);
 }
 
-cudf::join_match_context hash_join::inner_join_match_context(
-  cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+cudf::join_match_context hash_join::inner_join_match_context(cudf::table_view const& left,
+                                                             cuda::stream_ref stream,
+                                                             cudf::memory_resources mr) const
 {
   return _impl->inner_join_match_context(left, stream, mr);
 }
 
 cudf::join_match_context hash_join::left_join_match_context(cudf::table_view const& left,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr) const
+                                                            cudf::memory_resources mr) const
 {
   return _impl->left_join_match_context(left, stream, mr);
 }
 
 cudf::join_match_context hash_join::full_join_match_context(cudf::table_view const& left,
                                                             cuda::stream_ref stream,
-                                                            rmm::device_async_resource_ref mr) const
+                                                            cudf::memory_resources mr) const
 {
   return _impl->full_join_match_context(left, stream, mr);
 }
@@ -295,7 +296,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_inner_join(cudf::join_partition_context const& context,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr) const
+                                  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return _impl->partitioned_inner_join(context, stream, mr);
@@ -305,7 +306,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_left_join(cudf::join_partition_context const& context,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr) const
+                                 cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return _impl->partitioned_left_join(context, stream, mr);
@@ -315,7 +316,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
           std::unique_ptr<rmm::device_uvector<size_type>>>
 hash_join::partitioned_full_join(cudf::join_partition_context const& context,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr) const
+                                 cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
   return _impl->partitioned_full_join(context, stream, mr);

@@ -902,7 +902,7 @@ def print_query_plan(
     q: pl.LazyFrame,
     run_options: RunOptions,
     run_config: RunConfig,
-    engine: None | pl.GPUEngine = None,
+    engine: pl.GPUEngine | None = None,
     *,
     print_plans: bool = True,
 ) -> tuple[str | None, str | None]:
@@ -971,7 +971,7 @@ def execute_query(
     q: pl.LazyFrame,
     run_config: RunConfig,
     run_options: RunOptions,
-    engine: None | pl.GPUEngine = None,
+    engine: pl.GPUEngine | None = None,
 ) -> tuple[pl.DataFrame, float]:
     """Execute a query with NVTX annotation."""
     if run_config.io_mode == "cold":

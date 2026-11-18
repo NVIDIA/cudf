@@ -818,18 +818,10 @@ class ParquetScanTask(ScanTask):
                     hybrid_read=hybrid_read,
                     stream=stream,
                 )
-                partition_values = (
-                    Scan._lake_partition_values(
-                        lake_options, file_schema, base_scan.with_columns
+                if hive_parts is not None:
+                    df = df.with_columns(
+                        hive_parts.broadcast(df.num_rows, stream=stream), stream=stream
                     )
-                    if lake_options.partition_values
-                    else None
-                )
-                for parts in (partition_values, hive_parts):
-                    if parts is not None:
-                        df = df.with_columns(
-                            parts.broadcast(df.num_rows, stream=stream), stream=stream
-                        )
                 return apply_predicate(
                     df.select(list(base_scan.schema)),
                     None if exact else base_scan.predicate,

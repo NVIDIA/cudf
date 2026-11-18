@@ -9,6 +9,7 @@ if [[ "${RAPIDS_WHEEL_COMMON_INITIALIZED:-}" != "true" ]]; then
   source rapids-configure-sccache
   source rapids-datetime-string
   source rapids-init-pip
+  source rapids-init-uv
 
   export SCCACHE_S3_USE_PREPROCESSOR_CACHE_MODE=true
 
@@ -49,6 +50,7 @@ build_wheel() (
 
   local -a rapids_build_args=(
     --wheel
+    --installer uv
     --outdir dist
     --verbose
     # A fixed location keeps isolated-build include paths stable for sccache.
@@ -62,7 +64,7 @@ build_wheel() (
 
   # `build` receives the same generated constraints explicitly. Unset the
   # environment variable so it does not constrain the frontend installation.
-  unset PIP_CONSTRAINT
+  unset PIP_CONSTRAINT UV_CONSTRAINT
 
   rapids-python-build-retry \
     "${rapids_build_args[@]}" \

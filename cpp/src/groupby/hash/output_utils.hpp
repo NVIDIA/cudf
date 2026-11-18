@@ -10,6 +10,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
@@ -42,7 +43,7 @@ std::unique_ptr<table> create_results_table(size_type output_size,
                                             host_span<aggregation::Kind const> agg_kinds,
                                             std::span<int8_t const> is_agg_intermediate,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr);
+                                            cudf::memory_resources mr);
 
 /**
  * @brief Perform some final computation for the aggregation results such as null count and move

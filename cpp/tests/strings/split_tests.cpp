@@ -6,10 +6,12 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/default_stream.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/split/partition.hpp>
@@ -17,6 +19,9 @@
 #include <cudf/strings/split/split_re.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <cuda/iterator>
 
@@ -591,6 +596,21 @@ TEST_F(StringsSplitTest, SplitRecordRegex)
     // rsplit == split when using default parameters
     result = cudf::strings::rsplit_record_re(sv, *prog);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(result->view(), expected);
+  }
+}
+
+TEST_F(StringsSplitTest, SplitRecordRegexOutputResource)
+{
+  auto input  = cudf::test::strings_column_wrapper({"a_b-c", "", "d_e", "f"});
+  auto sv     = cudf::strings_column_view(input);
+  auto prog   = cudf::strings::regex_program::create("[_-]");
+  auto stream = cudf::test::get_default_stream();
+
+  for (auto split_fn : {cudf::strings::split_record_re, cudf::strings::rsplit_record_re}) {
+    auto output_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+    auto result    = split_fn(sv, *prog, -1, stream, output_mr);
+    stream.sync();
+    EXPECT_EQ(result->alloc_size(), static_cast<std::size_t>(output_mr.get_bytes_counter().value));
   }
 }
 
@@ -1252,4 +1272,44 @@ TEST_F(StringsSplitTest, InvalidParameter)
                std::invalid_argument);
   EXPECT_THROW(cudf::strings::split_part(strings_view, cudf::string_scalar(" "), -1),
                std::invalid_argument);
+}
+
+TEST_F(StringsSplitTest, SplitRegexSlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would split if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"q r outside", "", "a b c", "", "", "d", "e f", "s t outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+  auto const nulls  = cudf::test::iterators::nulls_at({0, 3});
+
+  auto const prog = cudf::strings::regex_program::create("\\s+");
+
+  {
+    auto results = cudf::strings::split_re(sv, *prog, 1);
+    auto col0    = cudf::test::strings_column_wrapper({"", "a", "", "", "d", "e"}, nulls);
+    auto col1    = cudf::test::strings_column_wrapper({"", "b c", "", "", "", "f"},
+                                                   cudf::test::iterators::nulls_at({0, 2, 3, 4}));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*results, cudf::table_view({col0, col1}));
+  }
+  {
+    auto results = cudf::strings::rsplit_re(sv, *prog, 1);
+    auto col0    = cudf::test::strings_column_wrapper({"", "a b", "", "", "d", "e"}, nulls);
+    auto col1    = cudf::test::strings_column_wrapper({"", "c", "", "", "", "f"},
+                                                   cudf::test::iterators::nulls_at({0, 2, 3, 4}));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*results, cudf::table_view({col0, col1}));
+  }
+
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  {
+    auto results = cudf::strings::split_record_re(sv, *prog);
+    LCW expected({{}, {"a", "b", "c"}, {""}, {}, {"d"}, {"e", "f"}}, nulls);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+  {
+    auto results = cudf::strings::rsplit_record_re(sv, *prog, 1);
+    LCW expected({{}, {"a b", "c"}, {""}, {}, {"d"}, {"e", "f"}}, nulls);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
 }

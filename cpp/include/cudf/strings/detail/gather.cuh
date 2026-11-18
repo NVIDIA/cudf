@@ -18,8 +18,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>

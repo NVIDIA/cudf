@@ -640,7 +640,8 @@ void infer_column_types(parse_options const& parse_opts,
   for (auto col_idx = 0u; col_idx < column_flags.size(); ++col_idx) {
     if (not(column_flags[col_idx] & column_parse::inferred)) { continue; }
     auto const& stats = column_stats[inf_col_idx++];
-    if (stats.null_count == num_records or stats.total_count() == 0) {
+    // Missing fields are absent from the histogram and also represent nulls.
+    if (stats.null_count == stats.total_count()) {
       // Entire column is NULL; allocate the smallest amount of memory
       column_types[col_idx] = data_type(cudf::type_id::INT8);
     } else if (stats.string_count > 0L) {
@@ -650,7 +651,10 @@ void infer_column_types(parse_options const& parse_opts,
                                 ? data_type(cudf::type_id::TIMESTAMP_NANOSECONDS)
                                 : timestamp_type;
     } else if (stats.bool_count > 0L) {
-      column_types[col_idx] = data_type(cudf::type_id::BOOL8);
+      auto const has_numbers = stats.float_count + stats.negative_small_int_count +
+                                 stats.positive_small_int_count + stats.big_int_count >
+                               0;
+      column_types[col_idx] = data_type(has_numbers ? cudf::type_id::STRING : cudf::type_id::BOOL8);
     } else if (stats.float_count > 0L) {
       column_types[col_idx] = data_type(cudf::type_id::FLOAT64);
     } else if (stats.big_int_count == 0) {
@@ -669,16 +673,18 @@ void infer_column_types(parse_options const& parse_opts,
  *
  * @param size Number of entries
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned staging entries' device memory
  * @return Typed buffer of `size` null string staging entries
  */
 template <typename OffsetT>
 cuda::device_buffer<string_offset_pair<OffsetT>> make_null_string_indices(size_type size,
-                                                                          cuda::stream_ref stream)
+                                                                          cuda::stream_ref stream,
+                                                                          cudf::memory_resources mr)
 {
   cuda::device_buffer<string_offset_pair<OffsetT>> indices(
-    stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+    stream, mr.get_output_mr(), size, cuda::no_init);
   // Short rows leave missing fields untouched; zero is a valid offset, not a null.
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                indices.begin(),
                indices.end(),
                string_offset_pair<OffsetT>{});
@@ -701,7 +707,7 @@ std::vector<std::unique_ptr<column>> materialize_string_columns(
   device_span<char const> data,
   std::vector<cuda::device_buffer<string_offset_pair<OffsetT>>>& staging,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   using cudf::strings::detail::string_index_pair;
   auto const to_pair = cuda::proclaim_return_type<string_index_pair>(
@@ -754,7 +760,7 @@ decode_result decode_data(parse_options const& parse_opts,
                           int32_t num_actual_columns,
                           int32_t num_active_columns,
                           cuda::stream_ref stream,
-                          rmm::device_async_resource_ref mr)
+                          cudf::memory_resources mr)
 {
   // Alloc output; columns' data memory is still expected for empty dataframe
   std::vector<column_buffer> out_buffers;
@@ -768,7 +774,8 @@ decode_result decode_data(parse_options const& parse_opts,
                                ? column_buffer(column_types[active_col], true)
                                : column_buffer(column_types[active_col], num_records, true, stream, mr);
       if (is_string) {
-        staging[active_col].emplace(make_null_string_indices<OffsetT>(num_records, stream));
+        staging[active_col].emplace(make_null_string_indices<OffsetT>(
+          num_records, stream, cudf::get_current_device_resource_ref()));
       }
 
       out_buffer.name = column_names[col];
@@ -860,7 +867,7 @@ table_with_metadata read_csv(cudf::io::datasource* source,
                              csv_reader_options const& reader_opts,
                              parse_options const& parse_opts,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   std::vector<char> header;
 
@@ -1221,7 +1228,7 @@ parse_options make_parse_options(csv_reader_options const& reader_opts, cuda::st
 table_with_metadata read_csv(std::unique_ptr<cudf::io::datasource>&& source,
                              csv_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   auto parse_options = make_parse_options(options, stream);
 

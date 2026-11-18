@@ -96,6 +96,56 @@ def test_value_counts_normalize_div_by_zero(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "n_values, n_nulls",
+    [(6, 4), (0, 3), (1, 0), (0, 0)],
+    ids=["values_and_nulls", "all_nulls", "one_row", "empty"],
+)
+@pytest.mark.parametrize("dtype", ["int", "float"])
+@pytest.mark.parametrize("sort", [False, True])
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+@pytest.mark.parametrize("set_sorted_on", ["frame", "expr"])
+def test_value_counts_sorted(
+    engine: pl.GPUEngine,
+    *,
+    n_values: int,
+    n_nulls: int,
+    dtype: str,
+    sort: bool,
+    descending: bool,
+    nulls_last: bool,
+    set_sorted_on: str,
+) -> None:
+    if dtype == "float":
+        nan = float("nan")
+        ascending_values = [1.0, 2.0, 2.0, nan, nan, nan]
+        polars_dtype: pl.DataType = pl.Float64()
+    else:
+        ascending_values = [1, 2, 2, 3, 3, 3]
+        polars_dtype = pl.Int64()
+    values = ascending_values[:n_values]
+    if descending:
+        values.reverse()
+    nulls = [None] * n_nulls
+    ldf = pl.LazyFrame(
+        {"a": values + nulls if nulls_last else nulls + values},
+        schema={"a": polars_dtype},
+    )
+    sorted_a = pl.col("a").set_sorted(descending=descending)
+    if set_sorted_on == "frame":
+        q = ldf.with_columns(sorted_a).select(pl.col("a").value_counts(sort=sort))
+    else:
+        q = ldf.select(sorted_a.value_counts(sort=sort))
+    assert_gpu_result_equal(q, engine=engine, check_row_order=sort)
+
+
+def test_value_counts_derived_expression(engine: pl.GPUEngine):
+    ldf = pl.LazyFrame({"a": [1, 2, 2, 3, 3, 3]})
+    q = ldf.select((pl.col("a") + 1).value_counts(sort=True))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_groupby_value_counts_notimplemented(engine: pl.GPUEngine):
     lgb = pl.LazyFrame({"a": [1, 2, 3, 4, 5], "b": [1, 2, 3, 4, 5]}).group_by("a")
     value_counts_expr = pl.col("b").value_counts()

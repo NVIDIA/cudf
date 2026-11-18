@@ -321,15 +321,15 @@ class stats_caster_base {
         return true;
       };
 
-      auto const are_stats_unusable = is_narrowing_column and not(value_fits_in_type(min_value) and
-                                                                  value_fits_in_type(max_value));
-      if (are_stats_unusable) {
+      auto const are_stats_usable = not is_narrowing_column or (value_fits_in_type(min_value) and
+                                                                value_fits_in_type(max_value));
+      if (are_stats_usable) {
+        min.set_index(index, min_value, type, ts_scale);
+        max.set_index(index, max_value, type, ts_scale);
+      } else {
         min.set_index(index, std::nullopt, type);
         max.set_index(index, std::nullopt, type);
-        return;
       }
-      min.set_index(index, min_value, type, ts_scale);
-      max.set_index(index, max_value, type, ts_scale);
     }
 
     /**

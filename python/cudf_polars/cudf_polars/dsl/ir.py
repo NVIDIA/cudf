@@ -3344,6 +3344,8 @@ class AsofJoin(IR):
             stream=right.stream,
         )[0]
         right_by_cols = [right.column_map[name].obj for name in right_by]
+        # TODO: Carry RowOrdering through to recognize composite (by..., on)
+        # ordering and avoid sorting the right side again.
         right_key = (
             right.column_map[right_on.value.name]
             if not right_by and isinstance(right_on.value, expr.Col)

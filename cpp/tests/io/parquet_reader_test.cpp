@@ -845,6 +845,88 @@ TEST_F(ParquetReaderTest, ByteStreamSplitNestedListFloat)
   }
 }
 
+TEST_F(ParquetReaderTest, ByteStreamSplitAllNullPages)
+{
+  // Pages without non-null values have an empty BYTE_STREAM_SPLIT data stream
+  constexpr cudf::size_type num_rows = 257;
+  auto const all_nulls               = cudf::test::iterators::all_nulls();
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  // Only the first page has non-null values
+  auto const first_page_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i < 32; });
+
+  cudf::test::fixed_width_column_wrapper<int32_t> int_col(values, values + num_rows, all_nulls);
+  cudf::test::fixed_width_column_wrapper<int16_t> short_col(values, values + num_rows, all_nulls);
+  cudf::test::fixed_width_column_wrapper<double> double_col(
+    values, values + num_rows, first_page_valid);
+  cudf::test::fixed_width_column_wrapper<cudf::timestamp_ms, int32_t> timestamp_col(
+    values, values + num_rows, all_nulls);
+  cudf::test::fixed_point_column_wrapper<numeric::decimal64::rep> dec64_col(
+    values, values + num_rows, all_nulls, numeric::scale_type{-2});
+  cudf::test::fixed_point_column_wrapper<numeric::decimal128::rep> dec128_col(
+    values, values + num_rows, all_nulls, numeric::scale_type{-2});
+
+  cudf::test::fixed_width_column_wrapper<float> struct_child(values, values + num_rows, all_nulls);
+  cudf::test::structs_column_wrapper struct_col({struct_child});
+
+  auto const offsets =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return 2 * i; });
+  auto list_col = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets, offsets + num_rows + 1)
+      .release(),
+    cudf::test::fixed_width_column_wrapper<float>(values, values + 2 * num_rows, all_nulls)
+      .release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+
+  cudf::table_view const expected{
+    {int_col, short_col, double_col, timestamp_col, dec64_col, dec128_col, struct_col, *list_col}};
+  cudf::io::table_input_metadata metadata(expected);
+  for (auto i = 0; i < 6; ++i) {
+    metadata.column_metadata[i].set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  }
+  metadata.column_metadata[6].child(0).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  metadata.column_metadata[7].child(1).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+
+  for (auto const compression :
+       {cudf::io::compression_type::NONE, cudf::io::compression_type::SNAPPY}) {
+    for (auto const write_v2_headers : {false, true}) {
+      SCOPED_TRACE(
+        std::string{compression == cudf::io::compression_type::NONE ? "NONE" : "SNAPPY"} +
+        (write_v2_headers ? ", V2" : ", V1"));
+      auto const filepath = temp_env->get_temp_filepath("ByteStreamSplitAllNullPages.parquet");
+      cudf::io::write_parquet(
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+          .metadata(metadata)
+          .compression(compression)
+          .write_v2_headers(write_v2_headers)
+          .max_page_size_rows(32)
+          .max_page_fragment_size(32));
+
+      auto const source = cudf::io::datasource::create(filepath);
+      cudf::io::parquet::FileMetaData fmd;
+      read_footer(source, &fmd);
+      for (auto const& chunk : fmd.row_groups.front().columns) {
+        auto const& encodings = chunk.meta_data.encodings;
+        EXPECT_NE(
+          std::find(
+            encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
+          encodings.end());
+      }
+
+      for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
+        auto const result = cudf::io::read_parquet(
+          cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+            .skip_rows(skip_rows)
+            .num_rows(num_rows_to_read));
+        auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+        CUDF_TEST_EXPECT_TABLES_EQUAL(*result.tbl, sliced.front());
+      }
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
 {
   constexpr int num_rows = 32 * 1024;

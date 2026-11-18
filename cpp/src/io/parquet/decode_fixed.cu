@@ -254,8 +254,8 @@ __device__ inline void decode_fixed_width_split_values(
   Type const dtype    = s->setup.col.physical_type;
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
-  // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
+  // Check malformed BYTE_STREAM_SPLIT pages. Pages without non-null values have no value data.
+  if (s->output_cvt.dtype_len_in <= 0 or (data_len <= 0 and start < end)) {
     if (t == 0) { s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE); }
     return;
   }

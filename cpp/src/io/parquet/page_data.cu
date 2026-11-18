@@ -85,8 +85,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const data_len   = cuda::std::distance(s->stream.data_start, s->stream.data_end);
   auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
-  // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
+  // Check malformed BYTE_STREAM_SPLIT pages. Pages without non-null values have no value data, so
+  // an empty data stream is checked below once there are values to decode.
+  if (s->output_cvt.dtype_len_in <= 0) {
     cg::invoke_one(block, [&]() {
       set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE),
                 error_code);
@@ -153,7 +154,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
       // target_pos will always be properly bounded by num_rows, but dst_pos may be negative (values
       // before first_row) in the flat hierarchy case.
-      if (src_pos < target_pos && dst_pos >= 0) {
+      if (src_pos < target_pos && data_len <= 0) {
+        s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
+      } else if (src_pos < target_pos && dst_pos >= 0) {
         // src_pos represents the logical row position we want to read from. But in the case of
         // nested hierarchies, there is no 1:1 mapping of rows to values.  So our true read position
         // has to take into account the # of values we have to skip in the page to get to the

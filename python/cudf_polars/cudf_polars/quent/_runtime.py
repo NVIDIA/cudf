@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
     import cudf_polars_quent as quent_bindings
 
-    from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
+    from rapidsmpf.memory.buffer_resource import BufferResource
 
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
@@ -229,7 +229,7 @@ class QuentWorkerRuntime:
     session: QuentSession
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
-    mr: RmmResourceAdaptor
+    br: BufferResource
 
     @classmethod
     def create(
@@ -241,7 +241,7 @@ class QuentWorkerRuntime:
         rank: int,
         nranks: int,
         instance_name: str,
-        mr: RmmResourceAdaptor,
+        br: BufferResource,
     ) -> QuentWorkerRuntime:
         """
         Create a worker runtime and declare its resources.
@@ -260,8 +260,9 @@ class QuentWorkerRuntime:
             Total number of ranks.
         instance_name
             Display name of the Worker entity.
-        mr
-            The worker's memory resource adaptor to sample.
+        br
+            The worker's buffer resource whose device and host memory
+            resources are sampled.
         """
         from cudf_polars.quent._context import WorkerResources
 
@@ -293,8 +294,12 @@ class QuentWorkerRuntime:
             session=session,
             worker_resources=resources,
             _worker_handle=worker_handle,
-            mr=mr,
+            br=br,
         )
+
+    def update_buffer_resource(self, br: BufferResource) -> None:
+        """Use a replacement RapidsMPF buffer resource after an engine reset."""
+        self.br = br
 
     @contextlib.contextmanager
     def query(self, query_id: uuid.UUID) -> Iterator[QuentQueryWorkerState]:
@@ -321,12 +326,20 @@ class QuentWorkerRuntime:
         if interval_s is None:
             yield state
             return
+        device_mr = self.br.device_mr_adaptor()
+        host_mr = self.br.host_mr
         with memory_resource_sampler(
-            mr=self.mr,
+            resources={
+                self.worker_resources.sampled_device_memory_resource_id: (
+                    lambda: device_mr.current_allocated
+                ),
+                self.worker_resources.sampled_host_memory_resource_id: (
+                    lambda: host_mr.current_allocated
+                ),
+            },
             interval_s=interval_s,
             quent_session=self.session,
             query_id=query_id,
-            sampled_memory_resource_id=self.worker_resources.sampled_memory_resource_id,
         ):
             yield state
 

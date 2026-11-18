@@ -165,7 +165,8 @@ fn builds_query_bundle_from_generated_events() {
             sampled_memory_id,
             3,
             CudfPolarsEvent::SampledMemoryResource(SampledMemoryResourceEvent::Declared {
-                instance_name: "rank-0 sampled memory resource".to_owned(),
+                instance_name: "rank-0 sampled device memory".to_owned(),
+                memory_type: "device".to_owned(),
                 worker: EntityRef::new(worker_id, ()),
             }),
         ),

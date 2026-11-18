@@ -11,18 +11,16 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
     import cudf_polars_quent as quent_bindings
-
-    from rapidsmpf.rmm_resource_adaptor import RmmResourceAdaptor
 
     from cudf_polars.quent._runtime import QuentSession
 
 __all__ = ["memory_resource_sampler"]
 
 
-def device_memory_usage(
+def memory_resource_usage(
     target: uuid.UUID, nbytes: int
 ) -> quent_bindings.SampledMemoryResourceUsageRefDict:
     return {
@@ -33,20 +31,20 @@ def device_memory_usage(
 
 @contextlib.contextmanager
 def memory_resource_sampler(
-    mr: RmmResourceAdaptor,
+    resources: Mapping[uuid.UUID, Callable[[], int]],
     *,
     interval_s: float,
     quent_session: QuentSession,
     query_id: uuid.UUID,
-    sampled_memory_resource_id: uuid.UUID,
 ) -> Iterator[None]:
     """
-    Context manager that samples device memory usage on a background thread.
+    Sample memory-resource occupancy on one background thread.
 
     Parameters
     ----------
-    mr
-        Memory resource to sample.
+    resources
+        Mapping from each declared sampled-memory-resource ID to a callable
+        returning its current allocation in bytes.
     interval_s
         Seconds between readings. Must be positive.
     quent_session
@@ -54,10 +52,6 @@ def memory_resource_sampler(
     query_id
         UUID identifier for the query. The lifetime of this context should match
         the lifetime of the query execution.
-    sampled_memory_resource_id
-        Sampled memory resource ID to use for sampling. Typically comes from a
-        ``WorkerResources``.  It's expected that the memory resource has already
-        been declared.
 
     Notes
     -----
@@ -77,31 +71,29 @@ def memory_resource_sampler(
     """
     stop_event = threading.Event()
 
-    # Declare the sampler FSM on the main thread
-    fsm = (
-        quent_session.binding_context.memory_resource_sampler_observer()
-        .handle()
-        .sampling(
-            query=query_id,
-            memory=device_memory_usage(
-                sampled_memory_resource_id, mr.current_allocated
-            ),
+    # Declare one sampler FSM per resource on the main thread. A single
+    # background thread advances all of them.
+    fsms = {
+        resource_id: (
+            quent_session.binding_context.memory_resource_sampler_observer()
+            .handle()
+            .sampling(
+                query=query_id,
+                memory=memory_resource_usage(resource_id, read_allocated()),
+            )
         )
-    )
+        for resource_id, read_allocated in resources.items()
+    }
     errors: list[BaseException] = []
 
     def run() -> None:
-        # We reassign fsm to handle state transitions in `.sampling()`.
-        nonlocal fsm
-
         try:
             while not stop_event.wait(interval_s):
-                fsm = fsm.sampling(
-                    query=query_id,
-                    memory=device_memory_usage(
-                        sampled_memory_resource_id, mr.current_allocated
-                    ),
-                )
+                for resource_id, read_allocated in resources.items():
+                    fsms[resource_id] = fsms[resource_id].sampling(
+                        query=query_id,
+                        memory=memory_resource_usage(resource_id, read_allocated()),
+                    )
         except BaseException as error:
             errors.append(error)
             stop_event.set()
@@ -115,10 +107,11 @@ def memory_resource_sampler(
     def stop() -> None:
         stop_event.set()
         thread.join()
-        try:
-            fsm.stopped()
-        except BaseException as error:
-            errors.append(error)
+        for fsm in fsms.values():
+            try:
+                fsm.stopped()
+            except BaseException as error:
+                errors.append(error)
 
     try:
         yield

@@ -119,6 +119,7 @@ impl CudfPolarsUiAnalyzer {
                 CudfPolarsEvent::SampledMemoryResource(SampledMemoryResourceEvent::Declared {
                     instance_name,
                     worker,
+                    ..
                 }) => {
                     resources.insert(
                         event.id,

@@ -472,6 +472,7 @@ def _update_quent_on_worker(
             mp_ctx.quent_worker_runtime = None
     if quent_context is not None and collector_address is not None:
         assert mp_ctx.comm is not None
+        assert mp_ctx.ctx is not None
         assert mp_ctx.mr is not None
         worker_id = uuid.uuid4()
         mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
@@ -481,7 +482,7 @@ def _update_quent_on_worker(
             rank=mp_ctx.comm.rank,
             nranks=mp_ctx.comm.nranks,
             instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
-            mr=mp_ctx.mr,
+            br=mp_ctx.ctx.br(),
         )
 
 
@@ -629,6 +630,8 @@ def _reset_worker(
     )
     mp_ctx.mr = mp_ctx.ctx.br().device_mr_adaptor()
     rmm.mr.set_current_device_resource(mp_ctx.mr)
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.update_buffer_resource(mp_ctx.ctx.br())
 
 
 def _get_cluster_info(

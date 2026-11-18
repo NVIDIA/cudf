@@ -145,7 +145,8 @@ class WorkerResources:
     processor_registry: _ProcessorRegistry
     device_memory_id: uuid.UUID
     device_memory_bytes: int
-    sampled_memory_resource_id: uuid.UUID
+    sampled_device_memory_resource_id: uuid.UUID
+    sampled_host_memory_resource_id: uuid.UUID
     filesystem_id: uuid.UUID
     disk_to_device_channel_id: uuid.UUID
     link_channel_ids: dict[int, uuid.UUID]
@@ -170,7 +171,12 @@ class WorkerResources:
             processor_registry=_ProcessorRegistry(),
             device_memory_id=uuid.uuid5(namespace, "device-memory"),
             device_memory_bytes=get_total_device_memory() or 0,
-            sampled_memory_resource_id=uuid.uuid5(namespace, "sampled-memory-resource"),
+            sampled_device_memory_resource_id=uuid.uuid5(
+                namespace, "sampled-device-memory-resource"
+            ),
+            sampled_host_memory_resource_id=uuid.uuid5(
+                namespace, "sampled-host-memory-resource"
+            ),
             filesystem_id=uuid.uuid5(namespace, "filesystem"),
             disk_to_device_channel_id=uuid.uuid5(namespace, "disk-to-device"),
             link_channel_ids={
@@ -188,9 +194,17 @@ class WorkerResources:
             limits={"bytes": self.device_memory_bytes},
         )
         context.sampled_memory_resource_observer().handle(
-            self.sampled_memory_resource_id
+            self.sampled_device_memory_resource_id
         ).declared(
-            instance_name=f"{self.instance_suffix} sampled memory resource",
+            instance_name=f"{self.instance_suffix} sampled device memory",
+            memory_type="device",
+            worker=self.worker_id,
+        )
+        context.sampled_memory_resource_observer().handle(
+            self.sampled_host_memory_resource_id
+        ).declared(
+            instance_name=f"{self.instance_suffix} sampled host memory",
+            memory_type="host",
             worker=self.worker_id,
         )
         context.storage_observer().handle(self.filesystem_id).declared(

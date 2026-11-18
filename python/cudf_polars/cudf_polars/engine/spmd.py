@@ -837,7 +837,7 @@ class SPMDEngine(StreamingEngine):
                 rank=comm.rank,
                 nranks=comm.nranks,
                 instance_name=f"rank-{comm.rank}",
-                mr=self._mr,
+                br=self._ctx.br(),
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             steps: list[Callable[[], object]] = [
@@ -1119,6 +1119,8 @@ class SPMDEngine(StreamingEngine):
         # callback still restores the pre-engine MR at engine shutdown.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.update_buffer_resource(self._ctx.br())
 
         effective_quent_context = executor_options["quent_context"]
         engine_id = (

@@ -389,6 +389,7 @@ class RankActor:
                 self._quent_worker_runtime = None
         if quent_context is not None and collector_address is not None:
             assert self._comm is not None
+            assert self._ctx is not None
             assert self._mr is not None
             self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
@@ -397,7 +398,7 @@ class RankActor:
                 rank=self._comm.rank,
                 nranks=self._nranks,
                 instance_name=f"RankActor-{self._worker_id.hex[:8]}",
-                mr=self._mr,
+                br=self._ctx.br(),
             )
 
     def reset(
@@ -476,6 +477,8 @@ class RankActor:
         # to the now-shutdown Context.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.update_buffer_resource(self._ctx.br())
 
     def shutdown(self) -> None:
         """

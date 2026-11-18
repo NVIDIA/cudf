@@ -277,26 +277,27 @@ entities:
 
   SampledMemoryResource:
     doc: >-
-      Occupancy of the worker's memory resource, as periodically sampled
-      from the memory resource itself.
+      Occupancy of one of the worker's memory resources, as periodically
+      sampled from the memory resource itself.
 
-      This can differ from actual device memory usage when allocations are
-      made outside of the memory resource. In general, all allocations made
-      by cudf-polars, libcudf, and rapidsmpf will be on the memory resource.
-      But other libraries, like UCX (used for transferring data between ranks)
-      will use their own segments of device memory.
+      This can differ from actual memory usage when allocations are made
+      outside of the memory resource. In general, allocations made by
+      cudf-polars, libcudf, and rapidsmpf will be on the corresponding memory
+      resource. But other libraries, like UCX (used for transferring data
+      between ranks), may manage their own memory.
 
-      Because this is *sampled* and *global* (to the device) this metric cannot
-      be associated with specific operators. In general, the sampled memory
+      Because this is *sampled* and worker-global, this metric cannot be
+      associated with specific operators. In general, sampled device-memory
       usage ought to equal the sum of the memory usage reported by
-      `DeviceMemory`, but differences will occur due to timing issues and
-      certain areas not (yet) being explicitly instrumented.
+      `DeviceMemory`, but differences will occur due to timing and areas not
+      (yet) explicitly instrumented.
     resource:
       bytes: { kind: occupancy }
     events:
       declared:
         attributes:
           instance_name: string
+          memory_type: string
           worker: { scope-ref: Worker }
 
   Storage:

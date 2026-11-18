@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from contextlib import AsyncExitStack
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -985,21 +985,17 @@ async def _adjust_ordering_impl(
     pieces_by_source: dict[int, dict[int, ChunkStore]] = {comm.rank: {}}
     local_pieces = pieces_by_source[comm.rank]
     owed_remote_pid_set = set(plan.owed_remote_pids)
-    async with AsyncExitStack() as stack:
-        exchange = (
-            await stack.enter_async_context(
-                SparseAlltoall(
-                    context,
-                    comm,
-                    collective_id,
-                    srcs=plan.remote_sources,
-                    dsts=plan.remote_destinations,
-                )
-            )
-            if plan.remote_sources or plan.remote_destinations
-            else None
+    async with (
+        SparseAlltoall(
+            context,
+            comm,
+            collective_id,
+            srcs=plan.remote_sources,
+            dsts=plan.remote_destinations,
         )
-
+        if plan.remote_sources or plan.remote_destinations
+        else nullcontext()
+    ) as exchange:
         for pid in range(pre_start, pre_stop):
             piece = await buffer.collect_output_partition(pid)
             owner = partition_owner(pid, comm.nranks, plan.npartitions)
@@ -1026,9 +1022,9 @@ async def _adjust_ordering_impl(
                     local_pieces.pop(pid, None),
                 )
 
-        # Collect remote pieces from other ranks.
         if exchange is not None:
             await exchange.insert_finished()
+            # Collect remote pieces from other ranks.
             for source_rank in plan.remote_sources:
                 remote_pieces: dict[int, ChunkStore] = {}
                 stream = context.br().stream_pool.get_stream()

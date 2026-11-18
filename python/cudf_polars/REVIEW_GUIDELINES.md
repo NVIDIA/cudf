@@ -222,15 +222,15 @@ which can be long after the query ends. `ShuffleManager`,
 # Bad: an exception in the loop skips insert_finished(), and the shuffler
 # is never released
 shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
-for msg in messages:
-    shuffle.shuffler.insert(msg)
+for chunks in partitioned_chunks:
+    shuffle.shuffler.insert(chunks)
 await shuffle.shuffler.insert_finished()
 
 # Good
 async with ShuffleManager(context, comm, num_partitions, collective_id) as shuffle:
     async with shuffle.inserting() as inserter:
-        for msg in messages:
-            inserter.insert(msg)
+        for chunk in chunks:
+            await inserter.insert_hash(chunk, columns_to_hash)
     ...  # extract
 ```
 

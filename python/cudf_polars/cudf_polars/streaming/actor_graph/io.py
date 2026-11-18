@@ -9,7 +9,7 @@ import dataclasses
 import functools
 import io
 import math
-from contextlib import AsyncExitStack
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
@@ -915,22 +915,18 @@ async def callback_sink_actor(
             else None
         )
 
-        async with AsyncExitStack() as stack:
-            # Ordered callbacks and the default mode process all chunks on rank 0.
-            exchange = (
-                await stack.enter_async_context(
-                    SparseAlltoall(
-                        context,
-                        comm,
-                        collective_id,
-                        srcs=range(1, comm.nranks) if comm.rank == 0 else (),
-                        dsts=(0,) if comm.rank != 0 else (),
-                    )
-                )
-                if comm.nranks > 1 and not parallel
-                else None
+        # Ordered callbacks and the default mode process all chunks on rank 0.
+        async with (
+            SparseAlltoall(
+                context,
+                comm,
+                collective_id,
+                srcs=range(1, comm.nranks) if comm.rank == 0 else (),
+                dsts=(0,) if comm.rank != 0 else (),
             )
-
+            if comm.nranks > 1 and not parallel
+            else nullcontext()
+        ) as exchange:
             while (msg := await ch_in.recv(context)) is not None:
                 if (metadata.duplicated and comm.rank != 0) or (
                     consumer is not None and consumer.stopped

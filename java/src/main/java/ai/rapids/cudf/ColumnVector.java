@@ -790,6 +790,116 @@ public final class ColumnVector extends ColumnView {
   }
 
   /**
+   * Create a new column containing the SHA-224 hash of each row in the table.
+   *
+   * @param columns columns to hash
+   * @return the new ColumnVector of 56 character hex strings representing each row's hash value.
+   */
+  public static ColumnVector sha224Hash(ColumnView... columns) {
+    return new ColumnVector(sha224(getNativeViews("SHA-224", columns)));
+  }
+
+  /**
+   * Create a new column containing the SHA-256 hash of each row in the table.
+   *
+   * @param columns columns to hash
+   * @return the new ColumnVector of 64 character hex strings representing each row's hash value.
+   */
+  public static ColumnVector sha256Hash(ColumnView... columns) {
+    return new ColumnVector(sha256(getNativeViews("SHA-256", columns)));
+  }
+
+  /**
+   * Create a new column containing the SHA-384 hash of each row in the table.
+   *
+   * @param columns columns to hash
+   * @return the new ColumnVector of 96 character hex strings representing each row's hash value.
+   */
+  public static ColumnVector sha384Hash(ColumnView... columns) {
+    return new ColumnVector(sha384(getNativeViews("SHA-384", columns)));
+  }
+
+  /**
+   * Create a new column containing the SHA-512 hash of each row in the table.
+   *
+   * @param columns columns to hash
+   * @return the new ColumnVector of 128 character hex strings representing each row's hash value.
+   */
+  public static ColumnVector sha512Hash(ColumnView... columns) {
+    return new ColumnVector(sha512(getNativeViews("SHA-512", columns)));
+  }
+
+  /**
+   * Create a new column containing the MurmurHash3_x86_32 hash of each row in the table.
+   *
+   * @param seed the hash seed; its bits are used as an unsigned 32-bit value.
+   * @param columns columns to hash
+   * @return the new UINT32 ColumnVector of hash values.
+   */
+  public static ColumnVector murmurHash3x86_32(int seed, ColumnView... columns) {
+    return new ColumnVector(murmurHash32(seed, getNativeViews("MurmurHash3_x86_32", columns)));
+  }
+
+  /**
+   * Create a new column containing the Apache Spark-compatible MurmurHash3_x86_32 hash of each row
+   * in the table.
+   *
+   * @param seed the initial hash seed; its bits are used as an unsigned 32-bit value. Spark's
+   *             SQL {@code hash()} uses 42.
+   * @param columns columns to hash
+   * @return the new INT32 ColumnVector of hash values.
+   */
+  public static ColumnVector sparkMurmurHash3x86_32(int seed, ColumnView... columns) {
+    return new ColumnVector(
+        sparkMurmurHash32(seed, getNativeViews("Spark MurmurHash3_x86_32", columns)));
+  }
+
+  /**
+   * Create a new table containing the MurmurHash3_x64_128 hash of each row in the table.
+   *
+   * @param seed the hash seed; its bits are used as an unsigned 64-bit value.
+   * @param columns columns to hash
+   * @return a new Table of two UINT64 columns holding the two 64-bit halves of each row's hash.
+   */
+  public static Table murmurHash3x64_128(long seed, ColumnView... columns) {
+    return new Table(murmurHash128(seed, getNativeViews("MurmurHash3_x64_128", columns)));
+  }
+
+  /**
+   * Create a new column containing the xxHash32 hash of each row in the table.
+   *
+   * @param seed the hash seed; its bits are used as an unsigned 32-bit value.
+   * @param columns columns to hash
+   * @return the new UINT32 ColumnVector of hash values.
+   */
+  public static ColumnVector xxhash32(int seed, ColumnView... columns) {
+    return new ColumnVector(xxHash32(seed, getNativeViews("xxHash32", columns)));
+  }
+
+  /**
+   * Create a new column containing the xxHash64 hash of each row in the table.
+   *
+   * @param seed the hash seed; its bits are used as an unsigned 64-bit value.
+   * @param columns columns to hash
+   * @return the new UINT64 ColumnVector of hash values.
+   */
+  public static ColumnVector xxhash64(long seed, ColumnView... columns) {
+    return new ColumnVector(xxHash64(seed, getNativeViews("xxHash64", columns)));
+  }
+
+  private static long[] getNativeViews(String hashName, ColumnView... columns) {
+    if (columns.length < 1) {
+      throw new IllegalArgumentException(hashName + " hashing requires at least 1 column of input");
+    }
+    long[] columnViews = new long[columns.length];
+    for (int i = 0; i < columns.length; i++) {
+      assert columns[i] != null : "Column vectors passed may not be null";
+      columnViews[i] = columns[i].getNativeView();
+    }
+    return columnViews;
+  }
+
+  /**
    * Generic method to cast ColumnVector
    * When casting from a Date, Timestamp, or Boolean to a numerical type the underlying numerical
    * representation of the data will be used for the cast.
@@ -907,6 +1017,26 @@ public final class ColumnVector extends ColumnView {
    * @return native handle of the resulting cudf column containing the hex-string hashing results.
    */
   private static native long sha1(long[] viewHandles) throws CudfException;
+
+  private static native long sha224(long[] viewHandles) throws CudfException;
+
+  private static native long sha256(long[] viewHandles) throws CudfException;
+
+  private static native long sha384(long[] viewHandles) throws CudfException;
+
+  private static native long sha512(long[] viewHandles) throws CudfException;
+
+  private static native long murmurHash32(int seed, long[] viewHandles) throws CudfException;
+
+  private static native long sparkMurmurHash32(int seed, long[] viewHandles)
+      throws CudfException;
+
+  private static native long[] murmurHash128(long seed, long[] viewHandles)
+      throws CudfException;
+
+  private static native long xxHash32(int seed, long[] viewHandles) throws CudfException;
+
+  private static native long xxHash64(long seed, long[] viewHandles) throws CudfException;
 
   /////////////////////////////////////////////////////////////////////////////
   // INTERNAL/NATIVE ACCESS

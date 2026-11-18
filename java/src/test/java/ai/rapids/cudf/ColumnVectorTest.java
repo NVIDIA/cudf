@@ -765,6 +765,218 @@ public class ColumnVectorTest extends CudfTestBase {
     }
   }
 
+  // Expected values come from the reference implementations in Python's hashlib, xxhash and mmh3.
+  // libcudf hashes null rows to a fixed value (all bits set for the integer hashes, the hash of an
+  // empty string for SHA-2), which is what row 3 holds.
+  private static ColumnVector hashTestStrings() {
+    return ColumnVector.fromStrings("", "a", "Warsaw", null,
+        "Pi\u0119kna \u0142\u0105ka pod Warszaw\u0105", "abcdefghijklmnopqrstuvwxyz0123456789");
+  }
+
+  @Test
+  void testSha224HashStrings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.sha224Hash(v);
+         ColumnVector expected = ColumnVector.fromStrings(
+            "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f",
+            "abd37534c7d9a2efb9465de931cd7055ffdb8879563ae98078d6d6d5",
+            "9532fdcf4ec7e3dd397b34019236e382f403a004292666557a2da321",
+            "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f",
+            "62a6272fb5b82c49f15bdf362e512d68deaba546944b4e782d70541d",
+            "d1c6622aaec07d8a10a1a054c7e96315f9e80bcab10d3559d191c03f")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testSha256HashStrings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.sha256Hash(v);
+         ColumnVector expected = ColumnVector.fromStrings(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+            "2d59f8dd13aafd7bc42766de703e6dd4dc2933b802ed3ed743edac6631e4dc8c",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "c18c05e5a0728653752cba586df85afd94ccaf2d5a19f22516e8f8d8c8b5aa18",
+            "011fc2994e39d251141540f87a69092b3f22a86767f7283de7eeedb3897bedf6")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testSha384HashStrings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.sha384Hash(v);
+         ColumnVector expected = ColumnVector.fromStrings(
+            "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
+            "54a59b9f22b0b80880d8427e548b7c23abd873486e1f035dce9cd697e85175033caa88e6d57bc35efae0b5afd3145f31",
+            "a1fc90e7ea278f190201bc852b2b55a6985822aeb666fd2ff241b894d616d412e611f893f4d15ac3f102e2dc07b8da53",
+            "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
+            "4506ccd0509cb45f931b7ac86b22c5951f83b47b987c105f33cc496620ca68cf45ecb38c925d2adbbf7071cbcfbba7f2",
+            "9cc12672a5ec2a0a387c8822dbb943de7ca73d70650713ad90ff8764f5f67d7e1a1c3833d829dd4e9ac929c2d6100746")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testSha512HashStrings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.sha512Hash(v);
+         ColumnVector expected = ColumnVector.fromStrings(
+            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            "1f40fc92da241694750979ee6cf582f2d5d7d28e18335de05abc54d0560e0f5302860c652bf08d560252aa5e74210546f369fbbbce8c12cfc7957b2652fe9a75",
+            "5785553d662f557faad8b0778acd5a9ce1c8dbbf921e035d85a318ccadf2ff6387a4b34fac07a676554d675ab00f4a2ebecdf01cfad9ba709f7ea72dadd25d96",
+            "cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
+            "67a504903a1ff8ff91efad36f9d85e144c16e76d05bac3c8cf104361b70b07740a9716b7802386665f1da1afef6d6892d3e67f87c4925679540f51a105b4c735",
+            "a59b49216a0e3a20443b72c64bdae51d41b33ad08a86a4fb936378dd2f9cd3899809ec31e5259b3b4549388d026561362be71548d4393be76da7eeb01839470c")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testXXHash32Strings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.xxhash32(42, v);
+         ColumnVector resultMaxSeed = ColumnVector.xxhash32(-1, v);
+         ColumnVector expected = ColumnVector.fromUnsignedInts(
+            Integer.parseUnsignedInt("3586027192"),
+            Integer.parseUnsignedInt("1273873115"),
+            Integer.parseUnsignedInt("167856610"),
+            Integer.parseUnsignedInt("4294967295"),
+            Integer.parseUnsignedInt("4065668080"),
+            Integer.parseUnsignedInt("1273410966"));
+         ColumnVector expectedMaxSeed = ColumnVector.fromUnsignedInts(
+            Integer.parseUnsignedInt("2422332061"),
+            Integer.parseUnsignedInt("3443684653"),
+            Integer.parseUnsignedInt("3061055820"),
+            Integer.parseUnsignedInt("4294967295"),
+            Integer.parseUnsignedInt("3175735130"),
+            Integer.parseUnsignedInt("4113478708"))) {
+      assertColumnsAreEqual(expected, result);
+      assertColumnsAreEqual(expectedMaxSeed, resultMaxSeed);
+    }
+  }
+
+  @Test
+  void testMurmurHash3x86_32Strings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.murmurHash3x86_32(42, v);
+         ColumnVector resultMaxSeed = ColumnVector.murmurHash3x86_32(-1, v);
+         ColumnVector expected = ColumnVector.fromUnsignedInts(
+            Integer.parseUnsignedInt("142593372"),
+            Integer.parseUnsignedInt("3001393763"),
+            Integer.parseUnsignedInt("2982871493"),
+            Integer.parseUnsignedInt("4294967295"),
+            Integer.parseUnsignedInt("2423429057"),
+            Integer.parseUnsignedInt("46508703"));
+         ColumnVector expectedMaxSeed = ColumnVector.fromUnsignedInts(
+            Integer.parseUnsignedInt("2180083513"),
+            Integer.parseUnsignedInt("711476519"),
+            Integer.parseUnsignedInt("2280054622"),
+            Integer.parseUnsignedInt("4294967295"),
+            Integer.parseUnsignedInt("2229813559"),
+            Integer.parseUnsignedInt("2880843838"))) {
+      assertColumnsAreEqual(expected, result);
+      assertColumnsAreEqual(expectedMaxSeed, resultMaxSeed);
+    }
+  }
+
+  @Test
+  void testXXHash64Strings() {
+    try (ColumnVector v = hashTestStrings();
+         ColumnVector result = ColumnVector.xxhash64(42, v);
+         ColumnVector resultMaxSeed = ColumnVector.xxhash64(-1L, v);
+         ColumnVector expected = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("11002672306508523268"),
+            Long.parseUnsignedLong("9864288744972464332"),
+            Long.parseUnsignedLong("7716771431931769078"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("7912833126575397331"),
+            Long.parseUnsignedLong("2724237963427677065"));
+         ColumnVector expectedMaxSeed = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("2994696410035606400"),
+            Long.parseUnsignedLong("6972758980737027682"),
+            Long.parseUnsignedLong("12401446569255520207"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("16690358584231635229"),
+            Long.parseUnsignedLong("1633168291378088819"))) {
+      assertColumnsAreEqual(expected, result);
+      assertColumnsAreEqual(expectedMaxSeed, resultMaxSeed);
+    }
+  }
+
+  @Test
+  void testXXHash64MultipleColumns() {
+    // Columns are combined by libcudf, so these values come from libcudf rather than a reference.
+    try (ColumnVector strings = ColumnVector.fromStrings("a", "b", null);
+         ColumnVector ints = ColumnVector.fromBoxedInts(0, null, -1);
+         ColumnVector result = ColumnVector.xxhash64(42, strings, ints);
+         ColumnVector expected = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("11763038453651297527"),
+            Long.parseUnsignedLong("4436831903783406875"),
+            Long.parseUnsignedLong("417334748536706534"))) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testMurmurHash3x64_128Strings() {
+    // mmh3.hash64 returns the two 64-bit halves of MurmurHash3_x64_128 and takes a 32-bit seed.
+    try (ColumnVector v = hashTestStrings();
+         Table result = ColumnVector.murmurHash3x64_128(42, v);
+         Table resultMaxSeed = ColumnVector.murmurHash3x64_128(0xffffffffL, v);
+         ColumnVector expected0 = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("17305828677633410339"),
+            Long.parseUnsignedLong("2892890568104748720"),
+            Long.parseUnsignedLong("825568977902203809"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("9598141893909042114"),
+            Long.parseUnsignedLong("17069018092671032943"));
+         ColumnVector expected1 = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("15060430851467758521"),
+            Long.parseUnsignedLong("2732500323686427413"),
+            Long.parseUnsignedLong("6303757853695782687"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("16778382775675333117"),
+            Long.parseUnsignedLong("8988314208100888823"));
+         ColumnVector expectedMaxSeed0 = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("7706185961851046380"),
+            Long.parseUnsignedLong("13759488599274906432"),
+            Long.parseUnsignedLong("15949460306222861141"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("14709484434806456029"),
+            Long.parseUnsignedLong("13435543621387217045"));
+         ColumnVector expectedMaxSeed1 = ColumnVector.fromUnsignedLongs(
+            Long.parseUnsignedLong("9616347466054386795"),
+            Long.parseUnsignedLong("12193000263752017740"),
+            Long.parseUnsignedLong("18298055624844273599"),
+            Long.parseUnsignedLong("18446744073709551615"),
+            Long.parseUnsignedLong("5142270706950975276"),
+            Long.parseUnsignedLong("8185002866847756356"));
+         Table expected = new Table(expected0, expected1);
+         Table expectedMaxSeed = new Table(expectedMaxSeed0, expectedMaxSeed1)) {
+      assertTablesAreEqual(expected, result);
+      assertTablesAreEqual(expectedMaxSeed, resultMaxSeed);
+    }
+  }
+
+  @Test
+  void testSparkMurmurHash3x86_32() {
+    // Values produced by Apache Spark's hash() for the same input, from libcudf's tests.
+    try (ColumnVector first = ColumnVector.fromInts(0, 1, -1, 42, 123456789);
+         ColumnVector second = ColumnVector.fromInts(10, 20, 30, -40, -987654321);
+         ColumnVector result = ColumnVector.sparkMurmurHash3x86_32(42, first, second);
+         ColumnVector expected = ColumnVector.fromInts(
+            -1721723333, 1151116018, 1549484878, -1287750896, -1980733329)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testSeededHashRequiresColumns() {
+    assertThrows(IllegalArgumentException.class, () -> ColumnVector.xxhash64(0));
+  }
+
   @Test
   void isNotNullTestEmptyColumn() {
     try (ColumnVector v = ColumnVector.fromBoxedInts();

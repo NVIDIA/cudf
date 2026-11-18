@@ -15,9 +15,14 @@
   "primary_contact": "vyasr",
   "escalation_contact": "vyasr",
   "slack": {
+    "workspace_url": "https://nvidia.slack.com",
     "channel": "swrapids-etl-scrum",
     "channel_id": "CB7RE2H53",
-    "users": {"vyasr": "U01PXPJ5741"},
+    "users": {
+      "vyasr": "U01PXPJ5741",
+      "bdice": "U0149B9843U",
+      "wence-": "U03AZ063EQK"
+    },
     "delivery_enabled": false
   },
   "follow_up": {

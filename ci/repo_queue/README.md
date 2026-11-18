@@ -165,16 +165,97 @@ successful notification. Without a delivery record, escalation dates stay
 empty even for very old imported work. Owner and escalation mentions are
 consolidated when they identify the same person.
 
+## Test Slack delivery in a DM
+
+The pilot contact can test the installed bot without posting to the team
+channel. This targets the contact's Slack user ID from `pilot.json`, never
+the configured production channel. First preview the payload:
+
+```sh
+python3 ci/repo_queue/slack_dm_test.py
+```
+
+To send a parent message and a threaded reply, run interactively:
+
+```sh
+python3 ci/repo_queue/slack_dm_test.py --send
+```
+
+The script prompts for the bot token without displaying it, or reads
+`SLACK_BOT_TOKEN` from the environment. It does not read the token from GitHub
+Actions secrets, which cannot be retrieved after saving. Never pass a token
+as a command-line argument or commit it. The Actions secret is named
+`NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN`.
+
+Use `--text-file /tmp/message.txt` to test a rendered action body, including
+real owner mentions. People outside the bot's DM with the pilot contact
+will not receive mention notifications. Messages carry an explicit test
+heading. The script prints delivery identifiers and does not update Project
+cards or successful-notification history. It does not retry ambiguous sends;
+inspect the DM before rerunning after a connection failure.
+
+## End-to-end DM pilot
+
+Preview a small, explicit selection using fresh GitHub evidence on each run:
+
+```sh
+python3 ci/repo_queue/pilot.py --numbers 24176 24230 23772 \
+  --output-dir /tmp/cudf-work-tracking/e2e
+```
+
+Add `--apply` to synchronize Project-only draft action cards, or add both
+`--apply --send-dm` to synchronize and send notifications to the primary
+contact's bot DM. The token prompt and `SLACK_BOT_TOKEN` behavior match the
+smoke test. The production channel is never a delivery target for this command.
+Real owner mentions are retained. At most ten source issues/PRs can be selected.
+Run from one machine and use the same output directory for each pilot run;
+the local lock prevents concurrent runs using that directory. Cross-machine
+concurrent writers are not supported.
+
+Each managed card has a stable action key, a native GitHub assignee, source
+and handoff links, and a managed body section. Maintainer notes outside that
+section survive updates. Duplicate action keys or truncated card reads abort
+synchronization. Unchanged cards require no mutations, and a second Project
+read verifies the result after applying changes.
+
+Only explicitly selected sources are reconciled. Submitted reviews complete
+that reviewer's old card; new requests create new episodes. Replacement
+handoffs supersede old cards with an explanatory disposition. Closure completes
+cards, while draft/deferred sources defer them. Losing a component label or
+an ambiguous absence does not establish completion. Manual In progress,
+Deferred, and Complete statuses survive refreshes of the same current action.
+Archived cards are not changed or notified. The underlying issues and PRs
+are not modified.
+
+DM delivery history is durable in each draft card's managed metadata, keyed
+separately from any future production destination. Subsequent due reminders
+and test escalations use the original DM thread. Test timestamps do not set
+the Project's production Follow-up or Escalate on dates. Updating a card after
+GitHub activity currently does not publish a completion message to Slack.
+
+Before sending, the script saves a pending delivery record in the Project.
+After success it saves a local receipt to `dm-receipts.json`, then acknowledges
+the delivery in the Project. A rerun can recover the acknowledgment from that
+receipt without resending. An uncertain send with no local receipt blocks
+further delivery for inspection; this is deliberately not an exactly-once
+delivery guarantee. Preserve the receipt file until all pending records have
+been acknowledged. A pending record without a receipt currently requires
+manual reconciliation after inspecting the DM.
+
+The command saves the refreshed snapshot, DM plan, delivery receipts, and
+result under the output directory. These files contain no bot token.
+
 ## Remaining implementation and rollout
 
-The live Project schema and private previews are the current pilot stage.
-Project card synchronization, activity-driven completion/supersession,
-durable delivery history, a Slack publisher, and scheduled execution remain
-to be implemented. Previews are not a running repository monitor.
+The Project schema, explicit-source synchronization, and DM delivery form a
+manual pilot. Scheduled execution, production-channel delivery, automated
+reconciliation of ambiguous sends, and broader component classification remain
+to be implemented. Generic prose handoffs still require maintainer judgment;
+the classifier does not infer owners from arbitrary comments.
 
-No scheduled workflow or publisher is included while the report is being
-tuned privately. A future workflow should only provide the trigger, read
-permissions, runtime/authentication setup, invoke these commands, and retain
+No scheduled workflow is included while the report is being tuned privately.
+A future workflow should only provide the trigger, permissions and concurrency,
+runtime/authentication setup, invoke these commands, and retain
 their outputs. Sampling, event interpretation, policy, and rendering belong
 in the scripts. Any publication or reminder step should be a separate script
 that consumes the structured report and records successful deliveries.

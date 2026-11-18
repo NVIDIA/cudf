@@ -26,6 +26,7 @@
 
 #include <cuda/buffer>
 #include <cuda/std/concepts>
+#include <cuda/std/utility>
 
 #include <algorithm>
 #include <array>
@@ -95,10 +96,32 @@ class stats_caster_base {
     if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
       if (binary_value.has_value()) {
         auto const value = convert<__int128_t>(binary_value->data(), binary_value->size(), type);
-        return static_cast<__int128_t>(static_cast<T>(value)) == value;
+        return cuda::std::in_range<T>(value);
       }
     }
     return true;
+  }
+
+  /**
+   * @brief Whether values of the Parquet physical `type` may not fit in a signed integral type `T`
+   * (including decimal storage types)
+   *
+   * @param binary_value Binary stats value, used for the byte length of FIXED_LEN_BYTE_ARRAY values
+   * @param type Parquet physical type
+   */
+  template <typename T>
+  [[nodiscard]] static inline bool may_truncate(std::vector<uint8_t> const& binary_value,
+                                                Type const type)
+  {
+    if constexpr (cuda::std::signed_integral<T> and sizeof(T) < sizeof(__int128_t)) {
+      switch (type) {
+        case Type::INT32: return sizeof(T) < sizeof(int32_t);
+        case Type::INT64: return sizeof(T) < sizeof(int64_t);
+        case Type::FIXED_LEN_BYTE_ARRAY: return sizeof(T) < binary_value.size();
+        default: return true;  // BYTE_ARRAY values have no fixed length
+      }
+    }
+    return false;
   }
 
   template <typename T>
@@ -289,7 +312,8 @@ class stats_caster_base {
      * @brief Sets the min and max statistics, or nulls both if either does not fit in `T`
      *
      * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
-     * order, so neither bound is valid
+     * order, so neither bound is valid. A lone bound is also nulled if values may be truncated, as
+     * the missing bound may not fit
      *
      * @param min Min statistics column
      * @param max Max statistics column
@@ -307,7 +331,11 @@ class stats_caster_base {
                                    Type const type,
                                    int32_t ts_scale = 0)
     {
-      if (fits_in_type<T>(min_value, type) and fits_in_type<T>(max_value, type)) {
+      auto const lone_bound_may_truncate =
+        min_value.has_value() != max_value.has_value() and
+        may_truncate<T>(min_value.has_value() ? *min_value : *max_value, type);
+      if (not lone_bound_may_truncate and fits_in_type<T>(min_value, type) and
+          fits_in_type<T>(max_value, type)) {
         min.set_index(index, min_value, type, ts_scale);
         max.set_index(index, max_value, type, ts_scale);
       } else {

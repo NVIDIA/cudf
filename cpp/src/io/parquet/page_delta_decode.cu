@@ -522,8 +522,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
         // place value for this thread
         if (dst_pos >= 0 && sp < target_pos) {
-          void* const dst =
-            nesting_info_base[leaf_level_index].data_out + dst_pos * s->output_cvt.dtype_len;
+          void* const dst = nesting_info_base[leaf_level_index].data_out +
+                            static_cast<size_t>(dst_pos) * s->output_cvt.dtype_len;
           store_delta_binary_value(dst,
                                    db->value_at(sp + skipped_leaf_values),
                                    s->output_cvt.dtype_len,
@@ -692,7 +692,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
         auto dst_pos = process_nulls ? static_cast<int32_t>(nz_idx[sp]) : static_cast<int32_t>(sp);
         dst_pos -= first_row;
         if (dst_pos >= 0) {
-          void* const dst = data_out + dst_pos * dtype_len;
+          void* const dst = data_out + static_cast<size_t>(dst_pos) * dtype_len;
           store_delta_binary_value(dst, db->value_at(sp), dtype_len, dtype_len_in, is_decimal);
         }
       }

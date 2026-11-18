@@ -29,6 +29,7 @@ from cudf.io.parquet import (
     is_supported_read_parquet,
     is_supported_write_parquet,
     merge_parquet_filemetadata,
+    translate_filters_to_ast,
 )
 from cudf.testing import (
     assert_arrow_table_equal,
@@ -424,6 +425,23 @@ def test_parquet_read_metadata(tmp_path, pdf):
         assert a == b
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["a", 1, 1.25, datetime.date(2026, 1, 1), datetime.timedelta(days=1)],
+)
+def test_parquet_filter_ast_supported_scalar(value):
+    from pylibcudf.expressions import Operation
+
+    result = translate_filters_to_ast([[("x", "in", [value])]])
+    assert isinstance(result, Operation)
+
+
+@pytest.mark.parametrize("value", [object(), b"a", ["a"], None])
+def test_parquet_filter_ast_unsupported_scalar(value):
+    with pytest.raises(NotImplementedError, match="Only numeric, string"):
+        translate_filters_to_ast([[("x", "==", value)]])
+
+
 def test_parquet_read_filtered(set_decomp_env_vars, tmp_path):
     # Generate data
     fname = tmp_path / "filtered.parquet"
@@ -611,6 +629,149 @@ def test_parquet_reader_spark_decimals(datadir):
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+
+def test_parquet_reader_file_logical_type(datadir):
+    # Written with arrow-rs (parquet 60.1.0), one column per way a FILE value
+    # can appear: inline_only {inline, content_type}, external_whole {uri,
+    # content_type, checksum}, external_prefix {uri, size}, external_range
+    # {uri, offset, size}, inline_and_locator (all six fields, inline first),
+    # repeated_file (legacy `repeated group (FILE)`), file_list (list<FILE>),
+    # nested {id, file: FILE} and required_file (a REQUIRED FILE group).
+    # pyarrow cannot open FILE groups yet, so read from a buffer to skip its
+    # dataset discovery.
+    fname = datadir / "file_logical_type.parquet"
+    got = cudf.read_parquet(BytesIO(fname.read_bytes()))
+
+    # FILE groups read as structs with the `inline` child read as binary
+    field_types = {
+        "uri": pa.string(),
+        "offset": pa.int64(),
+        "size": pa.int64(),
+        "content_type": pa.string(),
+        "checksum": pa.string(),
+        "inline": pa.list_(pa.uint8()),
+    }
+
+    def file_type(*names):
+        return pa.struct([(name, field_types[name]) for name in names])
+
+    sha = "SHA-256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    archive = "s3://bucket/archive.tar"
+    columns = {
+        "inline_only": (
+            file_type("inline", "content_type"),
+            [
+                {"inline": list(b"hello"), "content_type": "text/plain"},
+                {"inline": [], "content_type": "application/octet-stream"},
+                None,
+                {"inline": [0x89, 0x50, 0x4E, 0x47]},
+            ],
+        ),
+        "external_whole": (
+            file_type("uri", "content_type", "checksum"),
+            [
+                {
+                    "uri": "s3://bucket/a.png",
+                    "content_type": "image/png",
+                    "checksum": sha,
+                },
+                {"uri": ""},
+                {
+                    "uri": "https://example.com/b.pdf",
+                    "content_type": "application/pdf",
+                },
+                None,
+            ],
+        ),
+        "external_prefix": (
+            file_type("uri", "size"),
+            [
+                {"uri": "file:///data/blob.bin", "size": 1024},
+                {"uri": "file:///data/empty.bin", "size": 0},
+                None,
+                {"uri": "s3://bucket/c.bin"},
+            ],
+        ),
+        "external_range": (
+            file_type("uri", "offset", "size"),
+            [
+                {"uri": archive, "offset": 0, "size": 512},
+                {"uri": archive, "offset": 512, "size": 2048},
+                {"uri": archive, "offset": 4096, "size": 0},
+                None,
+            ],
+        ),
+        "inline_and_locator": (
+            file_type(
+                "inline", "checksum", "size", "content_type", "offset", "uri"
+            ),
+            [
+                {
+                    "inline": list(b"hello"),
+                    "checksum": sha,
+                    "size": 5,
+                    "content_type": "text/plain",
+                    "offset": 0,
+                    "uri": "s3://bucket/hello.txt",
+                },
+                None,
+                {
+                    "inline": [],
+                    "size": 0,
+                    "offset": 0,
+                    "uri": "s3://bucket/empty.txt",
+                },
+                {"inline": [0xFF]},
+            ],
+        ),
+        "repeated_file": (
+            pa.list_(file_type("uri", "inline")),
+            [
+                [{"uri": "s3://x/1"}, {"inline": list(b"a")}],
+                [],
+                [{"inline": [0xFE]}],
+                [{"uri": "s3://x/2"}],
+            ],
+        ),
+        "file_list": (
+            pa.list_(file_type("uri", "size")),
+            [
+                [{"uri": "s3://l/1", "size": 10}, None],
+                None,
+                [],
+                [{"uri": "s3://l/2"}],
+            ],
+        ),
+        "nested": (
+            pa.struct(
+                [("id", pa.int32()), ("file", file_type("uri", "inline"))]
+            ),
+            [
+                {"id": 1, "file": {"uri": "s3://n/1"}},
+                {"id": 2, "file": None},
+                None,
+                {"id": 4, "file": {"inline": list(b"xyz")}},
+            ],
+        ),
+        "required_file": (
+            file_type("uri", "inline"),
+            [
+                {"uri": "s3://r/0"},
+                {"inline": list(b"r1")},
+                {"uri": "s3://r/2"},
+                {"uri": "", "inline": []},
+            ],
+        ),
+    }
+    expect = pa.table(
+        {
+            name: pa.array(rows, type=type_)
+            for name, (type_, rows) in columns.items()
+        }
+    )
+
+    assert_eq(cudf.DataFrame.from_arrow(expect), got)
 
 
 @pytest.mark.parametrize("columns", [["a"], ["b", "a"], None])
@@ -5502,3 +5663,77 @@ def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
     )
 
     assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)
+
+
+def test_dataset_writer_closes_rotated(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    for _ in range(4):
+        writer.write_table(df)
+
+    # Writers from earlier appends were closed once their files rotated out
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert len(open_writers) == 1
+
+    # Footer metadata of early-closed writers is still returned
+    meta = writer.close(return_metadata=True)
+    assert pq.ParquetFile(BytesIO(meta)).metadata.num_rows == 4 * len(df)
+    expect = cudf.concat([df] * 4).sort_values("x").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
+def test_dataset_writer_stale_partition(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+    df0 = df[df["centroid"] == 0]
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    writer.write_table(df)
+    for _ in range(3):
+        writer.write_table(df0)
+
+    # Partitions 1..15 never rotate, so the first writer stays open until
+    # close(); writers holding only partition 0 are closed as it rotates
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert writer._chunked_writers[0] is not None
+    assert len(open_writers) == 2
+
+    writer.close()
+    expect = (
+        cudf.concat([df, df0, df0, df0])
+        .sort_values("x")
+        .reset_index(drop=True)
+    )
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)

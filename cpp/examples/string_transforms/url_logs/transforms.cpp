@@ -418,15 +418,13 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
   std::unique_ptr<cudf::table> sizes;
 
   if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_sizes];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
-    sizes         = cudf::transform_lto(fragment,
+    sizes = cudf::transform_lto(url_log_fragments::get(url_log_fragments::url_component_sizes),
                                 cudf::lto_binary_type::FATBIN,
                                 cudf::null_aware::NO,
                                 std::nullopt,
                                 inputs,
                                 size_outputs,
-                                        {},
+                                {},
                                 std::nullopt,
                                 stream,
                                 mr);
@@ -462,9 +460,7 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
                                            cudf::output_nullability::ALL_VALID};
   std::vector<cudf::transform_output> const outputs(output_count, output_spec);
   if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_output];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
-    return cudf::transform_lto(fragment,
+    return cudf::transform_lto(url_log_fragments::get(url_log_fragments::url_component_output),
                                cudf::lto_binary_type::FATBIN,
                                cudf::null_aware::NO,
                                std::nullopt,

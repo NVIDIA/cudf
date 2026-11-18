@@ -16,6 +16,8 @@
 
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -228,7 +230,7 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   cuda::stream_ref stream);
 
 /**
- * @brief Computes the per-page buffer sizes required for string offsets.
+ * @brief Computes the buffer sizes required for string offsets, summed per column.
  *
  * For non-dictionary, non-FLBA string columns, this computes the size needed
  * to store string offsets (uint32_t per value) for each page.
@@ -239,8 +241,8 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to use for allocating the returned device_buffer
- * @returns A vector of size_t values, one for each page, indicating the size needed for string
- * offsets
+ * @returns For each page, the string offset buffer size in bytes of that page and the earlier
+ * pages in its column
  */
 cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
                                                         device_span<PageInfo const> pages,
@@ -250,7 +252,7 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
                                                         cudf::memory_resources mr);
 
 /**
- * @brief Computes the per-page buffer sizes required for level decode preprocessing.
+ * @brief Computes the buffer sizes required for level decode preprocessing, summed per column.
  *
  * This computes the memory needed to store decoded definition and repetition levels
  * during the preprocessing step. This memory is used by preprocess_levels_kernel().
@@ -262,8 +264,8 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to use for allocating the returned device_buffer
- * @returns A vector of size_t values, one for each page, indicating the size needed for level
- * decode preprocessing
+ * @returns For each page, the level decode buffer size in bytes of that page and the earlier pages
+ * in its column
  */
 cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
                                                        device_span<PageInfo const> pages,

@@ -126,9 +126,10 @@ def test_filter_hstack_select(left, engine, cpu_calls):
 
 def test_groupby_mean_all_null_group(left, right, engine, cpu_calls):
     # The streaming planner computes the mean as a grouped sum over a grouped
-    # count. The sum of an all-null group must be null, as in libcudf.
+    # count. The sum of an all-null group must be null, as in libcudf. Without
+    # a=3 on the right, every "c" of group "z" is null.
     q = (
-        left.join(right, on="a", how="left")
+        left.join(right.filter(pl.col("a") != 3), on="a", how="left")
         .group_by("s")
         .agg(pl.col("c").mean(), pl.col("b").sum(), n=pl.len())
     )
@@ -161,11 +162,11 @@ def test_projection_without_columns(left, right, engine, cpu_calls):
     assert cpu_calls["Projection"] > 0
 
 
-def test_not_cpu_capable():
+def test_not_cpu_capable(in_memory_engine):
     # A Select using an expression without a Polars conversion.
     dtype = DataType(pl.Int64())
     df = pl.LazyFrame({"a": [1, 2]})
-    child = Translator(df._ldf.visit(), pl.GPUEngine()).translate_ir()
+    child = Translator(df._ldf.visit(), in_memory_engine).translate_ir()
     agg = expr.Agg(dtype, "sum", None, ExecutionContext.ROLLING, expr.Col(dtype, "a"))
     node = Select(
         {"a": dtype},
@@ -285,19 +286,21 @@ def _compare_backends(q, streaming_engine_factory, cpu_calls, node):
     assert cpu_calls[node] > 0
 
 
-def _translated_exprs(q) -> list[expr.Expr]:
-    node = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+def _translated_exprs(q, engine: pl.GPUEngine) -> list[expr.Expr]:
+    node = Translator(q._ldf.visit(), engine).translate_ir()
     assert isinstance(node, Select)
     return list(traversal([ne.value for ne in node.exprs]))
 
 
 @pytest.mark.parametrize("op", sorted(BINARY_OPS, key=str))
 @pytest.mark.parametrize("columns", [("f", "g"), ("i", "j"), ("b", "c")])
-def test_binary_ops_match(edge_cases, streaming_engine_factory, cpu_calls, op, columns):
+def test_binary_ops_match(
+    edge_cases, streaming_engine_factory, in_memory_engine, cpu_calls, op, columns
+):
     left, right = (pl.col(c) for c in columns)
     q = edge_cases.select(BINARY_OPS[op](left, right).alias("out"))
     try:
-        translated = _translated_exprs(q)
+        translated = _translated_exprs(q, in_memory_engine)
         q.collect()
     except pl.exceptions.PolarsError:
         pytest.skip(f"Polars rejects {op.name} for {columns}")
@@ -444,10 +447,10 @@ def test_groupby_matches_gpu(
 
 
 @pytest.mark.parametrize("offset,length", [(2, 4), (-3, None), (10, 2)])
-def test_slice_matches_gpu(edge_cases, offset, length):
+def test_slice_matches_gpu(edge_cases, in_memory_engine, offset, length):
     # The streaming engine slices without evaluating Slice nodes, and Polars
     # pushes a slice into the scan, so the node is built and evaluated here.
-    child = Translator(edge_cases._ldf.visit(), pl.GPUEngine()).translate_ir()
+    child = Translator(edge_cases._ldf.visit(), in_memory_engine).translate_ir()
     node = Slice(child.schema, offset, length, child)
     assert is_cpu_capable(node)
     context = IRExecutionContext()

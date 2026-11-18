@@ -96,19 +96,7 @@ struct row_group_stats_caster : public stats_caster_base {
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
                      "Mapped schema index is out of bounds",
                      std::invalid_argument);
-        // Compute timestamp scale factor for precision conversion from the mapped source schema.
-        auto const ts_scale = [&] {
-          if constexpr (cudf::is_timestamp<T>()) {
-            auto const& schema = source_metadata.schema[mapped_schema_idx];
-            return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
-          }
-          return 0;
-        }();
-        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
-        auto const& schema = source_metadata.schema[mapped_schema_idx];
-        auto const is_narrowing_column =
-          cuda::std::signed_integral<T> and
-          is_column_wider_than(schema.type, schema.type_length, sizeof(T));
+        auto const conversion = get_conversion_info<T>(source_metadata.schema[mapped_schema_idx]);
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(
@@ -132,52 +120,26 @@ struct row_group_stats_caster : public stats_caster_base {
               if (not min_value->has_value()) { min_value = &stats.min; }
               if (not max_value->has_value()) { max_value = &stats.max; }
             }
-            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them,
-            // along with ones that cannot bound the converted values
-            auto const ignore_int96_min_max =
+            // translate binary data to Type then to <T>
+            host_column<T>::set_min_max(
+              min,
+              max,
+              stats_idx,
+              *min_value,
+              *max_value,
+              colchunk.meta_data.type,
+              conversion,
               is_unordered_int96(source_metadata,
                                  colchunk.meta_data.type,
-                                 std::distance(row_group.columns.begin(), col)) or
-              int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
-            if (ignore_int96_min_max) {
-              host_column<T>::set_min_max(
-                min, max, stats_idx, std::nullopt, std::nullopt, false, {});
-            } else {
-              // translate binary data to Type then to <T>
-              host_column<T>::set_min_max(min,
-                                          max,
-                                          stats_idx,
-                                          *min_value,
-                                          *max_value,
-                                          is_narrowing_column,
-                                          colchunk.meta_data.type,
-                                          ts_scale);
-            }
+                                 std::distance(row_group.columns.begin(), col)));
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
               has_nan->set_value(stats_idx, has_nans(stats.nan_count));
-              if (colchunk.meta_data.statistics.null_count.has_value()) {
-                auto const& null_count = colchunk.meta_data.statistics.null_count.value();
-                if (null_count == 0) {
-                  is_null->val[stats_idx] = false;
-                } else if (null_count < colchunk.meta_data.num_values) {
-                  is_null->set_value(stats_idx, std::nullopt);
-                } else if (null_count == colchunk.meta_data.num_values) {
-                  is_null->val[stats_idx] = true;
-                } else {
-                  CUDF_FAIL("Invalid null count");
-                }
-              } else {
-                // Statistics without a null count say nothing about this chunk's nullability. The
-                // value array is allocated uninitialized and the null mask starts out all valid, so
-                // this entry has to be marked null; leaving it alone would let an uninitialized
-                // byte be read as an answer.
-                is_null->set_value(stats_idx, std::nullopt);
-              }
+              is_null->set_all_null(stats_idx, stats.null_count, colchunk.meta_data.num_values);
             }
           } else {
             // Mark it null if the column chunk is absent from this row group.
-            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, false, {});
+            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, {}, {});
             if (with_null_and_nan_stats) {
               is_null->set_value(stats_idx, std::nullopt);
               has_nan->set_value(stats_idx, std::nullopt);

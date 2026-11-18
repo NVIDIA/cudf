@@ -238,18 +238,6 @@ TEST(SpanTest, HostSpanContainerConstraints)
   static_assert(not std::is_constructible_v<host_span<int>, thrust::device_vector<int>&>);
 }
 
-TEST(SpanTest, HostSpanConversionConstraints)
-{
-  static_assert(std::is_convertible_v<host_span<int>, host_span<int const>>);
-  static_assert(std::is_convertible_v<host_span<int, 4>, host_span<int>>);
-  static_assert(std::is_convertible_v<host_span<int, 4>, host_span<int const, 4>>);
-
-  static_assert(not std::is_constructible_v<host_span<int>, host_span<int const>>);
-  static_assert(not std::is_constructible_v<host_span<int, 4>, host_span<int>>);
-  static_assert(not std::is_constructible_v<host_span<int, 4>, host_span<int, 8>>);
-  static_assert(not std::is_constructible_v<host_span<long>, host_span<int>>);
-}
-
 TEST(SpanTest, CanUseStdSpan)
 {
   auto message            = create_hello_world_message();

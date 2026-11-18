@@ -902,7 +902,7 @@ async def _send_remote_partition(
     reservation = await reserve_memory(
         context,
         split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0,
-        # The packed copy replaces the chunk, which is freed below.
+        # The packed copy replaces the chunk, which is freed on return.
         net_memory_delta=0,
     )
     with opaque_memory_usage(reservation):

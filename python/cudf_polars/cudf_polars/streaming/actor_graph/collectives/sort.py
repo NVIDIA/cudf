@@ -309,6 +309,7 @@ async def _insert_chunks_into_shuffle(
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
             if skip_insert:
+                del msg
                 continue
             seq_num = msg.sequence_number
             # The chunk's data moves into shuffler-owned packed buffers,

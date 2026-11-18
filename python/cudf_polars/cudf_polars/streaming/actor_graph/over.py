@@ -564,8 +564,10 @@ async def _evaluate_and_route_to_origin(
             partition = TableChunk.from_pylibcudf_table(
                 extracted, stream, exclusive_view=True, br=context.br()
             )
-            # The window result is about the size of the partition, and the
-            # optional stable sort needs a second copy.
+            del extracted
+            # Approximation: the window result holds the child columns plus
+            # the window columns, so it can be larger than the partition.
+            # The optional stable sort needs a second copy.
             reservation = await reserve_memory(
                 context,
                 partition.data_alloc_size() * (2 if sort_by_input_order else 1),
@@ -580,7 +582,7 @@ async def _evaluate_and_route_to_origin(
                     stamps,
                     sort_by_input_order=sort_by_input_order,
                 )
-            del partition, extracted
+            del partition
             routed = await ir_context.to_thread(
                 _split_off_origin_rank, evaluated, context.br()
             )

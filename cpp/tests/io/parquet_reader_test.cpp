@@ -4170,6 +4170,64 @@ TEST_F(ParquetReaderTest, FilterNullableStats)
   }
 }
 
+TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
+{
+  using cudf::ast::ast_operator;
+  using cudf::ast::column_name_reference;
+  using cudf::ast::operation;
+  using cudf::test::fixed_width_column_wrapper;
+
+  auto const id = fixed_width_column_wrapper<int32_t>{10, 20, 30, 40};
+  auto child    = fixed_width_column_wrapper<int32_t>{{1, 2, 3, 4}, {true, false, true, true}};
+  auto const parent_validity = std::array{false, true, false, true};
+  auto const structure       = cudf::test::structs_column_wrapper{{child}, parent_validity.begin()};
+  auto const list =
+    cudf::test::lists_column_wrapper<int32_t>{{{}, {}, {}, {4}}, parent_validity.begin()};
+  auto const input = cudf::table_view{{id, structure, list}};
+  auto metadata    = cudf::io::table_input_metadata{input};
+  metadata.column_metadata[0].set_name("id");
+  metadata.column_metadata[1].set_name("structure");
+  metadata.column_metadata[2].set_name("list");
+
+  std::vector<char> buffer;
+  auto const options =
+    cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{&buffer})
+      .metadata(metadata)
+      .build();
+  cudf::io::chunked_parquet_writer writer(options);
+  for (auto const& row_group : cudf::slice(input, {0, 2, 2, 4})) {
+    writer.write(row_group);
+  }
+  writer.close();
+
+  auto const null_rows      = fixed_width_column_wrapper<std::size_t>{0, 2};
+  auto const valid_rows     = fixed_width_column_wrapper<std::size_t>{1, 3};
+  auto const null_ids       = fixed_width_column_wrapper<int32_t>{10, 30};
+  auto const valid_ids      = fixed_width_column_wrapper<int32_t>{20, 40};
+  auto const expected_null  = cudf::table_view{{null_rows, null_ids}};
+  auto const expected_valid = cudf::table_view{{valid_rows, valid_ids}};
+
+  for (auto const* name : {"structure", "list"}) {
+    SCOPED_TRACE(name);
+    auto const ref      = column_name_reference{name};
+    auto const is_null  = operation{ast_operator::IS_NULL, ref};
+    auto const is_valid = operation{ast_operator::NOT, is_null};
+    auto const check    = [&](operation const& filter, cudf::table_view expected) {
+      auto const result =
+        cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                                 cudf::io::source_info{cudf::host_span<char const>{buffer}})
+                                 .column_names({"id"})
+                                 .prepend_row_index_column(true)
+                                 .filter(filter));
+      EXPECT_EQ(result.metadata.num_input_row_groups, 2);
+      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter, 2);
+      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, *result.tbl);
+    };
+    check(is_null, expected_null);
+    check(is_valid, expected_valid);
+  }
+}
+
 // Filter for float column with NaN values
 TEST_F(ParquetReaderTest, FilterFloatNAN)
 {

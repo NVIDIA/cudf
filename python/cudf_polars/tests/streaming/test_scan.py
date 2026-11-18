@@ -6,6 +6,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, cast
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 import polars as pl
@@ -747,6 +749,28 @@ def test_split_scan_hybrid(
         q = q.filter(predicate)
     if use_columns is not None:
         q = q.select(use_columns)
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+@pytest.mark.skipif(
+    int(pa.__version__.split(".", 1)[0]) < 24,
+    reason="pyarrow writes Parquet bloom filters from 24.0",
+)
+def test_hybrid_scan_bloom_filters(
+    tmp_path: Path, streaming_engine_factory: Callable[..., StreamingEngine]
+) -> None:
+    # https://github.com/NVIDIA/cudf/issues/24851
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(parquet_options={"use_hybrid_scan": True})
+    )
+    source = tmp_path / "bloom.parquet"
+    pq.write_table(
+        pa.table({"y": [f"v{i}" for i in range(1_000)]}),
+        source,
+        row_group_size=250,
+        bloom_filter_options={"y": {"ndv": 1_000, "fpp": 0.0001}},
+    )
+    q = pl.scan_parquet(source).filter(pl.col("y") == "v990")
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 

@@ -321,6 +321,48 @@ def test_hybrid_scan_bloom_filter_byte_ranges_discarded_or(
     assert bloom_ranges(filter_expression) == bloom_ranges(survivor)
 
 
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize("stream", [None, Stream()])
+def test_hybrid_scan_filter_row_groups_with_bloom_filters(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+    stream: Stream | None,
+) -> None:
+    """Bitsets fetched with `fetch_bloom_filters_to_device` prune row groups."""
+    buf = io.BytesIO()
+    pq.write_table(
+        simple_parquet_table,
+        buf,
+        row_group_size=row_group_size,
+        bloom_filter_options={"col1": BLOOM_FILTER_OPTIONS},
+    )
+    options = plc.io.parquet.ParquetReaderOptions()
+    reader = HybridScanReader(extract_parquet_footer(buf.getvalue()), options)
+    row_groups = reader.all_row_groups(options)
+
+    for value, expected in [("str_7", [0]), ("str_990", [3]), ("absent", [])]:
+        options.set_filter(
+            Operation(
+                ASTOperator.EQUAL,
+                ColumnNameReference("col1"),
+                Literal(plc.Scalar.from_arrow(pa.scalar(value))),
+            )
+        )
+        bitsets = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+            plc.io.SourceInfo([buf]),
+            reader.bloom_filters_byte_ranges(row_groups, options),
+            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+            stream,
+        )
+        assert len(bitsets) == len(row_groups)
+        assert (
+            reader.filter_row_groups_with_bloom_filters(
+                bitsets, row_groups, options, stream
+            )
+            == expected
+        )
+
+
 def test_hybrid_scan_column_chunk_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,

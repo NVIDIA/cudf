@@ -3,7 +3,7 @@
 
 from libc.stdint cimport uint8_t
 from cuda.bindings.cyruntime cimport cudaStream_t
-from libcpp.memory cimport unique_ptr
+from libcpp.memory cimport shared_ptr, unique_ptr
 from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
@@ -32,6 +32,26 @@ cdef extern from * nogil:
     #include <cuda/stream>
     #include <cudf/io/parquet_io_utils.hpp>
 
+    struct bloom_filter_fetch {
+        std::shared_ptr<void> buffers;
+        std::vector<cudf::device_span<uint8_t const>> spans;
+    };
+
+    static bloom_filter_fetch cpp_fetch_bloom_filters_to_device(
+        cudf::io::datasource& datasource,
+        std::span<cudf::io::text::byte_range_info const> byte_ranges,
+        cudf::io::parquet::io_submission_policy policy,
+        cudaStream_t stream,
+        rmm::device_async_resource_ref mr)
+    {
+        // The buffers are `cuda::device_buffer`s, which Cython cannot name, so
+        // type-erase them into a `shared_ptr<void>` that keeps them alive.
+        auto [buffers, spans] = cudf::io::parquet::fetch_bloom_filters_to_device(
+            datasource, byte_ranges, policy, cuda::stream_ref{stream}, mr);
+        return {std::make_shared<decltype(buffers)>(std::move(buffers)),
+                std::move(spans)};
+    }
+
     static std::pair<std::vector<rmm::device_buffer>,
                      std::vector<cudf::device_span<uint8_t const>>>
     cpp_fetch_byte_ranges_to_device(
@@ -54,6 +74,18 @@ cdef extern from * nogil:
         return {std::move(buffers), std::move(spans)};
     }
     """
+    cdef cppclass bloom_filter_fetch:
+        shared_ptr[void] buffers
+        vector[device_span[const_uint8_t]] spans
+
+    bloom_filter_fetch cpp_fetch_bloom_filters_to_device(
+        datasource& source,
+        std_span[const_byte_range_info] byte_ranges,
+        io_submission_policy policy,
+        cudaStream_t stream,
+        device_async_resource_ref mr,
+    ) except +libcudf_exception_handler
+
     pair[vector[device_buffer], vector[device_span[const_uint8_t]]] \
         cpp_fetch_byte_ranges_to_device(
             datasource& source,

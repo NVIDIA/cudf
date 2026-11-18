@@ -71,7 +71,7 @@ The initial policy uses these thresholds:
 | Needs triage | More than 3 business days with the triage label |
 | Needs reviewer assignment | Immediately after becoming ready |
 | Waiting for first or another review | More than 3 business days |
-| Waiting for author | More than 7 calendar days |
+| Waiting for author | More than 14 calendar days without author activity; remind component lead |
 | Has approvals; inspect blockers | More than 2 business days since the earliest surviving approval |
 
 Business time accumulates Monday–Friday in UTC and excludes weekends, but
@@ -81,10 +81,21 @@ clocks; draft-to-ready and reopening transitions bound review waiting time.
 
 Human reviews exclude the author, GitHub Bot accounts, `[bot]` logins, and
 configured bot accounts. Comment-only reviews preserve previous decisions;
-dismissed decisions stop counting. A later author comment or later-dated
-commit after a changes-requested review leaves the handoff unclear unless an
-explicit label or re-request establishes it. Commit dates do not establish
-push timestamps.
+dismissed decisions stop counting. Changes-requested reviews count even when
+the reviewer was not explicitly requested. Author replies and revisions leave
+ownership with the author until explicit re-review requests establish the
+next handoff. A request to a different reviewer does not clear the original
+reviewer's requested changes. Independent reviewer cards remain visible.
+
+Author comments, inline replies, and attributed timeline activity reset the
+inactivity clock. When a changed head revision is attributed to the PR author,
+its first observation resets that clock; repeated observations do not. Commit
+dates do not establish push timestamps, and the first imported revision is
+not assumed to be new activity. Reviewer/bot activity and `updated_at` do not
+reset author inactivity. Without complete reply history the author still owns
+the action, but automated inactivity follow-up is suppressed.
+Until activity is observed after the handoff, the initial author handoff or
+first confirmed conflict observation supplies the clock's baseline.
 
 Drafts have their own queue and no inactivity threshold. Deferred work and
 explicit author handoffs require configured labels; both lists start empty
@@ -159,7 +170,7 @@ report retains its lifecycle classification and lists CI/conflict observations
 separately; the action planner determines the concrete work and owner.
 
 The conflict clock starts at the first confirmed observation and uses the
-7-calendar-day author threshold. Project metadata preserves this episode
+14-calendar-day author inactivity threshold. Project metadata preserves this episode
 across runs and temporarily unknown mergeability; approval dates are not
 conflict start dates. For offline replay across snapshots, pass a prior pilot
 run's `routing-history.json` using `actions.py --routing-history FILE`. A later
@@ -177,11 +188,21 @@ Identity keys are GitHub logins, matched case-insensitively.
 
 Optional `--history FILE` accepts a JSON object keyed by action key. Each
 record may contain `first_notified_at`, `last_notified_at`, and `escalated_at`.
-These must describe successful deliveries. The reminder proposal uses a
-3-business-day cooldown and escalates 7 calendar days after the first
-successful notification. Without a delivery record, escalation dates stay
-empty even for very old imported work. Owner and escalation mentions are
-consolidated when they identify the same person.
+These must describe successful deliveries. Reviewer/routing notifications
+use a 3-business-day cooldown and escalate 7 calendar days after the first
+successful notification; without a delivery record their escalation dates
+stay empty even for old imported work.
+
+Author-owned Respond and Resolve conflicts actions instead notify the
+component lead after strictly more than 14 calendar days without author
+activity, independently of previous notifications. The author remains assigned
+to the card. Last author activity and Escalate on fields expose that deadline.
+Lead follow-ups repeat after a 3-business-day cooldown. New author activity
+postpones follow-up for another 14 calendar days without changing the action
+key or reviewer responsibility. Owner and lead mentions are consolidated when
+they identify the same person.
+Only the lead's Slack mapping is required for author-inactivity follow-up;
+an external author without a mapping is identified by a GitHub profile link.
 
 ## Test Slack delivery in a DM
 

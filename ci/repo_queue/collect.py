@@ -118,6 +118,8 @@ def collect_item(github, repository, number):
             f"{root}/pulls/{number}/comments?per_page=100", paginate=True
         )
         sha = pr["head"]["sha"]
+        commit = github.get(f"{root}/commits/{sha}")
+        item["head_commit_author"] = (commit.get("author") or {}).get("login")
         for field, endpoint, key in [
             (
                 "check_runs",

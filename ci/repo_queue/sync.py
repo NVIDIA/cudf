@@ -67,6 +67,7 @@ def managed_body(data, previous=""):
         f"**Source:** {action['source']}",
         f"**Handoff evidence:** {action['handoff_evidence']}",
         f"**Waiting since:** {action['since'] or 'Unknown'}",
+        f"**Last author activity:** {action.get('last_author_activity_at') or 'Not applicable / unknown'}",
         "",
         "DM pilot: notifications go only to the primary contact. "
         "DM delivery history does not start production escalation clocks.",
@@ -88,7 +89,7 @@ def managed_body(data, previous=""):
 
 def action_record(action):
     # Live ages change every run; keep the durable identity and evidence instead.
-    return {
+    result = {
         key: deepcopy(action[key])
         for key in [
             "key",
@@ -106,6 +107,12 @@ def action_record(action):
             "uncertainty",
         ]
     }
+    if "author_inactivity_days" in action:
+        result["author_inactivity_days"] = action["author_inactivity_days"]
+        result["last_author_activity_at"] = action.get(
+            "last_author_activity_at"
+        )
+    return result
 
 
 def disposition(old, item, current, omitted, config):

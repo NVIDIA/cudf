@@ -153,7 +153,7 @@ class ReportTests(unittest.TestCase):
         request(data, "other", NOW)
         self.assertEqual(self.classify(data)["queue"], "Waiting for author")
 
-    def test_author_response_makes_handoff_unclear(self):
+    def test_author_response_retains_ownership_and_resets_inactivity(self):
         data = item()
         review(data, "CHANGES_REQUESTED")
         data["timeline"].append(
@@ -163,18 +163,24 @@ class ReportTests(unittest.TestCase):
                 "user": {"login": "author"},
             }
         )
-        self.assertEqual(self.classify(data)["queue"], "Unclear handoff")
+        row = self.classify(data)
+        self.assertEqual(row["queue"], "Waiting for author")
+        self.assertEqual(row["next_actor"], "@author")
+        self.assertEqual(row["since"], REVIEWED)
+        self.assertEqual(row["last_author_activity_at"], NOW)
+        self.assertEqual(row["age_days"], 0)
 
-    def test_inline_author_response_makes_handoff_unclear(self):
+    def test_inline_author_response_retains_ownership(self):
         data = item()
         review(data, "CHANGES_REQUESTED")
         data["review_comments"] = [
             {"created_at": NOW, "user": {"login": "author"}}
         ]
-        self.assertEqual(self.classify(data)["queue"], "Unclear handoff")
+        self.assertEqual(self.classify(data)["queue"], "Waiting for author")
+        self.assertEqual(self.classify(data)["last_author_activity_at"], NOW)
         del data["review_comments"]
         row = self.classify(data)
-        self.assertEqual(row["queue"], "Unclear handoff")
+        self.assertEqual(row["queue"], "Waiting for author")
         self.assertTrue(row["uncertainty"])
 
     def test_later_commit_does_not_establish_push_or_rereview_clock(self):
@@ -186,7 +192,9 @@ class ReportTests(unittest.TestCase):
                 "committer": {"date": NOW},
             }
         )
-        self.assertEqual(self.classify(data)["queue"], "Unclear handoff")
+        row = self.classify(data)
+        self.assertEqual(row["queue"], "Waiting for author")
+        self.assertEqual(row["last_author_activity_at"], REVIEWED)
 
     def test_comment_does_not_revoke_approval_but_dismissal_does(self):
         data = item()

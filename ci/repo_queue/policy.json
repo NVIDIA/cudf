@@ -10,7 +10,7 @@
     "Needs reviewer assignment": {"days": 0, "business_days": true},
     "Waiting for first review": {"days": 3, "business_days": true},
     "Waiting for another review": {"days": 3, "business_days": true},
-    "Waiting for author": {"days": 7, "business_days": false},
+    "Waiting for author": {"days": 14, "business_days": false},
     "Has approvals; inspect blockers": {"days": 2, "business_days": true}
   },
   "component_owners": {

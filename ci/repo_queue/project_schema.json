@@ -28,6 +28,7 @@
       {"name": "Unknown age", "color": "GRAY"}
     ]},
     {"name": "Waiting since", "data_type": "DATE"},
+    {"name": "Last author activity", "data_type": "DATE"},
     {"name": "Follow-up", "data_type": "DATE"},
     {"name": "Escalate on", "data_type": "DATE"},
     {"name": "Source", "data_type": "TEXT"},
@@ -35,7 +36,7 @@
     {"name": "Slack thread", "data_type": "TEXT"},
     {"name": "Action key", "data_type": "TEXT"}
   ],
-  "visible_fields": ["Title", "Assignees", "Status", "Next action", "Component", "Attention", "Waiting since", "Follow-up", "Escalate on", "Source"],
+  "visible_fields": ["Title", "Assignees", "Status", "Next action", "Component", "Attention", "Waiting since", "Last author activity", "Follow-up", "Escalate on", "Source"],
   "views": [
     {"name": "Outstanding actions", "layout": "TABLE_LAYOUT", "filter": "-status:Complete", "adopt_default": "View 1"},
     {"name": "My actions", "layout": "TABLE_LAYOUT", "filter": "assignee:@me -status:Complete"},

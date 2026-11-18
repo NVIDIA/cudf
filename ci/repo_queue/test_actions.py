@@ -8,7 +8,13 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-from actions import add_business_days, notification_state, preview, slack_text
+from actions import (
+    add_business_days,
+    notification_recipients,
+    notification_state,
+    preview,
+    slack_text,
+)
 from test_report import NOW, POLICY, REQUESTED, REVIEWED, item, request, review
 
 CONFIG = json.loads(Path(__file__).with_name("pilot.json").read_text())
@@ -31,6 +37,140 @@ def snapshot(data):
 
 
 class ActionTests(unittest.TestCase):
+    def test_unrequested_changes_reviewer_keeps_author_owner_after_reply(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED", who="unsolicited")
+        first = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        data["timeline"].append(
+            {
+                "event": "commented",
+                "created_at": NOW,
+                "user": {"login": "author"},
+            }
+        )
+        action = preview(
+            snapshot(data), POLICY, CONFIG, routing_history=[first]
+        )["actions"][0]
+        self.assertEqual(
+            (action["kind"], action["owner"]), ("Respond", "author")
+        )
+        self.assertEqual(action["key"], first["key"])
+        self.assertEqual(action["last_author_activity_at"], NOW)
+        self.assertEqual(action["notification"]["kind"], "none")
+
+    def test_author_inactivity_escalates_after_strictly_more_than_fourteen_days(
+        self,
+    ):
+        action = {
+            "key": "key",
+            "last_author_activity_at": "2026-11-01T12:00:00Z",
+            "author_inactivity_days": 14,
+        }
+        self.assertEqual(
+            notification_state(action, CONFIG, {}, "2026-11-15T12:00:00Z")[
+                "kind"
+            ],
+            "none",
+        )
+        result = notification_state(action, CONFIG, {}, "2026-11-15T12:00:01Z")
+        self.assertEqual(result["kind"], "escalation")
+        history = {
+            "key": {
+                "first_notified_at": "2026-11-15T12:00:01Z",
+                "last_notified_at": "2026-11-15T12:00:01Z",
+                "escalated_at": "2026-11-15T12:00:01Z",
+            }
+        }
+        self.assertEqual(
+            notification_state(
+                action, CONFIG, history, "2026-11-16T12:00:00Z"
+            )["kind"],
+            "none",
+        )
+        self.assertEqual(
+            notification_state(
+                action, CONFIG, history, "2026-11-19T12:00:00Z"
+            )["kind"],
+            "reminder",
+        )
+        action["last_author_activity_at"] = "2026-11-20T12:00:00Z"
+        self.assertEqual(
+            notification_state(
+                action, CONFIG, history, "2026-11-25T12:00:00Z"
+            )["kind"],
+            "none",
+        )
+        self.assertEqual(
+            notification_state(
+                action, CONFIG, history, "2026-12-05T12:00:00Z"
+            )["kind"],
+            "escalation",
+        )
+
+    def test_reviewer_and_bot_activity_do_not_reset_author_inactivity(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        for who in ["reviewer", "robot[bot]"]:
+            data["timeline"].append(
+                {
+                    "event": "commented",
+                    "created_at": NOW,
+                    "user": {"login": who},
+                }
+            )
+        saved = snapshot(data)
+        saved["collected_at"] = "2026-11-21T12:00:00Z"
+        action = preview(saved, POLICY, CONFIG)["actions"][0]
+        self.assertEqual(action["last_author_activity_at"], REVIEWED)
+        self.assertEqual(action["notification"]["kind"], "escalation")
+        self.assertIn("<@U01PXPJ5741>", action["slack_preview"])
+        self.assertIn("author retains ownership", action["slack_preview"])
+        self.assertEqual(notification_recipients(action, CONFIG), ["vyasr"])
+        self.assertIn(
+            "<https://github.com/author|@author>", action["slack_preview"]
+        )
+
+    def test_new_author_head_is_activity_once_at_first_observation(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        first = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        data["pull_request"]["head"]["sha"] = "new-head"
+        data["head_commit_author"] = "author"
+        saved = snapshot(data)
+        saved["collected_at"] = "2026-11-21T12:00:00Z"
+        action = preview(saved, POLICY, CONFIG, routing_history=[first])[
+            "actions"
+        ][0]
+        self.assertEqual(action["key"], first["key"])
+        self.assertEqual(
+            action["last_author_activity_at"], saved["collected_at"]
+        )
+        later = saved["collected_at"]
+        saved["collected_at"] = "2026-11-25T12:00:00Z"
+        again = preview(saved, POLICY, CONFIG, routing_history=[action])[
+            "actions"
+        ][0]
+        self.assertEqual(again["last_author_activity_at"], later)
+        self.assertFalse(again["overdue"])
+        data["head_commit_author"] = "robot[bot]"
+        other = preview(saved, POLICY, CONFIG, routing_history=[first])[
+            "actions"
+        ][0]
+        self.assertEqual(other["last_author_activity_at"], REVIEWED)
+
+    def test_incomplete_reply_history_preserves_owner_but_prevents_escalation(
+        self,
+    ):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        del data["review_comments"]
+        saved = snapshot(data)
+        saved["collected_at"] = "2026-12-05T12:00:00Z"
+        action = preview(saved, POLICY, CONFIG)["actions"][0]
+        self.assertEqual(action["owner"], "author")
+        self.assertIsNone(action["overdue"])
+        self.assertEqual(action["notification"]["kind"], "none")
+
     def test_confirmed_conflict_routes_concrete_action_to_author(self):
         data = python_item()
         review(data, "APPROVED")
@@ -90,7 +230,7 @@ class ActionTests(unittest.TestCase):
         data["pull_request"]["mergeable"] = False
         first = preview(snapshot(data), POLICY, CONFIG)["actions"]
         later = snapshot(data)
-        later["collected_at"] = "2026-11-25T12:00:00Z"
+        later["collected_at"] = "2026-12-02T12:00:00Z"
         for mergeable in [False, None]:
             later["items"][0]["pull_request"]["mergeable"] = mergeable
             actions = preview(later, POLICY, CONFIG, routing_history=first)[

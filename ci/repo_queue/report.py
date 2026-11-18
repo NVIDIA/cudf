@@ -128,6 +128,27 @@ def human_reviews(item, policy):
     )
 
 
+def author_activity_since(item, since):
+    author = item["issue"]["user"]["login"].casefold()
+    dates = [since] if since else []
+    for event in [
+        *item["timeline"],
+        *item.get("review_comments", []),
+        *item.get("reviews", []),
+    ]:
+        at = event.get("created_at") or event.get("submitted_at")
+        if (
+            at
+            and (event.get("user") or event.get("actor") or {})
+            .get("login", "")
+            .casefold()
+            == author
+            and (not since or parse_time(at) > parse_time(since))
+        ):
+            dates.append(at)
+    return max(dates, key=parse_time) if dates else None
+
+
 def observed_blockers(item):
     pr = item.get("pull_request")
     if not pr:
@@ -286,59 +307,18 @@ def classify(item, policy, now):
                 key=parse_time,
             )
             author = issue["user"]["login"].casefold()
-            responses = [
-                event
-                for event in events
-                if event["event"] == "commented"
-                and (event.get("user") or {}).get("login", "").casefold()
-                == author
-                and parse_time(event["created_at"]) > parse_time(since)
-            ]
-            responses.extend(
-                comment
-                for comment in item.get("review_comments", [])
-                if (comment.get("user") or {}).get("login", "").casefold()
-                == author
-                and parse_time(comment["created_at"]) > parse_time(since)
-            )
-            responses.extend(
-                review
-                for review in item["reviews"]
-                if (review.get("user") or {}).get("login", "").casefold()
-                == author
-                and review.get("submitted_at")
-                and parse_time(review["submitted_at"]) > parse_time(since)
-            )
-            # Commit dates cannot establish when a branch was pushed.
-            commits = [
-                event
-                for event in item["timeline"]
-                if event.get("event") == "committed"
-                and event.get("committer", {}).get("date")
-                and parse_time(event["committer"]["date"]) > parse_time(since)
-            ]
             if "review_comments" not in item:
                 row["uncertainty"].append(
                     "Inline author replies were not collected; "
-                    "author handoff cannot be established"
+                    "author inactivity is unknown"
                 )
-            if responses or commits or "review_comments" not in item:
-                row["evidence"].append(
-                    {
-                        "reason": "Changes-requested review needs an "
-                        "explicit handoff after author activity or "
-                        "incomplete reply history",
-                        "url": unaddressed[0]["html_url"],
-                    }
-                )
-            else:
-                assign(
-                    "Waiting for author",
-                    "@" + issue["user"]["login"],
-                    since,
-                    "Effective human changes-requested review",
-                    unaddressed[0]["html_url"],
-                )
+            assign(
+                "Waiting for author",
+                "@" + author,
+                since,
+                "Effective human changes-requested review; explicit re-review request required for handoff",
+                unaddressed[0]["html_url"],
+            )
         elif requests:
             dates = [since for _, _, since in requests]
             since = min(dates, key=parse_time) if all(dates) else None
@@ -404,10 +384,19 @@ def classify(item, policy, now):
             "business days" if threshold["business_days"] else "calendar days"
         )
         if row["since"]:
-            row["age_days"] = elapsed_days(
-                row["since"], now, threshold["business_days"]
-            )
-            row["overdue"] = row["age_days"] > threshold["days"]
+            age_since = row["since"]
+            if row["queue"] == "Waiting for author":
+                age_since = (
+                    author_activity_since(item, row["since"])
+                    if "review_comments" in item
+                    else None
+                )
+                row["last_author_activity_at"] = age_since
+            if age_since:
+                row["age_days"] = elapsed_days(
+                    age_since, now, threshold["business_days"]
+                )
+                row["overdue"] = row["age_days"] > threshold["days"]
         else:
             row["uncertainty"].append(
                 "Waiting-since event unavailable; aging is unknown"
@@ -505,7 +494,12 @@ def render_markdown(report):
                     "Unknown"
                     if row["age_days"] is None
                     else (
-                        f"{row['since']} / {row['age_days']:.1f} {row['clock']}"
+                        f"{row.get('last_author_activity_at') or row['since']} / {row['age_days']:.1f} {row['clock']}"
+                        + (
+                            " idle"
+                            if row.get("last_author_activity_at")
+                            else ""
+                        )
                         + ("; **overdue**" if row["overdue"] else "")
                     )
                 )

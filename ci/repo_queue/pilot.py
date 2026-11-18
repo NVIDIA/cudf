@@ -16,7 +16,7 @@ import uuid
 from copy import deepcopy
 from pathlib import Path
 
-from actions import preview
+from actions import notification_recipients, preview
 from collect import GitHub, collect_item, timestamp
 from project import read_project
 from slack_dm_test import payload, post, recipient
@@ -221,10 +221,20 @@ def main():
             "sent": [],
         }
         if args.send_dm:
-            if dm_plan["missing_slack_mappings"]:
+            mapped = {login.casefold() for login in config["slack"]["users"]}
+            missing = {
+                login
+                for action in dm_plan["actions"]
+                if not cards.cards[action["key"]]["item"]["isArchived"]
+                and cards.cards[action["key"]]["values"].get("Status")
+                not in {"Complete", "Deferred"}
+                for login in notification_recipients(action, config)
+                if login.casefold() not in mapped
+            }
+            if missing:
                 raise ValueError(
                     "Resolve Slack mappings before sending: "
-                    + ", ".join(dm_plan["missing_slack_mappings"])
+                    + ", ".join(sorted(missing))
                 )
             summary["sent"] = send_notifications(
                 cards, dm_plan, route, member, token, journal, journal_path

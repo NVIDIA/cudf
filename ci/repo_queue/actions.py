@@ -13,6 +13,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from report import (
+    author_activity_since,
     classify,
     elapsed_days,
     escape,
@@ -58,6 +59,34 @@ def add_business_days(start, days):
 
 def notification_state(action, config, history, now):
     """Derive a proposal without recording an attempted delivery as success."""
+    if "author_inactivity_days" in action:
+        since = action.get("last_author_activity_at")
+        if not since:
+            return {"kind": "none", "follow_up": None, "escalate_on": None}
+        deadline = parse_time(since) + timedelta(
+            days=action["author_inactivity_days"]
+        )
+        record = history.get(action["key"], {})
+        escalated = record.get("escalated_at")
+        last = record.get("last_notified_at")
+        follow_up = (
+            add_business_days(
+                last, config["follow_up"]["repeat_after_business_days"]
+            )
+            if last and escalated and parse_time(escalated) > parse_time(since)
+            else deadline.isoformat()
+        )
+        kind = "none"
+        if parse_time(now) > deadline:
+            if not escalated or parse_time(escalated) <= parse_time(since):
+                kind = "escalation"
+            elif follow_up and parse_time(now) >= parse_time(follow_up):
+                kind = "reminder"
+        return {
+            "kind": kind,
+            "follow_up": follow_up,
+            "escalate_on": deadline.isoformat(),
+        }
     if not action["overdue"]:
         return {"kind": "none", "follow_up": None, "escalate_on": None}
     record = history.get(action["key"], {})
@@ -325,25 +354,86 @@ def candidates(item, config, policy, now, routing_history=None):
     return result, None
 
 
+def author_inactivity(action, item, policy, now, routing_history):
+    previous = next(
+        (old for old in routing_history or [] if old["key"] == action["key"]),
+        None,
+    )
+    dates = [author_activity_since(item, action["since"]) or now]
+    if previous and previous.get("last_author_activity_at"):
+        dates.append(previous["last_author_activity_at"])
+    if (
+        previous
+        and previous.get("source_sha")
+        and previous.get("source_sha") != action["source_sha"]
+        and (item.get("head_commit_author") or "").casefold()
+        == action["owner"].casefold()
+    ):
+        # First observation is reliable; a commit's authored date is not its push time.
+        dates.append(now)
+    since = max(dates, key=parse_time)
+    complete = "review_comments" in item and bool(action["since"])
+    action["last_author_activity_at"] = since if complete else None
+    days = policy["thresholds"]["Waiting for author"]["days"]
+    action["author_inactivity_days"] = days
+    age = elapsed_days(since, now) if complete else None
+    action.update(
+        age_days=age, overdue=age > days if age is not None else None
+    )
+    action["attention"] = (
+        "Unknown age"
+        if age is None
+        else "Overdue"
+        if age > days
+        else "On track"
+    )
+    action["project_fields"]["Attention"] = action["attention"]
+    action["project_fields"]["Last author activity"] = (
+        parse_time(since).date().isoformat() if complete else None
+    )
+    if action["kind"] == "Respond":
+        action["description"] = (
+            "Address the requested changes and explicitly request re-review when ready"
+        )
+
+
+def notification_recipients(action, config):
+    kind = action["notification"]["kind"]
+    if kind == "none":
+        return []
+    if "author_inactivity_days" in action:
+        return [config["escalation_contact"]]
+    return [
+        action["owner"],
+        *([config["escalation_contact"]] if kind == "escalation" else []),
+    ]
+
+
 def slack_text(action, config, project_state):
-    def contact(login):
+    def contact(login, required=True):
         users = {
             name.casefold(): member
             for name, member in config["slack"]["users"].items()
         }
         member = users.get(login.casefold())
-        return (
-            f"<@{member}>"
-            if member
-            else f"[Slack mapping needed: GitHub {login}]"
-        )
+        if member:
+            return f"<@{member}>"
+        if not required:
+            return f"<https://github.com/{login}|@{login}>"
+        return f"[Slack mapping needed: GitHub {login}]"
 
-    mention = contact(action["owner"])
+    mention = contact(
+        action["owner"], required="author_inactivity_days" not in action
+    )
     if (
         action["notification"]["kind"] == "escalation"
-        and action["owner"].casefold()
-        != config["escalation_contact"].casefold()
-    ):
+        or (
+            "author_inactivity_days" in action
+            and action["notification"]["kind"] == "reminder"
+        )
+    ) and action["owner"].casefold() != config[
+        "escalation_contact"
+    ].casefold():
         mention += " " + contact(config["escalation_contact"])
     base = config["project"]["url"]
     views = {
@@ -363,7 +453,16 @@ def slack_text(action, config, project_state):
     ]
     if action["since"]:
         lines.append(f"Waiting since {action['since']}.")
-    if kind == "escalation":
+    if "author_inactivity_days" in action:
+        if action.get("last_author_activity_at"):
+            lines.append(
+                f"Last author activity: {action['last_author_activity_at']}."
+            )
+        if kind in {"escalation", "reminder"}:
+            lines.append(
+                f"More than {action['author_inactivity_days']} calendar days without author activity; component lead, please follow up. The author retains ownership."
+            )
+    elif kind == "escalation":
         lines.append(
             "One week has elapsed since the first notification without the required action."
         )
@@ -402,6 +501,18 @@ def preview(
             )
     missing = set()
     for action in actions:
+        if action["kind"] in {"Respond", "Resolve conflicts"}:
+            author_inactivity(
+                action,
+                next(
+                    item
+                    for item in snapshot["items"]
+                    if item["issue"]["html_url"] == action["source"]
+                ),
+                policy,
+                now,
+                routing_history,
+            )
         action["notification"] = notification_state(
             action, config, history or {}, now
         )
@@ -440,8 +551,9 @@ def render_markdown(plan):
         "Candidates come from the saved sample, not the complete Python backlog. "
         "Unlabeled issues require component classification before inclusion.",
         "",
-        "The escalation clock has not started for unsent notifications. "
-        "Slack mappings must be resolved before delivery.",
+        "Reviewer/routing escalation clocks start at successful notification. "
+        "Author follow-up deadlines use inactivity even before notification. "
+        "Required Slack mappings must be resolved before delivery.",
         "",
         "| Action | Owner | Waiting since | Attention | Notification proposal |",
         "| --- | --- | --- | --- | --- |",

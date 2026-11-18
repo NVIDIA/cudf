@@ -29,7 +29,7 @@ remain independent. CI failures alone do not establish author responsibility;
 unknown requirements and ownership still go to the primary contact.
 
 Conflict clocks start when automation first confirms the conflict, using the
-7-calendar-day author threshold. They are not backdated to an approval or a
+14-calendar-day author inactivity threshold. They are not backdated to an approval or a
 commit. Refreshes preserve the clock, including while GitHub temporarily
 reports unknown mergeability. A later confirmation of no conflicts completes
 that action without claiming the PR satisfies other merge requirements.
@@ -45,16 +45,35 @@ superseded, or made unnecessary by the source item closing.
 GitHub activity is the response channel for the pilot. Slack carries
 notifications and links to these views; Slack replies do not change state.
 Ambiguous discussion is routed for clarification. Labels, bot updates, and
-unrelated edits do not restart an action's clock.
+unrelated edits do not restart an action's handoff clock.
+
+After a changes-requested review, the author keeps ownership until explicitly
+requesting re-review. This includes reviews from people who were not originally
+requested. Author replies and revisions count as activity, without implying
+a reviewer handoff. A request to another reviewer does not clear outstanding
+requested changes from the original reviewer.
+
+For author-owned work, notify the component lead after **more than 14 calendar
+days without author activity**, while keeping the author assigned. The clock
+uses author comments/replies and other attributed activity; a newly observed
+author-attributed head revision counts at its first observation. Bot activity,
+reviewer comments, and generic PR update timestamps do not reset this clock.
+The **Last author activity** and **Escalate on** fields show the activity time
+and follow-up deadline. New author activity postpones the lead follow-up.
+Until activity is observed after the handoff, the initial author handoff (or
+first confirmed conflict observation) supplies the clock's baseline.
 
 Initial thresholds are 3 business days for triage/review, immediate routing
-for a ready PR without reviewers, 7 calendar days for author response, and
+for a ready PR without reviewers, 14 calendar days of author inactivity, and
 2 business days to inspect a PR with approvals. Business days currently
 exclude weekends in UTC and do not account for holidays.
 
-After the initial Slack notification, repeat after 3 business days and
+For reviewer/routing actions, after the initial Slack notification, repeat after 3 business days and
 escalate to `vyasr` after 7 calendar days if the action remains outstanding.
-Escalation starts from successful notification, not from importing old work.
+These reviewer/routing escalation clocks start from successful notification,
+not from importing old work. Author-owned actions use the activity-based
+14-day lead-follow-up rule above, regardless of whether notifications were
+previously sent. Their follow-up reminders repeat after 3 business days.
 If the contact and escalation recipient are the same person, consolidate
 their notification rather than sending two mentions.
 

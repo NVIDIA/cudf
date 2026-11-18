@@ -130,6 +130,38 @@ class FakeGitHub:
 
 
 class SyncTests(unittest.TestCase):
+    def test_author_activity_updates_clock_without_completing_or_reassigning_card(
+        self,
+    ):
+        self.data["pull_request"]["requested_reviewers"] = []
+        review(self.data, "CHANGES_REQUESTED", who="unsolicited")
+        cards, plan = self.sync()
+        key = plan["actions"][0]["key"]
+        self.data["timeline"].append(
+            {
+                "event": "commented",
+                "created_at": NOW,
+                "user": {"login": "author"},
+            }
+        )
+        cards, plan = self.sync()
+        self.assertEqual(len(cards.cards), 1)
+        self.assertEqual(plan["actions"][0]["key"], key)
+        self.assertEqual(
+            cards.cards[key]["data"]["action"]["last_author_activity_at"], NOW
+        )
+        self.assertEqual(cards.cards[key]["data"]["action"]["owner"], "author")
+        self.assertEqual(
+            cards.cards[key]["values"]["Status"], "Awaiting action"
+        )
+        request(self.data, "unsolicited", NOW)
+        cards, plan = self.sync()
+        self.assertEqual(cards.cards[key]["values"]["Status"], "Complete")
+        self.assertEqual(
+            [(a["kind"], a["owner"]) for a in plan["actions"]],
+            [("Review", "unsolicited")],
+        )
+
     def setUp(self):
         clock = patch("pilot.timestamp", return_value=NOW)
         clock.start()

@@ -78,6 +78,8 @@ class CollectorTests(unittest.TestCase):
                 return issue
             if endpoint == "repos/NVIDIA/cudf/pulls/1":
                 return pr
+            if endpoint == "repos/NVIDIA/cudf/commits/head":
+                return {"author": {"login": "author"}}
             if endpoint.endswith("/comments?per_page=100"):
                 self.assertTrue(kwargs["paginate"])
                 return [reply]
@@ -86,6 +88,7 @@ class CollectorTests(unittest.TestCase):
         with patch.object(github, "get", side_effect=response):
             result = collect_item(github, "NVIDIA/cudf", 1)
         self.assertEqual(result["review_comments"], [reply])
+        self.assertEqual(result["head_commit_author"], "author")
         self.assertEqual(result["warnings"], [])
 
 

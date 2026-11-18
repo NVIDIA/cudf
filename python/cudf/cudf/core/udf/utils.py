@@ -10,13 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 import cachetools
 import cupy as cp
-import llvmlite.binding as ll
 import numpy as np
 from cuda.bindings import runtime
 from numba_cuda_mlir import cuda, models
 from numba_cuda_mlir.models import register_model
 from numba_cuda_mlir.numba_cuda import types as nb_types
-from numba_cuda_mlir.numba_cuda.descriptor import cuda_target
 from numba_cuda_mlir.numba_cuda.np import numpy_support
 from numba_cuda_mlir.numba_cuda.typing.typeof import typeof
 from numba_cuda_mlir.types import CPointer, Record, Tuple, int64, void
@@ -310,28 +308,20 @@ def _make_free_string_kernel():
     return free_mlir_string_array
 
 
-# The only supported data layout in NVVM.
-# See: https://docs.nvidia.com/cuda/nvvm-ir-spec/index.html?#data-layout
-_nvvm_data_layout = (
-    "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-"
-    "i128:128:128-f32:32:32-f64:64:64-v16:16:16-v32:32:32-"
-    "v64:64:64-v128:128:128-n16:32:64"
-)
-
-
 def _get_extensionty_size(ty):
     """
     Return the size of an extension type in bytes.
-    MLIR-path types (MLIRStringType, GroupType) define
-    _extensionty_size and are handled here without using the Numba/CUDA
-    data model.
+
+    Extension types (e.g. MLIRStringType, CooperativeArrayType) must define
+    ``_extensionty_size`` to match their device struct layout.
     """
     size = getattr(type(ty), "_extensionty_size", None)
-    if size is not None:
-        return size
-    target_data = ll.create_target_data(_nvvm_data_layout)
-    llty = cuda_target.target_context.data_model_manager[ty].get_value_type()
-    return llty.get_abi_size(target_data)
+    if size is None:
+        raise TypeError(
+            f"{type(ty).__name__} must define _extensionty_size to be used "
+            "as a UDF extension type"
+        )
+    return size
 
 
 def initfunc(f):

@@ -205,20 +205,19 @@ async def concatenate_node(
                     chunks.append(TableChunk.from_message(msg, br=context.br()))
 
                 if chunks:
-                    chunks, extra = await make_table_chunks_available_or_wait(
-                        context,
-                        chunks,
-                        reserve_extra=(
-                            0
-                            if len(chunks) == 1
-                            else sum(chunk.data_alloc_size() for chunk in chunks)
-                        ),
-                        net_memory_delta=0,
-                    )
-                    with opaque_memory_usage(extra):
-                        if len(chunks) == 1:
-                            (output_chunk,) = chunks
-                        else:
+                    if len(chunks) == 1:
+                        (output_chunk,) = chunks
+                        del chunks
+                    else:
+                        chunks, extra = await make_table_chunks_available_or_wait(
+                            context,
+                            chunks,
+                            reserve_extra=sum(
+                                chunk.data_alloc_size() for chunk in chunks
+                            ),
+                            net_memory_delta=0,
+                        )
+                        with opaque_memory_usage(extra):
                             df = _concat(
                                 *(
                                     DataFrame.from_table(
@@ -237,8 +236,7 @@ async def concatenate_node(
                                 exclusive_view=True,
                                 br=context.br(),
                             )
-                            del df
-                        del chunks
+                            del df, chunks
                     await send_chunk(
                         context, ch_out, output_chunk, seq_num, tracer=tracer
                     )

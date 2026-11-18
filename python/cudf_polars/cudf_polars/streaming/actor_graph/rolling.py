@@ -219,6 +219,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                 self.policy.validate_chunk(chunk)
                 if not staged.owned:
                     history.append(chunk)
+                    del staged, chunk
                 elif chunk.num_rows == 0:
                     result = await evaluate_chunk(
                         self.context,
@@ -227,6 +228,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                         ir_context=self.ir_context,
                         already_available=True,
                     )
+                    del staged, chunk
                     await send_chunk(
                         self.context,
                         ch_out,
@@ -254,7 +256,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                     )
                     if retained is not None:
                         history.append(retained)
-                    del cursor, retained
+                    del cursor, retained, staged, chunk
                     await send_chunk(
                         self.context,
                         ch_out,
@@ -263,7 +265,6 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
                         tracer=tracer,
                     )
                     output_sequence_number += 1
-                del staged, chunk
                 if future:
                     staged = future.popleft()
                 else:

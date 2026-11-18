@@ -823,7 +823,7 @@ class _OutputPartitionBuffer:
                         piece_pid,
                         _copy_to_owned_chunk(piece, stream, self.context.br()),
                     )
-            del chunk, table
+            del chunk, table, piece
         return self.pending.pop(pid, None)
 
     async def assert_input_drained(self) -> None:

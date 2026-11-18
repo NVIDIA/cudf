@@ -468,6 +468,7 @@ async def _broadcast_join_large_chunk(
                 context=ir_context,
             )
             join_results.append(result)
+            del result
 
         df = _concat(*join_results, context=ir_context)
         del join_results

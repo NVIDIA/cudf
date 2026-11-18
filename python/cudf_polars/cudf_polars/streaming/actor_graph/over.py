@@ -639,11 +639,14 @@ async def _reassemble_input_chunks(
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
-            # The sorted copy replaces the unsorted input.
+            # The sorted copy replaces the unsorted input. The sort also
+            # builds a row index column of int32 (cudf::size_type), which
+            # is 4 bytes per row.
             with opaque_memory_usage(
                 await reserve_memory(
                     context,
-                    size=sum(col.device_buffer_size() for col in tbl.columns()),
+                    size=sum(col.device_buffer_size() for col in tbl.columns())
+                    + tbl.num_rows() * 4,
                     net_memory_delta=0,
                 )
             ):

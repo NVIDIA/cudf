@@ -349,7 +349,7 @@ class LocalRepartitioner:
         for partition_id in self._global_shuffle.local_partitions():
             yield from self._global_shuffle.extract_pieces(partition_id)
 
-    async def _unpack_chunk(self, piece: Any, stream: Stream) -> TableChunk | None:
+    async def _unpack_table(self, piece: Any, stream: Stream) -> plc.Table | None:
         # TODO: batch pieces up to target_partition_size before unpacking
         pieces = [piece]
         reservation = await reserve_memory(
@@ -362,11 +362,7 @@ class LocalRepartitioner:
         table = py_unpack_and_concat(
             pieces, stream=stream, br=self._br, reservation=reservation
         )
-        if table.num_rows() == 0:
-            return None
-        return TableChunk.from_pylibcudf_table(
-            table, stream, exclusive_view=True, br=self._br
-        )
+        return None if table.num_rows() == 0 else table
 
     async def repartition_by_hash(
         self, *, columns_to_hash: tuple[int, ...], stream: Stream
@@ -383,10 +379,14 @@ class LocalRepartitioner:
         """
         async with self._local_shuffle.inserting() as inserter:
             for piece in self._iter_pieces():
-                chunk = await self._unpack_chunk(piece, stream)
-                if chunk is not None:
+                table = await self._unpack_table(piece, stream)
+                if table is not None:
+                    chunk = TableChunk.from_pylibcudf_table(
+                        table, stream, exclusive_view=True, br=self._br
+                    )
+                    del table
                     await inserter.insert_hash(chunk, columns_to_hash)
-                del chunk
+                    del chunk
 
     async def repartition_by_index(
         self,
@@ -411,10 +411,10 @@ class LocalRepartitioner:
         """
         async with self._local_shuffle.inserting() as inserter:
             for piece in self._iter_pieces():
-                chunk = await self._unpack_chunk(piece, stream)
-                if chunk is None:
+                table = await self._unpack_table(piece, stream)
+                if table is None:
                     continue
-                cols = chunk.table_view().columns()
+                cols = table.columns()
                 payload = TableChunk.from_pylibcudf_table(
                     plc.Table(
                         [
@@ -434,7 +434,7 @@ class LocalRepartitioner:
                     br=self._br,
                 )
                 await inserter.insert_index(payload, partition_map)
-                del cols, chunk, payload, partition_map
+                del cols, table, payload, partition_map
 
     def local_partitions(self) -> list[int]:
         """Return the local partition IDs."""

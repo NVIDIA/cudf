@@ -320,6 +320,11 @@ def test_validate_rank_local_cpu_compute(monkeypatch: pytest.MonkeyPatch) -> Non
     config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
     assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.NEVER
 
+    with monkeypatch.context() as m:
+        m.setenv("CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE", "always")
+        config = ConfigOptions.from_polars_engine(pl.GPUEngine(executor="streaming"))
+        assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.ALWAYS
+
     config = ConfigOptions.from_polars_engine(
         pl.GPUEngine(
             executor="streaming",

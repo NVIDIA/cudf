@@ -397,6 +397,14 @@ def test_select_matches_gpu(
     assert targets <= cpu_exprs
 
 
+def test_col_reads_regex_shaped_name():
+    # pl.col reads "^i$" as a regex matching "i", so check that the
+    # conversion reads the column named "^i$".
+    df = pl.DataFrame({"i": [1, 2], "^i$": [10, 20]})
+    got = df.select(cpu_evaluate_module.expr_to_polars(expr.Col(_I64, "^i$")))
+    assert_frame_equal(got, pl.DataFrame({"^i$": [10, 20]}))
+
+
 def test_float_to_string_stays_on_gpu(edge_cases, streaming_engine_factory, cpu_calls):
     # libcudf formats floats with a fixed number of digits, unlike Polars.
     q = edge_cases.select(pl.col("f").cast(pl.String))

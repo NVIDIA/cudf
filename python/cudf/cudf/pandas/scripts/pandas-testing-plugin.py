@@ -1390,7 +1390,6 @@ NODEIDS_THAT_FAIL = {
     "tests/groupby/test_missing.py::test_indices_with_missing": "TODO: Add a reason for failure",
     "tests/groupby/test_reductions.py::test_basic_aggregations[float32]": "AssertionError: Attributes of Series are different",
     "tests/groupby/test_reductions.py::test_basic_aggregations[int32]": "AssertionError: Attributes of Series are different",
-    "tests/groupby/test_reductions.py::test_groupby_mean_no_overflow": "TODO: Add a reason for failure",
     "tests/groupby/test_reductions.py::test_groupby_sum_mincount_boolean[0]": "TODO: Add a reason for failure",
     "tests/groupby/test_reductions.py::test_mean_numeric_only_validates_bool": "Failed: DID NOT RAISE <class 'ValueError'>",
     "tests/groupby/test_reductions.py::test_multifunc_skipna[True-prod-values3-float64-float64]": "cudf returns NA for an all-null prod; pandas returns the empty-product identity 1.0 (min_count/empty-reduction semantics, not skipna)",

@@ -153,7 +153,7 @@ jobs:
     with:
       build_type: ${{ inputs.build_type || 'branch' }}
       matrix_name: docs-build
-      matrix_type: nightly
+      matrix_type: python-3-15-nightly
   docs-build:
     if: github.ref_type == 'branch'
     needs: [docs-build-matrix, python-build, python-build-noarch]

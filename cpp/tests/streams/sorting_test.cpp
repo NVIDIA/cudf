@@ -135,6 +135,12 @@ TEST_F(SortingTest, TopK)
   cudf::test::fixed_width_column_wrapper<int32_t> const input{10, 20, 30, 40, 50};
   cudf::top_k(input, 2, cudf::order::ASCENDING, stream);
   cudf::top_k_order(input, 2, cudf::order::ASCENDING, stream);
+  cudf::test::fixed_width_column_wrapper<int32_t> const nullable{{10, 20, 30, 40, 50},
+                                                                 {1, 0, 1, 1, 0}};
+  cudf::top_k(nullable, 2, cudf::order::ASCENDING, stream);
+  cudf::top_k_order(nullable, 4, cudf::order::ASCENDING, stream);
+  cudf::test::fixed_width_column_wrapper<double> const floating_point{1.0, -0.0, 3.0, 0.0, 2.0};
+  cudf::top_k(floating_point, 2, cudf::order::ASCENDING, stream);
   cudf::test::fixed_width_column_wrapper<int32_t> const offsets{0, 5};
   cudf::segmented_top_k(input, offsets, 2, cudf::order::ASCENDING, stream);
   cudf::segmented_top_k_order(input, offsets, 2, cudf::order::ASCENDING, stream);

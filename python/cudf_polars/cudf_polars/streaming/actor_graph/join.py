@@ -54,9 +54,12 @@ from cudf_polars.streaming.actor_graph.partitioning import (
 )
 from cudf_polars.streaming.actor_graph.prefilter import (
     JoinPrefilterExecution,
+    PrefilterSampleMeasurement,
     RuntimePrefilterStatistics,
     add_bloom_prefilter,
     choose_prefilter,
+    hold_until_measured,
+    measure_prefilter_sample,
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -664,9 +667,16 @@ def make_prefilter_execution(
     ch_right: Channel[TableChunk],
     join_state: JoinPlanningState,
     collective_ids: JoinCollectiveIds,
+    measurements: dict[JoinSide, PrefilterSampleMeasurement] | None = None,
 ) -> JoinPrefilterExecution:
-    """Create the actors and channels that realize selected prefilters."""
+    """
+    Create the actors and channels that realize selected prefilters.
+
+    For each side in ``measurements``, also measure the rows its prefilter
+    keeps from the sampled chunks (see ``PrefilterSampleMeasurement``).
+    """
     execution = JoinPrefilterExecution(context, ch_left, ch_right)
+    measurements = measurements or {}
 
     # Prepare every required domain before connecting target-side filters. This
     # is important for opposing direct filters: each filter must consume the
@@ -715,7 +725,7 @@ def make_prefilter_execution(
         ch_target = execution.join_inputs[target_side]
         ch_filtered: Channel[TableChunk] = context.create_channel()
         prefilter_statistics = candidate.statistics
-
+        measurement = measurements.get(target_side)
         add_prefilter(
             execution,
             comm,
@@ -730,7 +740,25 @@ def make_prefilter_execution(
             ir_context=ir_context,
             prefilter_statistics=prefilter_statistics,
         )
+        if measurement is not None:
+            ch_measured: Channel[TableChunk] = context.create_channel()
+            execution.add_channel(ch_filtered)
+            execution.add_task(
+                measure_prefilter_sample(context, ch_filtered, ch_measured, measurement)
+            )
+            ch_filtered = ch_measured
         execution.replace_join_input(target_side, ch_filtered)
+
+    if measurements:
+        done = tuple(m.done for m in measurements.values())
+        for side in ("left", "right"):
+            if side in measurements:
+                continue
+            ch_held: Channel[TableChunk] = context.create_channel()
+            execution.add_task(
+                hold_until_measured(context, execution.join_inputs[side], ch_held, done)
+            )
+            execution.replace_join_input(side, ch_held)
 
     return execution
 
@@ -977,7 +1005,8 @@ async def _shuffle_join(
     output_indices = strategy.output_indices
     nranks = comm.nranks
     metadata_out = ChannelMetadata(
-        local_count=max(1, shuffle_modulus // nranks),
+        # The shuffler assigns partitions to ranks round robin.
+        local_count=max(1, (shuffle_modulus - comm.rank + nranks - 1) // nranks),
         partitioning=Partitioning(
             HashScheme(column_indices=output_indices, modulus=shuffle_modulus),
             local="inherit",
@@ -1375,26 +1404,14 @@ def _choose_strategy_from_samples(
         return BroadcastJoinStrategy(side=broadcast_side)
 
     # Couldn't broadcast - Use a shuffle join instead.
-    estimated_output_size = max(left_total, right_total)
-    ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
-    # Limit the output count to 10x the larger input side. This prevents an
-    # oversized sample from blowing up the chunk count.
-    max_output_chunks = 10 * max(left_sample.total_chunks, right_sample.total_chunks)
-    min_shuffle_modulus = min(ideal_output_count, max_output_chunks)
-
-    # Stay away from cuDF's row limit.
-    estimated_rows_count = max(left_total_rows, right_total_rows)
-    if estimated_rows_count > 0:
-        min_partitions_for_row_limit = (
-            estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
-        ) // MAX_ROWS_PER_PARTITION
-        min_shuffle_modulus = max(min_shuffle_modulus, min_partitions_for_row_limit)
-
-    shuffle_modulus = _choose_shuffle_modulus(
+    shuffle_modulus = _shuffle_modulus_from_estimates(
         comm,
+        executor,
         left_partitioning,
         right_partitioning,
-        min_shuffle_modulus,
+        sizes=(left_total, right_total),
+        rows=(left_total_rows, right_total_rows),
+        chunks=(left_sample.total_chunks, right_sample.total_chunks),
     )
     strategy = _make_shuffle_strategy(
         ir,
@@ -1409,6 +1426,240 @@ def _choose_strategy_from_samples(
             right_partitioning,
         )
     return strategy
+
+
+def _shuffle_modulus_from_estimates(
+    comm: Communicator,
+    executor: StreamingExecutor,
+    left_partitioning: NormalizedPartitioning,
+    right_partitioning: NormalizedPartitioning,
+    *,
+    sizes: tuple[int, int],
+    rows: tuple[int, int],
+    chunks: tuple[int, int],
+) -> int:
+    """Choose a shuffle modulus from estimated (left, right) input totals."""
+    estimated_output_size = max(sizes)
+    ideal_output_count = max(1, estimated_output_size // executor.target_partition_size)
+    # Limit the output count to 10x the larger input side. This prevents an
+    # oversized sample from blowing up the chunk count.
+    max_output_chunks = 10 * max(chunks)
+    min_shuffle_modulus = min(ideal_output_count, max_output_chunks)
+
+    # Stay away from cuDF's row limit.
+    estimated_rows_count = max(rows)
+    if estimated_rows_count > 0:
+        min_partitions_for_row_limit = (
+            estimated_rows_count + MAX_ROWS_PER_PARTITION - 1
+        ) // MAX_ROWS_PER_PARTITION
+        min_shuffle_modulus = max(min_shuffle_modulus, min_partitions_for_row_limit)
+
+    return _choose_shuffle_modulus(
+        comm,
+        left_partitioning,
+        right_partitioning,
+        min_shuffle_modulus,
+    )
+
+
+def _join_partitionings(
+    ir: Join,
+    left_metadata: ChannelMetadata,
+    right_metadata: ChannelMetadata,
+    nranks: int,
+) -> tuple[NormalizedPartitioning, NormalizedPartitioning]:
+    """Normalize the partitioning of both join inputs on the join keys."""
+    left, right = ir.children[:2]
+    return (
+        NormalizedPartitioning.from_keys(
+            left_metadata.partitioning,
+            nranks,
+            keys=names_to_indices(ir.left_on, left.schema, concrete_prefix=True),
+        ),
+        NormalizedPartitioning.from_keys(
+            right_metadata.partitioning,
+            nranks,
+            keys=names_to_indices(ir.right_on, right.schema, concrete_prefix=True),
+        ),
+    )
+
+
+def prefilter_measurements(
+    strategy: JoinStrategy,
+    join_state: JoinPlanningState,
+) -> dict[JoinSide, PrefilterSampleMeasurement]:
+    """
+    Choose the shuffled inputs whose prefilter effect sizes the shuffle.
+
+    The shuffle modulus is chosen from unfiltered input estimates, which can
+    vastly overestimate a selectively prefiltered input (PDS-H Q9 keeps ~5% of
+    lineitem) and make the shuffle send many tiny messages. Measure the
+    filter on the sampled chunks instead. Inputs with more than one active
+    prefilter are not measured.
+    """
+    if not isinstance(strategy, ShuffleJoinStrategy):
+        return {}
+    active = [
+        candidate
+        for candidate in join_state.candidates
+        if candidate.decision is not None and candidate.decision.method != "skip"
+    ]
+    sides = [candidate.spec.target_side for candidate in active]
+    measurements = {}
+    for side in set(sides):
+        sample = (join_state.left if side == "left" else join_state.right).sample
+        if sides.count(side) != 1 or sample is None:
+            continue
+        measurements[side] = PrefilterSampleMeasurement(
+            sample_chunks=len(sample.local_sample.chunks),
+            sample_rows=sample.local_sample.rows,
+            sample_size=sample.local_sample.size,
+        )
+    return measurements
+
+
+async def resize_shuffle_for_prefilters(
+    context: Context,
+    comm: Communicator,
+    ir: Join,
+    join_state: JoinPlanningState,
+    strategy: ShuffleJoinStrategy,
+    measurements: dict[JoinSide, PrefilterSampleMeasurement],
+    executor: StreamingExecutor,
+    collective_id: int,
+) -> ShuffleJoinStrategy:
+    """
+    Re-choose the shuffle modulus once the prefilters' effect is measured.
+
+    Every rank participates (the strategy and prefilter decisions are global)
+    and the modulus is only ever reduced.
+    """
+    await gather_in_task_group(*(m.done.wait() for m in measurements.values()))
+    sides: tuple[JoinSide, ...] = tuple(sorted(measurements))
+    totals = await allgather_reduce(
+        context,
+        comm,
+        collective_id,
+        *(
+            value
+            for side in sides
+            for value in (
+                measurements[side].sample_rows,
+                measurements[side].output_rows,
+                measurements[side].sample_size,
+                measurements[side].output_size,
+            )
+        ),
+    )
+    left_sample, right_sample = join_state.left.sample, join_state.right.sample
+    assert left_sample is not None
+    assert right_sample is not None
+    sizes = [left_sample.total_size, right_sample.total_size]
+    rows = [left_sample.total_rows, right_sample.total_rows]
+    for i, side in enumerate(sides):
+        sample_rows, kept_rows, sample_size, kept_size = totals[4 * i : 4 * i + 4]
+        index = 0 if side == "left" else 1
+        # Kept rows can be wider or narrower than the rejected ones, so scale
+        # bytes by the measured byte ratio and rows by the row ratio.
+        if sample_size > 0:
+            sizes[index] = sizes[index] * kept_size // sample_size
+        if sample_rows > 0:
+            rows[index] = rows[index] * kept_rows // sample_rows
+    left_partitioning, right_partitioning = _join_partitionings(
+        ir, join_state.left.metadata, join_state.right.metadata, comm.nranks
+    )
+    modulus = _shuffle_modulus_from_estimates(
+        comm,
+        executor,
+        left_partitioning,
+        right_partitioning,
+        sizes=(sizes[0], sizes[1]),
+        rows=(rows[0], rows[1]),
+        chunks=(left_sample.total_chunks, right_sample.total_chunks),
+    )
+    if modulus >= strategy.shuffle_modulus:
+        return strategy
+    return _make_shuffle_strategy(ir, modulus, left_partitioning, right_partitioning)
+
+
+def _resized_shuffle_decision(
+    decision: str,
+    original: ShuffleJoinStrategy,
+    resized: ShuffleJoinStrategy,
+    left_partitioning: NormalizedPartitioning,
+    right_partitioning: NormalizedPartitioning,
+) -> str:
+    """
+    Update a traced shuffle decision for a resized shuffle.
+
+    A new modulus can change which inputs need redistribution: an input
+    already partitioned with the original modulus may need a shuffle with the
+    new one. The traced decision ends with the shuffle decision (possibly after
+    a ``broadcast_<side>_rejected_`` prefix), which is replaced.
+    """
+    before = _shuffle_strategy_decision(original, left_partitioning, right_partitioning)
+    after = _shuffle_strategy_decision(resized, left_partitioning, right_partitioning)
+    if not decision.endswith(before):
+        return decision
+    return decision[: len(decision) - len(before)] + after
+
+
+async def _shuffle_join_after_prefilter_measurement(
+    context: Context,
+    comm: Communicator,
+    ir: Join,
+    ir_context: IRExecutionContext,
+    ch_out: Channel[TableChunk],
+    ch_left: Channel[TableChunk],
+    ch_right: Channel[TableChunk],
+    join_state: JoinPlanningState,
+    strategy: ShuffleJoinStrategy,
+    measurements: dict[JoinSide, PrefilterSampleMeasurement],
+    executor: StreamingExecutor,
+    collective_ids: JoinCollectiveIds,
+    *,
+    tracer: ActorTracer | None,
+) -> None:
+    """Run a shuffle join sized by the measured effect of its prefilters."""
+    if measurements:
+        resized = await resize_shuffle_for_prefilters(
+            context,
+            comm,
+            ir,
+            join_state,
+            strategy,
+            measurements,
+            executor,
+            # Free once the strategy is chosen: prefilters reuse the shuffle IDs.
+            collective_ids.size_estimate,
+        )
+        if (
+            tracer is not None
+            and tracer.decision is not None
+            and resized is not strategy
+        ):
+            tracer.decision = _resized_shuffle_decision(
+                tracer.decision,
+                strategy,
+                resized,
+                *_join_partitionings(
+                    ir, join_state.left.metadata, join_state.right.metadata, comm.nranks
+                ),
+            )
+        strategy = resized
+    await _shuffle_join(
+        context,
+        comm,
+        ir,
+        ir_context,
+        ch_out,
+        ch_left,
+        ch_right,
+        strategy,
+        collective_ids.shuffle("left"),
+        collective_ids.shuffle("right"),
+        tracer=tracer,
+    )
 
 
 def _choose_shuffle_modulus(
@@ -1721,19 +1972,10 @@ async def choose_strategy(
     tracer: ActorTracer | None,
 ) -> JoinStrategy:
     """Collect any required samples and choose broadcast vs shuffle."""
-    left, right = ir.children[:2]
     left_metadata = join_state.left.metadata
     right_metadata = join_state.right.metadata
-    nranks = comm.nranks
-    left_partitioning = NormalizedPartitioning.from_keys(
-        left_metadata.partitioning,
-        nranks,
-        keys=names_to_indices(ir.left_on, left.schema, concrete_prefix=True),
-    )
-    right_partitioning = NormalizedPartitioning.from_keys(
-        right_metadata.partitioning,
-        nranks,
-        keys=names_to_indices(ir.right_on, right.schema, concrete_prefix=True),
+    left_partitioning, right_partitioning = _join_partitionings(
+        ir, left_metadata, right_metadata, comm.nranks
     )
     hash_chunkwise = isinstance(
         left_partitioning.inter_rank_scheme, HashScheme
@@ -1985,6 +2227,7 @@ async def join_actor(
             raise ValueError("Join inputs have not been sampled")
         ch_left_replay = context.create_channel()
         ch_right_replay = context.create_channel()
+        measurements = prefilter_measurements(strategy, join_state)
         prefilter_execution = make_prefilter_execution(
             context,
             comm,
@@ -1995,6 +2238,7 @@ async def join_actor(
             ch_right_replay,
             join_state,
             collective_ids,
+            measurements,
         )
         async with shutdown_on_error(
             context,
@@ -2058,7 +2302,7 @@ async def join_actor(
                 )
             elif isinstance(strategy, ShuffleJoinStrategy):
                 actor_tasks.append(
-                    _shuffle_join(
+                    _shuffle_join_after_prefilter_measurement(
                         context,
                         comm,
                         ir,
@@ -2066,9 +2310,11 @@ async def join_actor(
                         ch_out,
                         ch_left,
                         ch_right,
+                        join_state,
                         strategy,
-                        collective_ids.shuffle("left"),
-                        collective_ids.shuffle("right"),
+                        measurements,
+                        executor,
+                        collective_ids,
                         tracer=tracer,
                     )
                 )

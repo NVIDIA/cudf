@@ -526,7 +526,10 @@ async def _global_shuffle(
 
     # Normal shuffle path
     output_metadata = ChannelMetadata(
-        local_count=max(1, num_partitions // comm.nranks),
+        # The shuffler assigns partitions to ranks round robin.
+        local_count=max(
+            1, (num_partitions - comm.rank + comm.nranks - 1) // comm.nranks
+        ),
         partitioning=(
             Partitioning(
                 inter_rank=HashScheme(columns_to_hash, num_partitions),

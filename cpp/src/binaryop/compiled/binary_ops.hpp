@@ -160,6 +160,21 @@ std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type
  */
 bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_operator op);
 
+/**
+ * @brief Check if the operation is a STRING NULL_MIN or NULL_MAX.
+ *
+ * These operations are not handled by the type-dispatched implementation and are instead
+ * computed by `string_null_min_max`. This is the single source of truth shared by
+ * `binary_operation` and the public `cudf::binops::is_supported_operation`.
+ *
+ * @param out output type of the binary operation
+ * @param lhs first operand type of the binary operation
+ * @param rhs second operand type of the binary operation
+ * @param op binary operator enum.
+ * @return true if all types are STRING and @p op is NULL_MIN or NULL_MAX
+ */
+bool is_string_null_min_max(data_type out, data_type lhs, data_type rhs, binary_operator op);
+
 // Defined in individual .cu files.
 /**
  * @brief Deploys single type or double type dispatcher that runs binary operation on each element

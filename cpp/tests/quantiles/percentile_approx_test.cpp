@@ -17,6 +17,7 @@
 #include <cudf/quantiles.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/tdigest/tdigest_column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -39,7 +40,7 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            [[maybe_unused]] cudf::size_type ulps)
-    requires(cudf::is_numeric<T>() || cudf::is_fixed_point<T>())
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::fixed_point<T>)
   {
     // gpu implementation.
     auto agg_result = op(values, delta);
@@ -58,7 +59,6 @@ struct percentile_approx_dispatch {
                                            int delta,
                                            std::vector<double> const& percentages,
                                            cudf::size_type ulps)
-    requires(!cudf::is_numeric<T>() && !cudf::is_fixed_point<T>())
   {
     CUDF_FAIL("Invalid input type for percentile_approx test");
   }
@@ -335,8 +335,10 @@ void simple_with_nulls_test(cudf::data_type input_type, std::vector<std::pair<in
   // all in the same group
   auto keys = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::INT32}, values->size(), cudf::mask_state::UNALLOCATED);
-  CUDF_CUDA_TRY(
-    cudaMemset(keys->mutable_view().data<int32_t>(), 0, values->size() * sizeof(int32_t)));
+  CUDF_CUDA_TRY(cudaMemsetAsync(keys->mutable_view().data<int32_t>(),
+                                0,
+                                values->size() * sizeof(int32_t),
+                                cudf::test::get_default_stream().get()));
 
   // add a null mask
   auto mask = make_null_mask(*values);

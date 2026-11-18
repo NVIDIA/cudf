@@ -25,7 +25,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   if (input.num_rows() == 0 or input.num_columns() == 0 or keys.empty()) {
     return empty_like(input);
@@ -62,8 +62,12 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
     return markers;
   }();
 
-  return cudf::detail::apply_mask(
-    input, cudf::device_span<bool const>(output_markers), mask_type::RETENTION, stream, mr);
+  return cudf::detail::apply_mask(input,
+                                  cudf::device_span<bool const>(output_markers),
+                                  mask_type::RETENTION,
+                                  null_policy::EXCLUDE,
+                                  stream,
+                                  mr);
 }
 
 }  // namespace detail
@@ -74,7 +78,7 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
                                        null_equality nulls_equal,
                                        nan_equality nans_equal,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::stable_distinct(input, keys, keep, nulls_equal, nans_equal, stream, mr);

@@ -15,10 +15,10 @@ from cudf_polars.engine.dask import DaskEngine
 with DaskEngine() as engine:
     result = (
         pl.scan_parquet("/data/dataset/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
     print(result)
 ```
@@ -87,12 +87,15 @@ from cudf_polars.engine.hardware_binding import (
     HardwareBindingPolicy,
 )
 
-with Client(LocalCUDACluster()) as dc, DaskEngine(
-    dask_client=dc,
-    engine_options={
-        "hardware_binding": HardwareBindingPolicy(enabled=False),
-    },
-) as engine:
+with (
+    Client(LocalCUDACluster()) as dc,
+    DaskEngine(
+        dask_client=dc,
+        engine_options={
+            "hardware_binding": HardwareBindingPolicy(enabled=False),
+        },
+    ) as engine,
+):
     ...
 ```
 

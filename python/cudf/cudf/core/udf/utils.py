@@ -6,33 +6,34 @@ import functools
 import os
 import warnings
 from pickle import dumps
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import cachetools
 import cupy as cp
 import llvmlite.binding as ll
 import numpy as np
 from cuda.bindings import runtime
-from numba import cuda, typeof
-from numba.core.datamodel import models
-from numba.core.extending import register_model
-from numba.cuda.descriptor import cuda_target
-from numba.np import numpy_support
-from numba.types import CPointer, Record, Tuple, int64, void
+from numba_cuda_mlir import cuda, models
+from numba_cuda_mlir.models import register_model
+from numba_cuda_mlir.numba_cuda import types as nb_types
+from numba_cuda_mlir.numba_cuda.descriptor import cuda_target
+from numba_cuda_mlir.numba_cuda.np import numpy_support
+from numba_cuda_mlir.numba_cuda.typing.typeof import typeof
+from numba_cuda_mlir.types import CPointer, Record, Tuple, int64, void
 
+import pylibcudf as plc
 import rmm
+from pylibcudf.gpumemoryview import gpumemoryview
 
-from cudf._lib import strings_udf
-from cudf.core.buffer import as_buffer
-from cudf.core.dtype.validators import is_dtype_obj_string
-from cudf.core.udf.masked_typing import MaskedType
-from cudf.core.udf.nrt_utils import nrt_enabled
-from cudf.core.udf.strings_typing import (
+from cudf.api.types import is_string_dtype as _is_string_dtype
+from cudf.core.udf.mlir_backend.strings_typing import (
+    ManagedStrArrayWrapper,
+    MLIRStringType,
     NRT_decref,
-    managed_udf_string,
-    str_view_arg_handler,
-    string_view,
+    mlir_string,
+    mlir_string_arg_handler,
 )
+from cudf.core.udf.nrt_utils import nrt_enabled
 from cudf.utils.dtypes import (
     BOOL_TYPES,
     DATETIME_TYPES,
@@ -45,15 +46,31 @@ from cudf.utils.dtypes import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pylibcudf as plc
-
     from cudf.core.buffer.buffer import Buffer
     from cudf.core.indexed_frame import IndexedFrame
 
 
+SUPPORTED_MASKED_TYPES = (
+    nb_types.Number,
+    nb_types.Boolean,
+    nb_types.NPDatetime,
+    nb_types.NPTimedelta,
+    MLIRStringType,
+)
+
+_units = ("ns", "us", "ms", "s")
+_supported_masked_types = (
+    nb_types.integer_domain
+    | nb_types.real_domain
+    | {nb_types.NPDatetime(u) for u in _units}
+    | {nb_types.NPTimedelta(u) for u in _units}
+    | {nb_types.boolean}
+    | {mlir_string}
+)
+
 # Maximum size of a string column is 2 GiB
 _STRINGS_UDF_DEFAULT_HEAP_SIZE = int(
-    os.environ.get("STRINGS_UDF_HEAP_SIZE", str(2**31))
+    os.environ.get("STRINGS_UDF_HEAP_SIZE", 2**31)
 )
 _HEAP_SIZE = 0
 
@@ -69,26 +86,28 @@ MASK_BITSIZE = SIZE_TYPE_DTYPE.itemsize * 8
 
 precompiled: cachetools.LRUCache = cachetools.LRUCache(maxsize=32)
 
-# This cache is keyed on the (signature, code, closure variables) of UDFs, so
-# it can hit for distinct functions that are similar. The lru_cache wrapping
-# compile_udf misses for these similar functions, but doesn't need to serialize
-# closure variables to check for a hit.
-_udf_code_cache: cachetools.LRUCache = cachetools.LRUCache(maxsize=32)
-
-
-UDF_SHIM_FILE = os.path.join(
-    os.path.dirname(strings_udf.__file__), "..", "core", "udf", "shim.fatbin"
-)
 
 DEPRECATED_SM_REGEX = "Architectures prior to '<compute/sm>_75' are deprecated"
 
 
 def _all_dtypes_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
+    # String columns are modeled as object in the row struct (row_function
+    # maps object -> mlir_string). Current-main string dtypes (e.g.
+    # StringDtype(na_value=nan)) are not np.dtype-constructible, so normalize
+    # them to object even though they are "supported".
     return {
         colname: dtype
-        if str(dtype) in supported_types and not is_dtype_obj_string(dtype)
+        if (str(dtype) in supported_types and not _is_string_dtype(dtype))
         else np.dtype("O")
         for colname, dtype in frame._dtypes
+    }
+
+
+def _supported_dtypes_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
+    return {
+        colname: dtype
+        for colname, dtype in frame._dtypes
+        if str(dtype) in supported_types
     }
 
 
@@ -102,22 +121,18 @@ def _supported_cols_from_frame(frame, supported_types=JIT_SUPPORTED_TYPES):
 
 def _masked_array_type_from_col(col):
     """
-    Return a type representing a tuple of arrays,
-    the first element an array of the numba type
-    corresponding to `dtype`, and the second an
-    array of bools representing a mask.
+    Return kernel arg type per column: Array for unmasked, Tuple(data, mask) for masked.
+    Matches original numba extension: unmasked -> single array, masked -> unpacked (d, m).
     """
-
-    if is_dtype_obj_string(col.dtype):
-        col_type = CPointer(string_view)
+    if _is_string_dtype(col.dtype):
+        col_type = CPointer(mlir_string)
     else:
         nb_scalar_ty = numpy_support.from_dtype(col.dtype)
         col_type = nb_scalar_ty[::1]
 
     if col.mask is None:
         return col_type
-    else:
-        return Tuple((col_type, LIBCUDF_BITMASK_TYPE[::1]))
+    return Tuple((col_type, LIBCUDF_BITMASK_TYPE[::1]))
 
 
 class Row(Record):
@@ -139,11 +154,25 @@ class Row(Record):
 
 register_model(Row)(models.RecordModel)
 
+# Also register with numba's native model system for the numba-cuda backend.
+try:
+    from numba_cuda_mlir.numba_cuda.datamodel import models as numba_models
+    from numba_cuda_mlir.numba_cuda.extending import (
+        register_model as numba_register_model,
+    )
 
-@cuda.jit(device=True)
-def _mask_get(mask, pos):
-    """Return the validity of mask[pos] as a word."""
-    return (mask[pos // MASK_BITSIZE] >> (pos % MASK_BITSIZE)) & 1
+    numba_register_model(Row)(numba_models.RecordModel)
+except (ImportError, AttributeError):
+    pass
+
+
+def _mask_get_impl(mask, pos):
+    """Return the validity of mask[pos] as a bool (raw impl for JIT)."""
+    return bool((mask[pos // MASK_BITSIZE] >> (pos % MASK_BITSIZE)) & 1)
+
+
+# numba_cuda_mlir-jitted device function for kernel exec context
+_mask_get = cuda.jit(device=True)(_mask_get_impl)
 
 
 def make_cache_key(udf, sig):
@@ -164,58 +193,6 @@ def make_cache_key(udf, sig):
     return names, constants, codebytes, cvarbytes, sig
 
 
-def compile_udf(udf, type_signature):
-    """Compile ``udf`` with `numba`
-
-    Compile a python callable function ``udf`` with
-    `numba.cuda.compile_ptx_for_current_device(device=True)` using
-    ``type_signature`` into CUDA PTX together with the generated output type.
-
-    The output is expected to be passed to the PTX parser in `libcudf`
-    to generate a CUDA device function to be inlined into CUDA kernels,
-    compiled at runtime and launched.
-
-    Parameters
-    ----------
-    udf:
-      a python callable function
-
-    type_signature:
-      a tuple that specifies types of each of the input parameters of ``udf``.
-      The types should be one in `numba.types` and could be converted from
-      numpy types with `numba.numpy_support.from_dtype(...)`.
-
-    Returns
-    -------
-    ptx_code:
-      The compiled CUDA PTX
-
-    output_type:
-      An numpy type
-
-    """
-    key = make_cache_key(udf, type_signature)
-    res = _udf_code_cache.get(key)
-    if res:
-        return res
-
-    # We haven't compiled a function like this before, so need to fall back to
-    # compilation with Numba
-    ptx_code, return_type = cuda.compile_ptx_for_current_device(
-        udf, type_signature, device=True
-    )
-    if not isinstance(return_type, MaskedType):
-        output_type = numpy_support.as_dtype(return_type).type
-    else:
-        output_type = return_type
-
-    # Populate the cache for this function
-    res = (ptx_code, output_type)
-    _udf_code_cache[key] = res
-
-    return res
-
-
 def _generate_cache_key(frame, func: Callable, args, suffix="__APPLY_UDF"):
     """Create a cache key that uniquely identifies a compilation.
 
@@ -234,30 +211,73 @@ def _generate_cache_key(frame, func: Callable, args, suffix="__APPLY_UDF"):
     )
 
 
+def _buffer_as_dtyped_view(data: "Buffer", n: int, dtype: np.dtype):
+    """View a Buffer as a cupy array with shape (n,) and dtype so the kernel indexes by element.
+
+    Buffer's cuda_array_interface uses shape=(size,) and typestr='|u1' (bytes), so passing it
+    directly makes d_0[i] load the i-th byte instead of the i-th element. This view gives the
+    kernel the correct dtype and shape so d_0[i + offset] is the (i+offset)-th element.
+    """
+    with data.access(mode="read"):
+        ptr = data.ptr
+    size_bytes = data.size
+    memptr = cp.cuda.MemoryPointer(
+        cp.cuda.UnownedMemory(ptr, size_bytes, None), 0
+    )
+    return cp.ndarray((n,), dtype=dtype, memptr=memptr)
+
+
 def _get_input_args_from_frame(fr: IndexedFrame) -> list:
-    args: list[Buffer | tuple[Buffer, Buffer]] = []
+    # Heterogeneous launch args: a per-column data view (cupy array) or string
+    # wrapper, optionally paired with a mask view, followed by int offsets.
+    args: list[Any] = []
     offsets = []
     for col in _supported_cols_from_frame(fr).values():
-        if is_dtype_obj_string(col.dtype):
-            data = column_to_string_view_array_init_heap(col.plc_column)
+        if _is_string_dtype(col.dtype):
+            data = ManagedStrArrayWrapper(
+                column_to_mlir_string_array_init_heap(col.plc_column)
+            )
         else:
-            data = col.data
+            # View buffer with column dtype/shape so kernel sees d_0[i] as i-th element, not i-th byte
+            data = _buffer_as_dtyped_view(col.data, len(col), col.dtype)
         if col.mask is not None:
-            # argument is a tuple of data, mask
-            args.append((data, col.mask))
+            # View mask buffer with LIBCUDF_BITMASK_TYPE so kernel gets expected dtype/shape
+            mask_itemsize = np.dtype(SIZE_TYPE_DTYPE).itemsize
+            mask_n = col.mask.size // mask_itemsize
+            mask_view = _buffer_as_dtyped_view(
+                col.mask, mask_n, SIZE_TYPE_DTYPE
+            )
+            args.append((data, mask_view))
         else:
-            # argument is just the data pointer
             args.append(data)
         offsets.append(col.offset)
 
     return args + offsets
 
 
+def _output_args_for_udf_kernel(ans_col, ans_mask, n):
+    """Build output_args for kernel launch. Mask as writable array for numba_cuda_mlir kernel."""
+    with ans_mask.data.access(mode="write"):
+        ptr = ans_mask.data.ptr
+    # NB: expose the byte-per-row validity mask to the kernel as int8 rather
+    # than bool. Released numba-cuda-mlir's CUDA-array marshaller computes
+    # ``itemsize = dtype.bitwidth`` unconditionally, and its ``Boolean`` type
+    # has no ``bitwidth`` (latent upstream bug). int8 has identical byte
+    # layout, so the kernel writes 0/1 into the same buffer cuDF reads as the
+    # bool mask.
+    ans_mask_arr = cp.ndarray(
+        (n,),
+        dtype=np.int8,
+        memptr=cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(ptr, n, None), 0),
+    )
+    if isinstance(ans_col, rmm.DeviceBuffer):
+        ans_col = ManagedStrArrayWrapper(ans_col)
+    return [(ans_col, ans_mask_arr), n]
+
+
 def _return_arr_from_dtype(dtype, size):
-    if dtype == np.dtype("object"):
-        return rmm.DeviceBuffer(
-            size=size * _get_extensionty_size(managed_udf_string)
-        )
+    if _is_string_dtype(dtype):
+        return rmm.DeviceBuffer(size=size * _get_extensionty_size(mlir_string))
     if dtype.kind in {"M", "m"}:
         # cupy>=14 rejects cp.empty() for datetime64
         # or timedelta64 as unsupported dtypes.
@@ -279,16 +299,15 @@ def _make_free_string_kernel():
             )
 
             @cuda.jit(
-                void(CPointer(managed_udf_string), int64),
-                link=[UDF_SHIM_FILE],
-                extensions=[str_view_arg_handler],
+                void(CPointer(mlir_string), int64),
+                extensions=[mlir_string_arg_handler],
             )
-            def free_managed_udf_string_array(ary, size):
+            def free_mlir_string_array(ary, size):
                 gid = cuda.grid(1)
                 if gid < size:
                     NRT_decref(ary[gid])
 
-    return free_managed_udf_string_array
+    return free_mlir_string_array
 
 
 # The only supported data layout in NVVM.
@@ -302,8 +321,14 @@ _nvvm_data_layout = (
 
 def _get_extensionty_size(ty):
     """
-    Return the size of an extension type in bytes
+    Return the size of an extension type in bytes.
+    MLIR-path types (MLIRStringType, GroupType) define
+    _extensionty_size and are handled here without using the Numba/CUDA
+    data model.
     """
+    size = getattr(type(ty), "_extensionty_size", None)
+    if size is not None:
+        return size
     target_data = ll.create_target_data(_nvvm_data_layout)
     llty = cuda_target.target_context.data_model_manager[ty].get_value_type()
     return llty.get_abi_size(target_data)
@@ -344,9 +369,184 @@ def set_malloc_heap_size(size=None):
         _HEAP_SIZE = size
 
 
-def column_to_string_view_array_init_heap(col: plc.Column) -> Buffer:
-    # lazily allocate heap only when a string needs to be returned
-    return as_buffer(strings_udf.column_to_string_view_array(col))
+def column_to_mlir_string_array_init_heap(col: plc.Column) -> rmm.DeviceBuffer:
+    set_malloc_heap_size()
+    return _column_to_mlir_string_array(col)
+
+
+def _column_to_mlir_string_array(plc_col: plc.Column) -> rmm.DeviceBuffer:
+    """Build a device array of mlir_string from a pylibcudf string column.
+
+    Each element is {meminfo=null, data=chars+offset[i], nbytes=offset[i+1]-offset[i]}.
+    Pure Python + cupy, no C++/Cython.
+    """
+    n = plc_col.size()
+    if n == 0:
+        return rmm.DeviceBuffer(size=0)
+
+    offsets_data = plc_col.child(0).data()
+    chars_data = plc_col.data()
+    offsets_ptr = offsets_data.ptr if offsets_data is not None else 0
+    chars_ptr = chars_data.ptr if chars_data is not None else 0
+
+    offset_type_id = plc_col.child(0).type().id()
+    if offset_type_id == plc.TypeId.INT64:
+        offset_dtype = cp.int64
+        offset_itemsize = 8
+    else:
+        offset_dtype = cp.int32
+        offset_itemsize = 4
+
+    offsets_cp = cp.ndarray(
+        (n + 1,),
+        dtype=offset_dtype,
+        memptr=cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(
+                offsets_ptr, (n + 1) * offset_itemsize, None
+            ),
+            0,
+        ),
+    )
+
+    starts = offsets_cp[:-1].astype(cp.int64)
+    lengths = (offsets_cp[1:] - offsets_cp[:-1]).astype(cp.int64)
+    data_ptrs = starts + chars_ptr
+
+    out = cp.zeros((n, 3), dtype=cp.int64)
+    out[:, 1] = data_ptrs
+    out[:, 2] = lengths
+
+    return rmm.DeviceBuffer(ptr=out.data.ptr, size=out.nbytes)
+
+
+def _mlir_string_array_to_column(buf: rmm.DeviceBuffer, n: int) -> plc.Column:
+    """Build a pylibcudf string column from a device array of mlir_string.
+
+    Reads {meminfo, data, nbytes} triples, computes offsets via cupy prefix
+    sum, scatters chars into a contiguous buffer, and assembles a plc.Column.
+    Mask is applied separately by the caller.
+    Pure Python + cupy + one scatter kernel, no C++/Cython.
+    """
+    if n == 0:
+        offsets_cp = cp.zeros(1, dtype=cp.int32)
+        offsets_gmv = gpumemoryview(offsets_cp)
+        offsets_col = plc.Column(
+            plc.DataType(plc.TypeId.INT32),
+            1,
+            offsets_gmv,
+            None,
+            0,
+            0,
+            [],
+        )
+        chars_buf = rmm.DeviceBuffer(size=0)
+        chars_gmv = gpumemoryview(chars_buf)
+        return plc.Column(
+            plc.DataType(plc.TypeId.STRING),
+            0,
+            chars_gmv,
+            None,
+            0,
+            0,
+            [offsets_col],
+        )
+
+    raw = cp.ndarray(
+        (n, 3),
+        dtype=cp.int64,
+        memptr=cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(buf.ptr, buf.size, None), 0
+        ),
+    )
+    data_ptrs = cp.ascontiguousarray(raw[:, 1])
+    lengths64 = cp.ascontiguousarray(raw[:, 2])  # int64 byte lengths
+
+    # Offsets are int32; a total output exceeding the int32 range would overflow
+    # them and silently corrupt the column. Compute the total in int64 and fail
+    # loudly (INT64-offset output is not yet supported on this path).
+    total_chars = int(lengths64.sum())
+    if total_chars > 0x7FFFFFFF:
+        raise OverflowError(
+            "JIT UDF produced more than 2 GiB of string data "
+            f"({total_chars} bytes); string outputs requiring INT64 offsets "
+            "are not supported by the apply engine."
+        )
+
+    lengths = lengths64.astype(cp.int32)
+    offsets_cp = cp.zeros(n + 1, dtype=cp.int32)
+    cp.cumsum(lengths, out=offsets_cp[1:])
+
+    chars_dev = rmm.DeviceBuffer(size=max(total_chars, 1))
+    chars_cp = cp.ndarray(
+        (max(total_chars, 1),),
+        dtype=cp.uint8,
+        memptr=cp.cuda.MemoryPointer(
+            cp.cuda.UnownedMemory(chars_dev.ptr, max(total_chars, 1), None), 0
+        ),
+    )
+
+    _scatter_chars_kernel(data_ptrs, lengths, offsets_cp, chars_cp, n)
+
+    offsets_gmv = gpumemoryview(offsets_cp)
+    offsets_col = plc.Column(
+        plc.DataType(plc.TypeId.INT32),
+        n + 1,
+        offsets_gmv,
+        None,
+        0,
+        0,
+        [],
+    )
+    chars_gmv = gpumemoryview(chars_dev)
+
+    return plc.Column(
+        plc.DataType(plc.TypeId.STRING),
+        n,
+        chars_gmv,
+        None,
+        0,
+        0,
+        [offsets_col],
+    )
+
+
+def _scatter_chars_kernel(data_ptrs, lengths, offsets, chars_out, n):
+    """Copy each string's bytes into the contiguous chars buffer.
+
+    Grid-stride cupy raw kernel: each thread handles strings
+    ``gid, gid + stride, ...`` so a fixed (capped) grid correctly covers any
+    ``n``. String ``i`` copies ``lengths[i]`` bytes from ``data_ptrs[i]`` to
+    ``chars_out + offsets[i]``.
+    """
+    if n == 0:
+        return
+    kernel = cp.RawKernel(
+        r"""
+    extern "C" __global__
+    void scatter_chars(
+        const long long* data_ptrs,
+        const int* lengths,
+        const int* offsets,
+        unsigned char* chars_out,
+        long long n
+    ) {
+        const long long stride = (long long)blockDim.x * gridDim.x;
+        for (long long gid = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+             gid < n; gid += stride) {
+            const unsigned char* src = (const unsigned char*)data_ptrs[gid];
+            int len = lengths[gid];
+            int off = offsets[gid];
+            for (int j = 0; j < len; j++) {
+                chars_out[off + j] = src[j];
+            }
+        }
+    }
+    """,
+        "scatter_chars",
+    )
+    block = 256
+    grid = min((n + block - 1) // block, 65535)
+    kernel((grid,), (block,), (data_ptrs, lengths, offsets, chars_out, n))
 
 
 class UDFError(RuntimeError):

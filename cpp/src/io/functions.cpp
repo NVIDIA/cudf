@@ -29,6 +29,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -215,7 +216,7 @@ std::vector<std::unique_ptr<data_sink>> make_datasinks(sink_info const& info)
 
 table_with_metadata read_avro(avro_reader_options const& options,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   namespace avro = cudf::io::detail::avro;
 
@@ -230,7 +231,7 @@ table_with_metadata read_avro(avro_reader_options const& options,
 
 table_with_metadata read_json(json_reader_options options,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -245,7 +246,7 @@ table_with_metadata read_json(json_reader_options options,
 
 json_reader_result read_json_with_diagnostics(json_reader_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -258,8 +259,9 @@ json_reader_result read_json_with_diagnostics(json_reader_options options,
   return json::detail::read_json_with_diagnostics(datasources, options, stream, mr);
 }
 
-json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(
-  json_reader_options options, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(json_reader_options options,
+                                                                       cuda::stream_ref stream,
+                                                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -286,7 +288,7 @@ void write_json(json_writer_options const& options, cuda::stream_ref stream)
 
 table_with_metadata read_csv(csv_reader_options options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -482,7 +484,7 @@ orc_metadata read_orc_metadata(source_info const& src_info, cuda::stream_ref str
  */
 table_with_metadata read_orc(orc_reader_options const& options,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr)
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -513,7 +515,7 @@ chunked_orc_reader::chunked_orc_reader(std::size_t chunk_read_limit,
                                        size_type output_row_granularity,
                                        orc_reader_options const& options,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
   : reader{std::make_unique<orc::detail::chunked_reader>(chunk_read_limit,
                                                          pass_read_limit,
                                                          output_row_granularity,
@@ -528,7 +530,7 @@ chunked_orc_reader::chunked_orc_reader(std::size_t chunk_read_limit,
                                        std::size_t pass_read_limit,
                                        orc_reader_options const& options,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
   : reader{std::make_unique<orc::detail::chunked_reader>(chunk_read_limit,
                                                          pass_read_limit,
                                                          make_datasources(options.get_source()),
@@ -541,7 +543,7 @@ chunked_orc_reader::chunked_orc_reader(std::size_t chunk_read_limit,
 chunked_orc_reader::chunked_orc_reader(std::size_t chunk_read_limit,
                                        orc_reader_options const& options,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
   : chunked_orc_reader(chunk_read_limit, 0UL, options, stream, mr)
 {
 }
@@ -1291,9 +1293,7 @@ namespace experimental {
 // Forward declarations for detail functions
 namespace detail {
 void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref stream);
-packed_table read_cudftable(datasource* source,
-                            cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr);
+packed_table read_cudftable(datasource* source, cuda::stream_ref stream, cudf::memory_resources mr);
 }  // namespace detail
 
 /**
@@ -1314,7 +1314,7 @@ void write_cudftable(cudftable_writer_options const& options, cuda::stream_ref s
  */
 packed_table read_cudftable(cudftable_reader_options const& options,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

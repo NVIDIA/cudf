@@ -17,9 +17,11 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <span>
+
 void contiguous_split(cudf::table_view const& src_table, std::vector<cudf::size_type> const& splits)
 {
-  auto result = cudf::contiguous_split(src_table, splits);
+  auto result = cudf::contiguous_split(src_table, std::span<cudf::size_type const>{splits});
 }
 
 void chunked_pack(cudf::table_view const& src_table, std::vector<cudf::size_type> const&)

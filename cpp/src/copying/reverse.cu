@@ -21,7 +21,7 @@ namespace cudf {
 namespace detail {
 std::unique_ptr<table> reverse(table_view const& source_table,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   size_type num_rows = source_table.num_rows();
   auto elements      = make_counting_transform_iterator(
@@ -35,7 +35,7 @@ std::unique_ptr<table> reverse(table_view const& source_table,
 
 std::unique_ptr<column> reverse(column_view const& source_column,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   return std::move(
     cudf::detail::reverse(table_view({source_column}), stream, mr)->release().front());
@@ -44,7 +44,7 @@ std::unique_ptr<column> reverse(column_view const& source_column,
 
 std::unique_ptr<table> reverse(table_view const& source_table,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::reverse(source_table, stream, mr);
@@ -52,7 +52,7 @@ std::unique_ptr<table> reverse(table_view const& source_table,
 
 std::unique_ptr<column> reverse(column_view const& source_column,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::reverse(source_column, stream, mr);

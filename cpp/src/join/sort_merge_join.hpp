@@ -20,6 +20,7 @@
 #include <cuda/buffer>
 #include <cuda/stream>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -67,9 +68,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  inner_join(table_view const& left,
-             cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr) const;
+  inner_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns the row indices for a left join.
@@ -81,9 +80,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  left_join(table_view const& left,
-            cuda::stream_ref stream,
-            rmm::device_async_resource_ref mr) const;
+  left_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -93,8 +90,9 @@ class sort_merge_join {
    * @param mr Device memory resource used to allocate the result device memory
    * @return A unique_ptr to join_match_context
    */
-  std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  std::unique_ptr<join_match_context> inner_join_match_context(table_view const& left,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -108,7 +106,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const;
+                         cudf::memory_resources mr) const;
 
  private:
   /**
@@ -210,7 +208,18 @@ class sort_merge_join {
   std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_offsets;  ///< Start of each run in sorted order; the first `num_right_runs + 1`
                         ///< entries are valid, including the row-count sentinel
-  size_type num_right_runs{};   ///< Number of distinct key runs in the processed right table
+  size_type num_right_runs{};  ///< Number of distinct key runs in the processed right table
+
+  /**
+   * @brief Right run keys stored as the integer type that the typed key search reads.
+   */
+  struct typed_run_keys {
+    cuda::device_buffer<std::byte> keys;     ///< Key value of each run
+    cuda::device_buffer<std::byte> samples;  ///< Sampled run keys searched before `keys`
+  };
+  std::optional<typed_run_keys>
+    right_typed_run_keys;  ///< Present when the right keys are a single null-free 32- or 64-bit
+                           ///< integer or chrono column
   null_equality compare_nulls;  ///< Null comparison mode
 
   /**

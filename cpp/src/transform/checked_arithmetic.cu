@@ -117,11 +117,9 @@ CUDF_KERNEL void checked_binary_kernel(size_type row_size,
                                        binary_operator op,
                                        int32_t* max_error)
 {
-  using input_accessors =
-    jit::type_list<jit::column_accessor<0, column_device_view_core, T, LhsIsScalar, 0>,
-                   jit::column_accessor<1, column_device_view_core, T, RhsIsScalar, 0>>;
-  using output_accessors =
-    jit::type_list<jit::column_accessor<0, mutable_column_device_view_core, T, false, 0>>;
+  using input_accessors  = jit::type_list<jit::column_accessor<0, T, LhsIsScalar, 0>,
+                                          jit::column_accessor<1, T, RhsIsScalar, 0>>;
+  using output_accessors = jit::type_list<jit::column_accessor<0, T, false, 0>>;
 
   column_device_view_core const inputs[]          = {lhs, rhs};
   mutable_column_device_view_core const outputs[] = {out};
@@ -136,10 +134,8 @@ CUDF_KERNEL void checked_unary_kernel(size_type row_size,
                                       unary_operator op,
                                       int32_t* max_error)
 {
-  using input_accessors =
-    jit::type_list<jit::column_accessor<0, column_device_view_core, T, false, 0>>;
-  using output_accessors =
-    jit::type_list<jit::column_accessor<0, mutable_column_device_view_core, T, false, 0>>;
+  using input_accessors  = jit::type_list<jit::column_accessor<0, T, false, 0>>;
+  using output_accessors = jit::type_list<jit::column_accessor<0, T, false, 0>>;
 
   column_device_view_core const inputs[]          = {input};
   mutable_column_device_view_core const outputs[] = {out};

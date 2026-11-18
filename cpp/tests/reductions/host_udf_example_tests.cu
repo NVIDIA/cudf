@@ -19,6 +19,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
@@ -63,18 +64,14 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
     using InputType  = double;
     using OutputType = int64_t;
 
-    template <typename T,
-              typename U,
-              typename... Args,
-              CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
+    template <typename T, typename U, typename... Args>
+      requires(not cuda::std::same_as<InputType, T> or not cuda::std::same_as<OutputType, U>)
     std::unique_ptr<cudf::scalar> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input/output type.");
     }
 
-    template <typename T,
-              typename U,
-              CUDF_ENABLE_IF(std::is_same_v<InputType, T>&& std::is_same_v<OutputType, U>)>
+    template <cuda::std::same_as<InputType> T, cuda::std::same_as<OutputType> U>
     [[nodiscard]] std::unique_ptr<cudf::scalar> operator()(
       cudf::column_view const& input,
       cudf::data_type output_dtype,
@@ -206,18 +203,14 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
     using InputType  = double;
     using OutputType = int64_t;
 
-    template <typename T,
-              typename U,
-              typename... Args,
-              CUDF_ENABLE_IF(!std::is_same_v<InputType, T> || !std::is_same_v<OutputType, U>)>
+    template <typename T, typename U, typename... Args>
+      requires(not cuda::std::same_as<InputType, T> or not cuda::std::same_as<OutputType, U>)
     std::unique_ptr<cudf::column> operator()(Args...) const
     {
       CUDF_FAIL("Unsupported input/output type.");
     }
 
-    template <typename T,
-              typename U,
-              CUDF_ENABLE_IF(std::is_same_v<InputType, T>&& std::is_same_v<OutputType, U>)>
+    template <cuda::std::same_as<InputType> T, cuda::std::same_as<OutputType> U>
     std::unique_ptr<cudf::column> operator()(
       cudf::column_view const& input,
       cudf::device_span<cudf::size_type const> offsets,

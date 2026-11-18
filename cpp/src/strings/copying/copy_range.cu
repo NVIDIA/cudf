@@ -49,7 +49,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
                                    size_type source_end,
                                    size_type target_begin,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   auto target_end = target_begin + (source_end - source_begin);
   CUDF_EXPECTS(
@@ -88,7 +88,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // create chars
-  auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr);
+  auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
   auto d_chars    = chars_data.data();
   thrust::for_each(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),

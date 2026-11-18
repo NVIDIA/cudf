@@ -244,8 +244,10 @@ class hybrid_scan_metadata {
  * column chunk statistics, dictionaries and bloom filters. Byte ranges for column chunk dictionary
  * pages and bloom filters within parquet file may be obtained via the
  * `dictionary_pages_byte_ranges()` and `bloom_filters_byte_ranges()` functions respectively. The
- * byte ranges may be read into device buffers and their device spans may be passed to the row group
- * filtration functions.
+ * dictionary page byte ranges may be read into device buffers and their device spans may be passed
+ * to the row group filtration functions. Bloom filters must instead be fetched with
+ * `cudf::io::parquet::fetch_bloom_filters_to_device`, which strips each bloom filter's header and
+ * returns 32-byte aligned bitsets.
  * @code{.cpp}
  * // Start with a list of all parquet row group indices from the file footer
  * auto all_row_group_indices = reader->all_row_groups(options);
@@ -564,8 +566,6 @@ class hybrid_scan_reader {
 
   /**
    * @brief Filter the row groups using column chunk bloom filters
-   *
-   * @note The `bloom_filter_data` device spans must point to 32-byte aligned addresses
    *
    * @throws std::invalid_argument if a non-empty bitset is not 32-byte aligned or its size is not
    *         a multiple of 32 bytes

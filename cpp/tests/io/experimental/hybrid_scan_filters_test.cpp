@@ -2657,10 +2657,11 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithBloomFiltersValidatesBitsets)
   // Empty spans mean "no bloom filter" and keep every row group
   EXPECT_EQ(reader->filter_row_groups_with_bloom_filters(spans(0, 0), row_groups, options, stream),
             row_groups);
-  // Aligned bitsets whose sizes are multiples of 32 bytes are accepted
-  EXPECT_NO_THROW(std::ignore = reader->filter_row_groups_with_bloom_filters(
-                    spans(0, 64), row_groups, options, stream));
-  // A raw bloom filter byte range still holds the header, so its size is not a multiple of 32
+  // An all-zero bitset holds no values, so every row group is pruned
+  EXPECT_TRUE(
+    reader->filter_row_groups_with_bloom_filters(spans(0, 64), row_groups, options, stream)
+      .empty());
+  // Sizes that are not a multiple of 32 bytes are rejected (e.g. most header-included ranges)
   EXPECT_THROW(std::ignore = reader->filter_row_groups_with_bloom_filters(
                  spans(0, 47), row_groups, options, stream),
                std::invalid_argument);

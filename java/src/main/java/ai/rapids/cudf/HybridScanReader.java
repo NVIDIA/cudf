@@ -321,8 +321,10 @@ public class HybridScanReader implements AutoCloseable {
    * <p>The ordering follows the C++ reader's ordering and is meaningful: the i-th entry
    * corresponds to the i-th column chunk needing a bloom filter. The result may be empty.
    *
-   * <p>Device buffers for these ranges must be allocated using a 32-byte aligned memory
-   * resource.
+   * <p>Each byte range spans a complete bloom filter, including its header. Row-group
+   * pruning with bloom filters needs the header-stripped, 32-byte aligned bitsets that
+   * the C++ {@code cudf::io::parquet::fetch_bloom_filters_to_device} returns, not the raw
+   * bytes of these ranges.
    */
   public ByteRange[] bloomFiltersByteRanges(int[] rowGroupIndices) {
     assertNotClosed();

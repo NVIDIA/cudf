@@ -15,8 +15,6 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/mr/aligned_resource_adaptor.hpp>
-
 #include <vector>
 
 using cudf::io::parquet::experimental::hybrid_scan_reader;
@@ -142,8 +140,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   bool case_sensitive_names,
   bool use_jit_filter,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr)
+  rmm::device_async_resource_ref mr)
 {
   // Create reader options with empty source info
   cudf::io::parquet_reader_options options = cudf::io::parquet_reader_options::builder()
@@ -227,8 +224,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr)
+  rmm::device_async_resource_ref mr)
 {
   // Create reader options with empty source info
   cudf::io::parquet_reader_options options = cudf::io::parquet_reader_options::builder()

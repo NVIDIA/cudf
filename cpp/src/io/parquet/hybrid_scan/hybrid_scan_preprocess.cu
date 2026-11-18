@@ -69,7 +69,7 @@ void decode_dictionary_page_headers(
                    chunk_page_offsets.end(),
                    0);
 
-  parquet::kernel_error error_code(stream, cudf::get_current_device_resource_ref());
+  parquet::kernel_error error_code(stream, mr.as_temporary());
 
   // Decode dictionary page headers, one thread per page
   parquet::detail::decode_page_headers_from_page_data(

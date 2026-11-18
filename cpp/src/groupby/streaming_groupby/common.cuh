@@ -6,7 +6,6 @@
 #pragma once
 
 #include "groupby/hash/hash_csr_kernels.cuh"
-#include "warp_aggregate.hpp"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
@@ -203,22 +202,16 @@ auto build_cross_comparators(
   return cudf::detail::make_device_buffer(h_eqs, stream, mr.get_output_mr());
 }
 
-/*
- * Maps slot bits to aggregate rows. With several partials, rows of the same thread block share
- * one partial so concurrent blocks spread their atomics over different copies of each group.
- */
-struct resolve_aggregate_targets {
+/// Maps slot bits to dense group IDs.
+struct resolve_group_ids {
   size_type const* slots;
   size_type* targets;
-  size_type capacity;
-  size_type partials_per_group;
 
   __device__ void operator()(size_type row) const
   {
     auto const slot = cuda::std::bit_cast<cuda::std::uint32_t>(targets[row]);
     if (slot == detail::hash::hash_csr_no_slot) { return; }
-    auto const partial = (row / partial_aggregation_block_size) % partials_per_group;
-    targets[row]       = partial * capacity + slots[slot];
+    targets[row] = slots[slot];
   }
 };
 
@@ -332,12 +325,10 @@ struct streaming_groupby::impl {
   void update_nullable_state(table_view const& batch_keys);
 
   /*
-   * Inserts the batch keys and returns each row's aggregate row, or the no-slot sentinel for
-   * excluded rows. `use_partials` spreads rows over the per-group partials (aggregate);
-   * otherwise every row targets the group's first partial (merge).
+   * Inserts the batch keys and returns each row's dense group ID, or the no-slot sentinel for
+   * excluded rows. Without aggregations, the other rows keep their slot bits.
    */
   cuda::device_buffer<size_type> probe_and_insert(table_view const& batch_keys,
-                                                  bool use_partials,
                                                   cuda::stream_ref stream);
 
   /*
@@ -346,7 +337,6 @@ struct streaming_groupby::impl {
    */
   template <bool has_nested>
   cuda::device_buffer<size_type> probe_and_insert_impl(table_view const& batch_keys,
-                                                       bool use_partials,
                                                        cuda::stream_ref stream);
 
   void do_aggregate(table_view const& data, cuda::stream_ref stream);

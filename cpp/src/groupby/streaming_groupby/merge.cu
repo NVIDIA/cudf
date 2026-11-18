@@ -71,7 +71,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
     insertion_started  = true;
-    auto const targets = probe_and_insert(other_key_view, false, stream);
+    auto const targets = probe_and_insert(other_key_view, stream);
     _insert_done.record(stream);
     _results_read_done.wait(stream);
 

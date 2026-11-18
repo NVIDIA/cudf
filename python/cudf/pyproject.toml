@@ -109,8 +109,6 @@ filterwarnings = [
     "ignore:Passing a BlockManager to DataFrame is deprecated:DeprecationWarning",
     # PerformanceWarning from cupy warming up the JIT cache
     "ignore:Jitify is performing a one-time only warm-up to populate the persistent cache:cupy._util.PerformanceWarning",
-    # Ignore numba PEP 456 warning specific to arm machines
-    "ignore:FNV hashing is not implemented in Numba.*:UserWarning",
     # Allow running UDF tests on older architectures
     "ignore:.*NVRTC log messages whilst compiling.*:UserWarning",
 ]

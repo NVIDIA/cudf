@@ -74,9 +74,10 @@ def duckdb_impl(run_config: RunConfig) -> str:
 def _build_rollup_levels(
     base_data: pl.LazyFrame,
     full_cols: list[str],
-    rollup_specs: list[tuple[list[str], dict[str, pl.DataType]]],
+    rollup_specs: list[tuple[list[str], list[str]]],
 ) -> pl.LazyFrame:
     levels: list[pl.LazyFrame] = []
+    schema = base_data.collect_schema()
 
     for grp_cols, null_cols in rollup_specs:
         lf = (
@@ -89,7 +90,7 @@ def _build_rollup_levels(
 
         if null_cols:
             lf = lf.with_columns(
-                [pl.lit(None, dtype=dt).alias(col) for col, dt in null_cols.items()]
+                [pl.lit(None, dtype=schema[col]).alias(col) for col in null_cols]
             )
 
         lf = lf.select(
@@ -107,7 +108,7 @@ def _build_rollup_levels(
     return pl.concat(levels)
 
 
-rollup_specs: list[tuple[list[str], dict[str, pl.DataType]]] = [
+rollup_specs: list[tuple[list[str], list[str]]] = [
     (
         [
             "i_category",
@@ -119,7 +120,7 @@ rollup_specs: list[tuple[list[str], dict[str, pl.DataType]]] = [
             "d_moy",
             "s_store_id",
         ],
-        {},
+        [],
     ),
     (
         [
@@ -131,70 +132,70 @@ rollup_specs: list[tuple[list[str], dict[str, pl.DataType]]] = [
             "d_qoy",
             "d_moy",
         ],
-        {"s_store_id": pl.String()},
+        ["s_store_id"],
     ),
     (
         ["i_category", "i_class", "i_brand", "i_product_name", "d_year", "d_qoy"],
-        {"d_moy": pl.Int64(), "s_store_id": pl.String()},
+        ["d_moy", "s_store_id"],
     ),
     (
         ["i_category", "i_class", "i_brand", "i_product_name", "d_year"],
-        {"d_qoy": pl.Int64(), "d_moy": pl.Int64(), "s_store_id": pl.String()},
+        ["d_qoy", "d_moy", "s_store_id"],
     ),
     (
         ["i_category", "i_class", "i_brand", "i_product_name"],
-        {
-            "d_year": pl.Int64(),
-            "d_qoy": pl.Int64(),
-            "d_moy": pl.Int64(),
-            "s_store_id": pl.String(),
-        },
+        [
+            "d_year",
+            "d_qoy",
+            "d_moy",
+            "s_store_id",
+        ],
     ),
     (
         ["i_category", "i_class", "i_brand"],
-        {
-            "i_product_name": pl.String(),
-            "d_year": pl.Int64(),
-            "d_qoy": pl.Int64(),
-            "d_moy": pl.Int64(),
-            "s_store_id": pl.String(),
-        },
+        [
+            "i_product_name",
+            "d_year",
+            "d_qoy",
+            "d_moy",
+            "s_store_id",
+        ],
     ),
     (
         ["i_category", "i_class"],
-        {
-            "i_brand": pl.String(),
-            "i_product_name": pl.String(),
-            "d_year": pl.Int64(),
-            "d_qoy": pl.Int64(),
-            "d_moy": pl.Int64(),
-            "s_store_id": pl.String(),
-        },
+        [
+            "i_brand",
+            "i_product_name",
+            "d_year",
+            "d_qoy",
+            "d_moy",
+            "s_store_id",
+        ],
     ),
     (
         ["i_category"],
-        {
-            "i_class": pl.String(),
-            "i_brand": pl.String(),
-            "i_product_name": pl.String(),
-            "d_year": pl.Int64(),
-            "d_qoy": pl.Int64(),
-            "d_moy": pl.Int64(),
-            "s_store_id": pl.String(),
-        },
+        [
+            "i_class",
+            "i_brand",
+            "i_product_name",
+            "d_year",
+            "d_qoy",
+            "d_moy",
+            "s_store_id",
+        ],
     ),
     (
         [],
-        {
-            "i_category": pl.String(),
-            "i_class": pl.String(),
-            "i_brand": pl.String(),
-            "i_product_name": pl.String(),
-            "d_year": pl.Int64(),
-            "d_qoy": pl.Int64(),
-            "d_moy": pl.Int64(),
-            "s_store_id": pl.String(),
-        },
+        [
+            "i_category",
+            "i_class",
+            "i_brand",
+            "i_product_name",
+            "d_year",
+            "d_qoy",
+            "d_moy",
+            "s_store_id",
+        ],
     ),
 ]
 

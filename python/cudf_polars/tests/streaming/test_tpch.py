@@ -46,7 +46,8 @@ def tpch_data_dir(
     try:
         subprocess.run(
             [
-                "tpchgen-cli",
+                "tpcgen-cli",
+                "tpch",
                 "parquet",
                 "-s",
                 str(request.config.getoption("scale") or 1.0),
@@ -58,7 +59,7 @@ def tpch_data_dir(
         )
     except FileNotFoundError as e:
         raise RuntimeError(
-            "tpchgen-cli is not installed. Install it to generate TPC-H test data."
+            "tpcgen-cli is not installed. Install it to generate TPC-H test data."
         ) from e
     return str(data_dir)
 

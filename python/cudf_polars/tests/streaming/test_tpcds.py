@@ -7,11 +7,11 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import duckdb
 import pytest
 
 from cudf_polars.streaming.benchmarks.pdsds import PDSDSPolarsQueries
@@ -61,15 +61,23 @@ def tpcds_data_dir(
         return path
     scale = request.config.getoption("scale") or 1.0
     data_dir = tmp_path_factory.mktemp("tpcds")
-    with duckdb.connect() as conn:
-        conn.execute("INSTALL tpcds")
-        conn.execute("LOAD tpcds")
-        conn.execute("CALL dsdgen(sf=$1)", [scale])
-        for table in conn.execute("SHOW TABLES").df()["name"]:
-            conn.execute(
-                f"COPY {table} TO $1 (FORMAT PARQUET)",
-                [f"{data_dir}/{table}.parquet"],
-            )
+    try:
+        subprocess.run(
+            [
+                "tpcgen-cli",
+                "tpcds",
+                "parquet",
+                "-s",
+                str(scale),
+                f"--output-dir={data_dir}",
+            ],
+            check=True,
+            timeout=1800,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            "tpcgen-cli is not installed. Install it to generate TPC-DS test data."
+        ) from e
     return str(data_dir)
 
 

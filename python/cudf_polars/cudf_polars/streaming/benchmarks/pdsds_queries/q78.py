@@ -129,6 +129,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         run_config.dataset_path, "store_returns", run_config.suffix
     )
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
+    year_dtype = date_dim.collect_schema()["d_year"]
 
     # Filter date_dim to just the target year to reduce data volume.
     # The final query filters ss_sold_year == year and joins on sold_year,
@@ -206,7 +207,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         )
         .select(
             [
-                pl.lit(year, dtype=pl.Int64).alias("ss_sold_year"),
+                pl.lit(year, dtype=year_dtype).alias("ss_sold_year"),
                 pl.col("ss_item_sk"),
                 pl.col("ss_customer_sk"),
                 (

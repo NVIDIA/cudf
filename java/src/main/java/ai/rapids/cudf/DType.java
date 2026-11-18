@@ -66,7 +66,11 @@ public final class DType {
     DURATION_MILLISECONDS(8, 19),
     DURATION_MICROSECONDS(8, 20),
     DURATION_NANOSECONDS(8, 21),
-    //DICTIONARY32(4, 22),
+    /**
+     * Dictionary-encoded column. The parent owns no data buffer; it has two child columns,
+     * indices (a signed integer type) and keys. Only STRING keys are supported in Java.
+     */
+    DICTIONARY32(0, 22),
 
     STRING(0, 23),
     LIST(0, 24),
@@ -131,6 +135,14 @@ public final class DType {
   public static final DType STRING = new DType(DTypeEnum.STRING);
   public static final DType LIST = new DType(DTypeEnum.LIST);
   public static final DType STRUCT = new DType(DTypeEnum.STRUCT);
+  /**
+   * Dictionary-encoded column with STRING keys. Columns of this type are only created natively,
+   * by {@link ColumnView#dictionaryEncode()}, {@link ColumnVector#makeDictionary} or the Parquet
+   * reader ({@link ParquetOptions.Builder#withOutputDictColumns}). Those entry points, plus
+   * {@link ColumnView}'s native view construction and the Arrow IPC reader, reject dictionaries
+   * whose keys are not STRING. Any new entry point that can produce a dictionary must do the same.
+   */
+  public static final DType DICTIONARY32 = new DType(DTypeEnum.DICTIONARY32);
 
   /* This is used in fromNative method to return singleton object for non-decimal types.
   Please make sure the order here is same as that of DTypeEnum. Whenever a new non-decimal
@@ -158,7 +170,7 @@ public final class DType {
       DURATION_MILLISECONDS,
       DURATION_MICROSECONDS,
       DURATION_NANOSECONDS,
-      null, // DICTIONARY32
+      DICTIONARY32,
       STRING,
       LIST,
       null, // DECIMAL32
@@ -414,11 +426,27 @@ public final class DType {
     return INTEGRALS.contains(this.typeId);
   }
 
- /**
-   * Returns true for nested types
+  /**
+   * Returns true for nested types (LIST and STRUCT). This matches libcudf's
+   * {@code cudf::is_nested}. A type can have child columns without being nested; use
+   * {@link #hasChildren()} to ask whether a column exposes child columns.
    */
   public boolean isNestedType() {
     return NESTED_TYPE.contains(this.typeId);
+  }
+
+  /**
+   * Returns true if columns of this type expose child columns through
+   * {@link ColumnView#getNumChildren()} and {@link ColumnView#getChildColumnView(int)}.
+   * Currently LIST, STRUCT and DICTIONARY32 (children: indices, then keys). STRING returns false:
+   * its offsets are exposed through {@link ColumnView#getOffsets()}, not as a child column.
+   * <p>
+   * Code that builds, copies or walks columns generically must use this, not
+   * {@link #isNestedType()}. Code that handles specific nested layouts (LIST vs STRUCT) uses
+   * {@link #isNestedType()} and must reject any other type for which this returns true.
+   */
+  public boolean hasChildren() {
+    return HAS_CHILDREN_TYPE.contains(this.typeId);
   }
 
   @Deprecated
@@ -502,6 +530,12 @@ public final class DType {
   private static final EnumSet<DTypeEnum> NESTED_TYPE = EnumSet.of(
       DTypeEnum.LIST,
       DTypeEnum.STRUCT
+  );
+
+  private static final EnumSet<DTypeEnum> HAS_CHILDREN_TYPE = EnumSet.of(
+      DTypeEnum.LIST,
+      DTypeEnum.STRUCT,
+      DTypeEnum.DICTIONARY32
   );
 
   private static final EnumSet<DTypeEnum> OFFSETS_TYPE = EnumSet.of(

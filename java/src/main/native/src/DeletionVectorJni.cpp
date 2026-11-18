@@ -46,7 +46,8 @@ cudf::io::parquet_reader_options make_parquet_reader_options(JNIEnv* env,
                                                              jbooleanArray const& col_binary_read,
                                                              jobjectArray const& row_groups,
                                                              cudf::io::source_info&& source,
-                                                             jint unit)
+                                                             jint unit,
+                                                             jboolean output_dict_columns)
 {
   cudf::jni::native_jstringArray n_filter_col_names(env, filter_col_names);
   cudf::jni::native_jobjectArray<jintArray> n_row_groups(env, row_groups);
@@ -74,6 +75,7 @@ cudf::io::parquet_reader_options make_parquet_reader_options(JNIEnv* env,
     .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
     // Ignore any missing projected column(s) by default
     .ignore_missing_columns(true)
+    .output_dict_columns(output_dict_columns)
     .build();
 }
 
@@ -154,6 +156,7 @@ Java_ai_rapids_cudf_DeletionVector_computeNumDeletedRows(JNIEnv* env,
  * @param row_group_num_rows Number of rows in each row group.
  *                             When reading multiple files, the row counts are stored in order of
  * files, i.e., all row groups from file 1 followed by all row groups from file 2, etc.
+ * @param output_dict_columns Whether to return flat STRING columns as DICTIONARY32
  * @return Handle to the columns of the resulting table (as jlongArray)
  */
 JNIEXPORT jlongArray JNICALL
@@ -169,7 +172,8 @@ Java_ai_rapids_cudf_DeletionVector_readParquet(JNIEnv* env,
                                                jintArray deletion_vector_row_counts,
                                                jlongArray row_group_offsets,
                                                jintArray row_group_num_rows,
-                                               jboolean are_retention_vectors)
+                                               jboolean are_retention_vectors,
+                                               jboolean output_dict_columns)
 {
   bool read_buffer = true;
   if (addrs_and_sizes == nullptr) {
@@ -200,8 +204,13 @@ Java_ai_rapids_cudf_DeletionVector_readParquet(JNIEnv* env,
     cudf::io::source_info source = read_buffer ? cudf::io::source_info(multi_buffer_source.get())
                                                : cudf::io::source_info(filenames.as_cpp_vector());
 
-    cudf::io::parquet_reader_options opts = make_parquet_reader_options(
-      env, filter_col_names, col_binary_read, row_groups, std::move(source), unit);
+    cudf::io::parquet_reader_options opts = make_parquet_reader_options(env,
+                                                                        filter_col_names,
+                                                                        col_binary_read,
+                                                                        row_groups,
+                                                                        std::move(source),
+                                                                        unit,
+                                                                        output_dict_columns);
 
     auto dv_info = make_deletion_vector_info(env,
                                              serialized_roaring64,
@@ -244,6 +253,7 @@ Java_ai_rapids_cudf_DeletionVector_readParquet(JNIEnv* env,
  * @param row_group_num_rows Number of rows in each row group.
  *                             When reading multiple files, the row counts are stored in order of
  * files, i.e., all row groups from file 1 followed by all row groups from file 2, etc.
+ * @param output_dict_columns Whether to return flat STRING columns as DICTIONARY32
  * @return jlongArray of size 3:
  *         [0] Handle to the chunked_parquet_reader
  *         [1] Handle to the multi_host_buffer_source (nullptr if reading from file)
@@ -264,7 +274,8 @@ Java_ai_rapids_cudf_DeletionVector_createParquetChunkedReader(JNIEnv* env,
                                                               jintArray deletion_vector_row_counts,
                                                               jlongArray row_group_offsets,
                                                               jintArray row_group_num_rows,
-                                                              jboolean are_retention_vectors)
+                                                              jboolean are_retention_vectors,
+                                                              jboolean output_dict_columns)
 {
   bool read_buffer = true;
   if (addrs_sizes == nullptr) {
@@ -295,8 +306,13 @@ Java_ai_rapids_cudf_DeletionVector_createParquetChunkedReader(JNIEnv* env,
     cudf::io::source_info source = read_buffer ? cudf::io::source_info(multi_buffer_source.get())
                                                : cudf::io::source_info(filenames.as_cpp_vector());
 
-    cudf::io::parquet_reader_options opts = make_parquet_reader_options(
-      env, filter_col_names, col_binary_read, row_groups, std::move(source), unit);
+    cudf::io::parquet_reader_options opts = make_parquet_reader_options(env,
+                                                                        filter_col_names,
+                                                                        col_binary_read,
+                                                                        row_groups,
+                                                                        std::move(source),
+                                                                        unit,
+                                                                        output_dict_columns);
 
     auto dv_info = make_deletion_vector_info(env,
                                              serialized_roaring64,

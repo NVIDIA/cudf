@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -453,6 +453,9 @@ public final class Scalar implements AutoCloseable, BinaryOperable {
    */
   private static ColumnVector buildNullColumnVector(HostColumnVector.DataType hostType) {
     DType dt = hostType.getType();
+    if (dt.equals(DType.DICTIONARY32)) {
+      throw new IllegalArgumentException("DICTIONARY32 is not supported as a scalar element type");
+    }
     if (!dt.isNestedType()) {
       try (HostColumnVector.Builder builder = HostColumnVector.builder(dt, 1)) {
         builder.appendNull();

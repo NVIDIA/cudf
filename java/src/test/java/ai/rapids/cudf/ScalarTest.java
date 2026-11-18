@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -44,6 +44,9 @@ public class ScalarTest extends CudfTestBase {
   @Test
   public void testNull() {
     for (DType.DTypeEnum dataType : DType.DTypeEnum.values()) {
+      if (dataType == DType.DTypeEnum.DICTIONARY32) {
+        continue; // there are no dictionary scalars, nor lists or structs of them built on the host
+      }
       DType type;
       if (dataType.isDecimalType()) {
         type = DType.create(dataType, -3);

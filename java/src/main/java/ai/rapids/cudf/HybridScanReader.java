@@ -192,6 +192,9 @@ public class HybridScanReader implements AutoCloseable {
    * @param footerBuffer host-resident footer bytes (must remain valid until this constructor
    *                     returns; the JNI reads the bytes synchronously)
    * @param opts         Parquet reader options. {@link ParquetOptions#DEFAULT} by default.
+   *                     {@link ParquetOptions.Builder#withOutputDictColumns(boolean)} is not
+   *                     supported because the hybrid scan pipeline cannot honor it.
+   * @throws IllegalArgumentException if {@code opts} requests dictionary output columns.
    */
   public HybridScanReader(HostMemoryBuffer footerBuffer, ParquetOptions opts) {
     if (footerBuffer == null) {
@@ -199,6 +202,10 @@ public class HybridScanReader implements AutoCloseable {
     }
     if (opts == null) {
       opts = ParquetOptions.DEFAULT;
+    }
+    if (opts.isOutputDictColumns()) {
+      throw new IllegalArgumentException(
+          "outputDictColumns is not supported by the hybrid scan reader");
     }
     String[] columnNames = opts.getIncludeColumnNames();
     boolean[] readBinaryAsString = opts.getReadBinaryAsString();

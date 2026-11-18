@@ -304,7 +304,8 @@ public class DeletionVector {
                                             deletionVectorRowCounts,
                                             rowGroupOffsets,
                                             rowGroupNumRows,
-                                            areRetentionVectors);
+                                            areRetentionVectors,
+                                            opts.isOutputDictColumns());
     return new Table(columnHandles);
   }
 
@@ -450,7 +451,8 @@ public class DeletionVector {
       long[] handles = createParquetChunkedReader(chunkSizeByteLimit, passReadLimit,
         opts.getIncludeColumnNames(), opts.getReadBinaryAsString(), inputFilePaths,
           dataBufferAddrsSizes, rowGroups, opts.timeUnit().typeId.getNativeId(),
-          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows, areRetentionVectors);
+          bitmapAddrsSizes, deletionVectorRowCounts, rowGroupOffsets, rowGroupNumRows, areRetentionVectors,
+          opts.isOutputDictColumns());
       readerHandle = handles[0];
       if (readerHandle == 0) {
         throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -543,7 +545,8 @@ public class DeletionVector {
                                                 int[] deletionVectorRowCounts,
                                                 long[] rowGroupOffsets,
                                                 int[] rowGroupNumRows,
-                                                boolean areRetentionVectors)
+                                                boolean areRetentionVectors,
+                                                boolean outputDictColumns)
     throws CudfException;
 
   private static native long[] createParquetChunkedReader(long chunkReadLimit,
@@ -558,7 +561,8 @@ public class DeletionVector {
                                                                int[] deletionVectorRowCounts,
                                                                long[] rowGroupOffsets,
                                                                int[] rowGroupNumRows,
-                                                               boolean areRetentionVectors)
+                                                               boolean areRetentionVectors,
+                                                               boolean outputDictColumns)
     throws CudfException;
 
   private static native boolean parquetChunkedReaderHasNext(long readerHandle) throws CudfException;

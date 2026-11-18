@@ -111,6 +111,8 @@ filterwarnings = [
     "ignore:Jitify is performing a one-time only warm-up to populate the persistent cache:cupy._util.PerformanceWarning",
     # Allow running UDF tests on older architectures
     "ignore:.*NVRTC log messages whilst compiling.*:UserWarning",
+    # TODO: Remove once https://github.com/NVIDIA/numba-cuda-mlir/issues/477 is resolved
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:numba_cuda_mlir",
 ]
 markers = [
     "spilling: mark benchmark a good candidate to run with `CUDF_SPILL=ON`",

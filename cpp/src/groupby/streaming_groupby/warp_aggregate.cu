@@ -260,6 +260,11 @@ void compute_warp_aggregates(table_view const& values,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
 {
+  CUDF_EXPECTS(partials_per_group > 0, "partials_per_group must be positive");
+  CUDF_EXPECTS(output.num_columns() == 0 or
+                 output.num_rows() >= static_cast<int64_t>(capacity) * partials_per_group,
+               "Output is smaller than capacity * partials_per_group");
+
   for (size_type begin = 0; begin < values.num_columns();) {
     auto const& input = values.column(begin);
     aggregation_columns columns{};

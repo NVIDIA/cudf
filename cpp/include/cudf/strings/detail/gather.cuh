@@ -496,6 +496,12 @@ CUDF_KERNEL void gather_string_sizes(Column const* columns,
  * Map values are not checked.
  * This preserves each column's character count, allowing a single batched size readback.
  *
+ * @note Batching can reduce synchronization and kernel-launch overhead, but this function is not
+ * guaranteed to outperform other gather or materialization paths for every workload. Performance
+ * depends on row and column counts, string lengths, and permutation locality. Callers should use
+ * workload-specific heuristics to select this function or an alternative path; this utility does
+ * not make that selection.
+ *
  * @tparam MapIterator Random-access device iterator over row indices
  * @param input Table of non-null STRING columns with INT32 offsets
  * @param begin First index of the complete permutation

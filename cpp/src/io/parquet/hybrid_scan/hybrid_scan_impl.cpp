@@ -10,19 +10,16 @@
 #include "io/parquet/reader_impl_chunking_utils.cuh"
 #include "io/parquet/synthetic_column_helpers.hpp"
 #include "page_index_filter_utils.hpp"
-#include "runtime/context.hpp"
 
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/stream_compaction.hpp>
 #include <cudf/detail/structs/utilities.hpp>
-#include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/utilities.hpp>
-#include <cudf/transform.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -1262,19 +1259,7 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   if constexpr (std::is_same_v<RowMaskView, cudf::mutable_column_view>) {
     CUDF_EXPECTS(columns_mode == read_columns_mode::FILTER_COLUMNS, "Invalid read mode");
 
-    // Compute the final filter expression incorporating any column reference offsets in _expr_conv
-    auto const final_filter      = compute_offset_filter();
-    auto const final_filter_expr = final_filter.get_converted_expr();
-
-    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
-    auto final_row_mask =
-      use_jit ? cudf::compute_column_jit(read_table->view(),
-                                         final_filter_expr.value().get(),
-                                         {},
-                                         _stream,
-                                         _mr.get_temporary_mr())
-              : cudf::detail::compute_column(
-                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+    auto final_row_mask = compute_filter(read_table->view());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 

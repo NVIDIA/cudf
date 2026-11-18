@@ -14,6 +14,7 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/unary.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -368,16 +369,26 @@ std::vector<std::string> names_from_expression::to_vector() &&
           std::make_move_iterator(_column_names.end())};
 }
 
-offset_column_references::offset_column_references(
-  std::optional<std::reference_wrapper<ast::expression const>> expr, size_type offset)
-  : _offset{offset}
+post_read_filter::post_read_filter(ast::expression const& expr,
+                                   table_view input,
+                                   size_type offset,
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr)
+  : _input{std::move(input)}, _offset{offset}, _stream{stream}, _mr{mr}, _expr{expr}
 {
-  if (not expr.has_value()) { return; }
-  if (offset == 0) {
-    _converted_expr = expr;
-    return;
+  if (offset != 0 or
+      std::ranges::any_of(_input, [](auto const& col) { return cudf::is_nested(col.type()); })) {
+    _expr = expr.accept(*this);
   }
-  _converted_expr = expr.value().get().accept(*this);
+
+  if (not _null_checks.empty()) {
+    std::vector<column_view> columns(_input.begin(), _input.end());
+    columns.reserve(columns.size() + _null_checks.size());
+    for (auto const& result : _null_checks) {
+      columns.push_back(result->view());
+    }
+    _input = table_view{columns};
+  }
 }
 
 std::optional<std::reference_wrapper<ast::expression const>>
@@ -386,38 +397,45 @@ parquet_filter_normalizer::get_converted_expr() const
   return _converted_expr;
 }
 
-std::optional<std::reference_wrapper<ast::expression const>>
-offset_column_references::get_converted_expr() const
-{
-  return _converted_expr;
-}
-
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
-  ast::literal const& expr)
+std::reference_wrapper<ast::expression const> post_read_filter::visit(ast::literal const& expr)
 {
   return expr;
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> post_read_filter::visit(
   ast::column_reference const& expr)
 {
+  if (_offset == 0) { return expr; }
   return _tree.push(
     ast::column_reference{expr.get_column_index() + _offset, expr.get_table_source()});
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
-  ast::operation const& expr)
+std::reference_wrapper<ast::expression const> post_read_filter::visit(ast::operation const& expr)
 {
+  if (expr.get_operator() == ast::ast_operator::IS_NULL) {
+    auto const operand = extract_unary_operand(expr);
+    if (operand.operand_type == operand_kind::COLUMN_REF) {
+      auto const col_index = operand.col_ref->get_column_index() + _offset;
+      auto const& col      = _input.column(col_index);
+      if (cudf::is_nested(col.type())) {
+        auto const [it, inserted] = _null_check_indices.try_emplace(
+          col_index, _input.num_columns() + static_cast<size_type>(_null_checks.size()));
+        if (inserted) { _null_checks.push_back(cudf::is_null(col, _stream, _mr)); }
+        return _tree.push(ast::column_reference{it->second});
+      }
+    }
+  }
+
   auto const new_operands = visit_operands(expr.get_operands());
   auto const arity        = cudf::ast::detail::ast_operator_arity(expr.get_operator());
   if (arity == 1) { return _tree.push(ast::operation{expr.get_operator(), new_operands.front()}); }
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> post_read_filter::visit(
   ast::column_name_reference const&)
 {
-  CUDF_FAIL("Column name references are not supported in column reference offsetter");
+  CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
 }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(

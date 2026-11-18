@@ -9,14 +9,18 @@
 
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
+#include <cudf/column/column.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
 #include <list>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -250,13 +254,16 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Offsets every column referencein an expression by the specified value
- *
+ * @brief Prepares a filter for decoded rows by offsetting column references and
+ * replacing nested null checks with references to boolean columns.
  */
-class offset_column_references : public ast::detail::expression_transformer {
+class post_read_filter : public ast::detail::expression_transformer {
  public:
-  offset_column_references(std::optional<std::reference_wrapper<ast::expression const>> expr,
-                           size_type offset);
+  post_read_filter(ast::expression const& expr,
+                   table_view input,
+                   size_type offset,
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -280,17 +287,24 @@ class offset_column_references : public ast::detail::expression_transformer {
     ast::column_name_reference const& expr) override;
 
   /**
-   * @brief Returns the converted AST expression
-   *
-   * @return Converted expression, if an input expression was provided
+   * @brief Returns the expression over the filter input table.
    */
-  [[nodiscard]] std::optional<std::reference_wrapper<ast::expression const>> get_converted_expr()
-    const;
+  [[nodiscard]] ast::expression const& expression() const { return _expr.get(); }
+
+  /**
+   * @brief Returns the decoded columns followed by any materialized null checks.
+   */
+  [[nodiscard]] table_view const& input() const { return _input; }
 
  private:
+  table_view _input;
+  size_type _offset;
+  cuda::stream_ref _stream;
+  cudf::memory_resources _mr;
   ast::tree _tree;
-  std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
-  size_type _offset{0};
+  std::reference_wrapper<ast::expression const> _expr;
+  std::unordered_map<size_type, size_type> _null_check_indices;
+  std::vector<std::unique_ptr<column>> _null_checks;
 };
 
 /**

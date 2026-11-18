@@ -82,8 +82,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   bool const process_nulls  = should_process_nulls(s);
 
-  auto const data_len   = cuda::std::distance(s->stream.data_start, s->stream.data_end);
-  auto const num_values = data_len / s->output_cvt.dtype_len_in;
+  auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
   // Check malformed BYTE_STREAM_SPLIT pages. Pages without non-null values have no value data, so
   // an empty data stream is checked below once there are values to decode.
@@ -94,6 +93,8 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     });
     return;
   }
+
+  auto const num_values = data_len / s->output_cvt.dtype_len_in;
 
   PageNestingDecodeInfo* nesting_info_base = s->nesting.nesting_info;
 
@@ -154,67 +155,69 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
       // target_pos will always be properly bounded by num_rows, but dst_pos may be negative (values
       // before first_row) in the flat hierarchy case.
-      if (src_pos < target_pos && data_len <= 0) {
-        s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
-      } else if (src_pos < target_pos && dst_pos >= 0) {
-        // src_pos represents the logical row position we want to read from. But in the case of
-        // nested hierarchies, there is no 1:1 mapping of rows to values.  So our true read position
-        // has to take into account the # of values we have to skip in the page to get to the
-        // desired logical row.  For flat hierarchies, skipped_leaf_values will always be 0.
-        uint32_t val_src_pos = src_pos + skipped_leaf_values;
+      if (src_pos < target_pos) {
+        if (data_len <= 0) {
+          s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
+        } else if (dst_pos >= 0) {
+          // src_pos represents the logical row position we want to read from. But in the case of
+          // nested hierarchies, there is no 1:1 mapping of rows to values.  So our true read
+          // position has to take into account the # of values we have to skip in the page to get to
+          // the desired logical row.  For flat hierarchies, skipped_leaf_values will always be 0.
+          uint32_t val_src_pos = src_pos + skipped_leaf_values;
 
-        // nesting level that is storing actual leaf values
-        int leaf_level_index = s->setup.col.max_nesting_depth - 1;
+          // nesting level that is storing actual leaf values
+          int leaf_level_index = s->setup.col.max_nesting_depth - 1;
 
-        uint32_t dtype_len = s->output_cvt.dtype_len;
-        uint8_t const* src = s->stream.data_start + val_src_pos;
-        uint8_t* dst =
-          nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
-        auto const is_decimal = s->setup.col.logical_type.has_value() and
-                                s->setup.col.logical_type->type == LogicalType::DECIMAL;
+          uint32_t dtype_len = s->output_cvt.dtype_len;
+          uint8_t const* src = s->stream.data_start + val_src_pos;
+          uint8_t* dst =
+            nesting_info_base[leaf_level_index].data_out + static_cast<size_t>(dst_pos) * dtype_len;
+          auto const is_decimal = s->setup.col.logical_type.has_value() and
+                                  s->setup.col.logical_type->type == LogicalType::DECIMAL;
 
-        // Note: non-decimal FIXED_LEN_BYTE_ARRAY will be handled in the string reader
-        if (is_decimal) {
-          switch (dtype) {
-            case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
-            case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
-            case Type::FIXED_LEN_BYTE_ARRAY:
-              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-                *reinterpret_cast<int32_t*>(dst) =
-                  decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-                *reinterpret_cast<int64_t*>(dst) =
-                  decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-                *reinterpret_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(
-                  src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              }
-              // unsupported decimal precision
-              [[fallthrough]];
+          // Note: non-decimal FIXED_LEN_BYTE_ARRAY will be handled in the string reader
+          if (is_decimal) {
+            switch (dtype) {
+              case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
+              case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
+              case Type::FIXED_LEN_BYTE_ARRAY:
+                if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
+                  *reinterpret_cast<int32_t*>(dst) =
+                    decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
+                  break;
+                } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
+                  *reinterpret_cast<int64_t*>(dst) =
+                    decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
+                  break;
+                } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
+                  *reinterpret_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(
+                    src, s->output_cvt.dtype_len_in, num_values);
+                  break;
+                }
+                // unsupported decimal precision
+                [[fallthrough]];
 
-            default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
-          }
-        } else if (dtype_len == 8) {
-          if (s->output_cvt.dtype_len_in == 4) {
-            // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
-            // TIME_MILLIS is the only duration type stored as int32:
-            // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
+              default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
+            }
+          } else if (dtype_len == 8) {
+            if (s->output_cvt.dtype_len_in == 4) {
+              // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
+              // TIME_MILLIS is the only duration type stored as int32:
+              // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#deprecated-time-convertedtype
+              gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
+              // zero out most significant bytes
+              memset(dst + 4, 0, 4);
+            } else if (s->output_cvt.ts_scale) {
+              gpuOutputSplitInt64Timestamp(
+                reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.ts_scale);
+            } else {
+              gpuOutputByteStreamSplit<int64_t>(dst, src, num_values);
+            }
+          } else if (dtype_len == 4) {
             gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
-            // zero out most significant bytes
-            memset(dst + 4, 0, 4);
-          } else if (s->output_cvt.ts_scale) {
-            gpuOutputSplitInt64Timestamp(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.ts_scale);
           } else {
-            gpuOutputByteStreamSplit<int64_t>(dst, src, num_values);
+            s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
           }
-        } else if (dtype_len == 4) {
-          gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
-        } else {
-          s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
         }
       }
       // Only the first thread in the warp 1 updates src_pos

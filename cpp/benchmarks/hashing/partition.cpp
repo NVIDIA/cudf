@@ -494,7 +494,8 @@ void run_string_partition(nvbench::state& state,
   auto map = create_random_column(cudf::type_id::INT32, row_count{rows}, map_profile);
   std::vector<std::unique_ptr<cudf::column>> columns;
   for (cudf::size_type seed = 0; seed < num_columns; ++seed) {
-    columns.push_back(create_ascii_string_column(string_profile, rows, seed));
+    columns.push_back(
+      create_random_column(cudf::type_id::STRING, row_count{rows}, string_profile, seed));
   }
   auto input = cudf::table(std::move(columns));
   run_map_partition(state, input, map->view(), partitions);

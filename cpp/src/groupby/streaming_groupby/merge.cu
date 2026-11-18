@@ -70,8 +70,8 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
     update_nullable_state(other_key_view);
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
-    insertion_started  = true;
-    auto const targets = probe_and_insert(other_key_view, stream);
+    insertion_started    = true;
+    auto const group_ids = probe_and_insert(other_key_view, stream);
     _insert_done.record(stream);
     _results_read_done.wait(stream);
 
@@ -95,7 +95,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
       rmm::exec_policy_nosync(stream, mr),
       cuda::counting_iterator<int64_t>(0),
       static_cast<int64_t>(other_distinct_keys) * source_partials_per_group * _agg_kinds.size(),
-      merge_partial_aggs_fn{targets.data(),
+      merge_partial_aggs_fn{group_ids.data(),
                             source_capacity,
                             other_distinct_keys,
                             source_partials_per_group,

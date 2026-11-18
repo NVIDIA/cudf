@@ -2118,7 +2118,9 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
   auto const filepath = temp_env->get_temp_filepath("DecimalWidthFiltering.parquet");
   {
     cudf::io::chunked_parquet_writer writer(
-      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{filepath}).build());
+      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{filepath})
+        .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+        .build());
     for (auto const& row_group : cudf::slice(table, {0, 12, 12, 24, 24, 36, 36, 44})) {
       writer.write(row_group);
     }
@@ -2132,6 +2134,13 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
   auto const row_groups = reader->all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 4);
+  for (auto const& row_group : reader->parquet_metadata().row_groups) {
+    auto const& encodings = row_group.columns.front().meta_data.encodings;
+    ASSERT_TRUE(std::ranges::any_of(encodings, [](auto const encoding) {
+      return encoding == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+             encoding == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+    }));
+  }
 
   auto const col_ref     = cudf::ast::column_reference(0);
   auto const test_filter = [&](cudf::ast::ast_operator op,

@@ -315,6 +315,13 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   template <read_columns_mode mode>
   [[nodiscard]] table_with_metadata materialize_table_chunk(row_mask_view_t<mode> const& row_mask);
 
+  /**
+   * @brief Recomputes the null count of the row mask after materializing filter columns
+   *
+   * @param row_mask Row mask column updated in place while materializing filter columns
+   */
+  void update_row_mask_null_count(cudf::mutable_column_view& row_mask) const;
+
  private:
   /**
    * @brief Populate the reader's `_options` config (and related members) from the user options.
@@ -558,13 +565,15 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param[in,out] out_columns The columns for building the output table
    * @param[in,out] row_mask Boolean column indicating which rows need to be read after page-pruning
    *                         for filter columns, or after materialize step for payload columns
+   * @param[in] mr Memory resources for the columns before the row mask is applied
    * @return The output table along with columns' metadata
    */
   template <typename RowMaskView>
   table_with_metadata finalize_output(read_columns_mode columns_mode,
                                       table_metadata& out_metadata,
                                       std::vector<std::unique_ptr<column>>& out_columns,
-                                      RowMaskView row_mask);
+                                      RowMaskView row_mask,
+                                      cudf::memory_resources mr);
 
   /**
    * @brief Read a chunk of data and return an output table.
@@ -584,7 +593,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                           RowMaskView row_mask);
 
   /**
-   * @brief Check if all rows are pruned (all valid and false)
+   * @brief Check if all rows are pruned (all null or false)
    *
    * @param row_mask Input row mask column
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -595,7 +604,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
 
   /**
    * @brief Updates the output row mask such that out_row_mask[i + out_row_mask_offset] = true if
-   * and only if in_row_mask[i] is valid and true
+   * and only if both in_row_mask[i] and out_row_mask[i + out_row_mask_offset] are valid and true
    *
    * Updates the output row mask to reflect the final valid and surviving rows from the input row
    * mask. This is inline with the masking behavior of cudf::apply_retention_mask.

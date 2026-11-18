@@ -627,7 +627,7 @@ void host_decompress(compression_type compression,
 }
 
 /**
- * @brief Device decompression path used for a compression type, as far as scratch space goes.
+ * @brief Device decompression path for a compression type, which determines the scratch size
  */
 enum class device_decompressor : uint8_t {
   NONE,           ///< No device decompression: uncompressed data or host decompression forced ON
@@ -661,9 +661,9 @@ enum class device_decompressor : uint8_t {
 /**
  * @brief Computes the scratch space for `di` given its resolved device decompression path.
  */
-[[nodiscard]] size_t get_decompression_scratch_size(device_decompressor decompressor,
-                                                    decompression_info const& di,
-                                                    cuda::stream_ref stream)
+[[nodiscard]] size_t compute_scratch_size(device_decompressor decompressor,
+                                          decompression_info const& di,
+                                          cuda::stream_ref stream)
 {
   switch (decompressor) {
     case device_decompressor::NVCOMP:
@@ -690,7 +690,7 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
 [[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
                                                     cuda::stream_ref stream)
 {
-  return get_decompression_scratch_size(get_device_decompressor(di.type), di, stream);
+  return compute_scratch_size(get_device_decompressor(di.type), di, stream);
 }
 
 void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
@@ -704,14 +704,15 @@ void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
              static_cast<std::size_t>(compression_type::ZSTD) + 1>
     decompressors;
   auto const decompressor_of = [&](compression_type type) {
-    auto& cached = decompressors.at(static_cast<std::size_t>(type));
+    auto const idx = static_cast<std::size_t>(type);
+    CUDF_EXPECTS(idx < decompressors.size(), "Invalid compression type");
+    auto& cached = decompressors[idx];
     if (not cached.has_value()) { cached = get_device_decompressor(type); }
     return *cached;
   };
   for (size_t i = 0; i < infos.size(); ++i) {
     auto const& di = infos[i];
-    sizes[i] =
-      di.num_pages == 0 ? 0 : get_decompression_scratch_size(decompressor_of(di.type), di, stream);
+    sizes[i] = di.num_pages == 0 ? 0 : compute_scratch_size(decompressor_of(di.type), di, stream);
   }
 }
 

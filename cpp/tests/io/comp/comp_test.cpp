@@ -27,9 +27,7 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdlib>
 #include <limits>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -426,29 +424,7 @@ TEST_F(NvcompConfigTest, Decompression)
   EXPECT_TRUE(decomp_disabled(compression_type::SNAPPY, {false, false}));
 }
 
-struct DecompressionScratchSizesTest : public cudf::test::BaseFixture {
-  // Tests below change these; restore the values inherited from the environment afterwards
-  static constexpr std::array<char const*, 2> env_vars{"LIBCUDF_HOST_DECOMPRESSION",
-                                                       "LIBCUDF_NVCOMP_POLICY"};
-  std::array<std::optional<std::string>, env_vars.size()> saved_env;
-
-  DecompressionScratchSizesTest()
-  {
-    for (size_t i = 0; i < env_vars.size(); ++i) {
-      if (auto const* value = std::getenv(env_vars[i]); value != nullptr) { saved_env[i] = value; }
-    }
-  }
-  ~DecompressionScratchSizesTest() override
-  {
-    for (size_t i = 0; i < env_vars.size(); ++i) {
-      if (saved_env[i].has_value()) {
-        setenv(env_vars[i], saved_env[i]->c_str(), 1);
-      } else {
-        unsetenv(env_vars[i]);
-      }
-    }
-  }
-};
+struct DecompressionScratchSizesTest : public cudf::test::BaseFixture {};
 
 TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
 {
@@ -489,30 +465,37 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
     return sizes;
   };
 
-  // Device decompression with nvCOMP enabled (independent of the inherited environment)
-  unsetenv("LIBCUDF_HOST_DECOMPRESSION");
-  setenv("LIBCUDF_NVCOMP_POLICY", "STABLE", 1);
-  auto const nvcomp_sizes = check();
-  // ZSTD is only decompressed on the device through nvCOMP, which needs scratch space
-  if (not nvcomp::is_decompression_disabled(nvcomp::compression_type::ZSTD)) {
-    for (size_t i = 0; i < infos.size(); ++i) {
-      if (infos[i].type == compression_type::ZSTD and infos[i].num_pages > 0) {
-        EXPECT_GT(nvcomp_sizes[i], 0) << "element " << i;
+  {
+    // Device decompression with nvCOMP enabled (independent of the inherited environment)
+    tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "STABLE"};
+    auto const sizes = check();
+    // ZSTD is only decompressed on the device through nvCOMP, which needs scratch space
+    if (not nvcomp::is_decompression_disabled(nvcomp::compression_type::ZSTD)) {
+      for (size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].type == compression_type::ZSTD and infos[i].num_pages > 0) {
+          EXPECT_GT(sizes[i], 0) << "element " << i;
+        }
       }
     }
   }
-  // Host decompression forced on where supported
-  setenv("LIBCUDF_HOST_DECOMPRESSION", "ON", 1);
-  check();
-  unsetenv("LIBCUDF_HOST_DECOMPRESSION");
-  // nvCOMP disabled: libcudf kernels, only Brotli needs scratch space
-  setenv("LIBCUDF_NVCOMP_POLICY", "OFF", 1);
-  auto const kernel_sizes = check();
-  for (size_t i = 0; i < infos.size(); ++i) {
-    if (infos[i].type == compression_type::BROTLI and infos[i].num_pages > 0) {
-      EXPECT_GT(kernel_sizes[i], 0) << "element " << i;
-    } else {
-      EXPECT_EQ(kernel_sizes[i], 0) << "element " << i;
+  {
+    // Host decompression forced on where supported
+    tmp_env_var const host_decomp{host_decomp_env_var, "ON"};
+    check();
+  }
+  {
+    // nvCOMP disabled: libcudf kernels, only the Brotli kernel needs scratch space. Compare against
+    // independently computed sizes, since `check` cannot catch a wrong engine choice that both
+    // functions share.
+    tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "OFF"};
+    auto const sizes = check();
+    for (size_t i = 0; i < infos.size(); ++i) {
+      auto const expected = infos[i].type == compression_type::BROTLI and infos[i].num_pages > 0
+                              ? cudf::io::detail::get_gpu_debrotli_scratch_size(infos[i].num_pages)
+                              : 0;
+      EXPECT_EQ(sizes[i], expected) << "element " << i;
     }
   }
 }

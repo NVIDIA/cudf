@@ -23,6 +23,8 @@
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/functional>

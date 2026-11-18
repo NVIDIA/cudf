@@ -52,10 +52,10 @@ namespace lists {
 std::unique_ptr<column> have_overlap(
   lists_column_view const& lhs,
   lists_column_view const& rhs,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality nulls_equal = null_equality::EQUAL,
+  nan_equality nans_equal   = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a lists column of distinct elements common to two input lists columns.
@@ -89,10 +89,10 @@ std::unique_ptr<column> have_overlap(
 std::unique_ptr<column> intersect_distinct(
   lists_column_view const& lhs,
   lists_column_view const& rhs,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality nulls_equal = null_equality::EQUAL,
+  nan_equality nans_equal   = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a lists column of distinct elements found in either of two input lists columns.
@@ -126,10 +126,10 @@ std::unique_ptr<column> intersect_distinct(
 std::unique_ptr<column> union_distinct(
   lists_column_view const& lhs,
   lists_column_view const& rhs,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality nulls_equal = null_equality::EQUAL,
+  nan_equality nans_equal   = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a lists column of distinct elements found only in the left input column.
@@ -163,10 +163,10 @@ std::unique_ptr<column> union_distinct(
 std::unique_ptr<column> difference_distinct(
   lists_column_view const& lhs,
   lists_column_view const& rhs,
-  null_equality nulls_equal         = null_equality::EQUAL,
-  nan_equality nans_equal           = nan_equality::ALL_EQUAL,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  null_equality nulls_equal = null_equality::EQUAL,
+  nan_equality nans_equal   = nan_equality::ALL_EQUAL,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 }  // namespace lists

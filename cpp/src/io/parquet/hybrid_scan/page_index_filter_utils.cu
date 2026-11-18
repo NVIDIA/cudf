@@ -12,6 +12,7 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/replace.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
@@ -36,7 +37,8 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -57,8 +59,7 @@ namespace {
 /**
  * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
  *
- * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
- * unavailable page-level statistics (represented as nulls)
+ * Null rows are treated as pruned
  */
 struct row_mask_accessor {
   bool const* data;               ///< Row mask data, adjusted for the column view offset
@@ -79,8 +80,8 @@ struct row_mask_accessor {
 
   __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
   {
-    if (data[row_idx]) { return true; }
-    return null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx);
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return false; }
+    return data[row_idx];
   }
 };
 
@@ -418,13 +419,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -740,6 +741,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
   //   max(col[i])     = segment_views[i * stats_cols_per_column + 1]
   //   is_null(col[i]) = segment_views[i * stats_cols_per_column + 2]
+  //   has_nan(col[i]) = segment_views[i * stats_cols_per_column + 3]
   std::vector<std::unique_ptr<column>> segment_columns;
   segment_columns.reserve(stats_cols_per_column * inputs.size());
   std::vector<column_view> segment_views(stats_cols_per_column * num_columns,
@@ -772,8 +774,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
-  // Drop the null mask if it was allocated but ended up empty
-  if (segment_mask->nullable() and segment_mask->null_count() == 0) {
+  // Statistics can't decide the null segments so retain them and drop the null mask
+  if (segment_mask->nullable()) {
+    if (segment_mask->null_count() > 0) {
+      segment_mask =
+        cudf::detail::replace_nulls(segment_mask->view(),
+                                    cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
+                                    stream,
+                                    temp_mr);
+    }
     segment_mask->set_null_mask(
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
   }

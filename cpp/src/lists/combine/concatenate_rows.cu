@@ -63,7 +63,7 @@ generate_regrouped_offsets_and_null_mask(table_device_view const& input,
                                          concatenate_null_policy null_policy,
                                          device_span<size_type const> row_null_counts,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   cudf::memory_resources mrs{mr};
   // outgoing offsets.
@@ -197,7 +197,7 @@ cuda::device_buffer<size_type> generate_null_counts(table_device_view const& inp
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(input.num_columns() > 0, "The input table must have at least one column.");
 
@@ -317,7 +317,7 @@ std::unique_ptr<column> concatenate_rows(table_view const& input,
 std::unique_ptr<column> concatenate_rows(table_view const& input,
                                          concatenate_null_policy null_policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate_rows(input, null_policy, stream, mr);

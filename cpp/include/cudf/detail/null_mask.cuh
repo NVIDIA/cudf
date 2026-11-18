@@ -238,7 +238,7 @@ size_type inplace_bitmask_binop(Binop op,
                                 cudf::memory_resources mr);
 
 template <typename Binop>
-rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
+cuda::device_buffer<size_type> inplace_segmented_bitmask_binop(
   Binop op,
   device_span<bitmask_type*> dest_masks,
   size_type dest_mask_size,
@@ -402,7 +402,7 @@ size_type inplace_bitmask_binop(Binop op,
  * to each segment after the AND operation
  */
 template <typename Binop>
-rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
+cuda::device_buffer<size_type> inplace_segmented_bitmask_binop(
   Binop op,
   device_span<bitmask_type*> dest_masks,
   size_type dest_mask_size,
@@ -426,7 +426,7 @@ rmm::device_uvector<size_type> inplace_segmented_bitmask_binop(
 
   auto const num_segments = static_cast<size_type>(segment_offsets.size() - 1);
   // The kernel accumulates into the null counts, so they have to start at zero
-  auto d_null_counts = cudf::detail::make_zeroed_device_uvector_async<size_type>(
+  auto d_null_counts = cudf::detail::make_zeroed_device_buffer_async<size_type>(
     num_segments, stream, mr.get_output_mr());
   auto const temp_mr = mr.get_temporary_mr();
   auto d_masks       = cudf::detail::make_device_buffer_async(masks, stream, temp_mr);
@@ -558,7 +558,7 @@ struct popcount {
 
 // Count set/unset bits in a segmented null mask, using offset iterators accessible by the device.
 template <typename OffsetIterator>
-rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
+cuda::device_buffer<size_type> segmented_count_bits(bitmask_type const* bitmask,
                                                     OffsetIterator first_bit_indices_begin,
                                                     OffsetIterator first_bit_indices_end,
                                                     OffsetIterator last_bit_indices_begin,
@@ -569,7 +569,8 @@ rmm::device_uvector<size_type> segmented_count_bits(bitmask_type const* bitmask,
   auto const num_ranges =
     static_cast<size_type>(std::distance(first_bit_indices_begin, first_bit_indices_end));
   auto const temp_mr = mr.get_temporary_mr();
-  rmm::device_uvector<size_type> d_bit_counts(num_ranges, stream, mr.get_output_mr());
+  cuda::device_buffer<size_type> d_bit_counts(
+    stream, mr.get_output_mr(), num_ranges, cuda::no_init);
 
   auto num_set_bits_in_word = cuda::transform_iterator(bitmask, popcount{});
   auto first_word_indices =
@@ -714,7 +715,7 @@ std::vector<size_type> segmented_count_bits(
   auto const first_bit_indices_end = first_bit_indices_begin + num_segments;
   auto last_bit_indices_begin      = cuda::transform_iterator(
     cuda::counting_iterator<cudf::size_type>{0}, index_alternator{true, d_indices.data()});
-  rmm::device_uvector<size_type> d_bit_counts =
+  cuda::device_buffer<size_type> d_bit_counts =
     cudf::detail::segmented_count_bits(bitmask,
                                        first_bit_indices_begin,
                                        first_bit_indices_end,

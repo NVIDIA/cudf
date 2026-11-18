@@ -31,7 +31,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
                                  std::optional<std::size_t> output_size,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr) const
+                                 cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -47,8 +47,9 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   if constexpr (Join == join_kind::INNER_JOIN) {
     if (is_trivial_join(left, _right, Join)) {
       validate_output_size(0);
-      return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+      return std::pair(
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
     }
   } else {
     if (_is_empty) {
@@ -58,8 +59,9 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
 
     if (is_trivial_join(left, _right, Join)) {
       validate_output_size(0);
-      return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+      return std::pair(
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
     }
   }
 
@@ -134,24 +136,21 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
 
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
-hash_join<hash_join_hasher>::join_retrieve<join_kind::INNER_JOIN>(
-  cudf::table_view const&,
-  std::optional<std::size_t>,
-  cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+hash_join<hash_join_hasher>::join_retrieve<join_kind::INNER_JOIN>(cudf::table_view const&,
+                                                                  std::optional<std::size_t>,
+                                                                  cuda::stream_ref,
+                                                                  cudf::memory_resources) const;
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
-hash_join<hash_join_hasher>::join_retrieve<join_kind::LEFT_JOIN>(
-  cudf::table_view const&,
-  std::optional<std::size_t>,
-  cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+hash_join<hash_join_hasher>::join_retrieve<join_kind::LEFT_JOIN>(cudf::table_view const&,
+                                                                 std::optional<std::size_t>,
+                                                                 cuda::stream_ref,
+                                                                 cudf::memory_resources) const;
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                    std::unique_ptr<rmm::device_uvector<size_type>>>
-hash_join<hash_join_hasher>::join_retrieve<join_kind::FULL_JOIN>(
-  cudf::table_view const&,
-  std::optional<std::size_t>,
-  cuda::stream_ref,
-  rmm::device_async_resource_ref) const;
+hash_join<hash_join_hasher>::join_retrieve<join_kind::FULL_JOIN>(cudf::table_view const&,
+                                                                 std::optional<std::size_t>,
+                                                                 cuda::stream_ref,
+                                                                 cudf::memory_resources) const;
 
 }  // namespace cudf::detail

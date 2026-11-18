@@ -24,6 +24,12 @@ size_t CompactProtocolWriter::write(FileMetaData const& f)
   if (not f.key_value_metadata.empty()) { c.field_struct_list(5, f.key_value_metadata); }
   if (not f.created_by.empty()) { c.field_string(6, f.created_by); }
   if (f.column_orders.has_value()) { c.field_struct_list(7, f.column_orders.value()); }
+  if (f.encryption_algorithm.has_value()) {
+    c.field_struct_blob(8, f.encryption_algorithm.value());
+  }
+  if (f.footer_signing_key_metadata.has_value()) {
+    c.field_binary(9, f.footer_signing_key_metadata.value());
+  }
   return c.value();
 }
 
@@ -225,6 +231,10 @@ size_t CompactProtocolWriter::write(ColumnChunk const& s)
     c.field_int(6, s.column_index_offset);
     c.field_int(7, s.column_index_length);
   }
+  if (s.crypto_metadata.has_value()) { c.field_struct_blob(8, s.crypto_metadata.value()); }
+  if (s.encrypted_column_metadata.has_value()) {
+    c.field_binary(9, s.encrypted_column_metadata.value());
+  }
   return c.value();
 }
 
@@ -243,6 +253,8 @@ size_t CompactProtocolWriter::write(ColumnChunkMetaData const& s)
   if (s.dictionary_page_offset != 0) { c.field_int(11, s.dictionary_page_offset); }
   c.field_struct(12, s.statistics);
   if (s.encoding_stats.has_value()) { c.field_struct_list(13, s.encoding_stats.value()); }
+  if (s.bloom_filter_offset.has_value()) { c.field_int(14, s.bloom_filter_offset.value()); }
+  if (s.bloom_filter_length.has_value()) { c.field_int(15, s.bloom_filter_length.value()); }
   if (s.size_statistics.has_value()) { c.field_struct(16, s.size_statistics.value()); }
   return c.value();
 }

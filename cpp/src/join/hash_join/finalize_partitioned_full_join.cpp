@@ -26,7 +26,7 @@ hash_join::finalize_partitioned_full_join(
   size_type left_table_num_rows,
   size_type right_table_num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return cudf::detail::finalize_full_join(

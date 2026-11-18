@@ -13,6 +13,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
@@ -33,6 +34,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <thread>
 #include <tuple>
@@ -1404,6 +1406,44 @@ TEST_F(StreamingGroupbyTest, ManySmallBatches)
   verify_against_groupby(keys, results, batches, KEY_COL, reqs);
 }
 
+template <typename T>
+struct StreamingGroupbyMeanOverflowTest : public cudf::test::BaseFixture {};
+
+using mean_overflow_types = cudf::test::Types<int64_t, uint64_t>;
+TYPED_TEST_SUITE(StreamingGroupbyMeanOverflowTest, mean_overflow_types);
+
+// Each batch and each merged object adds to a SUM that wraps V while the MEAN of the same column
+// accumulates in double. A group with only null values has a null SUM and MEAN.
+TYPED_TEST(StreamingGroupbyMeanOverflowTest, SumWrapsWhileMeanDoesNot)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby worker1(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  cudf::groupby::streaming_groupby worker2(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 3; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1, 2};
+    cudf::test::fixed_width_column_wrapper<V> vals{{max, max, static_cast<V>(b), V{7}},
+                                                   {true, true, true, false}};
+    (b < 2 ? worker1 : worker2).aggregate(cudf::table_view{{keys, vals}});
+  }
+  worker1.merge(worker2);
+  auto [keys, results] = worker1.finalize();
+
+  using S                = cudf::detail::target_type_t<V, cudf::aggregation::SUM>;
+  auto const wrapped_sum = static_cast<S>(6 * static_cast<uint64_t>(max));
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<S> e_sum{{wrapped_sum, S{3}, S{0}}, {true, true, false}};
+  cudf::test::fixed_width_column_wrapper<double> e_mean{{static_cast<double>(max), 1.0, 0.0},
+                                                        {true, true, false}};
+  check(keys, results, cudf::table_view{{ek}}, {e_sum, e_mean});
+}
+
 // Test that exceeding distinct-key capacity throws.
 TEST_F(StreamingGroupbyTest, ExceedsDistinctKeyCapacityThrows)
 {
@@ -2098,5 +2138,33 @@ TEST_F(StreamingGroupbyTest, DenseAggregationsNullableFlatAndNestedKeys)
           results,
           cudf::table_view{{expected_key_view}},
           {expected_sum, expected_min, expected_max, expected_count});
+  }
+}
+
+TEST_F(StreamingGroupbyTest, SharedM2DependenciesPreserveRequestOrder)
+{
+  cudf::test::fixed_width_column_wrapper<int32_t> input_keys{0, 0, 1, 1};
+  cudf::test::fixed_width_column_wrapper<float> values{{1, 3, 2, 4}, {true, true, false, false}};
+  cudf::table_view const batch{{input_keys, values}};
+  for (bool m2_first : {false, true}) {
+    std::vector<cudf::groupby::streaming_aggregation_request> requests;
+    requests.push_back(make_req(1, cudf::make_count_aggregation<cudf::groupby_aggregation>()));
+    requests.push_back(make_req(1, cudf::make_m2_aggregation<cudf::groupby_aggregation>()));
+    requests.push_back(make_req(1, cudf::make_variance_aggregation<cudf::groupby_aggregation>(0)));
+    requests.push_back(make_req(1, cudf::make_std_aggregation<cudf::groupby_aggregation>(0)));
+    requests.push_back(make_req(1, cudf::make_m2_aggregation<cudf::groupby_aggregation>()));
+    if (!m2_first) { std::swap(requests[1], requests[2]); }
+    cudf::groupby::streaming_groupby gb(KEY_COL, requests, DEFAULT_MAX_DISTINCT_KEYS);
+    gb.aggregate(batch);
+    // A snapshot followed by destructive finalization exercises both finalization paths.
+    auto [keys, results] = gb.finalize();
+    cudf::test::fixed_width_column_wrapper<int32_t> expected_keys{0, 1}, counts{2, 0};
+    cudf::test::fixed_width_column_wrapper<double> m2{2, 0};
+    cudf::test::fixed_width_column_wrapper<double> variance{{1, 0}, {true, false}};
+    std::vector<cudf::column_view> expected{counts, m2, variance, variance, m2};
+    if (!m2_first) { std::swap(expected[1], expected[2]); }
+    check(keys, results, cudf::table_view{{expected_keys}}, expected);
+    auto [released_keys, released_results] = std::move(gb).finalize_and_release();
+    check(released_keys, released_results, cudf::table_view{{expected_keys}}, expected);
   }
 }

@@ -26,7 +26,6 @@ dependencies = [
     "fsspec>=0.6.0",
     "libcudf==27.2.*,>=0.0.0a0",
     "numba-cuda-mlir>=0.3.0",
-    "numba>=0.60.0,<0.65.0",
     "numpy>=2.0,<3.0",
     "nvtx>=0.2.1",
     "packaging",

@@ -1146,7 +1146,114 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
           "transform only supports fixed-width output types, got " + outputType);
     }
     return new ColumnVector(transform(getNativeView(), udf, isPtx,
-        outputType.getTypeId().getNativeId(), outputType.getScale()));
+        outputType.getTypeId().getNativeId(), outputType.getScale(), false, 0, 0));
+  }
+
+  /**
+   * Transform a vector using a custom function, passing user data to the UDF, for example as
+   * scratch space for STRING output.  See
+   * {@link #transform(String, boolean, DType, BaseDeviceMemoryBuffer, ColumnView)}.
+   * @param udf This function will be applied to every element in the vector
+   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * @param outputType the type of the output column. The type of the UDF's output parameter
+   *                   must match it.
+   * @param userData device memory passed to the UDF
+   * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING
+   */
+  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
+      BaseDeviceMemoryBuffer userData) {
+    return transform(udf, isPtx, outputType, userData, null);
+  }
+
+  /**
+   * Transform a vector using a custom function, writing STRING output into preallocated
+   * offsets.  See
+   * {@link #transform(String, boolean, DType, BaseDeviceMemoryBuffer, ColumnView)}.
+   * @param udf This function will be applied to every element in the vector
+   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * @param outputType the type of the output column, must be STRING. The type of the UDF's
+   *                   output parameter must match it.
+   * @param stringOffsets the offsets of the STRING output: INT32, without nulls, with one more
+   *                      row than this column.  Copied, not retained.
+   * @throws IllegalArgumentException if outputType is not STRING, or if stringOffsets has the
+   *                                  wrong type, nulls, or the wrong number of rows
+   */
+  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
+      ColumnView stringOffsets) {
+    return transform(udf, isPtx, outputType, null, stringOffsets);
+  }
+
+  /**
+   * Transform a vector using a custom function, as {@link #transform(String, boolean, DType)},
+   * optionally passing user data to the UDF, and optionally writing STRING output into
+   * preallocated offsets.
+   * <p>
+   * For STRING output without {@code stringOffsets}, the output parameter is a
+   * {@code cudf::string_view} pointer.  The string_view must point to device memory that stays
+   * valid until this method returns, such as the characters of a STRING input or the user data;
+   * the characters are copied into the result column.
+   * <p>
+   * With {@code userData}, the UDF takes two extra leading parameters:
+   * {@code (void* user_data, cudf::size_type row, <output>* output, <input> input)}.  The buffer
+   * is passed as is; its size is not passed, and the UDF must stay within it.  A UDF producing
+   * STRING output can use it as scratch space: write the characters of each row into that row's
+   * slot of the buffer, for example at {@code row * maxBytesPerRow}, and set the
+   * {@code cudf::string_view} output to point at them.  The characters are copied into a
+   * compacted result column on the default stream, so the buffer can be closed once this method
+   * returns if it is freed on the default stream; a buffer on another stream must stay valid
+   * until the default stream completes the work queued by this method.  The user data can also
+   * hold read-only inputs of the UDF, such as lookup tables or parameters, also together
+   * with {@code stringOffsets}.
+   * <p>
+   * With {@code stringOffsets}, the UDF writes the characters of each row directly into the
+   * result column.  The output parameter is a {@code cuda::std::span<char>} pointer, set to
+   * the row's slot in the result's characters, sized according to the offsets.  The characters
+   * are uninitialized; the UDF must write all of them.  The offsets are typically computed by a
+   * preceding transform producing the output size of each row.  The offsets must start at 0 and
+   * be non-decreasing; this is not checked, and invalid offsets make the UDF write out of bounds.
+   * Null rows must have zero-length slots: the UDF is not called for them, so any characters
+   * there stay uninitialized.
+   * @param udf This function will be applied to every element in the vector
+   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * @param outputType the type of the output column. The type of the UDF's output parameter
+   *                   must match it.
+   * @param userData device memory passed to the UDF, or null to pass none
+   * @param stringOffsets the offsets of the STRING output: INT32, without nulls, with one more
+   *                      row than this column.  Copied, not retained.  Null to let the UDF
+   *                      produce cudf::string_view values instead.
+   * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING, or
+   *                                  if stringOffsets is given for a non-STRING output, or has
+   *                                  the wrong type, nulls, or the wrong number of rows
+   */
+  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
+      BaseDeviceMemoryBuffer userData, ColumnView stringOffsets) {
+    if (outputType.getSizeInBytes() == 0 && !outputType.equals(DType.STRING)) {
+      throw new IllegalArgumentException(
+          "transform only supports fixed-width and STRING output types, got " + outputType);
+    }
+    if (stringOffsets != null) {
+      if (!outputType.equals(DType.STRING)) {
+        throw new IllegalArgumentException(
+            "string offsets are only supported for STRING output, got " + outputType);
+      }
+      // TODO accept INT64 offsets once the Java layer supports them; it reads string offsets as
+      // INT32, e.g. when copying to host.
+      if (!stringOffsets.getType().equals(DType.INT32)) {
+        throw new IllegalArgumentException(
+            "string offsets must be INT32, got " + stringOffsets.getType());
+      }
+      if (stringOffsets.getRowCount() != getRowCount() + 1) {
+        throw new IllegalArgumentException("string offsets must have " + (getRowCount() + 1)
+            + " rows, got " + stringOffsets.getRowCount());
+      }
+      if (stringOffsets.getNullCount() != 0) {
+        throw new IllegalArgumentException("string offsets must not have nulls");
+      }
+    }
+    return new ColumnVector(transform(getNativeView(), udf, isPtx,
+        outputType.getTypeId().getNativeId(), outputType.getScale(),
+        userData != null, userData == null ? 0 : userData.getAddress(),
+        stringOffsets == null ? 0 : stringOffsets.getNativeView()));
   }
 
   /**
@@ -5202,7 +5309,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long containsVector(long valuesHandle, long searchSpaceHandle) throws CudfException;
 
   private static native long transform(long viewHandle, String udf, boolean isPtx,
-      int outputTypeId, int outputScale);
+      int outputTypeId, int outputScale, boolean hasUserData, long userDataAddress,
+      long stringOffsetsViewHandle);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

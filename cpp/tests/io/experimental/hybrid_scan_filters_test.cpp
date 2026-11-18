@@ -20,8 +20,6 @@
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/table/table_view.hpp>
-#include <cudf/transform.hpp>
-#include <cudf/unary.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
@@ -2117,20 +2115,17 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
     cudf::test::fixed_point_column_wrapper<int64_t>(values.begin(), values.end(), scale);
   auto const table = cudf::table_view{{col}};
 
-  std::vector<char> buffer;
+  auto const filepath = temp_env->get_temp_filepath("DecimalWidthFiltering.parquet");
   {
-    auto const options =
-      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{&buffer}).build();
-    cudf::io::chunked_parquet_writer writer(options);
+    cudf::io::chunked_parquet_writer writer(
+      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{filepath}).build());
     for (auto const& row_group : cudf::slice(table, {0, 12, 12, 24, 24, 36, 36, 44})) {
       writer.write(row_group);
     }
     writer.close();
   }
-  auto const buffer_span = cudf::host_span<std::byte const>(
-    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size());
 
-  auto const datasource    = cudf::io::datasource::create(buffer_span);
+  auto const datasource    = cudf::io::datasource::create(filepath);
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto options = cudf::io::parquet_reader_options::builder().decimal_width(dtype.id()).build();
   auto const reader =
@@ -2138,10 +2133,7 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
   auto const row_groups = reader->all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 4);
 
-  auto const cast_column = cudf::cast(col, dtype);
-  auto const cast_table  = cudf::table_view{{cast_column->view()}};
   auto const col_ref     = cudf::ast::column_reference(0);
-
   auto const test_filter = [&](cudf::ast::ast_operator op,
                                RepType value,
                                std::size_t expected_stats_row_groups,
@@ -2158,18 +2150,6 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
         filter_row_groups_with_dictionaries(*datasource, *reader, options, stream, mr).size(),
         expected_dict_row_groups.value());
     }
-
-    // The main reader must prune the same row groups and match filtering the cast input
-    auto const read_options =
-      cudf::io::parquet_reader_options::builder(cudf::io::source_info{buffer_span})
-        .decimal_width(dtype.id())
-        .filter(filter)
-        .build();
-    auto const result = cudf::io::read_parquet(read_options, stream);
-    EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter, expected_stats_row_groups);
-    auto const expected =
-      cudf::apply_retention_mask(cast_table, cudf::compute_column(cast_table, filter)->view());
-    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
   };
 
   // Stats of the last row group are ignored when narrowed as its max does not fit

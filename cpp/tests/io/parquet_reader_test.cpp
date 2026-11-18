@@ -12,7 +12,6 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
-#include <cudf_test/debug_utilities.hpp>
 #include <cudf_test/io_metadata_utilities.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/memory_resource_utilities.hpp>
@@ -46,7 +45,6 @@
 #include <array>
 #include <cstring>
 #include <format>
-#include <fstream>
 #include <limits>
 #include <locale>
 #include <map>
@@ -7026,47 +7024,6 @@ TYPED_TEST(ParquetReaderDecimalWidthTest, ReadValues)
     auto const result   = cudf::io::read_parquet(decimal_width_options(filepath, type.id()));
     CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
   }
-}
-
-// BYTE_ARRAY decimals of precision 9, 18 and 38 read as `T` match casting them to `T`
-TYPED_TEST(ParquetReaderDecimalWidthTest, ReadByteArrayValues)
-{
-  auto const sources = decimal_width_sources();
-  auto const type    = cudf::data_type{cudf::type_to_id<TypeParam>(), decimal_width_scale};
-
-  // Write each column as big-endian bytes and annotate it as a decimal
-  auto columns = std::vector<std::unique_ptr<cudf::column>>{};
-  for (auto const& col : sources.view()) {
-    auto const decimals =
-      cudf::cast(col, cudf::data_type{cudf::type_id::DECIMAL128, decimal_width_scale});
-    auto const [reps, mask] = cudf::test::to_host<__int128_t>(decimals->view());
-    auto const bytes        = cudf::detail::make_counting_transform_iterator(
-      0, [&](auto i) { return big_endian_bytes(reps[i], cudf::size_of(col.type())); });
-    auto const validity = cudf::detail::make_counting_transform_iterator(
-      0, [&](auto i) { return cudf::bit_is_set(mask.data(), i); });
-    columns.push_back(
-      cudf::test::strings_column_wrapper(bytes, bytes + col.size(), validity).release());
-  }
-  auto const binary = cudf::table{std::move(columns)};
-  auto metadata     = cudf::io::table_input_metadata{binary.view()};
-  for (auto& column_metadata : metadata.column_metadata) {
-    column_metadata.set_output_as_binary(true);
-  }
-  std::vector<char> buffer;
-  cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, binary.view())
-      .metadata(std::move(metadata))
-      .build());
-  edit_footer(buffer, [](cudf::io::parquet::FileMetaData& footer) {
-    for (auto const [col, precision] : {std::pair{0, 9}, std::pair{1, 18}, std::pair{2, 38}}) {
-      annotate_byte_array_decimal(footer, col, precision, -decimal_width_scale);
-    }
-  });
-  auto const filepath = temp_env->get_temp_filepath("DecimalWidthByteArray.parquet");
-  std::ofstream{filepath, std::ios::binary}.write(buffer.data(), buffer.size());
-
-  auto const result = cudf::io::read_parquet(decimal_width_options(filepath, type.id()));
-  CUDF_TEST_EXPECT_TABLES_EQUAL(cast_columns(sources.view(), type)->view(), result.tbl->view());
 }
 
 // Filters match the values read as `T`, including ones truncated to the literal

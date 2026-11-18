@@ -610,12 +610,13 @@ async def read_chunk(
             ),
         )
 
-    reservation = await reserve_memory(
-        context,
-        size=reservation_bytes,
-        net_memory_delta=estimated_chunk_bytes,
-    )
-    with opaque_memory_usage(reservation):
+    with opaque_memory_usage(
+        await reserve_memory(
+            context,
+            size=reservation_bytes,
+            net_memory_delta=estimated_chunk_bytes,
+        )
+    ):
         df = await ir_context.to_thread(
             task.do_evaluate,
             *task._non_child_args,

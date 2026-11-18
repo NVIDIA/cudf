@@ -568,12 +568,12 @@ async def _evaluate_and_route_to_origin(
             # Approximation: the window result holds the child columns plus
             # the window columns, so it can be larger than the partition.
             # The optional stable sort needs a second copy.
-            reservation = await reserve_memory(
-                context,
-                partition.data_alloc_size() * (2 if sort_by_input_order else 1),
-                net_memory_delta=0,
+            window_bytes = partition.data_alloc_size() * (
+                2 if sort_by_input_order else 1
             )
-            with opaque_memory_usage(reservation):
+            with opaque_memory_usage(
+                await reserve_memory(context, size=window_bytes, net_memory_delta=0)
+            ):
                 evaluated = await ir_context.to_thread(
                     _evaluate_window_with_stamps,
                     partition,
@@ -639,13 +639,14 @@ async def _reassemble_input_chunks(
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
-            reservation = await reserve_memory(
-                context,
-                sum(col.device_buffer_size() for col in tbl.columns()),
-                # The sorted copy replaces the unsorted input.
-                net_memory_delta=0,
-            )
-            with opaque_memory_usage(reservation):
+            # The sorted copy replaces the unsorted input.
+            with opaque_memory_usage(
+                await reserve_memory(
+                    context,
+                    size=sum(col.device_buffer_size() for col in tbl.columns()),
+                    net_memory_delta=0,
+                )
+            ):
                 sorted_tbl = plc.sorting.stable_sort_by_key(
                     tbl,
                     plc.Table([tbl.columns()[n_exprs]]),

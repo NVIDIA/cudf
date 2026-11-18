@@ -899,13 +899,13 @@ async def _send_remote_partition(
     )
     stream = chunk.stream
     table = chunk.table_view()
-    reservation = await reserve_memory(
-        context,
-        split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0,
-        # The packed copy replaces the chunk, which is freed on return.
-        net_memory_delta=0,
+    pack_bytes = (
+        split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0
     )
-    with opaque_memory_usage(reservation):
+    # The packed copy replaces the chunk, which is freed on return.
+    with opaque_memory_usage(
+        await reserve_memory(context, size=pack_bytes, net_memory_delta=0)
+    ):
         packed = pack(table, stream, mr=context.br().device_mr)
     exchange.insert(
         partition_owner(pid, comm.nranks, npartitions),

@@ -188,30 +188,32 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
         stream = context.br().stream_pool.get_stream()
         cudf_df = DataFrame.from_polars(pl_df, stream)
         with reserve_op_id() as op_id:
-            shuffle = ShuffleManager(
+            async with ShuffleManager(
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
-            )
-            async with shuffle.inserting() as inserter:
-                await inserter.insert_hash(
-                    TableChunk.from_pylibcudf_table(
-                        cudf_df.table, stream, exclusive_view=True, br=context.br()
-                    ),
-                    columns_to_hash=(0,),
-                )
-
-            local = LocalRepartitioner(shuffle, local_count=local_count)
-            await local.repartition_by_hash(columns_to_hash=(0,), stream=stream)
-
-            for pid in local.local_partitions():
-                tbl = await local.extract_chunk(pid, stream)
-                results.append(
-                    (
-                        pid,
-                        DataFrame.from_table(
-                            tbl, col_names, dtypes, stream
-                        ).to_polars(),
+            ) as shuffle:
+                async with shuffle.inserting() as inserter:
+                    await inserter.insert_hash(
+                        TableChunk.from_pylibcudf_table(
+                            cudf_df.table, stream, exclusive_view=True, br=context.br()
+                        ),
+                        columns_to_hash=(0,),
                     )
-                )
+
+                async with LocalRepartitioner(
+                    shuffle, local_count=local_count
+                ) as local:
+                    await local.repartition_by_hash(columns_to_hash=(0,), stream=stream)
+
+                    for pid in local.local_partitions():
+                        tbl = await local.extract_chunk(pid, stream)
+                        results.append(
+                            (
+                                pid,
+                                DataFrame.from_table(
+                                    tbl, col_names, dtypes, stream
+                                ).to_polars(),
+                            )
+                        )
 
     asyncio.run(_run())
 
@@ -256,32 +258,40 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
         rank_part_df = DataFrame.from_polars(pl_rank_part, stream)
 
         with reserve_op_id() as op_id:
-            shuffle = ShuffleManager(
+            async with ShuffleManager(
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
-            )
-            async with shuffle.inserting() as inserter:
-                await inserter.insert_index(
-                    TableChunk.from_pylibcudf_table(
-                        payload_df.table, stream, exclusive_view=True, br=context.br()
-                    ),
-                    TableChunk.from_pylibcudf_table(
-                        rank_part_df.table, stream, exclusive_view=True, br=context.br()
-                    ),
-                )
-
-            local = LocalRepartitioner(shuffle, local_count=local_count)
-            await local.repartition_by_index(partition_col=0, stream=stream)
-
-            for pid in local.local_partitions():
-                tbl = await local.extract_chunk(pid, stream)
-                results.append(
-                    (
-                        pid,
-                        DataFrame.from_table(
-                            tbl, out_col_names, out_dtypes, stream
-                        ).to_polars(),
+            ) as shuffle:
+                async with shuffle.inserting() as inserter:
+                    await inserter.insert_index(
+                        TableChunk.from_pylibcudf_table(
+                            payload_df.table,
+                            stream,
+                            exclusive_view=True,
+                            br=context.br(),
+                        ),
+                        TableChunk.from_pylibcudf_table(
+                            rank_part_df.table,
+                            stream,
+                            exclusive_view=True,
+                            br=context.br(),
+                        ),
                     )
-                )
+
+                async with LocalRepartitioner(
+                    shuffle, local_count=local_count
+                ) as local:
+                    await local.repartition_by_index(partition_col=0, stream=stream)
+
+                    for pid in local.local_partitions():
+                        tbl = await local.extract_chunk(pid, stream)
+                        results.append(
+                            (
+                                pid,
+                                DataFrame.from_table(
+                                    tbl, out_col_names, out_dtypes, stream
+                                ).to_polars(),
+                            )
+                        )
 
     asyncio.run(_run())
 

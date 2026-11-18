@@ -624,48 +624,48 @@ async def _reassemble_input_chunks(
 
     # TODO: thread ir_context through repartition_by_index so each
     # PackedData piece moves on its own pool stream rather than sharing one.
-    local = LocalRepartitioner(return_shuffle, local_count=n_chunks)
-    await local.repartition_by_index(
-        partition_col=chunk_index_column, stream=ir_context.get_cuda_stream()
-    )
+    async with LocalRepartitioner(return_shuffle, local_count=n_chunks) as local:
+        await local.repartition_by_index(
+            partition_col=chunk_index_column, stream=ir_context.get_cuda_stream()
+        )
 
-    for chunk_index, sequence_number in zip(
-        local.local_partitions(), sequence_numbers, strict=True
-    ):
-        # Distinct stream per chunk so downstream work on different
-        # chunks can overlap on the GPU.
-        stream = ir_context.get_cuda_stream()
-        tbl = await local.extract_chunk(chunk_index, stream)
-        if tbl.num_rows() == 0:
-            chunk = empty_table_chunk(ir, context, stream)
-        else:
-            # The sorted copy replaces the unsorted input. The sort also
-            # builds a row index column of int32 (cudf::size_type), which
-            # is 4 bytes per row.
-            with opaque_memory_usage(
-                await reserve_memory(
-                    context,
-                    size=sum(col.device_buffer_size() for col in tbl.columns())
-                    + tbl.num_rows() * 4,
-                    net_memory_delta=0,
+        for chunk_index, sequence_number in zip(
+            local.local_partitions(), sequence_numbers, strict=True
+        ):
+            # Distinct stream per chunk so downstream work on different
+            # chunks can overlap on the GPU.
+            stream = ir_context.get_cuda_stream()
+            tbl = await local.extract_chunk(chunk_index, stream)
+            if tbl.num_rows() == 0:
+                chunk = empty_table_chunk(ir, context, stream)
+            else:
+                # The sorted copy replaces the unsorted input. The sort also
+                # builds a row index column of int32 (cudf::size_type), which
+                # is 4 bytes per row.
+                with opaque_memory_usage(
+                    await reserve_memory(
+                        context,
+                        size=sum(col.device_buffer_size() for col in tbl.columns())
+                        + tbl.num_rows() * 4,
+                        net_memory_delta=0,
+                    )
+                ):
+                    sorted_tbl = plc.sorting.stable_sort_by_key(
+                        tbl,
+                        plc.Table([tbl.columns()[n_exprs]]),
+                        [plc.types.Order.ASCENDING],
+                        [plc.types.NullOrder.AFTER],
+                        stream=stream,
+                    )
+                chunk = TableChunk.from_pylibcudf_table(
+                    plc.Table(sorted_tbl.columns()[:n_exprs]),
+                    stream,
+                    exclusive_view=True,
+                    br=context.br(),
                 )
-            ):
-                sorted_tbl = plc.sorting.stable_sort_by_key(
-                    tbl,
-                    plc.Table([tbl.columns()[n_exprs]]),
-                    [plc.types.Order.ASCENDING],
-                    [plc.types.NullOrder.AFTER],
-                    stream=stream,
-                )
-            chunk = TableChunk.from_pylibcudf_table(
-                plc.Table(sorted_tbl.columns()[:n_exprs]),
-                stream,
-                exclusive_view=True,
-                br=context.br(),
-            )
-            del sorted_tbl
-        del tbl
-        await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
+                del sorted_tbl
+            del tbl
+            await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
 
 
 async def _shuffle_and_reassemble(
@@ -707,58 +707,57 @@ async def _shuffle_and_reassemble(
         sample_chunk_count,
     )
 
-    forward_shuffle = ShuffleManager(
-        context,
-        comm,
-        forward_modulus,
-        forward_shuffle_collective_id,
+    ch_replay = context.create_channel()
+    sort_by_input_order = _contains_input_order_window_without_order_by(
+        [ne.value for ne in ir.exprs]
     )
-    return_shuffle = ShuffleManager(
+    async with ShuffleManager(
         context,
         comm,
         comm.nranks,
         return_shuffle_collective_id,
         partition_assignment=PartitionAssignment.CONTIGUOUS,
-    )
-
-    ch_replay = context.create_channel()
-    sort_by_input_order = _contains_input_order_window_without_order_by(
-        [ne.value for ne in ir.exprs]
-    )
-    sequence_numbers, _ = await gather_in_task_group(
-        _distribute_by_group(
+    ) as return_shuffle:
+        async with ShuffleManager(
             context,
             comm,
-            forward_shuffle,
-            ch_replay,
-            ir.key_indices,
-            ir_context,
-            skip_insert,
-        ),
-        replay_buffered_channel(
-            context,
-            ch_replay,
-            ch_in,
-            sample.local_sample.chunks,
-            metadata_in,
-            trace_ir=ir,
-        ),
-    )
+            forward_modulus,
+            forward_shuffle_collective_id,
+        ) as forward_shuffle:
+            sequence_numbers, _ = await gather_in_task_group(
+                _distribute_by_group(
+                    context,
+                    comm,
+                    forward_shuffle,
+                    ch_replay,
+                    ir.key_indices,
+                    ir_context,
+                    skip_insert,
+                ),
+                replay_buffered_channel(
+                    context,
+                    ch_replay,
+                    ch_in,
+                    sample.local_sample.chunks,
+                    metadata_in,
+                    trace_ir=ir,
+                ),
+            )
 
-    await _evaluate_and_route_to_origin(
-        context,
-        comm,
-        ir,
-        ir_context,
-        forward_shuffle,
-        return_shuffle,
-        stamps,
-        sort_by_input_order=sort_by_input_order,
-        duplicated_origin=metadata_in.duplicated,
-    )
-    await _reassemble_input_chunks(
-        context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
-    )
+            await _evaluate_and_route_to_origin(
+                context,
+                comm,
+                ir,
+                ir_context,
+                forward_shuffle,
+                return_shuffle,
+                stamps,
+                sort_by_input_order=sort_by_input_order,
+                duplicated_origin=metadata_in.duplicated,
+            )
+        await _reassemble_input_chunks(
+            context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
+        )
 
     await ch_out.drain(context)
 

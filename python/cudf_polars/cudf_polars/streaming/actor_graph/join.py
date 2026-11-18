@@ -350,13 +350,15 @@ async def _collect_small_side_for_broadcast(
 
     dfs: list[DataFrame] = []
     if need_allgather:
-        allgather = AllGatherManager(context, comm, collective_id)
-        with allgather.inserting() as inserter:
-            for s_id in range(len(chunks)):
-                await inserter.insert(s_id, chunks.pop(0))
         stream = ir_context.get_cuda_stream()
-        # TODO: if we can't concatenate and we needn't then this spuriously fails.
-        gathered = await allgather.extract_concatenated(stream, ir_context=ir_context)
+        async with AllGatherManager(context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                for s_id in range(len(chunks)):
+                    await inserter.insert(s_id, chunks.pop(0))
+            # TODO: if we can't concatenate and we needn't then this spuriously fails.
+            gathered = await allgather.extract_concatenated(
+                stream, ir_context=ir_context
+            )
         # When every rank inserted zero chunks, the AllGather has no schema
         # to infer and returns a 0 column table. Substitute a properly typed
         # empty table for the small side so downstream joins still match the

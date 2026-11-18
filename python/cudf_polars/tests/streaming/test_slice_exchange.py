@@ -24,7 +24,7 @@ def test_sparse_exchange_close_survives_cancellation(
         finished = asyncio.Event()
 
         class DelayedExchange:
-            async def insert_finished(self, _context) -> None:
+            async def insert_finished(self) -> None:
                 started.set()
                 await release.wait()
                 finished.set()

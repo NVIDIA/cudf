@@ -37,22 +37,22 @@ async def _test_allgather(engine) -> None:
     ]
 
     # Insert tables into AllGatherManager
-    allgather = AllGatherManager(context, comm, 0)
-    with allgather.inserting() as inserter:
-        for i, table in enumerate(tables):
-            await inserter.insert(
-                i,
-                TableChunk.from_pylibcudf_table(
-                    table, stream, exclusive_view=True, br=context.br()
-                ),
-            )
+    async with AllGatherManager(context, comm, 0) as allgather:
+        with allgather.inserting() as inserter:
+            for i, table in enumerate(tables):
+                await inserter.insert(
+                    i,
+                    TableChunk.from_pylibcudf_table(
+                        table, stream, exclusive_view=True, br=context.br()
+                    ),
+                )
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        ir_context = IRExecutionContext(executor)
-        # Extract concatenated result
-        result = await allgather.extract_concatenated(
-            stream, ordered=True, ir_context=ir_context
-        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            ir_context = IRExecutionContext(executor)
+            # Extract concatenated result
+            result = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=ir_context
+            )
 
     # Verify the concatenated table has the expected shape
     assert result.num_rows() == 600  # 100 + 200 + 300

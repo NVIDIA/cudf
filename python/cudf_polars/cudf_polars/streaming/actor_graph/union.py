@@ -262,9 +262,9 @@ async def _exchange_child(
     # Every rank exchanges with every other rank (possibly sending nothing),
     # which keeps the set of peers independent of the routing plan.
     peers = [r for r in range(comm.nranks) if r != rank]
-    exchange = SparseAlltoall(context, comm, collective_id, srcs=peers, dsts=peers)
-
-    try:
+    async with SparseAlltoall(
+        context, comm, collective_id, srcs=peers, dsts=peers
+    ) as exchange:
         index = 0
         while (msg := await ch_in.recv(context)) is not None:
             if drop:
@@ -284,16 +284,13 @@ async def _exchange_child(
                 )
                 exchange.insert(dst, chunk.into_packed_data(extra))
             index += 1
-    finally:
-        # Finish the exchange even if reading or packing fails or the task
-        # is cancelled: destroying an unfinished exchange can abort the worker.
-        await exchange.insert_finished(context)
+        await exchange.insert_finished()
 
-    for src in peers:
-        for i, packed in enumerate(exchange.extract(src)):
-            owned[src].insert(
-                Message(i, TableChunk.from_packed_data(packed, context.br()))
-            )
+        for src in peers:
+            for i, packed in enumerate(exchange.extract(src)):
+                owned[src].insert(
+                    Message(i, TableChunk.from_packed_data(packed, context.br()))
+                )
 
 
 async def _ordered_union(

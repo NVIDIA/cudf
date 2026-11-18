@@ -154,18 +154,18 @@ async def concatenate_node(
 
             stream = ir_context.get_cuda_stream()
             seq_num = 0
-            allgather = AllGatherManager(context, comm, collective_id)
-            with allgather.inserting() as inserter:
-                while (msg := await ch_in.recv(context)) is not None:
-                    await inserter.insert(
-                        seq_num, TableChunk.from_message(msg, br=context.br())
-                    )
-                    seq_num += 1
+            async with AllGatherManager(context, comm, collective_id) as allgather:
+                with allgather.inserting() as inserter:
+                    while (msg := await ch_in.recv(context)) is not None:
+                        await inserter.insert(
+                            seq_num, TableChunk.from_message(msg, br=context.br())
+                        )
+                        seq_num += 1
 
-            # Extract concatenated result
-            result_table = await allgather.extract_concatenated(
-                stream, ir_context=ir_context
-            )
+                # Extract concatenated result
+                result_table = await allgather.extract_concatenated(
+                    stream, ir_context=ir_context
+                )
 
             # If no chunks were gathered, result_table has 0 columns.
             # We need to create an empty table with the correct schema.

@@ -9,6 +9,7 @@ import dataclasses
 import functools
 import io
 import math
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any, cast
 
 import polars as pl
@@ -914,20 +915,22 @@ async def callback_sink_actor(
             else None
         )
 
-        # Ordered callbacks and the default mode process all chunks on rank 0.
-        exchange = (
-            SparseAlltoall(
-                context,
-                comm,
-                collective_id,
-                srcs=range(1, comm.nranks) if comm.rank == 0 else (),
-                dsts=(0,) if comm.rank != 0 else (),
+        async with AsyncExitStack() as stack:
+            # Ordered callbacks and the default mode process all chunks on rank 0.
+            exchange = (
+                await stack.enter_async_context(
+                    SparseAlltoall(
+                        context,
+                        comm,
+                        collective_id,
+                        srcs=range(1, comm.nranks) if comm.rank == 0 else (),
+                        dsts=(0,) if comm.rank != 0 else (),
+                    )
+                )
+                if comm.nranks > 1 and not parallel
+                else None
             )
-            if comm.nranks > 1 and not parallel
-            else None
-        )
 
-        try:
             while (msg := await ch_in.recv(context)) is not None:
                 if (metadata.duplicated and comm.rank != 0) or (
                     consumer is not None and consumer.stopped
@@ -946,17 +949,19 @@ async def callback_sink_actor(
                     )
                     assert exchange is not None
                     exchange.insert(0, chunk.into_packed_data(extra))
-        finally:
+
             if exchange is not None:
-                await exchange.insert_finished(context)
+                await exchange.insert_finished()
+                if consumer is not None:
+                    for src in range(1, comm.nranks):
+                        for packed in exchange.extract(src):
+                            if not consumer.stopped:
+                                chunk = TableChunk.from_packed_data(
+                                    packed, context.br()
+                                )
+                                await consumer.consume(chunk)
 
         if consumer is not None:
-            if exchange is not None:
-                for src in range(1, comm.nranks):
-                    for packed in exchange.extract(src):
-                        if not consumer.stopped:
-                            chunk = TableChunk.from_packed_data(packed, context.br())
-                            await consumer.consume(chunk)
             await consumer.finish()
 
         empty_chunk = empty_table_chunk(ir, context, ir_context.get_cuda_stream())

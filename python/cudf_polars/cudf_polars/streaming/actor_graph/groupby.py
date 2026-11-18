@@ -1407,8 +1407,8 @@ async def groupby_actor(
             tracer,
         )
 
-        # RapidsMPF permits ID reuse after AllGather.extract_all completes.
-        # Any strategy-selection AllGather finishes before reduction starts.
+        # RapidsMPF permits ID reuse after the AllGather is closed.
+        # Any strategy-selection AllGather is closed before reduction starts.
         if output_count == 1:
             tree_reduce = _tree_reduce(
                 context,

@@ -37,18 +37,17 @@ async def _test_allgather(engine) -> None:
     ]
 
     # Insert tables into AllGatherManager
-    async with AllGatherManager(context, comm, 0) as allgather:
-        with allgather.inserting() as inserter:
-            for i, table in enumerate(tables):
-                await inserter.insert(
-                    i,
-                    TableChunk.from_pylibcudf_table(
-                        table, stream, exclusive_view=True, br=context.br()
-                    ),
-                )
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            ir_context = IRExecutionContext(executor)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        ir_context = IRExecutionContext(executor)
+        async with AllGatherManager(context, comm, 0) as allgather:
+            with allgather.inserting() as inserter:
+                for i, table in enumerate(tables):
+                    await inserter.insert(
+                        i,
+                        TableChunk.from_pylibcudf_table(
+                            table, stream, exclusive_view=True, br=context.br()
+                        ),
+                    )
             # Extract concatenated result
             result = await allgather.extract_concatenated(
                 stream, ordered=True, ir_context=ir_context

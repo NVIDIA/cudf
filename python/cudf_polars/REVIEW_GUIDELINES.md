@@ -239,7 +239,8 @@ async with ShuffleManager(context, comm, num_partitions, collective_id) as shuff
 Register each new collective-using IR type with `ReserveOpIDs`. The number
 of reserved IDs must not depend on `nranks` or runtime state, because every
 rank must get the same IDs. Do not share an ID between concurrent
-collectives, and do not release an ID before its collective completes.
+collectives, and do not release an ID before its collective is closed
+(`aclose()` has returned).
 
 ### Every rank builds and runs the same graph
 

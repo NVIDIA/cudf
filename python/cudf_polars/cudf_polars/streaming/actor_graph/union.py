@@ -325,7 +325,7 @@ async def _ordered_union(
     for child, meta in enumerate(metadata):
         if not meta.duplicated or comm.rank == 0:
             local_values[child * comm.nranks + comm.rank] = meta.local_count
-    # The AllGather completes before child 0's exchange starts, so the two
+    # The AllGather is closed before child 0's exchange starts, so the two
     # share collective_ids[0].
     gathered = await allgather_reduce(context, comm, collective_ids[0], *local_values)
     plan = _OrderedUnionPlan(

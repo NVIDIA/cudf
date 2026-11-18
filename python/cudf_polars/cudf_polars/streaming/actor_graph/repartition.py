@@ -28,6 +28,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     empty_table_chunk,
     recv_metadata,
     send_metadata,
+    shutdown_channels_on_error,
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat
@@ -154,7 +155,10 @@ async def concatenate_node(
 
             stream = ir_context.get_cuda_stream()
             seq_num = 0
-            async with AllGatherManager(context, comm, collective_id) as allgather:
+            async with (
+                AllGatherManager(context, comm, collective_id) as allgather,
+                shutdown_channels_on_error(context, ch_in, ch_out),
+            ):
                 with allgather.inserting() as inserter:
                     while (msg := await ch_in.recv(context)) is not None:
                         await inserter.insert(

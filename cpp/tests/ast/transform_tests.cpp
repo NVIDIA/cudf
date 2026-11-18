@@ -49,8 +49,8 @@ struct executor_ast {
   static std::unique_ptr<cudf::column> compute_column(
     cudf::table_view const& table,
     cudf::ast::expression const& expr,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     return cudf::compute_column(table, expr, stream, mr);
   }
@@ -60,8 +60,8 @@ struct executor_jit {
   static std::unique_ptr<cudf::column> compute_column(
     cudf::table_view const& table,
     cudf::ast::expression const& expr,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     return cudf::compute_column_jit(table, expr, {}, stream, mr);
   }
@@ -71,8 +71,8 @@ struct executor_transform_program {
   static std::unique_ptr<cudf::column> compute_column(
     cudf::table_view const& table,
     cudf::ast::expression const& expr,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref())
   {
     std::reference_wrapper<cudf::ast::expression const> expressions[] = {expr};
     cudf::transform_program program{table, expressions, {}, stream, mr};

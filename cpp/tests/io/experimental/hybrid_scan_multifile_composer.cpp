@@ -22,7 +22,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto options = cudf::io::parquet_reader_options::builder()
                    .filter(filter_expression)
@@ -69,7 +69,7 @@ std::unique_ptr<cudf::table> hybrid_scan_multifile_single_step(
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto options = cudf::io::parquet_reader_options::builder()
                    .filter(filter_expression)
@@ -98,7 +98,7 @@ chunked_hybrid_scan_multifile(cudf::io::source_info const& source_info,
                               std::optional<std::vector<std::string>> const& payload_column_names,
                               bool case_sensitive_names,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   auto options = cudf::io::parquet_reader_options::builder()
                    .filter(filter_expression)
@@ -165,7 +165,7 @@ chunked_sparse_hybrid_scan_multifile(
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto options = cudf::io::parquet_reader_options::builder()
                    .filter(filter_expression)
@@ -230,7 +230,7 @@ std::unique_ptr<cudf::table> chunked_hybrid_scan_multifile_single_step(
   std::optional<std::vector<std::string>> const& column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto options = cudf::io::parquet_reader_options::builder()
                    .filter(filter_expression)

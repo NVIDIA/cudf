@@ -56,8 +56,8 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_disc_price(
   cudf::column_view const& discount,
   cudf::column_view const& extendedprice,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const one = discount.type().id() == cudf::type_id::DECIMAL64
                      ? cudf::make_fixed_point_scalar<numeric::decimal64>(1L, numeric::scale_type{0})
@@ -83,8 +83,8 @@
 [[nodiscard]] std::unique_ptr<cudf::column> calculate_charge(
   cudf::column_view const& tax,
   cudf::column_view const& disc_price,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   auto const one = tax.type().id() == cudf::type_id::DECIMAL64
                      ? cudf::make_fixed_point_scalar<numeric::decimal64>(1L, numeric::scale_type{0})

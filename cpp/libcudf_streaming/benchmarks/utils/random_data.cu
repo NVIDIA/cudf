@@ -52,10 +52,10 @@ std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
                                             std::int32_t min_val,
                                             std::int32_t max_val,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
-  auto vec =
-    random_device_vector(rapidsmpf::safe_cast<std::size_t>(nrows), min_val, max_val, stream, mr);
+  auto vec = random_device_vector(
+    rapidsmpf::safe_cast<std::size_t>(nrows), min_val, max_val, stream, mr.get_output_mr());
   return std::make_unique<cudf::column>(
     std::move(vec), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
 }
@@ -65,7 +65,7 @@ cudf::table random_table(cudf::size_type ncolumns,
                          std::int32_t min_val,
                          std::int32_t max_val,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cudf::memory_resources mr)
 {
   std::vector<std::unique_ptr<cudf::column>> cols;
   for (auto i = 0; i < ncolumns; ++i) {

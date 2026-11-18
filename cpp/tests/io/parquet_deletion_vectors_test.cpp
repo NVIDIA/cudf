@@ -70,12 +70,12 @@ template <typename T>
 auto build_column_from_host_data(cudf::host_span<T const> host_data,
                                  cudf::type_id data_type,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr)
+                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not host_data.empty(), "Host data vector must not be empty");
 
   auto const num_rows = host_data.size();
-  rmm::device_buffer buffer{num_rows * sizeof(T), stream, mr};
+  rmm::device_buffer buffer{num_rows * sizeof(T), stream, mr.get_output_mr()};
   cudf::detail::cuda_memcpy<T>(
     cudf::device_span<T>{static_cast<T*>(buffer.data()), num_rows}, host_data, stream);
   return std::make_unique<cudf::column>(cudf::data_type{data_type},
@@ -147,7 +147,7 @@ auto build_roaring_bitmap_and_expected_row_mask(cudf::size_type num_rows,
                                                 float deletion_probability,
                                                 cudf::host_span<std::size_t const> row_indices,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr,
+                                                cudf::memory_resources mr,
                                                 bool are_retention_vectors = false)
 {
   static constexpr auto seed = 0xbaLL;
@@ -203,7 +203,7 @@ std::unique_ptr<cudf::table> build_expected_table(
   cudf::column_view const& expected_row_index_column,
   cudf::column_view const& row_mask_column,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_rows = input_table_view.num_rows();
 
@@ -236,7 +236,7 @@ void test_read_parquet_and_apply_mask(
   cudf::column_view const& expected_row_mask_column,
   cudf::column_view const& expected_row_index_column,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   static_assert(std::cmp_greater_equal(num_concat, 1),
                 "num_concat must be greater than or equal to 1");

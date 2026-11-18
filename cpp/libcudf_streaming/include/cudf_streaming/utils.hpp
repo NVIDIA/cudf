@@ -25,8 +25,8 @@ namespace cudf_streaming {
  */
 std::string str(cudf::column_view col,
                 cudf::size_type index,
-                cuda::stream_ref stream           = cudf::get_default_stream(),
-                rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                cuda::stream_ref stream   = cudf::get_default_stream(),
+                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Converts all elements in a `cudf::column_view` to a string.
@@ -37,8 +37,8 @@ std::string str(cudf::column_view col,
  * @return A string representation of all elements in the column.
  */
 std::string str(cudf::column_view col,
-                cuda::stream_ref stream           = cudf::get_default_stream(),
-                rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                cuda::stream_ref stream   = cudf::get_default_stream(),
+                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Converts all rows in a `cudf::table_view` to a string.
@@ -49,8 +49,8 @@ std::string str(cudf::column_view col,
  * @return A string representation of all rows in the table.
  */
 std::string str(cudf::table_view tbl,
-                cuda::stream_ref stream           = cudf::get_default_stream(),
-                rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                cuda::stream_ref stream   = cudf::get_default_stream(),
+                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Estimate the memory usage of a column.

@@ -11,6 +11,10 @@ from pylibcudf.table import Table
 from pylibcudf.types import NullEquality
 from pylibcudf.utils import CudaStreamLike
 
+class NullableJoin(IntEnum):
+    NO = ...
+    YES = ...
+
 class AsofJoinStrategy(IntEnum):
     BACKWARD = ...
 
@@ -166,9 +170,10 @@ class FilteredJoin:
     def __init__(
         self,
         right: Table,
-        compare_nulls: NullEquality,
+        compare_nulls: NullEquality = ...,
         load_factor: float = ...,
         stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
     ) -> None: ...
     def semi_join(
         self,
@@ -182,3 +187,32 @@ class FilteredJoin:
         stream: CudaStreamLike | None = None,
         mr: DeviceMemoryResource | None = None,
     ) -> Column: ...
+
+class HashJoin:
+    def __init__(
+        self,
+        right: Table,
+        has_nulls: NullableJoin = ...,
+        compare_nulls: NullEquality = ...,
+        load_factor: float = ...,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> None: ...
+    def inner_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...
+    def left_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...
+    def full_join(
+        self,
+        left: Table,
+        stream: CudaStreamLike | None = None,
+        mr: DeviceMemoryResource | None = None,
+    ) -> tuple[Column, Column]: ...

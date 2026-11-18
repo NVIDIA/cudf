@@ -433,6 +433,7 @@ ConfigureTest(
   copying/copy_range_tests.cpp
   copying/copy_tests.cpp
   copying/gather_list_tests.cpp
+  copying/gather_multicolumn_tests.cu
   copying/gather_str_tests.cpp
   copying/gather_struct_tests.cpp
   copying/gather_tests.cpp

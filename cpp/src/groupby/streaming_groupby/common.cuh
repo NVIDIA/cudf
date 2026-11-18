@@ -205,13 +205,13 @@ auto build_cross_comparators(
 /// Maps slot bits to dense group IDs.
 struct resolve_group_ids {
   size_type const* slots;
-  size_type* targets;
+  size_type* group_ids;
 
   __device__ void operator()(size_type row) const
   {
-    auto const slot = cuda::std::bit_cast<cuda::std::uint32_t>(targets[row]);
+    auto const slot = cuda::std::bit_cast<cuda::std::uint32_t>(group_ids[row]);
     if (slot == detail::hash::hash_csr_no_slot) { return; }
-    targets[row] = slots[slot];
+    group_ids[row] = slots[slot];
   }
 };
 

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.cuda_stream_ref cimport stream_ref
 
 __all__ = ["findall", "find_re", "find_re_bytes"]
 
@@ -115,8 +116,10 @@ cpdef Column find_re_bytes(
         Strings instance for this operation
     pattern : RegexProgram
         Regex pattern
-    stream : Stream | None
+    stream : CudaStreamLike | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
@@ -125,7 +128,7 @@ cpdef Column find_re_bytes(
     """
     cdef unique_ptr[column] c_result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().get()
+    cdef stream_ref _cs = _stream.view()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

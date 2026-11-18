@@ -180,8 +180,10 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
 
   // each thread compares the target with the thread's individual starting byte
   size_type position = forward ? cuda::std::numeric_limits<size_type>::max() : -1;
-  for (auto itr = begin + lane_idx; itr + d_target.size_bytes() <= end;
-       itr += cudf::detail::warp_size) {
+  // last starting byte for a match, in signed arithmetic so that it is below `begin` when the
+  // target does not fit; `itr + d_target.size_bytes()` could overflow for a large `start`
+  auto const last = end - d_target.size_bytes();
+  for (auto itr = begin + lane_idx; begin <= last && itr <= last; itr += cudf::detail::warp_size) {
     if (d_target.compare(d_str.data() + itr, d_target.size_bytes()) == 0) {
       position = itr;
       if (forward) break;
@@ -246,7 +248,10 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
 {
   CUDF_EXPECTS(target.is_valid(stream), "Parameter target must be valid.");
   CUDF_EXPECTS(start >= 0, "Parameter start must be positive integer or zero.");
-  CUDF_EXPECTS(stop <= 0 or start <= stop, "Parameter start must be less than stop.");
+  // find/rfind have always accepted stop == 0 with any start, so that is kept for them;
+  // the byte APIs reject start > stop as documented
+  CUDF_EXPECTS((as_bytes ? stop < 0 : stop <= 0) or start <= stop,
+               "Parameter start must be less than stop.");
 
   // create output column
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},

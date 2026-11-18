@@ -20,6 +20,7 @@ from cython.operator import dereference
 
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.cuda_stream_ref cimport stream_ref
 
 __all__ = [
     "contains",
@@ -183,8 +184,10 @@ cpdef Column find_bytes(
     stop : size_type
         Last byte offset (exclusive) to include in the search. Default of -1
         will search to the end of the string.
-    stream : Stream | None
+    stream : CudaStreamLike | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
@@ -193,7 +196,7 @@ cpdef Column find_bytes(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().get()
+    cdef stream_ref _cs = _stream.view()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:
@@ -236,8 +239,10 @@ cpdef Column rfind_bytes(
     stop : size_type
         Last byte offset (exclusive) to include in the search. Default of -1
         will search to the end of the string.
-    stream : Stream | None
+    stream : CudaStreamLike | None
         CUDA stream on which to perform the operation.
+    mr : DeviceMemoryResource | None
+        Device memory resource used to allocate the returned column's device memory.
 
     Returns
     -------
@@ -246,7 +251,7 @@ cpdef Column rfind_bytes(
     """
     cdef unique_ptr[column] result
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().get()
+    cdef stream_ref _cs = _stream.view()
     mr = _get_memory_resource(mr)
     cdef column_view c_input = input.view()
     with nogil:

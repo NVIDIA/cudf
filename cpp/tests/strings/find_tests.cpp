@@ -671,6 +671,10 @@ TEST_F(StringsFindTest, ErrorCheck)
                cudf::logic_error);
   EXPECT_THROW(cudf::strings::find_bytes(strings_view, cudf::string_scalar("1"), -1),
                cudf::logic_error);
+  EXPECT_THROW(cudf::strings::find_bytes(strings_view, cudf::string_scalar("1"), 1, 0),
+               cudf::logic_error);
+  EXPECT_THROW(cudf::strings::rfind_bytes(strings_view, cudf::string_scalar("1"), 1, 0),
+               cudf::logic_error);
   EXPECT_THROW(cudf::strings::find(strings_view, targets_view), cudf::logic_error);
   EXPECT_THROW(cudf::strings::find(strings_view, strings_view, -1), cudf::logic_error);
 

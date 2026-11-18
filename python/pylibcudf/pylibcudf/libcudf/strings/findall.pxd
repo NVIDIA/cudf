@@ -6,6 +6,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings.regex_program cimport regex_program
 from cuda.bindings.cyruntime cimport cudaStream_t
+from rmm.librmm.cuda_stream_ref cimport stream_ref
 from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
@@ -26,5 +27,5 @@ cdef extern from "cudf/strings/findall.hpp" namespace "cudf::strings" nogil:
     cdef unique_ptr[column] find_re_bytes(
         column_view input,
         regex_program prog,
-        cudaStream_t stream,
+        stream_ref stream,
         device_async_resource_ref mr) except +libcudf_exception_handler

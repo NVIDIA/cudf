@@ -171,6 +171,13 @@ TEST_F(StringsFindallTests, FindBytesTest)
   expected =
     cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1, -1, -1, -1, 0, -1, 5}, valids);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // a zero-width match at the end of each string: its byte length
+  prog    = cudf::strings::regex_program::create("$");
+  results = cudf::strings::find_re_bytes(sv, *prog);
+  expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 5, 8, 6, 5, 0, 0, 22}, valids);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
 TEST_F(StringsFindallTests, NoMatches)

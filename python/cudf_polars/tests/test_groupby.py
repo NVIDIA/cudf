@@ -1060,6 +1060,8 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
         pl.col("j").sum() + pl.lit(pl.Series([7])),
         pl.lit(pl.Series([1, 2])).sum(),
         pl.lit(pl.Series([None], dtype=pl.Int64)).null_count(),
+        (pl.col("j") + pl.lit(pl.Series([7, 8, 9]))).sum(),
+        (pl.col("j") * pl.lit(pl.Series([7, 8]))).max(),
     ],
 )
 def test_groupby_list_or_series_literal_raises(

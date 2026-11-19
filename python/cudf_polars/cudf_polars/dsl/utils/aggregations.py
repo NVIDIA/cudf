@@ -57,6 +57,25 @@ def _is_literal_column_expr(value: expr.Expr) -> bool:
     ) and any(isinstance(node, expr.LiteralColumn) for node in leaves)
 
 
+def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
+    nodes = tuple(traversal([value]))
+    # Literals of list elements (e.g. the values of ``is_in``) are not
+    # evaluated row by row.
+    has_multi_element_literal = any(
+        isinstance(node, expr.LiteralColumn)
+        and len(node.value) != 1
+        and not (
+            isinstance(node.dtype.polars_type, pl.List)
+            and not isinstance(node.value.dtype, pl.List)
+        )
+        for node in nodes
+    )
+    return has_multi_element_literal and any(
+        not node.children and not isinstance(node, (expr.Literal, expr.LiteralColumn))
+        for node in nodes
+    )
+
+
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
     """
     Replace nulls with the given scalar if at top level.
@@ -128,6 +147,10 @@ def decompose_single_agg(
     if not agg.is_pointwise and any(map(_is_literal_column_expr, agg.children)):
         raise NotImplementedError(
             "Aggregating a list or Series literal in groupby/rolling"
+        )
+    if is_top and _combines_columns_with_multi_element_literal(agg):
+        raise NotImplementedError(
+            "Combining columns with a multi-element list or Series literal in groupby/rolling"
         )
     if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
         if context != ExecutionContext.GROUPBY:

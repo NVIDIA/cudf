@@ -208,6 +208,7 @@ def test_unsupported_agg(in_memory_engine):
         pl.col("values").sum() + pl.lit(pl.Series([7])),
         pl.lit(pl.Series([1, 2])).sum(),
         pl.col("values").sum().is_in(pl.Series([1, 7])),
+        (pl.col("values") + pl.lit(pl.Series([1, 2, 3, 4, 5]))).sum(),
     ],
 )
 def test_rolling_series_literal_raises(

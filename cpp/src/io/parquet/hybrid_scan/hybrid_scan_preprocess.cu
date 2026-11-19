@@ -292,13 +292,8 @@ hybrid_scan_reader_impl::prepare_dictionaries(
       // look up metadata
       auto& col_meta =
         _extended_metadata->get_column_metadata(rg.index, rg.source_index, col_schema_idx);
-      auto const mapped_schema_idx =
-        _extended_metadata->map_schema_index(col_schema_idx, rg.source_index);
-      auto& schema = _extended_metadata->get_schema(mapped_schema_idx, rg.source_index);
-      // Binary leaves of logical groups (FILE, VARIANT) are never converted to categories
-      auto const strings_to_categorical =
-        options.is_enabled_convert_strings_to_categories() and
-        not _extended_metadata->is_binary_leaf(mapped_schema_idx, rg.source_index);
+      auto& schema = _extended_metadata->get_schema(
+        _extended_metadata->map_schema_index(col_schema_idx, rg.source_index), rg.source_index);
 
       // dictionary data buffer for this column chunk
       auto& dict_page_data = dictionary_page_data[chunk_idx];
@@ -309,7 +304,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
       auto const [clock_rate, logical_type] = parquet::detail::conversion_info(
         parquet::detail::to_type_id(schema,
-                                    strings_to_categorical,
+                                    options.is_enabled_convert_strings_to_categories(),
                                     options.get_timestamp_type().id(),
                                     options.get_decimal_width()),
         options.get_timestamp_type().id(),

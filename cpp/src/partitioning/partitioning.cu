@@ -4,7 +4,6 @@
  */
 
 #include "partition_identity.hpp"
-#include "partition_strings.cuh"
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -21,11 +20,12 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/partitioning.hpp>
+#include <cudf/strings/detail/gather.cuh>
+#include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_scan.cuh>
@@ -934,7 +934,7 @@ struct dispatch_map_type {
       make_map_partition_offsets<MapType>(partition_map, num_partitions, stream, mr);
 
     if (can_batch_partition_strings(t, num_partitions)) {
-      rmm::device_uvector<size_type> gather_map(t.num_rows(), stream, temp_mr);
+      cuda::device_buffer<size_type> gather_map(stream, temp_mr, t.num_rows(), cuda::no_init);
       thrust::for_each(
         rmm::exec_policy_nosync(stream, temp_mr),
         cuda::counting_iterator<size_type>(0),
@@ -945,17 +945,9 @@ struct dispatch_map_type {
           cuda::atomic_ref<size_type, cuda::thread_scope_device> cursor{offsets[map[row]]};
           gather[cursor.fetch_add(1, cuda::memory_order_relaxed)] = row;
         });
-      auto output = cudf::detail::gather_partition_strings(t, gather_map, stream, mr);
-      if (!output) {
-        output =
-          cudf::detail::gather(t,
-                               device_span<size_type const>{gather_map.data(), gather_map.size()},
-                               out_of_bounds_policy::DONT_CHECK,
-                               negative_index_policy::NOT_ALLOWED,
-                               stream,
-                               mr);
-      }
-      return std::pair{std::move(output), partition_offsets};
+      auto output = cudf::strings::detail::gather_non_null_permutation(
+        t, gather_map.begin(), gather_map.end(), stream, mr);
+      return std::pair{std::move(output), std::move(partition_offsets)};
     }
 
     // Unfortunately need to materialize the scatter map because

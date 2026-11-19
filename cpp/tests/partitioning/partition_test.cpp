@@ -503,31 +503,37 @@ TEST_F(PartitionTestNotTyped, BatchedStringGatherOffsetThreshold)
   };
   restore_environment threshold_restore{"LIBCUDF_LARGE_STRINGS_THRESHOLD"};
   restore_environment enabled_restore{"LIBCUDF_LARGE_STRINGS_ENABLED"};
-  ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", "2048", 1), 0);
+  ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", "4096", 1), 0);
   ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_ENABLED", "1", 1), 0);
 
   constexpr cudf::size_type rows = 1'024;
-  std::vector<std::string> values(rows, "a");
-  strings_column_wrapper strings(values.begin(), values.end());
-  auto const input = cudf::table_view{{strings, strings}};
+  std::vector<std::string> short_values(rows, "a"), long_values(rows, "bb");
+  strings_column_wrapper short_column(short_values.begin(), short_values.end());
+  strings_column_wrapper long_column(long_values.begin(), long_values.end());
+  auto const input = cudf::table_view{{short_column, long_column}};
   auto const ones  = cuda::make_constant_iterator<int32_t>(1);
   fixed_width_column_wrapper<int32_t> map(ones, ones + rows);
-  ASSERT_EQ(cudf::strings_column_view(input.column(0)).offsets().type().id(), cudf::type_id::INT32);
+  for (auto const& column : input) {
+    ASSERT_EQ(cudf::strings_column_view(column).offsets().type().id(), cudf::type_id::INT32);
+  }
 
   // Change the threshold after construction to keep the input offsets INT32.
-  for (auto const threshold : {1'025, 1'024, 1'023}) {
+  for (auto const threshold : {2 * rows + 1, 2 * rows, 2 * rows - 1, rows}) {
     ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_THRESHOLD", std::to_string(threshold).c_str(), 1), 0);
     for (auto const enabled : {true, false}) {
       SCOPED_TRACE(::testing::Message() << threshold << "/" << enabled);
       ASSERT_EQ(setenv("LIBCUDF_LARGE_STRINGS_ENABLED", enabled ? "1" : "0", 1), 0);
-      if (!enabled && rows >= threshold) {
+      if (!enabled && 2 * rows >= threshold) {
         EXPECT_THROW(cudf::partition(input, map, 3), std::overflow_error);
       } else {
         auto [output, offsets] = cudf::partition(input, map, 3);
         EXPECT_EQ(offsets, (std::vector<cudf::size_type>{0, 0, rows, rows}));
-        auto const expected_type = rows >= threshold ? cudf::type_id::INT64 : cudf::type_id::INT32;
-        for (auto const& column : output->view()) {
-          EXPECT_EQ(cudf::strings_column_view(column).offsets().type().id(), expected_type);
+        for (cudf::size_type i = 0; i < input.num_columns(); ++i) {
+          auto const bytes = i == 0 ? rows : 2 * rows;
+          auto const expected_type =
+            bytes >= threshold ? cudf::type_id::INT64 : cudf::type_id::INT32;
+          EXPECT_EQ(cudf::strings_column_view(output->view().column(i)).offsets().type().id(),
+                    expected_type);
         }
         CUDF_TEST_EXPECT_TABLES_EQUIVALENT(input, output->view());
       }

@@ -179,8 +179,8 @@ public class CSVOptions extends ColumnFilterOptions {
      * preserved. Only spaces and tabs after closing quotes are recognized. Detection around
      * quotes takes precedence for trimming when both options are enabled. Null matching also
      * considers the quoted field without trailing spaces or tabs.
-     * This option does not change type inference or non-string conversion. Specify STRING for
-     * columns requiring this option's trimming and additional null matching.
+     * Padding removal and additional null matching apply only during STRING conversion.
+     * Specify STRING for columns requiring those behaviors.
      * Disabled by default and ignored when quoting is disabled.
      */
     public Builder withDetectWhitespaceAfterQuotes(boolean enabled) {

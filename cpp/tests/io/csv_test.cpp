@@ -1613,6 +1613,70 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesLoneQuote)
   }
 }
 
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesEscapedQuoteAtEof)
+{
+  for (bool const around_quotes : {false, true}) {
+    for (bool const closed : {false, true}) {
+      std::string const field = closed ? "\"A\"\"\" \t" : "\"A\"\" \t";
+      auto const buffer       = "row," + field;
+      auto const options =
+        cudf::io::csv_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .names({"id", "value"})
+          .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+          .header(-1)
+          .doublequote(true)
+          .keep_default_na(false)
+          .na_values({"\"A\"\""})
+          .detect_whitespace_around_quotes(around_quotes)
+          .detect_whitespace_after_quotes(true)
+          .build();
+      auto const result = cudf::io::read_csv(options);
+      // Only the third quote after A closes the field. The escaped pair alone cannot
+      // make the field eligible for padding removal or normalized NA matching.
+      cudf::test::strings_column_wrapper const expected({closed ? "A\"" : field});
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result.tbl->view().column(1));
+    }
+  }
+}
+
+TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesWhitespaceQuoteCharacter)
+{
+  for (char const quotechar : {'\t', ' '}) {
+    std::string const quote(1, quotechar);
+    std::string const padding(1, quotechar == '\t' ? ' ' : '\t');
+    auto const buffer = "id," + quote + "middle" + quote + padding + quote + ",last\r\n" + "row," +
+                        quote + "A" + quote + padding + quote + ",tail\r\n" + "row," + quote +
+                        quote + padding + ",tail\n" + "row," + quote + "missing" + quote + padding +
+                        ",tail\n" + "row," + quote + "raw" + quote + padding + ",tail\n" +
+                        "row,tail," + quote + "B" + quote + padding;
+    for (bool const around_quotes : {false, true}) {
+      auto const options =
+        cudf::io::csv_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<std::byte const>{
+            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+          .dtypes(
+            {dtype<cudf::string_view>(), dtype<cudf::string_view>(), dtype<cudf::string_view>()})
+          .header(0)
+          .quotechar(quotechar)
+          .keep_default_na(false)
+          .na_values({quote + "missing" + quote, quote + "raw" + quote + padding})
+          .detect_whitespace_around_quotes(around_quotes)
+          .detect_whitespace_after_quotes(true)
+          .build();
+      auto const result = cudf::io::read_csv(options);
+      ASSERT_EQ(result.tbl->num_columns(), 3);
+      EXPECT_EQ(result.metadata.schema_info[1].name, "middle");
+      cudf::test::strings_column_wrapper const middle({"A", "", "", "", "tail"},
+                                                      {true, true, false, false, true});
+      cudf::test::strings_column_wrapper const last({"tail", "tail", "tail", "tail", "B"});
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(middle, result.tbl->view().column(1));
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(last, result.tbl->view().column(2));
+    }
+  }
+}
+
 TEST_F(CsvReaderTest, SkiprowsNrows)
 {
   auto filepath = temp_env->get_temp_dir() + "SkiprowsNrows.csv";

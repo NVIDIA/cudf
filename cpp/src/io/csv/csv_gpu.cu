@@ -376,12 +376,18 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
     // not produce empty fields (matches pandas behavior).
     field_start = cudf::io::gpu::skip_leading_delimiter_run(field_start, row_end, options);
     if (field_start >= row_end) break;
-    next_field          = field_start;
-    auto next_delimiter = cudf::io::gpu::seek_field_end(field_start, row_end, options);
+    next_field                = field_start;
+    auto const column_enabled = column_flags[col] & column_parse::enabled;
+    auto const use_scanned_quotes =
+      options.detect_whitespace_after_quotes && not options.keepquotes && column_enabled &&
+      dtypes[actual_col].id() == cudf::type_id::STRING && *field_start == options.quotechar;
+    char const* quote_end     = nullptr;
+    auto const next_delimiter = cudf::io::gpu::seek_field_end(
+      field_start, row_end, options, false, use_scanned_quotes ? &quote_end : nullptr);
     // Trailing whitespace before the record terminator does not start another field
     if (options.multi_delimiter and next_delimiter == field_start) { break; }
 
-    if (column_flags[col] & column_parse::enabled) {
+    if (column_enabled) {
       // Check for NA values in the same way as type inference
       auto const token = quoted_field_content(field_start, next_delimiter, options)
                            .value_or(cuda::std::pair{field_start, next_delimiter});
@@ -393,17 +399,10 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
 
       // Modify field_start & end to ignore whitespace and quotechars
       auto field_end = next_delimiter;
-      if (is_valid && dtypes[actual_col].id() == cudf::type_id::STRING &&
-          options.detect_whitespace_after_quotes && not options.keepquotes &&
-          *field_start == options.quotechar) {
-        auto const quote_end = trim_whitespaces(field_start, field_end).second;
-        if (quote_end - field_start >= 2 && *(quote_end - 1) == options.quotechar &&
-            quote_end != field_end) {
-          field_end = quote_end;
-          // Match the same NA tokens as the equivalent quoted field without trailing padding.
-          is_valid = !serialized_trie_contains(
-            options.trie_na, {field_start, static_cast<size_t>(field_end - field_start)});
-        }
+      if (is_valid && quote_end != nullptr && quote_end != field_end) {
+        // Match the same NA tokens as the equivalent quoted field without trailing padding.
+        is_valid = !serialized_trie_contains(
+          options.trie_na, {field_start, static_cast<size_t>(quote_end - field_start)});
       }
       if (is_valid && dtypes[actual_col].id() != cudf::type_id::STRING) {
         auto const is_boolean_token =
@@ -421,7 +420,13 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
           auto end        = field_end;
           bool was_quoted = false;
           if (not options.keepquotes) {
-            if (not options.detect_whitespace_around_quotes) {
+            if (use_scanned_quotes) {
+              if (quote_end != nullptr) {
+                ++field_start;
+                end        = quote_end - 1;
+                was_quoted = true;
+              }
+            } else if (not options.detect_whitespace_around_quotes) {
               if (end - field_start >= 2 && *field_start == options.quotechar &&
                   *(end - 1) == options.quotechar) {
                 ++field_start;

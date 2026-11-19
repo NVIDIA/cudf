@@ -398,9 +398,9 @@ class csv_reader_options {
    * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
    * Detection around quotes takes precedence for trimming when both options are enabled;
    * NA matching also considers the quoted field without trailing spaces or tabs.
-   * This option does not change type inference or non-string conversion. Specify STRING for
-   * columns requiring this option's trimming and additional NA matching. Disabled by default
-   * and ignored when quoting is disabled.
+   * Padding removal and additional NA matching apply only during STRING conversion. Specify
+   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
+   * is disabled.
    *
    * @return `true` if trailing whitespace detection is enabled
    */
@@ -761,9 +761,9 @@ class csv_reader_options {
    * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
    * Detection around quotes takes precedence for trimming when both options are enabled;
    * NA matching also considers the quoted field without trailing spaces or tabs.
-   * This option does not change type inference or non-string conversion. Specify STRING for
-   * columns requiring this option's trimming and additional NA matching. Disabled by default
-   * and ignored when quoting is disabled.
+   * Padding removal and additional NA matching apply only during STRING conversion. Specify
+   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
+   * is disabled.
    *
    * @param val Boolean value to enable/disable
    */
@@ -1219,9 +1219,9 @@ class csv_reader_options_builder {
    * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
    * Detection around quotes takes precedence for trimming when both options are enabled;
    * NA matching also considers the quoted field without trailing spaces or tabs.
-   * This option does not change type inference or non-string conversion. Specify STRING for
-   * columns requiring this option's trimming and additional NA matching. Disabled by default
-   * and ignored when quoting is disabled.
+   * Padding removal and additional NA matching apply only during STRING conversion. Specify
+   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
+   * is disabled.
    *
    * @param val Boolean value to enable/disable
    * @return this for chaining

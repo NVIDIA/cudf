@@ -172,9 +172,24 @@ std::vector<std::string> get_column_names(std::vector<char> const& row,
 
   std::vector<std::string> col_names;
   bool quotation = false;
+  auto const whitespace_quote =
+    parse_opts.detect_whitespace_after_quotes && is_whitespace(parse_opts.quotechar);
   for (size_t pos = 0, prev = 0; pos < row.size(); ++pos) {
-    // Flip the quotation flag if current character is a quotechar
-    if (row[pos] == parse_opts.quotechar) { quotation = !quotation; }
+    char const* quote_end = nullptr;
+    if (whitespace_quote && pos == prev && row[pos] == parse_opts.quotechar) {
+      auto const end = row.data() + row.size();
+      auto const field_end =
+        cudf::io::gpu::seek_field_end(row.data() + pos, end, parse_opts, false, &quote_end);
+      if (quote_end != nullptr) {
+        // Use the same field boundary as conversion when a quote byte can also be padding.
+        pos = field_end == end ? row.size() - 1 : field_end - row.data();
+        if (parse_opts.terminator == '\n' && parse_opts.delimiter != '\r' && field_end != end &&
+            *field_end == '\r' && field_end + 1 < end && field_end[1] == '\n') {
+          ++pos;
+        }
+      }
+    }
+    if (quote_end == nullptr && row[pos] == parse_opts.quotechar) { quotation = !quotation; }
     // Check if end of a column/row
     if (pos == row.size() - 1 || (!quotation && row[pos] == parse_opts.terminator) ||
         (!quotation && row[pos] == parse_opts.delimiter)) {
@@ -197,9 +212,14 @@ std::vector<std::string> get_column_names(std::vector<char> const& row,
       if (!skip_empty_field) {
         if (header_row >= 0) {
           // This is the header, add the column name
-          col_names.emplace_back(remove_quotes(
-            std::string_view{row.data() + prev, static_cast<std::size_t>(col_name_len)},
-            parse_opts.quotechar));
+          if (quote_end != nullptr) {
+            auto const content = row.data() + prev + 1;
+            col_names.emplace_back(content, static_cast<size_t>(quote_end - content - 1));
+          } else {
+            col_names.emplace_back(remove_quotes(
+              std::string_view{row.data() + prev, static_cast<std::size_t>(col_name_len)},
+              parse_opts.quotechar));
+          }
         } else {
           // This is the first data row, add the automatically generated name
           col_names.push_back(prefix + std::to_string(col_names.size()));

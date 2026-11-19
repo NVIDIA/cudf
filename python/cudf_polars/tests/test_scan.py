@@ -21,6 +21,7 @@ import polars as pl
 import pylibcudf as plc
 
 from cudf_polars.containers import DataType
+from cudf_polars.dsl import ir
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
@@ -407,6 +408,15 @@ def test_scan_csv_multi_slice_concatenates_only_retained_rows(
     q = pl.scan_csv(csv_files).slice(11, 3)
     assert_gpu_result_equal(q, engine=engine)
     assert max(concatenated, default=0) < 11
+
+
+def test_scan_csv_multi_slice_file_above_read_limit(
+    in_memory_engine: pl.GPUEngine, csv_files, monkeypatch
+):
+    monkeypatch.setattr(ir, "_MAX_LIBCUDF_ROWS", 5)
+    q = pl.scan_csv(csv_files).slice(4, 2)
+    with pytest.raises(NotImplementedError, match="more rows than libcudf"):
+        q.collect(engine=in_memory_engine)
 
 
 def test_scan_csv_multi_slice_large_length(engine: pl.GPUEngine, csv_files):

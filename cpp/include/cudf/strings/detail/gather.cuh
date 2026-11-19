@@ -541,7 +541,7 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
                            nullptr,
                            nullptr});
   }
-  auto device_columns = cudf::detail::make_device_buffer(descriptors, stream, temp_mr);
+  auto device_columns = cudf::detail::make_device_buffer_async(descriptors, stream, temp_mr);
   cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
   gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
     device_columns.data(), columns, rows, device_sizes.data());

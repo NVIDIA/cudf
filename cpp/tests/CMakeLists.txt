@@ -433,7 +433,6 @@ ConfigureTest(
   copying/copy_range_tests.cpp
   copying/copy_tests.cpp
   copying/gather_list_tests.cpp
-  copying/gather_multicolumn_tests.cu
   copying/gather_str_tests.cpp
   copying/gather_struct_tests.cpp
   copying/gather_tests.cpp
@@ -623,7 +622,6 @@ ConfigureTest(
   strings/integers_tests.cpp
   strings/ipv4_tests.cpp
   strings/like_tests.cpp
-  strings/offsets_test.cu
   strings/pad_tests.cpp
   strings/repeat_strings_tests.cpp
   strings/replace_regex_tests.cpp

@@ -237,6 +237,7 @@ class QuentBrowserRole:
     format_version: int
     context_count: int
     event_count: int
+    model_name: str = "cudf-polars"
 
 
 Role = NightlyRole | NsysRole | QuentRole | QuentBrowserRole
@@ -1541,8 +1542,15 @@ def _finalize_benchmark_run(
     serializable_engine_config: dict[str, Any],
     startup_duration_ms: float | None,
     shutdown_duration_ms: float | None,
+    artifact_error: BaseException | None = None,
 ) -> None:
-    """Summarize, serialize, and exit after a benchmark run."""
+    """
+    Summarize, serialize, and exit after a benchmark run.
+
+    ``artifact_error`` is a failure while writing Quent traces. The run summary
+    is still written. A successful query run then exits with status 1; a query
+    or validation failure keeps its own non-zero status.
+    """
     if run_options.summarize:
         run_config.summarize()
     if (
@@ -1575,7 +1583,13 @@ def _finalize_benchmark_run(
         with run_options.output.open("a") as f:
             f.write(json.dumps(serializable_engine_config))
             f.write("\n")
-    sys.exit(benchmark_exit_code(query_failures, validation_failures))
+    code = benchmark_exit_code(query_failures, validation_failures)
+    if artifact_error is not None:
+        print("Failed to write Quent artifacts", file=sys.stderr)
+        traceback.print_exception(artifact_error)
+        if code == EXIT_SUCCESS:
+            code = 1
+    sys.exit(code)
 
 
 def run_polars_cpu(
@@ -1717,13 +1731,14 @@ def run_polars_spmd(
         )
         shutdown_time_begin = time.monotonic()
 
+    artifact_error = None
     if is_rank_0 and quent_archive is not None:
-        bundle_info = _write_quent_traces(
+        artifact_error = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
+            serializable_engine_config=serializable_engine_config,
         )
-        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         run_options,
@@ -1733,6 +1748,7 @@ def run_polars_spmd(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1791,13 +1807,14 @@ def run_polars_ray(
         )
         shutdown_time_begin = time.monotonic()
 
+    artifact_error = None
     if quent_archive is not None:
-        bundle_info = _write_quent_traces(
+        artifact_error = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
+            serializable_engine_config=serializable_engine_config,
         )
-        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
         run_options,
@@ -1807,6 +1824,7 @@ def run_polars_ray(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1845,6 +1863,7 @@ def run_polars_dask(
         )
 
     start_time_begin = time.monotonic()
+    artifact_error = None
     try:
         with DaskEngine(
             rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
@@ -1869,12 +1888,12 @@ def run_polars_dask(
             shutdown_time_begin = time.monotonic()
 
         if quent_archive is not None:
-            bundle_info = _write_quent_traces(
+            artifact_error = _write_quent_traces(
                 engine=engine,
                 run_id=run_config.run_id,
                 quent_archive=quent_archive,
+                serializable_engine_config=serializable_engine_config,
             )
-            _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
     finally:
         if dask_client is not None:
             dask_client.close()
@@ -1887,6 +1906,7 @@ def run_polars_dask(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1895,39 +1915,49 @@ def _write_quent_traces(
     run_id: uuid.UUID,
     *,
     quent_archive: Path,
-) -> BrowserBundleInfo | None:
-    """Write collected Quent events to a ``logs/<run_id>.zip`` archive."""
+    serializable_engine_config: dict[str, Any],
+) -> BaseException | None:
+    """
+    Write the Quent ZIP, then the browser bundle derived from that ZIP.
+
+    The ZIP writer removes the collector directory, so the bundle is generated
+    from the archive. A bundle failure leaves the ZIP in place. The failure is
+    returned so the caller can still record the run and exit non-zero.
+    """
     export_root = engine._quent_output_root
     if export_root is None:
         return None
+    try:
+        _check_quent_output_root(export_root, run_id)
+        output_path = write_quent_export(export_root, quent_archive)
+        print(f"Wrote Quent trace archive to {output_path}")
+        bundle_info = write_quent_browser_bundle(
+            output_path, quent_archive.with_suffix(".quent-browser")
+        )
+        print(f"Wrote Quent browser bundle to {bundle_info.path}")
+        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
+    except Exception as exc:
+        return exc
+    return None
+
+
+def _check_quent_output_root(export_root: Path, run_id: uuid.UUID) -> None:
+    """Raise if the collector directory does not belong to ``run_id``."""
     if export_root.name != str(run_id):
         raise ValueError(f"Quent output {export_root} does not match run {run_id}")
-    browser_bundle = quent_archive.with_suffix(".quent-browser")
-    bundle_info = write_quent_browser_bundle(export_root, browser_bundle)
-    output_path = write_quent_export(export_root, quent_archive)
-    print(f"Wrote Quent trace archive to {output_path}")
-    print(f"Wrote Quent browser bundle to {bundle_info.path}")
-    return bundle_info
 
 
 def _add_browser_bundle_metadata(
     serializable_engine_config: dict[str, Any],
-    bundle: BrowserBundleInfo | None,
+    bundle: BrowserBundleInfo,
 ) -> None:
     """Add a generated browser bundle to benchmark output metadata."""
-    if bundle is None:
-        return
-    role = QuentBrowserRole(
-        filename=bundle.path.name,
-        engine_id=bundle.engine_id,
-        schema_digest=bundle.schema_digest,
-        format_version=bundle.format_version,
-        context_count=bundle.context_count,
-        event_count=bundle.event_count,
-    )
+    recorded = dataclasses.asdict(bundle)
+    path = Path(recorded.pop("path"))
+    role = QuentBrowserRole(filename=path.name, **recorded)
     serializable_engine_config["roles"].append(dataclasses.asdict(role))
     serializable_engine_config["extra_info"]["quent-browser-bundle"] = str(
-        bundle.path.absolute()
+        path.absolute()
     )
 
 
@@ -2247,14 +2277,6 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="Cudf-Polars PDS-H/PDS-DS Benchmarks",
-        description=textwrap.dedent(f"""\
-            Exit code description:
-            - {EXIT_SUCCESS} : Success
-            - 1 : Unhandled exception during query run
-            - 2 : Invalid command line arguments
-            - {EXIT_QUERY_FAILURE} : Query failure (setup or execution)
-            - {EXIT_VALIDATION_FAILURE} : Validation failure
-            """),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -2563,7 +2585,7 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
             "cudf-polars tracing only applies to GPU frontends "
             "(dask, ray, spmd)."
         )
-    if run_config.collect_traces and run_config.frontend == "in-memory":
+    elif run_config.collect_traces and run_config.frontend == "in-memory":
         raise ValueError(
             "--collect-traces is not yet supported with --frontend in-memory; "
             "use dask, ray, or spmd."

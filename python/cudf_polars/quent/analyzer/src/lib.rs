@@ -6,13 +6,13 @@ mod analyzer;
 mod evaluate;
 mod model;
 mod resource;
-#[cfg(all(feature = "filesystem", not(target_arch = "wasm32")))]
+#[cfg(feature = "filesystem")]
 mod viewer;
 
 pub(crate) use cudf_polars_quent_store as generated;
 
 pub use analyzer::CudfPolarsUiAnalyzer;
-#[cfg(all(feature = "filesystem", not(target_arch = "wasm32")))]
+#[cfg(feature = "filesystem")]
 pub use viewer::Viewer;
 
 #[cfg(test)]

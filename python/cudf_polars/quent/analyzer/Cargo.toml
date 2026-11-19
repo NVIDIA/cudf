@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# Pin Quent by full commit SHA. See ../README.md.
+
 [features]
 default = ["filesystem"]
 filesystem = [
@@ -12,10 +14,6 @@ filesystem = [
     "cudf-polars-quent-store/filesystem",
 ]
 
-# quent-open's generated viewer pins quent to the sidecar's remote and full
-# commit SHA. Cargo keys git sources on the rev spelling, so an abbreviated rev
-# here would build a second copy of these crates and the two `QuentViewer`
-# traits would not unify.
 [dependencies]
 cudf-polars-quent-store = { path = "../store", default-features = false }
 quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }

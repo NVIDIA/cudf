@@ -1,8 +1,8 @@
 # cudf-polars Quent analyzer
 
-This crate is the entrypoint for `quent-open`. [./build.rs](./build.rs)
-generates typed event importers from the same [Model Schema](../model.yaml) that
-cudf-polars uses for generating and exporting events.
+This crate is the entrypoint for `quent-open`. Event types come from
+[`cudf-polars-quent-store`](../store), which generates them from the same
+[model schema](../model.yaml) that cudf-polars uses for exporting events.
 
 `cudf-polars-quent-analyzer` is typically built on demand by `quent-open` using
 the versions embedded in the archive's `model.qmi`. Check the local contents with:
@@ -12,16 +12,16 @@ cargo check
 cargo test
 ```
 
-Quent upgrades must update every `rev` in this crate and in
-[`../bridge/Cargo.toml`](../bridge/Cargo.toml) to the same full commit SHA, then
-refresh and commit both Cargo lockfiles. See the bridge's [Updating
-Quent](../bridge/README.md#updating-quent) section for the complete update and
-verification checklist.
+Quent upgrades must update every `rev` in `store`, `analyzer`, `browser`, and
+`bridge` to the same full commit SHA, then refresh and commit each Cargo
+lockfile. See the bridge's [Updating Quent](../bridge/README.md#updating-quent)
+section for the complete update and verification checklist.
 
 ## Project structure
 
-- `build.rs` generates Rust event types from `../model.yaml`; `lib.rs` exposes
-  those types and the analyzer entrypoint.
+- `lib.rs` re-exports the store's generated event types and the analyzer
+  entrypoint. The `filesystem` feature adds `viewer.rs`, which `quent-open`
+  uses to import events from disk. The WASM build leaves that feature off.
 - `model.rs` builds the query-engine model (the struct `CudfPolarsModel` and the
    traits implements).
 - `actor.rs`, `evaluate.rs`, and `resource.rs` reconstruct execution spans and

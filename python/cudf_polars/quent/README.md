@@ -1,9 +1,20 @@
 # cudf-polars-quent
 
-This directory contains the [model](./model.yaml) defining cudf-polar's
-telemetry and Rust crates to capture and analyze that telemetry.
+This directory contains the [model](./model.yaml) defining cudf-polars'
+telemetry and the Rust crates that capture and analyze that telemetry.
 
-- [cudf-polars-quent-bridge](./bridge/README.md): Build the `cudf_polars_quent` instrumentation library, including Python bindings for cudf-polars.
-- [cudf-polars-quent-analyzer](./analyzer/README.md): Rust crate for analyzing cudf-polars' custom events. Used by the UI to analyzer and transform the raw events.
+- [cudf-polars-quent-bridge](./bridge/README.md): Builds the `cudf_polars_quent` instrumentation library, including Python bindings for cudf-polars.
+- [cudf-polars-quent-analyzer](./analyzer/README.md): Rust crate that turns cudf-polars events into the views used by the Quent UI.
 - [cudf-polars-quent-store](./store/README.md): Shared generated event types, used by the analyzer and browser crates.
-- [cudf-polars-quent-browser](./browser/README.md): Implementation of the interface for compiling the cudf-polars analyzer to WASM and loading `.quent-browser` bundles.
+- [cudf-polars-quent-browser](./browser/README.md): Compiles the cudf-polars analyzer to WASM and loads `.quent-browser` bundles.
+
+## Pinning Quent
+
+Every Quent dependency in `store`, `analyzer`, `browser`, and `bridge` must use
+the same full commit SHA. Cargo keys git sources on the exact `rev` spelling,
+so a branch, tag, or abbreviated SHA builds a second copy of those crates. The
+generated model, the analyzer, and the `quent-open` viewer traits then fail to
+unify.
+
+See the bridge's [Updating Quent](./bridge/README.md#updating-quent) section for
+the update procedure.

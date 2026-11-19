@@ -1,3 +1,6 @@
+[workspace]
+
+# Pin Quent by full commit SHA. See ../README.md.
 [package]
 name = "cudf-polars-quent-store"
 version = "0.1.0"
@@ -18,3 +21,4 @@ smallvec = "1"
 [build-dependencies]
 quent-store-build = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
 quent-yaml = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
+sha2 = "0.11"

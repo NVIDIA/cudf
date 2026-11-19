@@ -102,3 +102,19 @@ def test_export_writes_browser_bundle(tmp_path: Path) -> None:
     assert info.context_count == 1
     assert info.event_count == 2
     assert info.format_version == 1
+
+
+def test_export_writes_browser_bundle_from_archive(tmp_path: Path) -> None:
+    root = tmp_path / "quent"
+    _collect_engine_events(root)
+    archive_path = tmp_path / "trace.zip"
+    bundle_path = tmp_path / "trace.quent-browser"
+
+    write_quent_export(root, archive_path)
+    info = write_quent_browser_bundle(archive_path, bundle_path)
+
+    assert not root.exists()
+    assert archive_path.is_file()
+    assert info.path == bundle_path
+    assert info.context_count == 1
+    assert info.event_count == 2

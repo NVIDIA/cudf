@@ -1,3 +1,6 @@
+[workspace]
+
+# Pin Quent by full commit SHA. See ../README.md.
 [package]
 name = "cudf-polars-quent-browser"
 version = "0.1.0"
@@ -17,6 +20,7 @@ crate-type = ["cdylib", "rlib"]
 cudf-polars-quent-analyzer = { path = "../analyzer", default-features = false }
 cudf-polars-quent-store = { path = "../store", default-features = false }
 postcard = { version = "1", default-features = false, features = ["alloc"] }
+uuid = "1"
 quent-browser-bundle = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
 quent-browser-bundle-build = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", optional = true }
 quent-events = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", features = ["serde"] }

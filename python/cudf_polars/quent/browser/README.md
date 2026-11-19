@@ -21,6 +21,12 @@ wasm-bindgen \
   --out-dir generated
 ```
 
+The `wasm-bindgen` CLI must match the `wasm-bindgen` crate version selected by
+`Cargo.lock`.
+
+`cargo metadata --no-deps` prints `target_directory` when `CARGO_TARGET_DIR`
+is set and that path differs from `target/`.
+
 The generated JavaScript module exports Quent's standardized `BrowserServer`
 interface, so no cudf-polars-specific Web Worker is required. Host the generated
 JavaScript and WASM files on the same origin as the Quent UI, then select them

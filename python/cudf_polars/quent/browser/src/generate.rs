@@ -3,24 +3,23 @@
 
 use std::path::Path;
 
-use cudf_polars_quent_store::{CudfPolars, CudfPolarsEvent, EngineEvent};
+use cudf_polars_quent_store::{CudfPolars, SCHEMA_DIGEST};
 use quent_browser_bundle::Capabilities;
 use quent_browser_bundle_build::{BuildOptions, GenerationSummary};
 
-use crate::schema_digest;
+use crate::{MODEL_NAME, engine_id};
 
 /// Convert a completed collector directory or Quent ZIP to a browser bundle.
 pub fn generate_bundle(
     input: &Path,
     output: &Path,
 ) -> Result<GenerationSummary, quent_browser_bundle_build::Error> {
-    let schema_digest = schema_digest();
     quent_browser_bundle_build::generate_bundle::<CudfPolars>(
         input,
         output,
         &BuildOptions {
-            model_name: "cudf-polars",
-            schema_digest: &schema_digest,
+            model_name: MODEL_NAME,
+            schema_digest: SCHEMA_DIGEST,
             analyzer_revision: option_env!("QUENT_SOURCE_COMMIT")
                 .unwrap_or(env!("CARGO_PKG_VERSION")),
             capabilities: Capabilities {
@@ -28,20 +27,14 @@ pub fn generate_bundle(
                 nvtx: false,
             },
         },
-        |event| {
-            matches!(
-                event.data,
-                CudfPolarsEvent::Engine(EngineEvent::Init { .. })
-            )
-            .then_some(event.id)
-        },
+        engine_id,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cudf_polars_quent_store::Implementation;
+    use cudf_polars_quent_store::{CudfPolarsEvent, EngineEvent, Implementation};
     use quent_events::Event;
     use uuid::Uuid;
 
@@ -82,7 +75,8 @@ mod tests {
         let output = temp.path().join("trace.quent-browser");
 
         let summary = generate_bundle(temp.path(), &output).unwrap();
-        let bytes = std::fs::read(output).unwrap();
+        let bytes = std::fs::read(&output).unwrap();
+        crate::load_browser_service(&bytes).expect("analyzer accepts the generated bundle");
         let decoded = quent_browser_bundle::decode(&bytes).unwrap();
         let decoded_events: Vec<Event<CudfPolarsEvent>> =
             postcard::from_bytes(decoded.payload).unwrap();

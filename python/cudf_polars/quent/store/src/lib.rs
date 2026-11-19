@@ -7,6 +7,9 @@
 
 include!(concat!(env!("OUT_DIR"), "/cudfpolars.rs"));
 
+/// SHA-256 digest of `model.yaml`, in the `sha256:<hex>` form Quent's simulator uses.
+pub const SCHEMA_DIGEST: &str = env!("CUDF_POLARS_SCHEMA_DIGEST");
+
 impl quent_analyzer::fsm::native::TransitionEvent for QueryEvent {
     fn name(&self) -> &'static str {
         match self {

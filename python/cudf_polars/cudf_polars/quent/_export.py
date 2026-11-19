@@ -30,10 +30,9 @@ class BrowserBundleInfo:
 
 
 def write_quent_browser_bundle(export_root: Path, output: Path) -> BrowserBundleInfo:
-    """Convert collector-produced contexts to a relocatable browser bundle."""
+    """Convert a collector directory or Quent ZIP to a relocatable browser bundle."""
     import cudf_polars_quent
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     summary = cudf_polars_quent.write_browser_bundle(export_root, output)
     return BrowserBundleInfo(
         path=output,

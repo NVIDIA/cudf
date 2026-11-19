@@ -1,5 +1,6 @@
 [workspace]
 
+# Pin Quent by full commit SHA. See ../README.md.
 [package]
 name = "cudf-polars-quent"
 # rapids-pre-commit-hooks: disable-next-line

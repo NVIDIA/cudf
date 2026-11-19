@@ -16,6 +16,7 @@ from pathlib import Path
 
 from actions import add_business_days, notification_state, slack_text
 from collect import timestamp
+from progress import record_stage
 from report import parse_time
 from slack_dm_test import post, recipient, slack_token
 from storage import save_json
@@ -47,6 +48,9 @@ class LocalCards:
             }
         )
 
+    def refresh(self):
+        self.cards = json.loads(self.path.read_text())
+
     def save(self, key, data, fields):
         updated = deepcopy(self.cards)
         updated[key]["data"] = data
@@ -55,12 +59,15 @@ class LocalCards:
         self.cards = updated
 
 
-def rehearse(config, directory, sender, start):
+def rehearse(config, directory, sender, start, progress_dir=None):
     directory.mkdir(parents=True, exist_ok=True)
+    progress_dir = progress_dir or directory
+    record_stage(progress_dir, "configuration")
     clock_path = directory / "clock.json"
     if not clock_path.exists():
         save_json(clock_path, {"start": start})
     start = json.loads(clock_path.read_text())["start"]
+    record_stage(progress_dir, "receipt_recovery")
     cards = LocalCards(config, directory / "cards.json")
     journal_path = directory / "dm-receipts.json"
     journal = (
@@ -72,6 +79,7 @@ def rehearse(config, directory, sender, start):
         raise RuntimeError(
             "Uncertain rehearsal send; inspect the DM before retrying"
         )
+    record_stage(progress_dir, "configuration")
     policy = config["follow_up"]
     reminder = add_business_days(start, policy["repeat_after_business_days"])
     escalation = (
@@ -111,6 +119,7 @@ def rehearse(config, directory, sender, start):
             f"Simulated time: {at}. This is an accelerated test.\n"
             + slack_text(action, config, None)
         )
+        record_stage(progress_dir, "slack_delivery")
         delivered = send_notifications(
             cards,
             {"actions": [action]},
@@ -127,6 +136,7 @@ def rehearse(config, directory, sender, start):
             sent.append(kind)
     result = {"dm_recipient": member, "sent": sent, "project_writes": 0}
     save_json(directory / "result.json", result)
+    record_stage(progress_dir, "complete")
     return result
 
 
@@ -135,6 +145,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--send-dm", action="store_true")
     args = parser.parse_args()
+    record_stage(args.output_dir, "configuration")
     config = json.loads((ROOT / "config.json").read_text())
     token = None
     if args.send_dm:
@@ -157,7 +168,10 @@ def main():
 
         print(
             json.dumps(
-                rehearse(config, directory, sender, timestamp()), indent=2
+                rehearse(
+                    config, directory, sender, timestamp(), args.output_dir
+                ),
+                indent=2,
             )
         )
 

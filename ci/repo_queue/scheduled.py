@@ -20,6 +20,8 @@ ROOT = Path(__file__).parent
 
 
 def command(selection, mode, output_dir):
+    if not isinstance(selection, dict):
+        raise ValueError("scheduled selection must be an object")
     numbers = selection.get("numbers")
     if (
         not isinstance(numbers, list)

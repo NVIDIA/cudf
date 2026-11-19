@@ -273,6 +273,9 @@ def status_data(card=None):
     if card is None:
         return {"version": 1, "deliveries": {}}
     data = deepcopy(card["data"])
+    if data.get("resolved_at") and resolution_time(data) is None:
+        data.setdefault("written_status", "Complete")
+        data["closed_at"] = data.pop("resolved_at")
     status = card["values"].get("Status")
     transition = data.get("status_transition")
     if transition and status in {transition["from"], transition["to"]}:
@@ -323,7 +326,13 @@ class ProjectCards:
             }
             try:
                 data = metadata(content.get("body", ""))
-            except (ValueError, TypeError, KeyError, AttributeError) as error:
+            except (
+                ValueError,
+                TypeError,
+                KeyError,
+                AttributeError,
+                OverflowError,
+            ) as error:
                 raise ValueError(
                     f"Invalid metadata on Project item {item['id']}: {error}"
                 ) from None
@@ -351,6 +360,11 @@ class ProjectCards:
             if values.get("Action key", key) != key:
                 raise ValueError("Card body and Action key disagree")
             self.cards[key] = {"item": item, "data": data, "values": values}
+
+    def refresh(self):
+        self.cards = ProjectCards(
+            self.github, self.config, self.state, self.apply
+        ).cards
 
     def routing_history(self):
         result = []
@@ -417,6 +431,20 @@ class ProjectCards:
             },
         }
         card["data"] = deepcopy(data)
+
+    def check_current_status(self, card):
+        # GitHub offers no conditional field mutation, leaving a short read/write race.
+        fresh = self.github.graphql(
+            'query($id:ID!){node(id:$id){... on ProjectV2Item{fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}}',
+            {"id": card["item"]["id"]},
+        )["node"]
+        if fresh is None:
+            raise RuntimeError("Project item disappeared during refresh")
+        status = (fresh["fieldValueByName"] or {}).get("name")
+        if status != card["values"].get("Status"):
+            raise RuntimeError(
+                "Project Status changed during refresh; retry from a fresh read"
+            )
 
     def save(self, key, data, values):
         card = self.cards.get(key)
@@ -490,6 +518,8 @@ class ProjectCards:
             )
             card["data"] = deepcopy(data)
         for name, value in changed.items():
+            if name == "Status":
+                self.check_current_status(card)
             field = self.fields[name]
             common = {
                 "projectId": self.config["project"]["id"],

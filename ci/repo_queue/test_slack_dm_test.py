@@ -10,7 +10,7 @@ from contextlib import ExitStack
 from io import BytesIO
 from unittest.mock import patch
 
-from slack_dm_test import payload, post, recipient, slack_token
+from slack_dm_test import SlackRejected, payload, post, recipient, slack_token
 
 
 class SlackDMTests(unittest.TestCase):
@@ -77,6 +77,21 @@ class SlackDMTests(unittest.TestCase):
                 request.get_header("Authorization"), "Bearer secret"
             )
             self.assertEqual(json.loads(request.data)["channel"], "U123")
+
+    def test_partial_success_and_unknown_slack_errors_remain_ambiguous(self):
+        for code in ("internal_error", "fatal_error", "unknown_server_error"):
+            with ExitStack() as stack:
+                stack.enter_context(self.subTest(code=code))
+                urlopen = stack.enter_context(
+                    patch("slack_dm_test.urllib.request.urlopen")
+                )
+                urlopen.return_value = BytesIO(
+                    json.dumps({"ok": False, "error": code}).encode()
+                )
+                with self.assertRaises(RuntimeError) as error:
+                    post("secret", payload("U123", "test"))
+                self.assertNotIsInstance(error.exception, SlackRejected)
+                self.assertEqual(urlopen.call_count, 1)
 
     def test_failed_post_stops_without_retries_or_raw_error_echo(self):
         response = {"ok": False, "error": "invalid_auth"}

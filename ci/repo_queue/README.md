@@ -287,9 +287,13 @@ Deferred, Complete, and In progress overrides remain in place. Automatic status
 provenance is stored in the managed metadata. Pending Status transitions
 record both the old and intended values so a partial write can be retried
 without mistaking the automation's own changes for a manual override.
+The native Status is checked again immediately before changing it. An
+intervening edit aborts the refresh so the next run can reconcile fresh intent.
+As with body updates, the API leaves a short race between that read and write.
 Closing a conflicting PR completes its card without recording conflict
 clearance; reopening the same conflict resumes that episode. Confirmed
-clearance is recorded even on manually completed cards. Older records use their
+clearance is recorded even on manually completed cards. Legacy closure times
+are migrated to closure metadata without becoming conflict-clearance evidence. Older records use their
 recorded disposition to recognize automatic transitions. Missing or damaged
 metadata on a card with a managed Action key stops the run before creating
 cards. The underlying issues and PRs are not modified.
@@ -303,10 +307,16 @@ GitHub activity currently does not publish a completion message to Slack.
 Before sending, the script saves a pending delivery record in the Project.
 After success it saves a local receipt to `dm-receipts.json`, then acknowledges
 the delivery in the Project, retrying that acknowledgment up to three times
-within the same run. A rerun using the same output directory can recover the
+within the same run. Pending intent remains until the native Slack thread
+link is saved and the acknowledgment is committed. A rerun using the same
+output directory can recover the
 acknowledgment from that receipt without resending. Definite Slack rejections
-(`ok: false` or HTTP 429) clear the pending intent and do not start delivery
-clocks. An uncertain send with no local receipt blocks
+(known authentication, permission, channel, and validation errors, or HTTP
+429) clear the pending intent and do not start delivery clocks. Unknown API
+errors and errors that can represent partial success, including `internal_error`
+and `fatal_error`, retain pending intent for inspection. Rejection cleanup and
+acknowledgment both receive bounded retries with a fresh Project read after a
+failed write; the Slack post itself is not retried. An uncertain send with no local receipt blocks
 further delivery for inspection; this is deliberately not an exactly-once
 delivery guarantee. Preserve the receipt file until all pending records have
 been acknowledged. A pending record without a receipt currently requires

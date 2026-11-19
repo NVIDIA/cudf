@@ -17,6 +17,21 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+# Other API errors may represent partial success, including internal_error/fatal_error.
+DEFINITE_REJECTIONS = {
+    "invalid_auth",
+    "not_authed",
+    "account_inactive",
+    "missing_scope",
+    "no_permission",
+    "channel_not_found",
+    "not_in_channel",
+    "is_archived",
+    "rate_limited",
+    "invalid_arguments",
+    "no_text",
+    "ekm_access_denied",
+}
 
 
 class SlackRejected(RuntimeError):
@@ -84,7 +99,10 @@ def post(token, message):
         code = result.get("error", "unknown_error")
         if not isinstance(code, str) or not re.fullmatch(r"[a-z_]+", code):
             code = "unknown_error"
-        raise SlackRejected("Slack API: " + code)
+        error_type = (
+            SlackRejected if code in DEFINITE_REJECTIONS else RuntimeError
+        )
+        raise error_type("Slack API: " + code)
     if not re.fullmatch(r"D[A-Z0-9]+", result.get("channel", "")):
         raise RuntimeError("Slack did not return a DM; stopping the test")
     if (

@@ -14,8 +14,9 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from progress import record_stage
+from progress import read_stage, record_stage
 from rehearse import KEY, rehearse
+from rehearse import main as rehearsal_main
 from scheduled import command, main
 from test_actions import CONFIG
 
@@ -52,6 +53,41 @@ class ScheduledTests(unittest.TestCase):
         ):
             with self.subTest(numbers=numbers), self.assertRaises(ValueError):
                 command({"numbers": numbers}, "dm", Path("/tmp/queue"))
+
+    def test_non_object_selection_uses_fixed_cli_error_without_running_child(
+        self,
+    ):
+        for value in ([], None, "private value", 42):
+            with self.subTest(value=value), ExitStack() as stack:
+                directory = Path(
+                    stack.enter_context(tempfile.TemporaryDirectory())
+                )
+                selection = directory / "selection.json"
+                selection.write_text(json.dumps(value))
+                stack.enter_context(
+                    patch(
+                        "sys.argv",
+                        [
+                            "scheduled.py",
+                            "--selection",
+                            str(selection),
+                            "--output-dir",
+                            str(directory),
+                        ],
+                    )
+                )
+                stderr = stack.enter_context(patch("sys.stderr", StringIO()))
+                run = stack.enter_context(patch("scheduled.subprocess.run"))
+                with self.assertRaises(SystemExit) as error:
+                    main()
+                self.assertEqual(error.exception.code, 2)
+                self.assertIn(
+                    "Invalid tracking selection configuration",
+                    stderr.getvalue(),
+                )
+                self.assertNotIn("Traceback", stderr.getvalue())
+                self.assertNotIn("private value", stderr.getvalue())
+                run.assert_not_called()
 
     def test_missing_slack_token_fails_before_any_project_mutation(self):
         with ExitStack() as stack:
@@ -152,6 +188,56 @@ class RehearsalTests(unittest.TestCase):
             list(state[KEY]["data"]["deliveries"]),
             ["dm-rehearsal:U01PXPJ5741"],
         )
+
+    def test_rehearsal_cli_reports_delivery_in_scheduler_output_directory(
+        self,
+    ):
+        with ExitStack() as stack:
+            directory = Path(
+                stack.enter_context(tempfile.TemporaryDirectory())
+            )
+            stack.enter_context(
+                patch(
+                    "sys.argv",
+                    [
+                        "rehearse.py",
+                        "--send-dm",
+                        "--output-dir",
+                        str(directory),
+                    ],
+                )
+            )
+            stack.enter_context(
+                patch("rehearse.slack_token", return_value="secret")
+            )
+            stack.enter_context(
+                patch(
+                    "rehearse.post",
+                    side_effect=RuntimeError("Slack unavailable"),
+                )
+            )
+            with self.assertRaisesRegex(RuntimeError, "Slack unavailable"):
+                rehearsal_main()
+            self.assertEqual(read_stage(directory), "slack_delivery")
+
+    def test_rehearsal_reports_configuration_and_recovery_failures(self):
+        for phase in ("configuration", "receipt_recovery"):
+            with ExitStack() as stack:
+                stack.enter_context(self.subTest(phase=phase))
+                directory = Path(
+                    stack.enter_context(tempfile.TemporaryDirectory())
+                )
+                if phase == "receipt_recovery":
+                    (directory / "cards.json").write_text("invalid JSON")
+                start = (
+                    "invalid time"
+                    if phase == "configuration"
+                    else "2026-11-16T12:00:00Z"
+                )
+                with self.assertRaises(ValueError):
+                    rehearse(self.config, directory, self.sender, start)
+                self.assertEqual(read_stage(directory), phase)
+        self.assertEqual(self.messages, [])
 
     def test_ambiguous_send_blocks_a_restart_instead_of_duplicating(self):
         def uncertain(token, message):

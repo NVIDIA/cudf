@@ -37,7 +37,8 @@ def acknowledge(cards, key, route, pending, receipt):
     card = cards.cards[key]
     data = deepcopy(card["data"])
     record = data["deliveries"][route]
-    record.pop("pending", None)
+    if record.get("pending") and record["pending"]["id"] != pending["id"]:
+        raise RuntimeError("Delivery intent changed during acknowledgement")
     record.setdefault("first_notified_at", receipt["sent_at"])
     record["last_notified_at"] = receipt["sent_at"]
     record.setdefault("thread_ts", receipt["ts"])
@@ -51,19 +52,41 @@ def acknowledge(cards, key, route, pending, receipt):
         + "/p"
         + record["thread_ts"].replace(".", "")
     )
-    cards.save(key, data, {"Slack thread": thread})
+    # Keep intent durable until both the native link and acknowledgement are saved.
+    cards.save(key, deepcopy(card["data"]), {"Slack thread": thread})
+    record.pop("pending", None)
+    cards.save(key, data, {})
 
 
-def acknowledge_with_retry(cards, key, route, pending, receipt):
-    # The hosted runner's receipt journal disappears after the job ends.
+def retry_project_write(cards, operation):
+    # Re-read after failures: a timed-out mutation may have reached the server.
     for attempt in range(3):
         try:
-            acknowledge(cards, key, route, pending, receipt)
+            if attempt:
+                cards.refresh()
+            operation()
             return
         except (OSError, RuntimeError):
             if attempt == 2:
                 raise
             time.sleep(0.2 * (attempt + 1))
+
+
+def acknowledge_with_retry(cards, key, route, pending, receipt):
+    retry_project_write(
+        cards, lambda: acknowledge(cards, key, route, pending, receipt)
+    )
+
+
+def clear_rejected_delivery(cards, key, route, pending):
+    data = deepcopy(cards.cards[key]["data"])
+    record = data["deliveries"][route]
+    if not record.get("pending"):
+        return
+    if record["pending"]["id"] != pending["id"]:
+        raise RuntimeError("Delivery intent changed during rejection cleanup")
+    record.pop("pending")
+    cards.save(key, data, {})
 
 
 def recover_receipts(cards, route, journal):
@@ -133,9 +156,10 @@ def send_notifications(
                 token, payload(member, text, record.get("thread_ts"))
             )
         except SlackRejected:
-            rejected = deepcopy(cards.cards[key]["data"])
-            rejected["deliveries"][route].pop("pending", None)
-            cards.save(key, rejected, {})
+            retry_project_write(
+                cards,
+                lambda: clear_rejected_delivery(cards, key, route, pending),
+            )
             raise
         receipt = {**response, "sent_at": clock()}
         journal[pending["id"]] = receipt

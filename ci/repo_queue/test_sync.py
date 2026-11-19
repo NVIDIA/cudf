@@ -64,6 +64,17 @@ class FakeGitHub:
                     )
                 )
             }
+        if "... on ProjectV2Item{fieldValueByName" in query:
+            nodes = self.items[variables["id"]]["fieldValues"]["nodes"]
+            status = next(
+                (f["name"] for f in nodes if f["field"]["name"] == "Status"),
+                None,
+            )
+            return {
+                "node": {
+                    "fieldValueByName": {"name": status} if status else None
+                }
+            }
         if "user(login:" in query:
             return {"user": {"id": "UID:" + variables["login"]}}
         self.mutations.append(query)
@@ -693,6 +704,7 @@ class SyncTests(unittest.TestCase):
             "since",
             "transition",
             "status",
+            "timestamp",
         ):
             with self.subTest(damage=damage):
                 self.github.items = deepcopy(initial)
@@ -713,6 +725,8 @@ class SyncTests(unittest.TestCase):
                         data["status_transition"] = {"to": "Complete"}
                     elif damage == "status":
                         data["manual_status"] = "Invalid option"
+                    elif damage == "timestamp":
+                        data["action"]["since"] = "0001-01-01T00:00:00+01:00"
                     else:
                         data["action"].pop(damage)
                     encoded = base64.b64encode(
@@ -835,6 +849,184 @@ class SyncTests(unittest.TestCase):
             [a["key"] for a in second["actions"]],
         )
         self.assertEqual(again.changes, [])
+
+    def test_failed_thread_field_write_retains_intent_until_receipt_recovery(
+        self,
+    ):
+        cards, plan = self.sync()
+        plan["actions"] = plan["actions"][:1]
+        key = plan["actions"][0]["key"]
+        original = self.github.graphql
+
+        def fail_link(query, variables):
+            if (
+                "updateProjectV2ItemFieldValue(" in query
+                and variables["input"]["fieldId"] == "Slack thread"
+            ):
+                raise RuntimeError("Thread field unavailable")
+            return original(query, variables)
+
+        with ExitStack() as stack:
+            directory = stack.enter_context(tempfile.TemporaryDirectory())
+            path = Path(directory) / "receipts.json"
+            stack.enter_context(patch("track.time.sleep"))
+            post = stack.enter_context(
+                patch(
+                    "track.post", return_value={"channel": "D123", "ts": "1.0"}
+                )
+            )
+            with patch.object(self.github, "graphql", side_effect=fail_link):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Thread field unavailable"
+                ):
+                    send_notifications(
+                        cards, plan, ROUTE, "U01PXPJ5741", "secret", {}, path
+                    )
+            saved = self.cards()
+            record = saved.cards[key]["data"]["deliveries"][ROUTE]
+            self.assertIn("pending", record)
+            self.assertNotIn("first_notified_at", record)
+            self.assertEqual(
+                recover_receipts(saved, ROUTE, json.loads(path.read_text())),
+                [],
+            )
+            self.assertIn(
+                "/archives/D123/p10",
+                saved.cards[key]["values"]["Slack thread"],
+            )
+            self.assertNotIn(
+                "pending", saved.cards[key]["data"]["deliveries"][ROUTE]
+            )
+            self.assertEqual(post.call_count, 1)
+
+    def test_rejection_cleanup_retries_and_reads_back_uncertain_write(self):
+        for committed in (False, True):
+            with self.subTest(committed=committed):
+                self.setUp()
+                cards, plan = self.sync()
+                plan["actions"] = plan["actions"][:1]
+                original = cards.save
+                calls = []
+
+                def save(*args):
+                    calls.append(args)
+                    if len(calls) == 2:
+                        if committed:
+                            original(*args)
+                        raise RuntimeError("Cleanup write timed out")
+                    return original(*args)
+
+                with ExitStack() as stack:
+                    directory = stack.enter_context(
+                        tempfile.TemporaryDirectory()
+                    )
+                    stack.enter_context(
+                        patch.object(cards, "save", side_effect=save)
+                    )
+                    refresh = stack.enter_context(
+                        patch.object(cards, "refresh", wraps=cards.refresh)
+                    )
+                    stack.enter_context(patch("track.time.sleep"))
+                    post = stack.enter_context(
+                        patch(
+                            "track.post",
+                            side_effect=SlackRejected("invalid_auth"),
+                        )
+                    )
+                    with self.assertRaises(SlackRejected):
+                        send_notifications(
+                            cards,
+                            plan,
+                            ROUTE,
+                            "U01PXPJ5741",
+                            "secret",
+                            {},
+                            Path(directory) / "receipts.json",
+                        )
+                    self.assertEqual(post.call_count, 1)
+                    self.assertEqual(refresh.call_count, 1)
+                self.assertEqual(recover_receipts(self.cards(), ROUTE, {}), [])
+
+    def test_legacy_closure_stays_distinct_from_confirmed_conflict_clearance(
+        self,
+    ):
+        for distinguished in (False, True):
+            with self.subTest(distinguished=distinguished):
+                self.setUp()
+                self.data["pull_request"]["requested_reviewers"] = []
+                self.data["pull_request"]["mergeable"] = False
+                cards, plan = self.sync()
+                key = plan["actions"][0]["key"]
+                native = self.github.items[cards.cards[key]["item"]["id"]]
+                data = deepcopy(cards.cards[key]["data"])
+                data.update(
+                    resolved_at=NOW,
+                    resolution="Source closed or merged: "
+                    + self.data["issue"]["html_url"],
+                    written_status="Complete",
+                )
+                if distinguished:
+                    data["closed_at"] = NOW
+                else:
+                    data.pop("written_status")
+                native["content"]["body"] = managed_body(
+                    data, native["content"]["body"]
+                )
+                next(
+                    f
+                    for f in native["fieldValues"]["nodes"]
+                    if f["field"]["name"] == "Status"
+                )["name"] = "Deferred"
+                self.data["issue"]["state"] = "closed"
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["data"].get("resolved_at"),
+                    NOW if distinguished else None,
+                )
+                self.assertEqual(
+                    next(
+                        a for a in cards.routing_history() if a["key"] == key
+                    )["resolved_at"],
+                    NOW if distinguished else None,
+                )
+                self.assertEqual(cards.cards[key]["data"]["closed_at"], NOW)
+
+    def test_status_edit_after_collection_aborts_then_reconciles_fresh_intent(
+        self,
+    ):
+        self.sync()
+        self.data["pull_request"]["draft"] = True
+        cards, _ = self.sync()
+        self.data["pull_request"]["draft"] = False
+        cards = self.cards()
+        plan = preview(
+            snapshot(self.data),
+            POLICY,
+            self.config,
+            routing_history=cards.routing_history(),
+        )
+        key = plan["actions"][0]["key"]
+        native = self.github.items[cards.cards[key]["item"]["id"]]
+        next(
+            f
+            for f in native["fieldValues"]["nodes"]
+            if f["field"]["name"] == "Status"
+        )["name"] = "In progress"
+        with self.assertRaisesRegex(RuntimeError, "Status changed"):
+            cards.reconcile(plan, snapshot(self.data))
+        self.assertEqual(
+            next(
+                f
+                for f in native["fieldValues"]["nodes"]
+                if f["field"]["name"] == "Status"
+            )["name"],
+            "In progress",
+        )
+        cards, _ = self.sync()
+        self.assertEqual(cards.cards[key]["values"]["Status"], "In progress")
+        self.assertEqual(
+            cards.cards[key]["data"]["manual_status"], "In progress"
+        )
 
     def test_reminder_and_escalation_use_the_initial_dm_thread(self):
         self.sync()

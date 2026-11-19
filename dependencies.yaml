@@ -704,6 +704,114 @@ files:
       - test_python_common
       - depends_on_cupy
       - numpy_run
+  conda_cudf_polars_host:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/cudf-polars
+    extras:
+      output_type: requirements
+      requirements_type: host
+    includes:
+      - py_version
+      - rapids_build_setuptools
+      - cuda_version
+  conda_cudf_polars_run:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/cudf-polars
+    extras:
+      output_type: requirements
+      requirements_type: run
+    includes:
+      - py_version
+      - cuda_version
+      - run_cudf_polars
+      - depends_on_cuda_bindings
+      - depends_on_cuda_core
+      - depends_on_cudf_streaming
+      - depends_on_kvikio
+      - depends_on_pylibcudf
+      - depends_on_rapidsmpf
+  conda_cudf_polars_run_constraints:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/cudf-polars
+    extras:
+      output_type: requirements
+      requirements_type: run_constraints
+    includes:
+      - depends_on_ray
+  conda_custreamz_host:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/custreamz
+    extras:
+      output_type: requirements
+      requirements_type: host
+    includes:
+      - py_version
+      - rapids_build_setuptools
+      - build_custreamz
+  conda_custreamz_run:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/custreamz
+    extras:
+      output_type: requirements
+      requirements_type: run
+    includes:
+      - py_version
+      - depends_on_cudf
+      - depends_on_cudf_kafka
+      - run_custreamz
+  conda_dask_cudf_host:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/dask-cudf
+    extras:
+      output_type: requirements
+      requirements_type: host
+    includes:
+      - py_version
+      - rapids_build_setuptools
+  conda_dask_cudf_run:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/dask-cudf
+    extras:
+      output_type: requirements
+      requirements_type: run
+    includes:
+      - py_version
+      - depends_on_cudf
+      - run_dask_cudf
+  conda_libcudf_package_libcudf_kafka_host:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/libcudf
+    extras:
+      output_type: package
+      package_name: libcudf_kafka
+      requirements_type: host
+    includes:
+      - depends_on_libcudf
+      - depends_on_librdkafka
+  conda_libcudf_package_libcudf_kafka_run:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/libcudf
+    extras:
+      output_type: package
+      package_name: libcudf_kafka
+      requirements_type: run
+    includes:
+      - depends_on_libcudf
+      - depends_on_librdkafka
+  conda_pylibcudf_run:
+    output: conda-recipe-v1
+    recipe_dir: conda/recipes/pylibcudf
+    extras:
+      output_type: requirements
+      requirements_type: run
+    includes:
+      - run_pylibcudf
+      - cuda_version
+      - py_version
+      - depends_on_cuda_bindings
+      - depends_on_libcudf
+      - depends_on_librmm
+      - depends_on_rmm
   test_python_narwhals:
     output: none
     includes:
@@ -811,6 +919,13 @@ dependencies:
               use_cuda_wheels: "true"
             packages:
               - nvidia-libnvcomp==6.0.0.12
+  depends_on_librdkafka:
+    common:
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+        packages:
+          - librdkafka
   rapids_build_skbuild:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -818,17 +933,31 @@ dependencies:
           - &rapids_build_backend rapids-build-backend>=0.4.0,<0.5.0
       - output_types: conda
         packages:
-          - scikit-build-core>=0.11.0
+          - &skbuild_core scikit-build-core>=0.11.0
       - output_types: [requirements, constraints, pyproject]
         packages:
           - scikit-build-core[pyproject]>=0.11.0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: host
+        packages:
+          - pip
+          - *rapids_build_backend
+          - *skbuild_core
   rapids_build_setuptools:
     common:
       - output_types: [requirements, constraints, pyproject]
         packages:
           - *rapids_build_backend
-          - setuptools>=77.0.0
+          - &setuptools setuptools>=77.0.0
           - wheel
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: host
+        packages:
+          - pip
+          - *rapids_build_backend
+          - *setuptools
   build_python_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -851,6 +980,17 @@ dependencies:
   # 'cuda_version' intentionally does not contain fallback entries... we want
   # a loud error if an unsupported 'cuda' value is passed
   cuda_version:
+    common:
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [build, host]
+        packages:
+          - cuda-version =${{ cuda_version }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - ${{ pin_compatible("cuda-version", upper_bound="x", lower_bound="x") }}
     specific:
       - output_types: conda
         matrices:
@@ -1058,6 +1198,17 @@ dependencies:
           - notebook
           - scipy
   py_version:
+    common:
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: host
+        packages:
+          - python>=3.12
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - python
     specific:
       - output_types: conda
         matrices:
@@ -1089,21 +1240,29 @@ dependencies:
           - cuda-pathfinder
   run_pylibcudf:
     common:
-      - output_types: [conda, requirements, constraints, pyproject]
+      - output_types: [conda, requirements, constraints, pyproject, conda-recipe-v1]
         packages:
           - nvtx>=0.2.1
   depends_on_cuda_bindings:
+    common:
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - if: cuda_major == "12"
+            then: &cuda_bindings_12 cuda-bindings>=12.9.3,<13.0
+            else: &cuda_bindings_13 cuda-bindings>=13.0.2,<14.0
     specific:
       - output_types: [conda, requirements, constraints, pyproject]
         matrices:
           - matrix:
               cuda: "12.*"
             packages:
-              - cuda-bindings>=12.9.3,<13.0
+              - *cuda_bindings_12
           # fallback to CUDA 13 versions if 'cuda' is '13.*' or not provided
           - matrix:
             packages:
-              - cuda-bindings>=13.0.2,<14.0
+              - *cuda_bindings_13
   # https://github.com/NVIDIA/cuda-python/blob/main/cuda_bindings_13/docs/source/support.rst
   # The Cython layer of cuda.bindings must be built against CTK headers of the
   # same or newer major.minor version, so cap the version at what the CUDA 13.4
@@ -1123,7 +1282,7 @@ dependencies:
               - cuda-bindings>=13.0.2,<13.5
   depends_on_cuda_core:
     common:
-      - output_types: [conda, constraints]
+      - output_types: [conda, constraints, conda-recipe-v1]
         packages:
           - cuda-core>=1.0,<2
     specific:
@@ -1151,19 +1310,39 @@ dependencies:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
-          - polars>=2.0,<2.2
+          - &polars polars>=2.0,<2.2
           - typing_extensions>=4.0.0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - *nvidia_ml_py
+          - packaging
+          - *polars
   run_cudf_polars_dask:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - rapids-dask-dependency==27.2.*,>=0.0.0a0
+          - &rapids_dask_dependency rapids-dask-dependency==27.2.*,>=0.0.0a0
   run_dask_cudf:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           - *nvidia_ml_py
-          - rapids-dask-dependency==27.2.*,>=0.0.0a0
+          - *rapids_dask_dependency
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - *nvidia_ml_py
+          - rapids-dask-dependency =${{ minor_version }}
+  build_custreamz:
+    common:
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: host
+        packages:
+          - python-confluent-kafka
   run_custreamz:
     common:
       - output_types: conda
@@ -1175,6 +1354,13 @@ dependencies:
       - output_types: [requirements, constraints, pyproject]
         packages:
           - confluent-kafka
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - python-confluent-kafka
+          - rapids-dask-dependency =${{ minor_version }}
+          - streamz
   test_cpp:
     common:
       - output_types: conda
@@ -1380,6 +1566,18 @@ dependencies:
       - output_types: conda
         packages:
           - &libcudf_unsuffixed libcudf==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: conda/recipes/libcudf
+        packages:
+          - ${{ pin_subpackage("libcudf", exact=True) }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: "!conda/recipes/libcudf"
+        packages:
+          - libcudf =${{ version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1425,6 +1623,18 @@ dependencies:
       - output_types: conda
         packages:
           - &pylibcudf_unsuffixed pylibcudf==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: conda/recipes/pylibcudf
+        packages:
+          - ${{ pin_subpackage("pylibcudf"), exact=True }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: "!conda/recipes/pylibcudf"
+        packages:
+          - pylibcudf =${{ version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1467,6 +1677,18 @@ dependencies:
       - output_types: conda
         packages:
           - &cudf_unsuffixed cudf==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: conda/recipes/cudf
+        packages:
+          - ${{ pin_subpackage("cudf", exact=True) }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: "!conda/recipes/cudf"
+        packages:
+          - cudf =${{ version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1488,6 +1710,18 @@ dependencies:
       - output_types: [conda, pyproject]
         packages:
           - cudf_kafka==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: conda/recipes/cudf_kafka
+        packages:
+          - ${{ pin_subpackage("cudf_kafka", exact=True) }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: "!conda/recipes/cudf_kafka"
+        packages:
+          - cudf_kafka =${{ version }}
   depends_on_cupy:
     common:
       - output_types: conda
@@ -1534,6 +1768,11 @@ dependencies:
       - output_types: conda
         packages:
           - &kvikio_unsuffixed kvikio==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+        packages:
+          - kvikio =${{ minor_version }}
     specific:
       - output_types: [requirements, pyproject]
         matrices:
@@ -1578,6 +1817,11 @@ dependencies:
       - output_types: conda
         packages:
           - &librmm_unsuffixed librmm==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+        packages:
+          - librmm =${{ minor_version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1600,6 +1844,11 @@ dependencies:
       - output_types: conda
         packages:
           - &rmm_unsuffixed rmm==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run
+        packages:
+          - ${{ pin_compatible("rmm", upper_bound="x.x" )}}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1666,6 +1915,11 @@ dependencies:
       - output_types: conda
         packages:
           - &rapidsmpf_unsuffixed rapidsmpf==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+        packages:
+          - rapidsmpf =${{ minor_version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1732,6 +1986,18 @@ dependencies:
       - output_types: conda
         packages:
           - &cudf_streaming_unsuffixed cudf-streaming==27.2.*,>=0.0.0a0
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: conda/recipes/cudf_streaming
+        packages:
+          - ${{ pin_subpackage("cudf-streaming", exact=True) }}
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: [host, run]
+          recipe_dir: "!conda/recipes/cudf_streaming"
+        packages:
+          - cudf-streaming =${{ version }}
     specific:
       - output_types: [requirements, constraints, pyproject]
         matrices:
@@ -1753,10 +2019,15 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          - ray-default>=2.55.1
+          - &ray_default ray-default>=2.55.1
       - output_types: [requirements, constraints, pyproject]
         packages:
           - ray>=2.55.1
+      - output_types: conda-recipe-v1
+        filters:
+          requirements_types: run_constraints
+        packages:
+          - *ray_default
   depends_on_pytorch:
     specific:
       - output_types: conda

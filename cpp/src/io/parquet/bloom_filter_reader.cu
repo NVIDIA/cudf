@@ -278,9 +278,13 @@ struct bloom_filter_caster {
 
     // INT32 also stores 8 and 16-bit integers, TIME(MILLIS) which is read as a 64-bit duration and
     // decimals read with a wider `decimal_width`
-    if (physical_type == Type::INT32 and (sizeof(rep_type) <= sizeof(int32_t) or
-                                          cudf::is_duration<T>() or cudf::is_fixed_point(dtype))) {
-      return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
+    if constexpr (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>() or
+                  cuda::std::signed_integral<T>) {
+      if (physical_type == Type::INT32 and
+          (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>() or
+           cudf::is_fixed_point(dtype))) {
+        return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
+      }
     }
     // INT64 also stores decimals read with a wider `decimal_width`
     if constexpr (sizeof(rep_type) >= sizeof(int64_t)) {

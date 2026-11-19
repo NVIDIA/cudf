@@ -747,7 +747,8 @@ class DynamicPlanningOptions:
     ----------
     sample_byte_count
         The maximum number of bytes to sample before making
-        dynamic-planning decisions. Defaults to ``target_partition_size``.
+        dynamic-planning decisions. The default of 0 uses
+        ``target_partition_size``.
     infer_ordering
         Whether to infer scan ordering from input metadata. Parquet scans use
         footer min/max statistics. For floating-point columns, this assumes row

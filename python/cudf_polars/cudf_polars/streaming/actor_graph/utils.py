@@ -945,9 +945,12 @@ class ChunkSampler:
             cardinality = CardinalityEstimate.from_message(msg)
 
         sample_count = len(chunks)
+        chunk_count = (
+            sample_count if is_complete else max(self.ch_in_chunk_count, sample_count)
+        )
         if sample_count and not is_complete:
-            total_size = int((sample_bytes / sample_count) * self.ch_in_chunk_count)
-            total_rows = int((sample_rows / sample_count) * self.ch_in_chunk_count)
+            total_size = sample_bytes * chunk_count // sample_count
+            total_rows = sample_rows * chunk_count // sample_count
         else:
             total_size = sample_bytes
             total_rows = sample_rows
@@ -960,7 +963,7 @@ class ChunkSampler:
             ),
             total_size=total_size,
             total_rows=total_rows,
-            total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),
+            total_chunks=chunk_count,
             is_complete=is_complete,
             cardinality=cardinality,
         )

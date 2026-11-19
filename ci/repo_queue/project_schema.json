@@ -1,5 +1,5 @@
 {
-  "short_description": "Explicit action ownership and follow-through for cuDF Python and C++ work; Python pilot.",
+  "short_description": "Explicit action ownership and follow-through for cuDF Python and C++ work; Python scope.",
   "fields": [
     {"name": "Status", "data_type": "SINGLE_SELECT", "options": [
       {"name": "Awaiting action", "previous_name": "Todo", "color": "YELLOW"},

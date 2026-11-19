@@ -12,10 +12,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from actions import preview
-from pilot import delivery_history, recover_receipts, send_notifications
 from sync import MARKER, ProjectCards, metadata
 from test_actions import CONFIG, python_item, snapshot
 from test_report import NOW, POLICY, REQUESTED, request, review
+from track import delivery_history, recover_receipts, send_notifications
 
 SCHEMA = json.loads(
     Path(__file__).with_name("project_schema.json").read_text()
@@ -255,7 +255,7 @@ class SyncTests(unittest.TestCase):
         )
 
     def setUp(self):
-        clock = patch("pilot.timestamp", return_value=NOW)
+        clock = patch("track.timestamp", return_value=NOW)
         clock.start()
         self.addCleanup(clock.stop)
         self.github = FakeGitHub()
@@ -517,7 +517,7 @@ class SyncTests(unittest.TestCase):
                 history=delivery_history(cards, ROUTE),
             )
             with patch(
-                "pilot.post",
+                "track.post",
                 side_effect=[
                     {"channel": "D123", "ts": "1.0"},
                     {"channel": "D123", "ts": "2.0"},
@@ -581,7 +581,7 @@ class SyncTests(unittest.TestCase):
                 )
                 post = stack.enter_context(
                     patch(
-                        "pilot.post",
+                        "track.post",
                         return_value={"channel": "D123", "ts": "1.0"},
                     )
                 )
@@ -626,11 +626,11 @@ class SyncTests(unittest.TestCase):
                 )
                 with ExitStack() as stack:
                     stack.enter_context(
-                        patch("pilot.timestamp", return_value=at)
+                        patch("track.timestamp", return_value=at)
                     )
                     post = stack.enter_context(
                         patch(
-                            "pilot.post",
+                            "track.post",
                             return_value={
                                 "channel": "D123",
                                 "ts": "1.0" if kind == "initial" else "2.0",
@@ -671,7 +671,7 @@ class SyncTests(unittest.TestCase):
         with ExitStack() as stack:
             directory = stack.enter_context(tempfile.TemporaryDirectory())
             post = stack.enter_context(
-                patch("pilot.post", side_effect=RuntimeError("timeout"))
+                patch("track.post", side_effect=RuntimeError("timeout"))
             )
             with self.assertRaisesRegex(RuntimeError, "timeout"):
                 send_notifications(

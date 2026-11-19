@@ -18,7 +18,7 @@ from actions import (
 from report import make_report
 from test_report import NOW, POLICY, REQUESTED, REVIEWED, item, request, review
 
-CONFIG = json.loads(Path(__file__).with_name("pilot.json").read_text())
+CONFIG = json.loads(Path(__file__).with_name("config.json").read_text())
 
 
 def python_item():

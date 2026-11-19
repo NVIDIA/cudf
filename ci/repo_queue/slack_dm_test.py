@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Send a smoke test to the pilot contact's bot DM, independently of delivery history."""
+"""Send a smoke test to the primary contact's bot DM, independently of delivery history."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ def post(token, message):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=ROOT / "pilot.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "config.json")
     parser.add_argument(
         "--text-file",
         type=Path,

@@ -88,7 +88,7 @@ def send_notifications(
     *,
     clock=None,
     post_message=None,
-    heading="DM PILOT — preview for the primary contact; no action requested",
+    heading="DM PREVIEW — for the primary contact; no action requested",
 ):
     clock = clock or timestamp
     post_message = post_message or post
@@ -141,7 +141,7 @@ def send_notifications(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--numbers", type=int, nargs="+", required=True)
-    parser.add_argument("--config", type=Path, default=ROOT / "pilot.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "config.json")
     parser.add_argument("--policy", type=Path, default=ROOT / "policy.json")
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
@@ -159,13 +159,13 @@ def main():
         any(number < 1 for number in args.numbers)
         or len(set(args.numbers)) > 10
     ):
-        parser.error("select 1–10 positive issue/PR numbers for the pilot")
+        parser.error("select 1–10 positive issue/PR numbers for work tracking")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     config = json.loads(args.config.read_text())
     policy = json.loads(args.policy.read_text())
     member = recipient(config)
     route = "dm-test:" + member
-    with (args.output_dir / "pilot.lock").open("a") as lock:
+    with (args.output_dir / "track.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         github = GitHub()
         state = read_project(github, config["project"])

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the explicit-source DM pilot identically from a scheduler or terminal."""
+"""Run work tracking identically from a scheduler or terminal."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ def command(selection, mode, output_dir):
             "scheduled numbers must contain 1–10 distinct positive integers"
         )
     if mode not in {"preview", "refresh", "dm", "rehearsal"}:
-        raise ValueError("unknown pilot mode")
+        raise ValueError("unknown tracking mode")
     if mode == "rehearsal":
         return [
             sys.executable,
@@ -41,7 +41,7 @@ def command(selection, mode, output_dir):
         ]
     result = [
         sys.executable,
-        str(ROOT / "pilot.py"),
+        str(ROOT / "track.py"),
         "--numbers",
         *map(str, numbers),
         "--output-dir",
@@ -88,9 +88,9 @@ def main():
             selected, stdout=diagnostics, stderr=diagnostics, check=False
         )
     print(
-        "Pilot completed."
+        "Work tracking completed."
         if result.returncode == 0
-        else "Pilot failed. Inspect pending deliveries in the private Project before retrying."
+        else "Work tracking failed. Inspect pending deliveries in the private Project before retrying."
     )
     raise SystemExit(result.returncode)
 
@@ -100,5 +100,5 @@ if __name__ == "__main__":
         main()
     except (OSError, ValueError):
         sys.exit(
-            "Pilot could not start; inspect its private local configuration and diagnostics."
+            "Work tracking could not start; inspect its private local configuration and diagnostics."
         )

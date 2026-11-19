@@ -1,4 +1,4 @@
-name: cuDF work tracking DM pilot
+name: cuDF work tracking
 
 on:
   schedule:
@@ -16,14 +16,14 @@ on:
           - rehearsal
 
 concurrency:
-  group: cudf-work-tracking-dm-pilot
+  group: cudf-work-tracking
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  pilot:
+  tracking:
     if: >-
       github.repository == 'NVIDIA/cudf' &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -33,11 +33,11 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - name: Refresh the pilot or rehearse DM reminders
+      - name: Refresh work tracking or rehearse DM reminders
         env:
           GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
           SLACK_BOT_TOKEN: ${{ secrets.NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN }}
-          PILOT_MODE: ${{ inputs.mode || 'dm' }}
+          TRACKING_MODE: ${{ inputs.mode || 'dm' }}
         run: >-
-          python3 ci/repo_queue/scheduled.py --mode "$PILOT_MODE"
+          python3 ci/repo_queue/scheduled.py --mode "$TRACKING_MODE"
           --output-dir "$RUNNER_TEMP/cudf-work-tracking"

@@ -250,7 +250,7 @@ def apply_setup(github, project, state, schema, readme):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, default=ROOT / "pilot.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "config.json")
     parser.add_argument(
         "--schema", type=Path, default=ROOT / "project_schema.json"
     )

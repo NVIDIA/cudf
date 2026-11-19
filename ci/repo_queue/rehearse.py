@@ -16,14 +16,14 @@ from pathlib import Path
 
 from actions import add_business_days, notification_state, slack_text
 from collect import timestamp
-from pilot import (
+from report import parse_time
+from slack_dm_test import post, recipient, slack_token
+from track import (
     delivery_history,
     recover_receipts,
     save_json,
     send_notifications,
 )
-from report import parse_time
-from slack_dm_test import post, recipient, slack_token
 
 ROOT = Path(__file__).parent
 KEY = "cudf-action:v1:dm-reminder-rehearsal"
@@ -135,7 +135,7 @@ def main():
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--send-dm", action="store_true")
     args = parser.parse_args()
-    config = json.loads((ROOT / "pilot.json").read_text())
+    config = json.loads((ROOT / "config.json").read_text())
     token = None
     if args.send_dm:
         token = slack_token()

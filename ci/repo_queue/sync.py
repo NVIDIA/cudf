@@ -71,7 +71,7 @@ def managed_body(data, previous=""):
         f"**Waiting since:** {action['since'] or 'Unknown'}",
         f"**Last author activity:** {action.get('last_author_activity_at') or 'Not applicable / unknown'}",
         "",
-        "DM pilot: notifications go only to the primary contact. "
+        "DM preview: notifications go only to the primary contact. "
         "DM delivery history does not start production escalation clocks.",
     ]
     lines.extend(f"- {note}" for note in action.get("observations", []))
@@ -174,7 +174,7 @@ def status_data(card=None):
     data = deepcopy(card["data"])
     status = card["values"].get("Status")
     written = data.get("written_status")
-    # Earlier pilot versions recorded automatic dispositions only as reasons.
+    # Earlier versions recorded automatic dispositions only as reasons.
     if written is None:
         if data.get("resolved_at"):
             written = "Complete"
@@ -234,7 +234,7 @@ class ProjectCards:
                 "https://github.com/" + config["repository"] + "/"
             ):
                 raise ValueError(
-                    "Managed card repository does not match pilot"
+                    "Managed card repository does not match configuration"
                 )
             if key in self.cards:
                 raise ValueError("Duplicate managed action key: " + key)

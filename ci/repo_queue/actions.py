@@ -460,7 +460,7 @@ def preview(
     if snapshot.get("schema_version") != 1:
         raise ValueError("unsupported snapshot schema_version")
     if snapshot["repository"] != config["repository"]:
-        raise ValueError("snapshot repository does not match pilot")
+        raise ValueError("snapshot repository does not match configuration")
     policy = {**policy, "triage_owner": "@" + config["primary_contact"]}
     now = snapshot["collected_at"]
     actions, omitted = [], []
@@ -561,7 +561,7 @@ def render_markdown(plan):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("snapshot", type=Path)
-    parser.add_argument("--config", type=Path, default=ROOT / "pilot.json")
+    parser.add_argument("--config", type=Path, default=ROOT / "config.json")
     parser.add_argument("--policy", type=Path, default=ROOT / "policy.json")
     parser.add_argument("--project-state", type=Path)
     parser.add_argument(

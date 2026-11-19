@@ -4,8 +4,8 @@ This Project tracks **the next action and its owner**, separately from the
 underlying issue or pull request. Each action is a Project-only draft item;
 it is never converted into a repository issue by this automation.
 
-The initial pilot covers Python-related work. The Project also has a C++
-component for future expansion. Vyas Ramasubramani (`vyasr`) is the pilot's
+The initial scope covers Python-related work. The Project also has a C++
+component for future expansion. Vyas Ramasubramani (`vyasr`) is the automation's
 primary routing contact and escalation contact.
 
 ## Find your work
@@ -42,7 +42,7 @@ work without claiming completion. **Deferred** requires a recorded reason
 and return date. **Complete** means the action was fulfilled, explicitly
 superseded, or made unnecessary by the source item closing.
 
-GitHub activity is the response channel for the pilot. Slack carries
+GitHub activity is the response channel for work tracking. Slack carries
 notifications and links to these views; Slack replies do not change state.
 Ambiguous discussion is routed for clarification. Labels, bot updates, and
 unrelated edits do not restart an action's handoff clock.
@@ -77,14 +77,14 @@ previously sent. Their follow-up reminders repeat after 3 business days.
 If the contact and escalation recipient are the same person, consolidate
 their notification rather than sending two mentions.
 
-## Pilot state
+## Delivery state
 
-Production Slack delivery is disabled during preview. The manual DM pilot
-delivers test messages only to the primary contact and keeps its history
+Channel delivery is disabled during preview. DM test messages go only
+to the primary contact, with their delivery history kept
 separate from production notification clocks. Planned production messages
 target `#swrapids-etl-scrum`, with one thread per action card. Draft item assignments
 do not provide GitHub assignment notifications; Slack delivery will supply
-the notification once the pilot is enabled.
+the notification once channel delivery is enabled.
 
 Evidence, exact handoff timestamps, source revisions, and observations belong
 in the card body. Date fields support the board's daily views; automation

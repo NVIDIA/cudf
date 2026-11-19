@@ -32,7 +32,7 @@ can consume considerably more API requests. All timeline, review, check-run,
 inline review comment, and status collections are paginated too.
 Use `--label Python` to restrict a sample or the full listing to that label.
 Unlabeled issues are excluded by that selection and require component
-classification before they can be included in the Python pilot.
+classification before they can be included in the Python scope.
 
 The sample selects approximately equal numbers from five search strata:
 untriaged issues, approved PRs, changes-requested PRs, PRs without reviews,
@@ -63,7 +63,7 @@ deterministic. Use `--now 2026-11-20T12:00:00Z` to assess aging at a later time;
 this extrapolates from the saved state and does not refresh GitHub metadata.
 Machine-readable output includes the applied policy, per-reviewer request
 timestamps, evidence, observations, and uncertainty. Pass
-`--routing-history /path/to/routing-history.json` from a prior pilot run to
+`--routing-history /path/to/routing-history.json` from a prior tracking run to
 include first-observation clocks for author-attributed revisions. Without
 history, the report explicitly marks revision-based author activity as
 unavailable. Reports and action cards share the same handoff normalization
@@ -125,9 +125,9 @@ ruff format --check ci/repo_queue
 
 These tests run without cuDF, CUDA, GitHub credentials, or network access.
 
-## Project setup and pilot configuration
+## Project setup and configuration
 
-[pilot.json](pilot.json) records the agreed NVIDIA Project, Python scope,
+[config.json](config.json) records the agreed NVIDIA Project, Python scope,
 `vyasr` as primary/escalation contact, Slack destination, and reminder policy.
 Slack IDs are identifiers, not posting credentials. Delivery is disabled.
 The Project is private; its intended audience needs read access before Slack
@@ -180,7 +180,7 @@ separately; the action planner determines the concrete work and owner.
 The conflict clock starts at the first confirmed observation and uses the
 14-calendar-day author inactivity threshold. Project metadata preserves this episode
 across runs and temporarily unknown mergeability; approval dates are not
-conflict start dates. For offline replay across snapshots, pass a prior pilot
+conflict start dates. For offline replay across snapshots, pass a prior tracking
 run's `routing-history.json` using `actions.py --routing-history FILE`. A later
 confirmed conflict-free result completes the author action. A new conflict
 after that resolution starts a new episode.
@@ -214,8 +214,8 @@ an external author without a mapping is identified by a GitHub profile link.
 
 ## Test Slack delivery in a DM
 
-The pilot contact can test the installed bot without posting to the team
-channel. This targets the contact's Slack user ID from `pilot.json`, never
+The primary contact can test the installed bot without posting to the team
+channel. This targets the contact's Slack user ID from `config.json`, never
 the configured production channel. First preview the payload:
 
 ```sh
@@ -235,18 +235,18 @@ as a command-line argument or commit it. The Actions secret is named
 `NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN`.
 
 Use `--text-file /tmp/message.txt` to test a rendered action body, including
-real owner mentions. People outside the bot's DM with the pilot contact
+real owner mentions. People outside the bot's DM with the primary contact
 will not receive mention notifications. Messages carry an explicit test
 heading. The script prints delivery identifiers and does not update Project
 cards or successful-notification history. It does not retry ambiguous sends;
 inspect the DM before rerunning after a connection failure.
 
-## End-to-end DM pilot
+## End-to-end DM delivery
 
 Preview a small, explicit selection using fresh GitHub evidence on each run:
 
 ```sh
-python3 ci/repo_queue/pilot.py --numbers 24176 24230 23772 \
+python3 ci/repo_queue/track.py --numbers 24176 24230 23772 \
   --output-dir /tmp/cudf-work-tracking/e2e
 ```
 
@@ -255,7 +255,7 @@ Add `--apply` to synchronize Project-only draft action cards, or add both
 contact's bot DM. The token prompt and `SLACK_BOT_TOKEN` behavior match the
 smoke test. The production channel is never a delivery target for this command.
 Real owner mentions are retained. At most ten source issues/PRs can be selected.
-Run from one machine and use the same output directory for each pilot run;
+Run from one machine and use the same output directory for each tracking run;
 the local lock prevents concurrent runs using that directory. Cross-machine
 concurrent writers are not supported.
 
@@ -274,7 +274,7 @@ Deferred, and Complete statuses survive refreshes of the same current action.
 Archived cards are not changed or notified. Automatic draft/closed
 dispositions are reversed when the same action becomes active again; manual
 Deferred, Complete, and In progress overrides remain in place. Automatic status
-provenance is stored in the managed metadata. Older pilot records use their
+provenance is stored in the managed metadata. Older records use their
 recorded disposition to recognize automatic transitions. Missing or damaged
 metadata on a card with a managed Action key stops the run before creating
 cards. The underlying issues and PRs are not modified.
@@ -297,14 +297,14 @@ manual reconciliation after inspecting the DM.
 The command saves the refreshed snapshot, DM plan, delivery receipts, and
 result under the output directory. These files contain no bot token.
 
-## Scheduled DM pilot
+## Scheduled DM delivery
 
 [scheduled.json](scheduled.json) limits unattended runs to the three agreed
-pilot sources. It is an explicit allowlist, including closed sources so their
-cards can complete. Editing it is the way to expand the pilot. No sampling or
+tracked sources. It is an explicit allowlist, including closed sources so their
+cards can complete. Editing it is the way to expand the selection. No sampling or
 backlog-wide collection happens in the scheduled job.
 
-The workflow in `.github/workflows/repo-queue-pilot.yml` runs daily at 17:17 UTC
+The workflow in `.github/workflows/repo-queue.yml` runs daily at 17:17 UTC
 and can be dispatched manually. It only runs in `NVIDIA/cudf` on its default
 branch. GitHub schedules become available once the workflow reaches that
 branch, and scheduled executions can be delayed. See
@@ -323,7 +323,7 @@ python3 ci/repo_queue/scheduled.py --mode dm --output-dir /tmp/cudf-queue/daily
 
 `preview` is read-only, `refresh` writes the board, and `dm` also delivers due
 DMs. The unattended entry point requires `SLACK_BOT_TOKEN` for delivery and
-never prompts for a credential. For interactive prompting, use `pilot.py`
+never prompts for a credential. For interactive prompting, use `track.py`
 directly. Missing Slack credentials stop the scheduler before any board writes.
 
 The workflow supplies `NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN` as
@@ -349,7 +349,7 @@ logs or repository artifacts. The local output directory is restricted to its
 owner; existing successful notification history remains in the private Project.
 
 For a local failure after Slack succeeds but before Project acknowledgment,
-rerun `pilot.py` with the same output directory to recover from
+rerun `track.py` with the same output directory to recover from
 `dm-receipts.json`. Do not discard receipts or switch directories during
 recovery. Hosted runners are ephemeral: their local diagnostics and receipts
 are not retained after a job ends. If acknowledgment fails there, the pending
@@ -363,7 +363,7 @@ Pause the workflow before local recovery and resume it afterward.
 
 Exercise an initial notice, the three-business-day reminder, and the
 seven-calendar-day escalation immediately, using the same notification policy
-and delivery code as the live pilot:
+and delivery code as the live tracking run:
 
 ```sh
 python3 ci/repo_queue/rehearse.py --output-dir /tmp/cudf-queue/rehearsal

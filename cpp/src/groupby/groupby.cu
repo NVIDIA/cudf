@@ -332,14 +332,18 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
                  cuda::counting_iterator{values.num_columns()},
                  std::back_inserter(results),
                  [&](size_type i) {
-                   auto grouped_values =
-                     helper().grouped_values(values.column(i), stream, mr.as_temporary());
-                   return cudf::detail::segmented_shift(grouped_values->view(),
-                                                        group_offsets,
-                                                        offsets[i],
-                                                        fill_values[i].get(),
-                                                        stream,
-                                                        mr.get_output_mr());
+                   // Presorted keys leave the values in grouped order.
+                   auto const grouped_values =
+                     helper().is_presorted()
+                       ? nullptr
+                       : helper().grouped_values(values.column(i), stream, mr.as_temporary());
+                   return cudf::detail::segmented_shift(
+                     grouped_values ? grouped_values->view() : values.column(i),
+                     group_offsets,
+                     offsets[i],
+                     fill_values[i].get(),
+                     stream,
+                     mr.get_output_mr());
                  });
 
   return std::pair(helper().grouped_keys(stream, mr),

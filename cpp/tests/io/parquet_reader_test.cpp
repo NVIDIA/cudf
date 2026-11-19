@@ -167,8 +167,9 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
-  // https://github.com/NVIDIA/cccl/issues/11167.
-  constexpr cudf::size_type num_rows    = 1000;
+  // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
+  // counting page headers without an offset index (1M).
+  constexpr cudf::size_type num_rows    = 300'000;
   constexpr cudf::size_type num_columns = 4;
 
   std::vector<std::string> values;
@@ -6986,7 +6987,50 @@ struct ParquetStatsDecoder : cudf::io::parquet::detail::stats_caster_base {
   {
     return convert<T>(bytes.begin(), bytes.size(), type);
   }
+
+  template <typename T>
+  static T decode_int96(int64_t nanos, int32_t julian_days)
+  {
+    auto const bytes = to_int96_bytes({nanos, julian_days});
+    return convert<T>(bytes.data(), bytes.size(), cudf::io::parquet::Type::INT96);
+  }
 };
+
+TEST_F(ParquetReaderTest, DecodeInt96Stats)
+{
+  // 1969-12-31T23:59:58.999999999, flooring to each output unit
+  auto constexpr nanos       = int64_t{86'398'999'999'999};
+  auto constexpr julian_days = int32_t{2'440'587};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(nanos, julian_days),
+            cudf::timestamp_ns{cudf::duration_ns{-1'000'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_us>(nanos, julian_days),
+            cudf::timestamp_us{cudf::duration_us{-1'000'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ms>(nanos, julian_days),
+            cudf::timestamp_ms{cudf::duration_ms{-1'001}});
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_s>(nanos, julian_days),
+            cudf::timestamp_s{cudf::duration_s{-2}});
+
+  // The `timestamp_ns` limits, whose midnight overflows at the minimum, and their neighbors
+  using cudf::io::parquet::detail::int96_fits_duration;
+  auto constexpr min_nanos = int64_t{763'145'224'192};
+  auto constexpr min_days  = int32_t{2'333'836};
+  auto constexpr max_nanos = int64_t{85'636'854'775'807};
+  auto constexpr max_days  = int32_t{2'547'339};
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(min_nanos, min_days),
+            cudf::timestamp_ns::min());
+  EXPECT_EQ(ParquetStatsDecoder::decode_int96<cudf::timestamp_ns>(max_nanos, max_days),
+            cudf::timestamp_ns::max());
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(min_nanos, min_days));
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_ns>(max_nanos, max_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(min_nanos - 1, min_days));
+  EXPECT_FALSE(int96_fits_duration<cudf::duration_ns>(max_nanos + 1, max_days));
+  // Coarser units have a wider range
+  EXPECT_TRUE(int96_fits_duration<cudf::duration_us>(min_nanos - 1, min_days));
+
+  EXPECT_THROW(
+    ParquetStatsDecoder::decode<cudf::timestamp_ns>({0x00}, cudf::io::parquet::Type::INT96),
+    cudf::logic_error);
+}
 
 TEST_F(ParquetReaderTest, DecodeVariableWidthDecimalStats)
 {
@@ -7548,6 +7592,24 @@ TEST_F(ParquetReaderTest, MismatchedSchemaColumnValidation)
                           .build();
       EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
     }
+  }
+}
+
+TEST_F(ParquetReaderTest, MismatchedLogicalTypeAcrossSources)
+{
+  // Same physical type (INT64), different timestamp unit: must still be rejected.
+  column_wrapper<cudf::timestamp_ms> const ms{1790816523456L};
+  column_wrapper<cudf::timestamp_us> const us{1790816523456789L};
+  auto const ms_file = write_parquet_temp_file(cudf::table_view{{ms}}, "TsMillis.parquet", {"t"});
+  auto const us_file = write_parquet_temp_file(cudf::table_view{{us}}, "TsMicros.parquet", {"t"});
+
+  for (auto const& paths :
+       {std::vector<std::string>{ms_file, us_file}, std::vector<std::string>{us_file, ms_file}}) {
+    auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+                        .allow_mismatched_pq_schemas(true)
+                        .column_names({"t"})
+                        .build();
+    EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
   }
 }
 

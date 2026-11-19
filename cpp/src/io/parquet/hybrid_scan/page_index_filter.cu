@@ -114,6 +114,11 @@ struct page_stats_caster : public stats_caster_base {
 
           auto const& colchunk               = *colchunk_iter;
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
+          // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
+          auto const ignore_int96_min_max = parquet::detail::is_unordered_int96(
+            per_file_metadata[src_idx],
+            colchunk.meta_data.type,
+            std::distance(row_group.columns.begin(), colchunk_iter));
 
           // Without a column index (e.g. a float chunk with NaNs), no page can be pruned
           if (not colchunk.column_index.has_value()) {
@@ -166,9 +171,16 @@ struct page_stats_caster : public stats_caster_base {
                 return;
               }
 
-              // Translate binary data to Type then to <T>
-              min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              // Also ignore INT96 min/max that cannot bound the converted values
+              if (ignore_int96_min_max or
+                  int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+              } else {
+                // Translate binary data to Type then to <T>
+                min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
+                max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              }
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()

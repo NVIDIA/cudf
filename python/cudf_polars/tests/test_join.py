@@ -137,6 +137,12 @@ def test_asof_join_right_nulls_last(
     )
 
 
+def test_asof_join_right_nulls_first(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [None, 1, 2], "value": [30, 10, 20]})
+    assert_gpu_result_equal(left.join_asof(right, on="time"), engine=in_memory_engine)
+
+
 def test_asof_join_right_interleaved_nulls(in_memory_engine: pl.GPUEngine):
     left = pl.LazyFrame({"time": [1, 2, 3]})
     right = pl.LazyFrame({"time": [1, None, 2], "value": [10, 20, 30]})

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from functools import partial
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import (
@@ -228,24 +228,24 @@ async def default_node_multi(
                     stream = ir_context.get_cuda_stream()
                     ready_chunks[ch_idx] = empty_table_chunk(child, context, stream)
 
+            chunks = [chunk for chunk in ready_chunks if chunk is not None]
+            assert len(chunks) == n_children
             # Ensure all table chunks are unspilled and available.
-            ready_chunks, extra = await make_table_chunks_available_or_wait(
+            chunks, extra = await make_table_chunks_available_or_wait(
                 context,
-                ready_chunks,
-                reserve_extra=sum(
-                    chunk.data_alloc_size()
-                    for chunk in cast("list[TableChunk]", ready_chunks)
-                ),
+                chunks,
+                reserve_extra=sum(chunk.data_alloc_size() for chunk in chunks),
                 net_memory_delta=0,
             )
+            ready_chunks[:] = chunks
             dfs = [
                 chunk_to_frame(
-                    cast("TableChunk", chunk),
+                    chunk,
                     child,
                     ordering_metadata=child_ordering_metadata,
                 )
                 for chunk, child, child_ordering_metadata in zip(
-                    ready_chunks,
+                    chunks,
                     ir.children,
                     child_ordering_metadatas,
                     strict=True,

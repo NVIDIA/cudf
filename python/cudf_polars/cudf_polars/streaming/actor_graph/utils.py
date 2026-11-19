@@ -14,7 +14,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pylibcudf as plc
 import rmm.mr
@@ -417,7 +417,7 @@ def _make_hash_shuffle_metadata(
             if metadata_in.partitioning is None
             else metadata_in.partitioning.inter_rank
         )
-        local_scheme: HashScheme | str = HashScheme(
+        local_scheme: HashScheme | Literal["inherit"] = HashScheme(
             column_indices=key_indices, modulus=modulus
         )
         local_output_count = modulus

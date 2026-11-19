@@ -279,6 +279,11 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "extract_all does not support $ outside of multiline mode"
                 )
+            # libcudf stops parsing the pattern at a NUL character
+            if "\x00" in pattern:
+                raise NotImplementedError(
+                    "extract_all does not support patterns with NUL characters"
+                )
             # libcudf does not encode \xHH escapes as UTF-8
             if any(
                 m.group(1) is not None and int(m.group(1), 16) >= 0x80

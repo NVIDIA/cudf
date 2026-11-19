@@ -17,7 +17,7 @@ from coverage import CoverageData
 MAX_CONTEXTS_PER_LINE = 20
 
 
-def _read_data(path: Path) -> tuple[CoverageData, str]:
+def _read_data(path: Path) -> tuple[CoverageData, Path]:
     if not path.is_file() or not path.stat().st_size:
         raise ValueError(f"Missing or empty coverage data: {path}")
     data = CoverageData(basename=str(path))
@@ -32,12 +32,13 @@ def _read_data(path: Path) -> tuple[CoverageData, str]:
     return data, _source_root(data)
 
 
-def _source_root(data: CoverageData) -> str:
-    roots = {
-        filename.replace("\\", "/").rsplit("/cudf_polars/", 1)[0]
-        for filename in data.measured_files()
-        if "/cudf_polars/" in filename.replace("\\", "/")
-    }
+def _source_root(data: CoverageData) -> Path:
+    roots = set()
+    for filename in data.measured_files():
+        for parent in Path(filename).parents:
+            if parent.name == "cudf_polars":
+                roots.add(parent.parent)
+                break
     if len(roots) != 1:
         raise ValueError(
             f"Expected one cudf-polars source root in each database; found {sorted(roots)}"
@@ -53,7 +54,7 @@ def build_report(
     totals = {"local_only": 0, "upstream_only": 0, "both": 0}
     filenames = local.measured_files() | upstream.measured_files()
     for filename in sorted(filenames):
-        if "/cudf_polars/" not in filename.replace("\\", "/"):
+        if "cudf_polars" not in Path(filename).parts[:-1]:
             continue
         local_lines = set(local.lines(filename) or ())
         upstream_lines = set(upstream.lines(filename) or ())

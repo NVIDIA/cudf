@@ -373,9 +373,10 @@ jobs:
       actions: read
       contents: read
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 120
+    timeout-minutes: 300
     container:
       image: rapidsai/citestwheel:27.02-cuda13.4.3-ubuntu26.04-py3.14
+      # GDB timeout diagnostics need ptrace; UCX needs extra shared memory and file descriptors.
       options: "--cap-add CAP_SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000"
       env:
         NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}

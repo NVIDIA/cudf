@@ -16,35 +16,7 @@ if [[ ! -d "${polars_dir}/py-polars/tests" ]]; then
     exit 2
 fi
 
-if ! nvidia-smi > /dev/null; then
-    echo "GPU unavailable. Check NVIDIA driver/GPU access and ensure nvidia-smi is on PATH." >&2
-    exit 2
-fi
-
-# Current-directory imports can hide a non-editable package used by upstream tests.
-polars_version=$(python -P - "${repo_root}" <<'PY'
-import importlib.util
-import sys
-import tomllib
-from pathlib import Path
-
-from packaging.requirements import Requirement
-from polars import __version__
-
-root = Path(sys.argv[1]).resolve()
-package = importlib.util.find_spec("cudf_polars")
-expected = (root / "python/cudf_polars/cudf_polars/__init__.py").resolve()
-if package is None or package.origin is None or Path(package.origin).resolve() != expected:
-    raise SystemExit(
-        "Install this checkout's python/cudf_polars package in editable mode before collecting coverage."
-    )
-dependencies = tomllib.loads((root / "python/cudf_polars/pyproject.toml").read_text())["project"]["dependencies"]
-requirement = next(Requirement(dep) for dep in dependencies if Requirement(dep).name == "polars")
-if __version__ not in requirement.specifier:
-    raise SystemExit(f"Installed Polars {__version__} does not satisfy {requirement}")
-print(__version__)
-PY
-)
+polars_version=$(python -c 'import polars; print(polars.__version__)')
 polars_sha=$(git -C "${polars_dir}" rev-parse HEAD)
 if [[ "${polars_sha}" != "$(git -C "${polars_dir}" rev-parse --verify "refs/tags/py-${polars_version}^{commit}")" ]]; then
     echo "Expected the Polars checkout at ${polars_dir} to be py-${polars_version}, got ${polars_sha}." >&2

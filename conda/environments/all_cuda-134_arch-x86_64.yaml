@@ -66,8 +66,8 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba
 - numba-cuda-mlir>=0.3.0
-- numba>=0.60.0,<0.65.0
 - numpy>=2.0,<3.0
 - numpydoc
 - nvidia-ml-py>=12

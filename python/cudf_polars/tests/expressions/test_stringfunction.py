@@ -1111,6 +1111,13 @@ def test_extract_all_scalar_input(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("pattern", [r"\x61", r"\\xE9", "é"])
+def test_extract_all_escapes(engine: pl.GPUEngine, pattern: str) -> None:
+    lf = pl.LazyFrame({"a": ["a", r"\xE9", "é", None]})
+    q = lf.select(pl.col("a").str.extract_all(pattern))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_extract_all_multiline_end_anchor(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": ["a\nba\n", "ab", None]})
     q = lf.select(pl.col("a").str.extract_all("(?m)a$"))
@@ -1146,6 +1153,8 @@ def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
         r"\x{61}",
         "a$",
         "(?:b|a$)",
+        r"\xE9",
+        r"[\x80-\xff]",
     ],
 )
 def test_extract_all_pattern_unsupported(

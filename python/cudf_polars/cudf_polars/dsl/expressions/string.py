@@ -166,6 +166,9 @@ class StringFunction(Expr):
     _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
     _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
     _CASE_INSENSITIVE_FLAG: ClassVar[re.Pattern[str]] = re.compile(r"\(\?[a-zA-Z-]*i")
+    _ESCAPE_SEQUENCE: ClassVar[re.Pattern[str]] = re.compile(
+        r"\\(?:x([0-9a-fA-F]{2})|.)", re.DOTALL
+    )
     __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
@@ -275,6 +278,14 @@ class StringFunction(Expr):
             ):
                 raise NotImplementedError(
                     "extract_all does not support $ outside of multiline mode"
+                )
+            # libcudf does not encode \xHH escapes as UTF-8
+            if any(
+                m.group(1) is not None and int(m.group(1), 16) >= 0x80
+                for m in self._ESCAPE_SEQUENCE.finditer(pattern)
+            ):
+                raise NotImplementedError(
+                    r"extract_all does not support non-ASCII \x escapes"
                 )
             try:
                 pl.select(pl.lit("", dtype=pl.String).str.extract_all(pattern))

@@ -8,7 +8,10 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars import Translator
+from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -140,6 +143,23 @@ def test_rename_duplicate_field_names(
 def test_map_field_names_then_field(engine: pl.GPUEngine, ldf) -> None:
     q = ldf.select(pl.col("a").name.map_fields(str.upper).struct.field("D"))
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").name.map_fields(str.upper),
+        pl.col("a").struct.rename_fields(["x"]),
+        pl.col("a").name.prefix_fields("p_"),
+        pl.col("a").name.suffix_fields("_s"),
+    ],
+    ids=["map_fields", "rename_fields", "prefix_fields", "suffix_fields"],
+)
+def test_rename_fields_preserves_sortedness(expr: pl.Expr) -> None:
+    ldf = pl.LazyFrame({"a": [{"b": 1}, {"b": 2}]}).set_sorted("a")
+    node = Translator(ldf.select(expr)._ldf.visit(), pl.GPUEngine()).translate_ir()
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+    assert result.columns[0].is_sorted == plc.types.Sorted.YES
 
 
 @pytest.mark.parametrize("name", [None, "my_count"])

@@ -163,7 +163,7 @@ class StructFunction(Expr):
             StructFunction.Name.SuffixFields,
             StructFunction.Name.MapFieldNames,
         }:
-            return Column(column.obj, dtype=self.dtype)
+            return Column(column.obj, dtype=self.dtype).sorted_like(column)
         else:
             raise NotImplementedError(
                 f"Struct function {self.name}"

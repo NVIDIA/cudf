@@ -364,6 +364,77 @@ TEST_F(HashPartition, CustomSeedValue)
   CUDF_TEST_EXPECT_TABLES_EQUAL(output1->view(), output2->view());
 }
 
+// Returns the partition each input row went to. Column 2 of the input holds each row's index.
+std::vector<cudf::size_type> partition_of_each_row(
+  std::pair<std::unique_ptr<cudf::table>, std::vector<cudf::size_type>> const& partitioned)
+{
+  auto const& [output, offsets] = partitioned;
+  auto const [row_index, null_mask] =
+    cudf::test::to_host<cudf::size_type>(output->get_column(2).view());
+  std::vector<cudf::size_type> partitions(row_index.size(), -1);
+  for (std::size_t p = 0; p + 1 < offsets.size(); ++p) {
+    for (auto i = offsets[p]; i < offsets[p + 1]; ++i) {
+      partitions[row_index[i]] = static_cast<cudf::size_type>(p);
+    }
+  }
+  return partitions;
+}
+
+// Integer and string keys with nulls in columns 0 and 1, and each row's index in column 2.
+cudf::table multiplied_count_test_input(cudf::size_type num_rows)
+{
+  auto const iter = cuda::counting_iterator<int32_t>{0};
+  fixed_width_column_wrapper<int64_t, int32_t> ints(
+    iter, iter + num_rows, cuda::transform_iterator(iter, [](auto i) { return i % 7 != 0; }));
+  std::vector<std::string> str_data(num_rows);
+  std::generate(
+    str_data.begin(), str_data.end(), [n = 0]() mutable { return "key_" + std::to_string(n++); });
+  strings_column_wrapper strings(str_data.begin(),
+                                 str_data.end(),
+                                 cuda::transform_iterator(iter, [](auto i) { return i % 5 != 0; }));
+  fixed_width_column_wrapper<cudf::size_type, int32_t> row_index(iter, iter + num_rows);
+  return cudf::table(cudf::table_view({ints, strings, row_index}));
+}
+
+// Parameters are `num_partitions` and the multiplier `k`.
+class HashPartitionMultipliedCount
+  : public cudf::test::BaseFixture,
+    public ::testing::WithParamInterface<std::tuple<cudf::size_type, cudf::size_type>> {};
+
+TEST_P(HashPartitionMultipliedCount, SplitsEachPartition)
+{
+  auto const [num_partitions, k] = GetParam();
+  auto const input               = multiplied_count_test_input(10'000);
+  std::vector<cudf::size_type> const columns_to_hash{0, 1};
+  auto const keys = input.view().select(columns_to_hash);
+
+  auto const partitions_by_columns = [&](cudf::size_type n) {
+    return partition_of_each_row(cudf::hash_partition(input.view(), columns_to_hash, n));
+  };
+  auto const partitions_by_keys = [&](cudf::size_type n) {
+    return partition_of_each_row(cudf::hash_partition(input.view(), keys, n));
+  };
+  // Multiplying `num_partitions` by `k` must send the rows of partition `p` only to partitions
+  // `p + j * num_partitions` for `j` in `[0, k)`. These are the partitions whose remainder by
+  // `num_partitions` is `p`.
+  auto const remainders = [&](std::vector<cudf::size_type> partitions) {
+    for (auto& partition : partitions) {
+      partition %= num_partitions;
+    }
+    return partitions;
+  };
+
+  EXPECT_EQ(remainders(partitions_by_columns(k * num_partitions)),
+            partitions_by_columns(num_partitions));
+  EXPECT_EQ(remainders(partitions_by_keys(k * num_partitions)), partitions_by_keys(num_partitions));
+}
+
+// Partition counts that are and are not powers of two, multiplied by 2, 3, 4 and 16.
+INSTANTIATE_TEST_SUITE_P(HashPartition,
+                         HashPartitionMultipliedCount,
+                         ::testing::Combine(::testing::Values(1, 3, 8, 1024),
+                                            ::testing::Values(2, 3, 4, 16)));
+
 template <typename T>
 class HashPartitionFixedWidth : public cudf::test::BaseFixture {};
 

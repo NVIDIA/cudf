@@ -3300,6 +3300,37 @@ class ConditionalJoin(IR):
         return result.slice(zlice)
 
 
+def _check_asof_sorted(key: Column, *, stream: Stream) -> bool:
+    """Validate non-null key order and report whether nulls come first."""
+    if key.check_sorted(
+        order=plc.types.Order.ASCENDING,
+        null_order=plc.types.NullOrder.BEFORE,
+        stream=stream,
+    ):
+        return True
+    if key.null_count:
+        if key.check_sorted(
+            order=plc.types.Order.ASCENDING,
+            null_order=plc.types.NullOrder.AFTER,
+            stream=stream,
+        ):
+            return False
+        non_null = plc.stream_compaction.drop_nulls(
+            plc.Table([key.obj]), [0], 1, stream=stream
+        ).columns()[0]
+        if plc.sorting.is_sorted(
+            plc.Table([non_null]),
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.BEFORE],
+            stream=stream,
+        ):
+            return False
+    raise pl.exceptions.InvalidOperationError(
+        "argument in operation 'asof_join' is not sorted, "
+        "please sort the 'expr/series/column' first"
+    )
+
+
 class AsofJoin(IR):
     """Join each left row to the last matching right row at or before its key."""
 
@@ -3360,35 +3391,18 @@ class AsofJoin(IR):
         )[0]
         if not has_payload and (right_by or not check_sortedness):
             return left.slice(zlice)
-        # libcudf accepts unordered left keys, so only check the right key.
-        if not right_by and check_sortedness:
-            sorted_nulls_first = right_on_col.check_sorted(
-                order=plc.types.Order.ASCENDING,
-                null_order=plc.types.NullOrder.BEFORE,
-                stream=right.stream,
-            )
-            if not sorted_nulls_first and not (
-                right_on_col.null_count
-                and right_on_col.check_sorted(
-                    order=plc.types.Order.ASCENDING,
-                    null_order=plc.types.NullOrder.AFTER,
-                    stream=right.stream,
-                )
-            ):
-                raise pl.exceptions.InvalidOperationError(
-                    "argument in operation 'asof_join' is not sorted, "
-                    "please sort the 'expr/series/column' first"
-                )
+        if check_sortedness and not right_by:
+            _check_asof_sorted(left_on_col, stream=left.stream)
+            sorted_nulls_first = _check_asof_sorted(right_on_col, stream=right.stream)
         else:
-            # Trust Polars' sorted-input contract, but enforce libcudf's
-            # additional requirement that nulls precede non-null keys.
-            sorted_nulls_first = not right_by and (
-                (
-                    right_on_col.is_sorted == plc.types.Sorted.YES
-                    and right_on_col.order == plc.types.Order.ASCENDING
-                    and right_on_col.null_order == plc.types.NullOrder.BEFORE
+            sorted_nulls_first = (
+                not right_by
+                and right_on_col.is_sorted == plc.types.Sorted.YES
+                and right_on_col.order == plc.types.Order.ASCENDING
+                and (
+                    right_on_col.null_count == 0
+                    or right_on_col.null_order == plc.types.NullOrder.BEFORE
                 )
-                or right_on_col.null_count == 0
             )
         if not has_payload:
             return left.slice(zlice)

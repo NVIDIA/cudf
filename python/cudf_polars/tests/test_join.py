@@ -93,6 +93,14 @@ def test_asof_join_checks_right_sortedness(in_memory_engine: pl.GPUEngine, paylo
         left.join_asof(right, on="time").collect(engine=in_memory_engine)
 
 
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_checks_left_sortedness(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"time": [2, 1]})
+    right = pl.LazyFrame({"time": [1, 2], **({"value": [10, 20]} if payload else {})})
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        left.join_asof(right, on="time").collect(engine=in_memory_engine)
+
+
 @pytest.mark.parametrize("check_sortedness", [False, True])
 def test_asof_join_right_nulls_last(in_memory_engine: pl.GPUEngine, check_sortedness):
     left = pl.LazyFrame({"time": [1, 2, 3]})
@@ -105,11 +113,29 @@ def test_asof_join_right_nulls_last(in_memory_engine: pl.GPUEngine, check_sorted
     )
 
 
+def test_asof_join_right_interleaved_nulls(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [1, None, 2], "value": [10, 20, 30]})
+    result = left.join_asof(right, on="time").collect(engine=in_memory_engine)
+    assert result["value"].to_list() == [10, 30, 30]
+
+
 def test_asof_join_unordered_left(in_memory_engine: pl.GPUEngine):
     left = pl.LazyFrame({"time": [2, 1]})
     right = pl.LazyFrame({"time": [1, 2], "value": [10, 20]}).sort("time")
-    result = left.join_asof(right, on="time").collect(engine=in_memory_engine)
+    result = left.join_asof(right, on="time", check_sortedness=False).collect(
+        engine=in_memory_engine
+    )
     assert result.to_dict(as_series=False) == {"time": [2, 1], "value": [20, 10]}
+
+
+def test_asof_join_unchecked_right_is_sorted(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [2, 1], "value": [20, 10]})
+    result = left.join_asof(right, on="time", check_sortedness=False).collect(
+        engine=in_memory_engine
+    )
+    assert result["value"].to_list() == [10, 20]
 
 
 @pytest.mark.engine_params(["in-memory"])

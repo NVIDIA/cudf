@@ -118,7 +118,12 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
   auto const d_target = d_targets[str_idx];
 
   auto const [begin, left_over] = bytes_to_character_position(d_str, start);
-  auto const start_char_pos     = start - left_over;  // keep track of character position
+  // start is past the end of the string; not found, matching string_view::find
+  if (left_over > 0) {
+    if (lane_idx == 0) { d_results[str_idx] = -1; }
+    return;
+  }
+  auto const start_char_pos = start - left_over;  // keep track of character position
 
   auto const end = [d_str, start, stop, begin = begin] {
     if (stop < 0) { return d_str.size_bytes(); }

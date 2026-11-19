@@ -469,6 +469,21 @@ TEST_F(StringsFindTest, EmptyTarget)
   cudf::test::strings_column_wrapper targets({"", "", "", "", "", ""});
   results = cudf::strings::find(strings_view, cudf::strings_column_view(targets));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_find);
+  {
+    auto const long_str = std::string(100, 'a');
+    cudf::test::strings_column_wrapper long_strings({long_str, long_str});
+    cudf::test::strings_column_wrapper long_targets({"", ""});
+    auto const long_view = cudf::strings_column_view(long_strings);
+    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0}));
+    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets), 100);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({100, 100}));
+    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets), 101);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1}));
+  }
 
   auto expected_rfind = cudf::strings::count_characters(strings_view);
   results             = cudf::strings::rfind(strings_view, cudf::string_scalar(""));
@@ -581,6 +596,37 @@ TEST_F(StringsFindTest, FindWithTargetsSliced)
     cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 3}, {false, true});
     auto const results = cudf::strings::find(cudf::strings_column_view(sliced_strings),
                                              cudf::strings_column_view(sliced_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+}
+
+TEST_F(StringsFindTest, FindWithTargetsLongStrings)
+{
+  // rows longer than 64 bytes on average are searched warp-per-row
+  {
+    std::string utf8;
+    for (int i = 0; i < 50; ++i) {
+      utf8 += "é";  // 100 bytes, 50 characters
+    }
+    cudf::test::strings_column_wrapper strings({utf8, utf8});
+    cudf::test::strings_column_wrapper targets({"", ""});
+    auto const strings_view = cudf::strings_column_view(strings);
+    auto const targets_view = cudf::strings_column_view(targets);
+    auto results            = cudf::strings::find(strings_view, targets_view, 50);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({50, 50}));
+    results = cudf::strings::find(strings_view, targets_view, 60);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1}));
+  }
+  {
+    auto const long_str = std::string(100, 'a');
+    cudf::test::strings_column_wrapper strings({long_str, long_str + "xyz", long_str});
+    cudf::test::strings_column_wrapper targets({"", "xyz", ""}, {true, true, false});
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 100, 0},
+                                                                     {true, true, false});
+    auto const results =
+      cudf::strings::find(cudf::strings_column_view(strings), cudf::strings_column_view(targets));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }

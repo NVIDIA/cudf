@@ -7043,8 +7043,11 @@ TYPED_TEST(ParquetReaderDecimalWidthTest, FilterRows)
   }
 }
 
-TYPED_TEST(ParquetReaderDecimalWidthTest, StoredTypeLiteralThrows)
+TYPED_TEST(ParquetReaderDecimalWidthTest, InvalidOptionsThrow)
 {
+  EXPECT_THROW(cudf::io::parquet_reader_options::builder().decimal_width(cudf::type_id::INT64),
+               std::invalid_argument);
+
   auto const table    = TestFixture::create_fixed_width_decimals_table();
   auto const filepath = TestFixture::write_decimals_table(table->view());
 

@@ -16,6 +16,11 @@ pytest.importorskip("cudf_polars_quent")
 
 from cudf_polars.quent._export import BrowserBundleInfo
 from cudf_polars.streaming.benchmarks import utils
+from cudf_polars.streaming.benchmarks.utils import (
+    EXIT_OUTPUT_FAILURE,
+    EXIT_QUERY_FAILURE,
+    EXIT_SUCCESS,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,9 +30,10 @@ def _finalize(
     *,
     query_failures: list[tuple[int, int]] | None = None,
     artifact_error: Exception | None = None,
+    output: Path | None = None,
 ) -> int:
     """Run ``_finalize_benchmark_run`` and return its exit status."""
-    run_options = MagicMock(summarize=False, output=None)
+    run_options = MagicMock(summarize=False, output=output)
     run_config = MagicMock(validation_method=None)
     with pytest.raises(SystemExit) as excinfo:
         utils._finalize_benchmark_run(
@@ -45,16 +51,24 @@ def _finalize(
 
 
 def test_finalize_exits_zero_without_artifact_error() -> None:
-    assert _finalize() == 0
+    assert _finalize() == EXIT_SUCCESS
 
 
 def test_finalize_exits_nonzero_on_query_failure() -> None:
-    assert _finalize(query_failures=[(1, 0)]) != 0
+    assert _finalize(query_failures=[(1, 0)]) == EXIT_QUERY_FAILURE
 
 
-def test_finalize_reraises_artifact_error() -> None:
-    with pytest.raises(OSError, match="disk full"):
-        _finalize(artifact_error=OSError("disk full"))
+def test_finalize_reports_artifact_error(capsys: pytest.CaptureFixture[str]) -> None:
+    assert _finalize(artifact_error=OSError("disk full")) == EXIT_OUTPUT_FAILURE
+    assert "disk full" in capsys.readouterr().err
+
+
+def test_finalize_reports_results_file_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = tmp_path / "missing" / "results.jsonl"
+    assert _finalize(output=output) == EXIT_OUTPUT_FAILURE
+    assert str(output) in capsys.readouterr().err
 
 
 def _bundle_info(path: Path) -> BrowserBundleInfo:

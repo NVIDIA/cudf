@@ -168,6 +168,27 @@ class QueryMode(enum.Enum):
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
 _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
 
+EXIT_SUCCESS = 0
+EXIT_QUERY_FAILURE = 3
+EXIT_VALIDATION_FAILURE = 4
+EXIT_OUTPUT_FAILURE = 5
+
+
+def benchmark_exit_code(
+    query_failures: list[tuple[int, int]],
+    validation_failures: list[int],
+    *,
+    output_failed: bool = False,
+) -> int:
+    """Map a run's failures to the process exit code."""
+    if query_failures:
+        return EXIT_QUERY_FAILURE
+    if validation_failures:
+        return EXIT_VALIDATION_FAILURE
+    if output_failed:
+        return EXIT_OUTPUT_FAILURE
+    return EXIT_SUCCESS
+
 
 @dataclasses.dataclass
 class NightlyRole:
@@ -1548,13 +1569,23 @@ def _finalize_benchmark_run(
     serializable_engine_config["startup_duration_ms"] = startup_duration_ms
     serializable_engine_config["shutdown_duration_ms"] = shutdown_duration_ms
 
+    output_errors = [artifact_error] if artifact_error is not None else []
     if run_options.output is not None:
-        with run_options.output.open("a") as f:
-            f.write(json.dumps(serializable_engine_config))
-            f.write("\n")
-    if artifact_error is not None:
-        raise artifact_error
-    sys.exit(bool(query_failures or validation_failures))
+        try:
+            with run_options.output.open("a") as f:
+                f.write(json.dumps(serializable_engine_config))
+                f.write("\n")
+        except Exception as error_:
+            output_errors.append(error_)
+    for error in output_errors:
+        traceback.print_exception(error)
+    sys.exit(
+        benchmark_exit_code(
+            query_failures,
+            validation_failures,
+            output_failed=bool(output_errors),
+        )
+    )
 
 
 def run_polars_cpu(
@@ -1684,7 +1715,7 @@ def run_polars_spmd(
             prepare_validation_result=_allgather_result,
         )
         if engine.rank > 0:
-            sys.exit(bool(query_failures or validation_failures))
+            sys.exit(benchmark_exit_code(query_failures, validation_failures))
         run_config = dataclasses.replace(run_config, records=dict(records))
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         if run_config.collect_traces:

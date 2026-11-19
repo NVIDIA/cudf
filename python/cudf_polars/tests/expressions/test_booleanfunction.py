@@ -311,9 +311,10 @@ def test_expr_is_in_only_null(engine: pl.GPUEngine, needles, nulls_equal):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine):
+@pytest.mark.parametrize("nulls_equal", [False, True])
+def test_expr_is_in_only_nulls_string(engine: pl.GPUEngine, nulls_equal):
     ldf = pl.LazyFrame({"a": ["x", None, "y"]})
-    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=True))
+    q = ldf.select(pl.col("a").is_in([None, None], nulls_equal=nulls_equal))
     assert_gpu_result_equal(q, engine=engine)
 
 

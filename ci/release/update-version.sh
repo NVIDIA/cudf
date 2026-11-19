@@ -177,6 +177,10 @@ for FILE in .github/workflows/*.yaml .github/workflows/*.yml; do
   sed_runner "s|:[0-9]*\\.[0-9]*-|:${NEXT_SHORT_TAG}-|g" "${FILE}"
 done
 
+# Keep the JNI image prefix aligned with main or the release branch, without changing its toolchain.
+sed_runner "s|jni-build:[^-]*-|jni-build:${RAPIDS_BRANCH_NAME#release/}-|" \
+  .github/workflows/cudf-spark-jni.yaml
+
 # cudf-polars-quent crate version.
 # Cargo requires SemVer, so use <major>.<minor>.<patch> without leading zeros (YY.MM.DD -> YY.MM.D).
 # Cargo.lock is edited directly to avoid a Rust toolchain dependency.

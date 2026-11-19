@@ -9,6 +9,7 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/orc_metadata.hpp>
 #include <cudf/io/orc_types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/wrappers/durations.hpp>
 
@@ -180,14 +181,13 @@ int inline constexpr encode_field_number(int field_number, ProtofType field_type
 
 template <typename base_t>
 int static constexpr encode_field_number_base(int field_number) noexcept
-  requires(!cuda::std::is_arithmetic_v<base_t> and !std::is_enum_v<base_t>)
 {
   return encode_field_number(field_number, ProtofType::FIXEDLEN);
 }
 
 template <typename base_t>
 int static constexpr encode_field_number_base(int field_number) noexcept
-  requires(cuda::std::is_integral_v<base_t> or std::is_enum_v<base_t>)
+  requires(cuda::std::integral<base_t> or std::is_enum_v<base_t>)
 {
   return encode_field_number(field_number, ProtofType::VARINT);
 }
@@ -206,7 +206,7 @@ int static constexpr encode_field_number_base(int field_number) noexcept
 
 template <typename T>
 int constexpr encode_field_number(int field_number) noexcept
-  requires(!std::is_class_v<T> or std::is_same_v<T, std::string>)
+  requires(not std::is_class_v<T> or cuda::std::same_as<T, std::string>)
 {
   return encode_field_number_base<T>(field_number);
 }
@@ -214,7 +214,7 @@ int constexpr encode_field_number(int field_number) noexcept
 // containers change the field number encoding
 template <typename T>
 int constexpr encode_field_number(int field_number) noexcept
-  requires(std::is_same_v<T, std::vector<typename T::value_type>>)
+  requires(cuda::std::same_as<T, std::vector<typename T::value_type>>)
 {
   return encode_field_number_base<T>(field_number);
 }
@@ -222,7 +222,7 @@ int constexpr encode_field_number(int field_number) noexcept
 // optional fields don't change the field number encoding
 template <typename T>
 int constexpr encode_field_number(int field_number) noexcept
-  requires(std::is_same_v<T, std::optional<typename T::value_type>>)
+  requires(cuda::std::same_as<T, std::optional<typename T::value_type>>)
 {
   return encode_field_number_base<typename T::value_type>(field_number);
 }
@@ -310,8 +310,8 @@ class protobuf_reader {
 
   template <typename T>
   void read_field(T& value, uint8_t const* end)
-    requires(std::is_same_v<T, std::vector<typename T::value_type>> and
-             !std::is_same_v<std::string, typename T::value_type>)
+    requires(cuda::std::same_as<T, std::vector<typename T::value_type>> and
+             not cuda::std::same_as<std::string, typename T::value_type>)
   {
     auto const size = read_field_size(end);
     value.emplace_back();
@@ -320,7 +320,7 @@ class protobuf_reader {
 
   template <typename T>
   void read_field(T& value, uint8_t const* end)
-    requires(std::is_same_v<T, std::optional<typename T::value_type>>)
+    requires(cuda::std::same_as<T, std::optional<typename T::value_type>>)
   {
     typename T::value_type contained_value;
     read_field(contained_value, end);

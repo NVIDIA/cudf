@@ -47,6 +47,12 @@ For the detailed review checklist, read these files:
 
 Use all applicable checklist items from those files when reviewing the PR. The Developer Guide is the authoritative reference for libcudf conventions — all rules in the guide apply during review.
 
+For changes involving `cudf::memory_resources`, explicitly:
+- verify that returned allocations use `get_output_mr()` and allocations released before return use `get_temporary_mr()`;
+- classify nested outputs from the outer caller's perspective, using the temporary resource for both roles when the nested result is only an intermediate;
+- confirm that public APIs default the final resource parameter while detail/private helpers do not; and
+- require focused tests with distinct output and temporary resources that detect fallback to the current resource.
+
 ---
 
 ## Reference Material

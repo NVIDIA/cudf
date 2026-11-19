@@ -4597,8 +4597,8 @@ class IndexedFrame(Frame):
         >>> df = cudf.DataFrame({"name": ['Alfred', 'Batman', 'Catwoman'],
         ...                    "toy": ['Batmobile', None, 'Bullwhip'],
         ...                    "born": [np.datetime64("1940-04-25"),
-        ...                             np.datetime64("NaT"),
-        ...                             np.datetime64("NaT")]})
+        ...                             np.datetime64("NaT", "ns"),
+        ...                             np.datetime64("NaT", "ns")]})
         >>> df
                name        toy                           born
         0    Alfred  Batmobile  1940-04-25 00:00:00.000000000

@@ -719,12 +719,12 @@ TEST_F(HybridScanTest, FilterInt96Stats)
 
 TEST_F(HybridScanTest, FilterWrittenNaNCounts)
 {
-  // Row groups of two 4-row pages: all 1s, 1s then NaN-free values, and 1s then a NaN page, for
-  // which cudf writes no column index
+  // Row groups of two 4-row pages: all 1s, 1s then NaN-free values, and 1s then an all-NaN page,
+  // for which cudf writes no column index
   auto constexpr nan = std::numeric_limits<float>::quiet_NaN();
   auto const col     = cudf::test::fixed_width_column_wrapper<float>{
     {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f,
-         2.f, 3.f, 4.f, 5.f, 1.f, 1.f, 1.f, 1.f, nan, 6.f, 7.f, 8.f}};
+         2.f, 3.f, 4.f, 5.f, 1.f, 1.f, 1.f, 1.f, nan, nan, nan, nan}};
   std::vector<char> buffer;
   cudf::io::write_parquet(
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, cudf::table_view{{col}})
@@ -751,7 +751,7 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
   auto const row_groups = reader.all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 3ul);
 
-  // The NaN-free constant row group and pages are pruned, and the NaN page is kept
+  // The NaN-free constant row group and pages are pruned, and the all-NaN page is kept
   EXPECT_EQ(reader.filter_row_groups_with_stats(row_groups, options, stream),
             (std::vector<cudf::size_type>{1, 2}));
   auto const row_mask = cudf::replace_nulls(
@@ -759,9 +759,9 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
     cudf::numeric_scalar<bool>(true));
   EXPECT_EQ(std::ranges::count(cudf::test::to_host<bool>(*row_mask).first, true), 12);
 
-  // The NaN row comes back
+  // The NaN rows come back
   auto const expected =
-    cudf::test::fixed_width_column_wrapper<float>{{2.f, 3.f, 4.f, 5.f, nan, 6.f, 7.f, 8.f}};
+    cudf::test::fixed_width_column_wrapper<float>{{2.f, 3.f, 4.f, 5.f, nan, nan, nan, nan}};
   auto const result = hybrid_scan_single_step(*datasource, filter, {}, false, false, stream, mr);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected}}, result->view());
 }

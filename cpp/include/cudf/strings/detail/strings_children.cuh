@@ -218,14 +218,8 @@ std::unique_ptr<column> make_offsets_child_column(SizeFunction size_at,
                "Size of output exceeds the column size limit",
                std::overflow_error);
   CUDF_EXPECTS(total_bytes >= 0, "Total string size must be non-negative");
-  auto const threshold = cudf::strings::get_offset64_threshold();
-  CUDF_EXPECTS(total_bytes < threshold || cudf::strings::is_large_strings_enabled(),
-               "Size of output exceeds the column size limit",
-               std::overflow_error);
-  auto build = [&]<typename Offset>() {
-    auto offsets = make_numeric_column(
-      data_type{type_to_id<Offset>()}, rows + 1, mask_state::UNALLOCATED, stream, mr);
-    auto output = offsets->mutable_view().template data<Offset>();
+  auto offsets      = create_offsets_child_column(total_bytes, rows + 1, stream, mr);
+  auto fill_offsets = [&]<typename Offset>(Offset* output) {
     if (total_bytes == 0) {
       CUDF_CUDA_TRY(cudaMemsetAsync(
         output, 0, (static_cast<std::size_t>(rows) + 1) * sizeof(Offset), stream.get()));
@@ -235,10 +229,14 @@ std::unique_ptr<column> make_offsets_child_column(SizeFunction size_at,
       CUDF_CUDA_TRY(
         cub::DeviceScan::ExclusiveSum(sizes, output, rows + 1, cudf::detail::make_env(stream, mr)));
     }
-    return offsets;
   };
-  return total_bytes >= threshold ? build.template operator()<int64_t>()
-                                  : build.template operator()<size_type>();
+  auto const view = offsets->mutable_view();
+  if (view.type().id() == type_id::INT64) {
+    fill_offsets(view.data<int64_t>());
+  } else {
+    fill_offsets(view.data<size_type>());
+  }
+  return offsets;
 }
 
 /**

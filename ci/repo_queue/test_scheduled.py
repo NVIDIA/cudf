@@ -14,6 +14,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
+from progress import record_stage
 from rehearse import KEY, rehearse
 from scheduled import command, main
 from test_actions import CONFIG
@@ -87,6 +88,7 @@ class ScheduledTests(unittest.TestCase):
                 )
 
                 def child(command, **kwargs):
+                    record_stage(Path(directory), "project_sync")
                     kwargs["stdout"].write("PRIVATE PROJECT STATE\n")
                     kwargs["stderr"].write("PRIVATE DM RECEIPT\n")
                     return CompletedProcess(command, status)
@@ -98,6 +100,8 @@ class ScheduledTests(unittest.TestCase):
                     main()
                 self.assertEqual(error.exception.code, status)
                 self.assertNotIn("PRIVATE", public.getvalue())
+                if status:
+                    self.assertIn("project_sync (exit 7)", public.getvalue())
                 private = (Path(directory) / "diagnostics.log").read_text()
                 self.assertIn("PRIVATE PROJECT STATE", private)
                 self.assertIn("PRIVATE DM RECEIPT", private)

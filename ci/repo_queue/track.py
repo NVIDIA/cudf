@@ -9,30 +9,21 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
-import os
 import sys
+import time
 import uuid
 from copy import deepcopy
 from pathlib import Path
 
 from actions import notification_recipients, preview
 from collect import GitHub, collect_item, timestamp
+from progress import record_stage
 from project import read_project
-from slack_dm_test import payload, post, recipient, slack_token
+from slack_dm_test import SlackRejected, payload, post, recipient, slack_token
+from storage import save_json
 from sync import ProjectCards
 
 ROOT = Path(__file__).parent
-
-
-def save_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w") as output:
-        json.dump(value, output, indent=2)
-        output.write("\n")
-        output.flush()
-        os.fsync(output.fileno())
-    temporary.replace(path)
 
 
 def delivery_history(cards, route):
@@ -46,7 +37,7 @@ def acknowledge(cards, key, route, pending, receipt):
     card = cards.cards[key]
     data = deepcopy(card["data"])
     record = data["deliveries"][route]
-    record.pop("pending")
+    record.pop("pending", None)
     record.setdefault("first_notified_at", receipt["sent_at"])
     record["last_notified_at"] = receipt["sent_at"]
     record.setdefault("thread_ts", receipt["ts"])
@@ -63,6 +54,18 @@ def acknowledge(cards, key, route, pending, receipt):
     cards.save(key, data, {"Slack thread": thread})
 
 
+def acknowledge_with_retry(cards, key, route, pending, receipt):
+    # The hosted runner's receipt journal disappears after the job ends.
+    for attempt in range(3):
+        try:
+            acknowledge(cards, key, route, pending, receipt)
+            return
+        except (OSError, RuntimeError):
+            if attempt == 2:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+
 def recover_receipts(cards, route, journal):
     unresolved = []
     for key, card in list(cards.cards.items()):
@@ -71,7 +74,7 @@ def recover_receipts(cards, route, journal):
             continue
         receipt = journal.get(pending["id"])
         if receipt:
-            acknowledge(cards, key, route, pending, receipt)
+            acknowledge_with_retry(cards, key, route, pending, receipt)
         else:
             unresolved.append(key)
     return unresolved
@@ -125,15 +128,21 @@ def send_notifications(
             text += f"\n<{cards.config['project']['url']}?pane=issue&itemId={database_id}|Project action card>"
         text += "\nTest delivery history is separate from production reminders and escalations."
         # Always resolve the configured contact's DM, even if stored history is damaged.
-        response = post_message(
-            token, payload(member, text, record.get("thread_ts"))
-        )
+        try:
+            response = post_message(
+                token, payload(member, text, record.get("thread_ts"))
+            )
+        except SlackRejected:
+            rejected = deepcopy(cards.cards[key]["data"])
+            rejected["deliveries"][route].pop("pending", None)
+            cards.save(key, rejected, {})
+            raise
         receipt = {**response, "sent_at": clock()}
         journal[pending["id"]] = receipt
-        # A local receipt repairs a successful send whose subsequent Project write failed.
+        # This receipt repairs reruns that reuse the same output directory.
         save_json(journal_path, journal)
         print(json.dumps({"delivered": kind}), flush=True)
-        acknowledge(cards, key, route, pending, receipt)
+        acknowledge_with_retry(cards, key, route, pending, receipt)
         sent.append(key)
     return sent
 
@@ -161,6 +170,7 @@ def main():
     ):
         parser.error("select 1–10 positive issue/PR numbers for work tracking")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    record_stage(args.output_dir, "configuration")
     config = json.loads(args.config.read_text())
     policy = json.loads(args.policy.read_text())
     member = recipient(config)
@@ -168,6 +178,7 @@ def main():
     with (args.output_dir / "track.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         github = GitHub()
+        record_stage(args.output_dir, "project_read")
         state = read_project(github, config["project"])
         cards = ProjectCards(github, config, state, args.apply)
         journal_path = args.output_dir / "dm-receipts.json"
@@ -177,6 +188,7 @@ def main():
             else {}
         )
         if args.apply:
+            record_stage(args.output_dir, "receipt_recovery")
             unresolved = recover_receipts(cards, route, journal)
             if args.send_dm and unresolved:
                 raise RuntimeError(
@@ -186,6 +198,7 @@ def main():
         token = None
         if args.send_dm:
             token = slack_token()
+        record_stage(args.output_dir, "source_collection")
         snapshot = {
             "schema_version": 1,
             "repository": config["repository"],
@@ -205,6 +218,7 @@ def main():
             state,
             routing_history=cards.routing_history(),
         )
+        record_stage(args.output_dir, "project_sync")
         cards.reconcile(plan, snapshot)
         dm_plan = preview(
             snapshot,
@@ -226,6 +240,7 @@ def main():
             "sent": [],
         }
         if args.send_dm:
+            record_stage(args.output_dir, "slack_delivery")
             mapped = {login.casefold() for login in config["slack"]["users"]}
             missing = {
                 login
@@ -245,6 +260,7 @@ def main():
                 cards, dm_plan, route, member, token, journal, journal_path
             )
         if args.apply:
+            record_stage(args.output_dir, "verification")
             verified = ProjectCards(github, config, state)
             verified.reconcile(plan, snapshot)
             if verified.changes:
@@ -254,6 +270,7 @@ def main():
                 )
             summary["verified"] = True
         save_json(args.output_dir / "result.json", summary)
+        record_stage(args.output_dir, "complete")
         print(json.dumps(summary, indent=2))
 
 

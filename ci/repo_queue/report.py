@@ -13,6 +13,8 @@ import re
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
+from storage import write_private
+
 
 def parse_time(value):
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -158,22 +160,90 @@ def queue_age(since, now, threshold):
     return age, age > threshold["days"] if age is not None else None
 
 
-def author_clock(item, since, now, previous=None, observed_at=None):
+def author_clock(item, since, previous=None):
     if "review_comments" not in item or not since:
         return None
     dates = [author_activity_since(item, since)]
     if previous and previous.get("last_author_activity_at"):
         dates.append(previous["last_author_activity_at"])
-    if (
-        previous
-        and previous.get("source_sha")
-        and previous["source_sha"] != item["pull_request"]["head"]["sha"]
-        and (item.get("head_commit_author") or "").casefold()
-        == item["issue"]["user"]["login"].casefold()
-    ):
-        # A commit's authored date is not its push time; use its first observation.
-        dates.append(item.get("observed_at") or observed_at or now)
     return max(dates, key=parse_time)
+
+
+def validate_history(history, observed_at):
+    for action in history or []:
+        for name in (
+            "since",
+            "last_author_activity_at",
+            "source_observed_at",
+            "resolved_at",
+        ):
+            if action.get(name) and parse_time(action[name]) > parse_time(
+                observed_at
+            ):
+                raise ValueError(
+                    "--routing-history contains observations newer than the snapshot; use history saved with this snapshot or collect a fresh snapshot"
+                )
+
+
+def rereview_answered(review, evidence):
+    identity = "user:" + review["user"]["login"].casefold()
+    requested = next(
+        (
+            event["created_at"]
+            for event in reversed(evidence["events"])
+            if event["event"] == "review_requested"
+            and requested_key(event) == identity
+            and parse_time(event["created_at"])
+            > parse_time(review["submitted_at"])
+        ),
+        None,
+    )
+    if not requested:
+        return False
+    withdrawn = next(
+        (
+            event["created_at"]
+            for event in evidence["events"]
+            if event["event"] == "review_request_removed"
+            and requested_key(event) == identity
+            and parse_time(event["created_at"]) > parse_time(requested)
+        ),
+        None,
+    )
+    for response in evidence["reviews"]:
+        if (
+            response["user"]["login"].casefold()
+            != review["user"]["login"].casefold()
+        ):
+            continue
+        at = parse_time(response["submitted_at"])
+        if at > parse_time(requested) and (
+            not withdrawn or at < parse_time(withdrawn)
+        ):
+            return True
+    return False
+
+
+def outstanding_changes(evidence):
+    """A consumed re-review must not revive the review that preceded it."""
+    result = []
+    for review in evidence["effective"]:
+        if review["state"] != "CHANGES_REQUESTED":
+            continue
+        identity = "user:" + review["user"]["login"].casefold()
+        current = next(
+            (r for r in evidence["requests"] if r["identity"] == identity),
+            None,
+        )
+        if current and (
+            not current["requested_at"]
+            or parse_time(current["requested_at"])
+            > parse_time(review["submitted_at"])
+        ):
+            continue
+        if not rereview_answered(review, evidence):
+            result.append(review)
+    return result
 
 
 def lifecycle(item, policy):
@@ -273,6 +343,7 @@ def observed_blockers(item):
 def classify(
     item, policy, now, routing_history=None, evidence=None, observed_at=None
 ):
+    validate_history(routing_history, observed_at or now)
     issue = item["issue"]
     labels = {label["name"] for label in issue["labels"]}
     evidence = evidence or lifecycle(item, policy)
@@ -349,27 +420,15 @@ def classify(
         )
     else:
         reviews = evidence["reviews"]
-        changes = [
-            r
-            for r in evidence["effective"]
-            if r["state"] == "CHANGES_REQUESTED"
-        ]
         approvals = [
             r for r in evidence["effective"] if r["state"] == "APPROVED"
         ]
         requests = evidence["requests"]
-        clocks = {r["identity"]: r["requested_at"] for r in requests}
-        unaddressed = [
-            review
-            for review in changes
-            if not (
-                clocks.get("user:" + review["user"]["login"].casefold())
-                and parse_time(
-                    clocks["user:" + review["user"]["login"].casefold()]
-                )
-                > parse_time(review["submitted_at"])
+        unaddressed = outstanding_changes(evidence)
+        if any(not r["requested_at"] for r in requests):
+            row["uncertainty"].append(
+                "Current review request has no matching timestamp; collection may have raced a handoff"
             )
-        ]
         if unaddressed:
             since = min(
                 (review["submitted_at"] for review in unaddressed),
@@ -458,12 +517,10 @@ def classify(
                     ),
                     None,
                 )
-                age_since = author_clock(
-                    item, row["since"], now, previous, observed_at
-                )
+                age_since = author_clock(item, row["since"], previous)
                 if routing_history is None:
                     row["uncertainty"].append(
-                        "No routing history supplied; revision-based author activity is unavailable"
+                        "No routing history supplied; previous confirmed author activity is unavailable"
                     )
                 row["last_author_activity_at"] = age_since
             if age_since:
@@ -480,6 +537,7 @@ def classify(
 def make_report(snapshot, policy, now=None, routing_history=None):
     if snapshot.get("schema_version") != 1:
         raise ValueError("unsupported snapshot schema_version")
+    validate_history(routing_history, snapshot["collected_at"])
     now = now or snapshot["collected_at"]
     if parse_time(now) < parse_time(snapshot["collected_at"]):
         raise ValueError("--now must not precede snapshot collection")
@@ -613,7 +671,7 @@ def main():
     parser.add_argument(
         "--routing-history",
         type=Path,
-        help="Prior action observations for revision-based author activity",
+        help="Prior action observations saved with this snapshot",
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -630,8 +688,7 @@ def main():
         if args.format == "json"
         else render_markdown(report)
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(content)
+    write_private(args.output, content)
 
 
 if __name__ == "__main__":

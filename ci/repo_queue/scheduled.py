@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from progress import read_stage, record_stage
 from slack_dm_test import slack_token
 
 ROOT = Path(__file__).parent
@@ -66,9 +67,12 @@ def main():
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
-    selected = command(
-        json.loads(args.selection.read_text()), args.mode, args.output_dir
-    )
+    try:
+        selected = command(
+            json.loads(args.selection.read_text()), args.mode, args.output_dir
+        )
+    except ValueError:
+        parser.error("Invalid tracking selection configuration")
     if args.mode in {"dm", "rehearsal"}:
         try:
             slack_token(allow_prompt=False)
@@ -83,14 +87,16 @@ def main():
     os.umask(0o077)
     args.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     args.output_dir.chmod(0o700)
+    record_stage(args.output_dir, "startup")
     with (args.output_dir / "diagnostics.log").open("a") as diagnostics:
+        (args.output_dir / "diagnostics.log").chmod(0o600)
         result = subprocess.run(
             selected, stdout=diagnostics, stderr=diagnostics, check=False
         )
     print(
         "Work tracking completed."
         if result.returncode == 0
-        else "Work tracking failed. Inspect pending deliveries in the private Project before retrying."
+        else f"Work tracking failed at {read_stage(args.output_dir)} (exit {result.returncode})."
     )
     raise SystemExit(result.returncode)
 
@@ -98,7 +104,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError):
+    except OSError:
         sys.exit(
-            "Work tracking could not start; inspect its private local configuration and diagnostics."
+            "Work tracking startup failed: local I/O or subprocess launch."
         )
+    except ValueError:
+        sys.exit("Work tracking startup failed: invalid configuration.")

@@ -56,8 +56,11 @@ class CollectorTests(unittest.TestCase):
         github = Mock()
         github.search.return_value = []
         sample(github, "NVIDIA/cudf", 25, "triage", "Python")
-        for call in github.search.call_args_list:
-            self.assertIn('label:"Python"', call[0][1])
+        queries = [call[0][1] for call in github.search.call_args_list]
+        self.assertEqual(len(queries), 6)
+        self.assertEqual(queries[-1], 'is:pr label:"Python"')
+        for query in queries[:5]:
+            self.assertIn('label:"Python"', query)
 
     def test_graphql_errors_are_not_treated_as_success(self):
         with patch("collect.subprocess.run") as run:
@@ -80,7 +83,7 @@ class CollectorTests(unittest.TestCase):
                 return pr
             if endpoint == "repos/NVIDIA/cudf/commits/head":
                 return {"author": {"login": "author"}}
-            if endpoint.endswith("/comments?per_page=100"):
+            if endpoint == "repos/NVIDIA/cudf/pulls/1/comments?per_page=100":
                 self.assertTrue(kwargs["paginate"])
                 return [reply]
             return []

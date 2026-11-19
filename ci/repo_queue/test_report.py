@@ -203,7 +203,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(
             self.classify(data)["queue"], "Has approvals; inspect blockers"
         )
-        review(data, "DISMISSED", at=NOW)
+        data["reviews"][0]["state"] = "DISMISSED"
         self.assertEqual(self.classify(data)["queue"], "Unclear handoff")
 
     def test_approval_is_not_assumed_valid_for_new_head(self):
@@ -295,14 +295,14 @@ class ReportTests(unittest.TestCase):
 
     def test_policy_overrides_and_input_are_not_mutated(self):
         data = item()
-        before = deepcopy(data)
         policy = deepcopy(POLICY)
         policy["waiting_for_author_labels"] = ["author-action"]
         data["issue"]["labels"].append({"name": "author-action"})
+        before, before_policy = deepcopy(data), deepcopy(policy)
         row = self.classify(data, policy)
         self.assertEqual(row["queue"], "Waiting for author")
-        data["issue"]["labels"].pop()
         self.assertEqual(data, before)
+        self.assertEqual(policy, before_policy)
 
     def test_replay_is_deterministic_and_escapes_titles(self):
         data = item()

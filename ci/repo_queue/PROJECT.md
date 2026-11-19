@@ -33,6 +33,9 @@ Conflict clocks start when automation first confirms the conflict, using the
 commit. Refreshes preserve the clock, including while GitHub temporarily
 reports unknown mergeability. A later confirmation of no conflicts completes
 that action without claiming the PR satisfies other merge requirements.
+Closure does not prove that conflicts were cleared: reopening an unresolved
+conflict resumes the same episode and preserves prior manual status. Confirmed
+clearance is recorded even when someone manually completed the card.
 
 ## Handoffs and clocks
 
@@ -51,12 +54,18 @@ After a changes-requested review, the author keeps ownership until explicitly
 requesting re-review. This includes reviews from people who were not originally
 requested. Author replies and revisions count as activity, without implying
 a reviewer handoff. A request to another reviewer does not clear outstanding
-requested changes from the original reviewer.
+requested changes from the original reviewer. A submitted re-review consumes
+the request even when it is comment-only and no longer appears in GitHub's
+current reviewer list. Withdrawing a request before a response returns
+ownership to the author. Missing request timestamps leave reviewer aging
+unknown until the evidence can be refreshed.
 
 For author-owned work, notify the component lead after **more than 14 calendar
 days without author activity**, while keeping the author assigned. The clock
-uses author comments/replies and other attributed activity; a newly observed
-author-attributed head revision counts at its first observation. Bot activity,
+uses author comments/replies and other activity with an identified actor.
+A new head alone does not count: commit authorship cannot identify who pushed
+or rebased it. The last confirmed activity is retained, with uncertainty
+recorded for an unattributed head change. Bot activity,
 reviewer comments, and generic PR update timestamps do not reset this clock.
 The **Last author activity** and **Escalate on** fields show the activity time
 and follow-up deadline. New author activity postpones the lead follow-up.

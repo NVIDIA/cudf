@@ -19,6 +19,10 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 
+class SlackRejected(RuntimeError):
+    """Slack confirmed that a message was not accepted for delivery."""
+
+
 def slack_token(*, allow_prompt=True):
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
     if not token and allow_prompt and sys.stdin.isatty():
@@ -68,6 +72,8 @@ def post(token, message):
         with urllib.request.urlopen(request, timeout=30) as response:
             result = json.load(response)
     except urllib.error.HTTPError as error:
+        if error.code == 429:
+            raise SlackRejected("Slack HTTP 429") from None
         raise RuntimeError(f"Slack HTTP {error.code}") from None
     except urllib.error.URLError:
         # An uncertain send must be inspected in Slack before retrying.
@@ -78,7 +84,7 @@ def post(token, message):
         code = result.get("error", "unknown_error")
         if not isinstance(code, str) or not re.fullmatch(r"[a-z_]+", code):
             code = "unknown_error"
-        raise RuntimeError("Slack API: " + code)
+        raise SlackRejected("Slack API: " + code)
     if not re.fullmatch(r"D[A-Z0-9]+", result.get("channel", "")):
         raise RuntimeError("Slack did not return a DM; stopping the test")
     if (

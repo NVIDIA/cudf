@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+from storage import save_json
+
 
 def timestamp():
     return datetime.now(timezone.utc).isoformat()
@@ -207,10 +209,7 @@ def main():
         "selection": selection_info,
         "items": items,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = args.output.with_suffix(args.output.suffix + ".tmp")
-    temporary.write_text(json.dumps(snapshot, indent=2) + "\n")
-    temporary.replace(args.output)
+    save_json(args.output, snapshot)
 
 
 if __name__ == "__main__":

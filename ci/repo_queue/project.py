@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from collect import GitHub
+from storage import write_private
 
 ROOT = Path(__file__).parent
 FIELD_SELECTION = """
@@ -273,8 +274,7 @@ def main():
     output = {"applied": args.apply, "changes": changes, "project": state}
     content = json.dumps(output, indent=2) + "\n"
     if args.output:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(content)
+        write_private(args.output, content)
     else:
         print(content, end="")
 

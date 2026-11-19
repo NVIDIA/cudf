@@ -64,9 +64,9 @@ this extrapolates from the saved state and does not refresh GitHub metadata.
 Machine-readable output includes the applied policy, per-reviewer request
 timestamps, evidence, observations, and uncertainty. Pass
 `--routing-history /path/to/routing-history.json` from a prior tracking run to
-include first-observation clocks for author-attributed revisions. Without
-history, the report explicitly marks revision-based author activity as
-unavailable. Reports and action cards share the same handoff normalization
+retain previously confirmed author activity. History newer than the snapshot
+is rejected, including when `--now` extrapolates to a later date. Without
+history, previously confirmed activity is unavailable. Reports and action cards share the same handoff normalization
 and author-clock calculation; aggregate reports and individual reviewer
 cards remain separate presentations.
 
@@ -92,12 +92,18 @@ the reviewer was not explicitly requested. Author replies and revisions leave
 ownership with the author until explicit re-review requests establish the
 next handoff. A request to a different reviewer does not clear the original
 reviewer's requested changes. Independent reviewer cards remain visible.
+Historical requests still count after GitHub removes them from the current
+reviewer list: a submitted re-review, including a comment-only review, consumes
+the handoff. Withdrawing a request before a response returns work to the author.
+A current request with a missing timeline timestamp keeps an unaged reviewer
+action and marks the handoff uncertain.
 
 Author comments, inline replies, and attributed timeline activity reset the
-inactivity clock. When a changed head revision is attributed to the PR author,
-its first observation resets that clock; repeated observations do not. Commit
-dates do not establish push timestamps, and the first imported revision is
-not assumed to be new activity. Reviewer/bot activity and `updated_at` do not
+inactivity clock. A changed head alone does not reset that clock: commit
+authorship and commit dates establish neither the push actor nor the push
+time. A maintainer rebase may preserve the original author's identity. The
+last confirmed activity is retained, and an unattributed head change is marked
+uncertain. Reviewer/bot activity and `updated_at` do not
 reset author inactivity. Without complete reply history the author still owns
 the action, but automated inactivity follow-up is suppressed.
 Until activity is observed after the handoff, the initial author handoff or
@@ -261,7 +267,11 @@ concurrent writers are not supported.
 
 Each managed card has a stable action key, a native GitHub assignee, source
 and handoff links, and a managed body section. Maintainer notes outside that
-section survive updates. Duplicate action keys or truncated card reads abort
+section survive updates. The body is re-read immediately before writing so
+notes added during collection are retained; concurrent changes to managed
+metadata abort the write. GitHub offers no conditional draft-body mutation,
+so a small race remains between that final read and write. Duplicate action
+keys or truncated card reads abort
 synchronization. Unchanged cards require no mutations, and a second Project
 read verifies the result after applying changes.
 
@@ -274,7 +284,12 @@ Deferred, and Complete statuses survive refreshes of the same current action.
 Archived cards are not changed or notified. Automatic draft/closed
 dispositions are reversed when the same action becomes active again; manual
 Deferred, Complete, and In progress overrides remain in place. Automatic status
-provenance is stored in the managed metadata. Older records use their
+provenance is stored in the managed metadata. Pending Status transitions
+record both the old and intended values so a partial write can be retried
+without mistaking the automation's own changes for a manual override.
+Closing a conflicting PR completes its card without recording conflict
+clearance; reopening the same conflict resumes that episode. Confirmed
+clearance is recorded even on manually completed cards. Older records use their
 recorded disposition to recognize automatic transitions. Missing or damaged
 metadata on a card with a managed Action key stops the run before creating
 cards. The underlying issues and PRs are not modified.
@@ -287,8 +302,11 @@ GitHub activity currently does not publish a completion message to Slack.
 
 Before sending, the script saves a pending delivery record in the Project.
 After success it saves a local receipt to `dm-receipts.json`, then acknowledges
-the delivery in the Project. A rerun can recover the acknowledgment from that
-receipt without resending. An uncertain send with no local receipt blocks
+the delivery in the Project, retrying that acknowledgment up to three times
+within the same run. A rerun using the same output directory can recover the
+acknowledgment from that receipt without resending. Definite Slack rejections
+(`ok: false` or HTTP 429) clear the pending intent and do not start delivery
+clocks. An uncertain send with no local receipt blocks
 further delivery for inspection; this is deliberately not an exactly-once
 delivery guarantee. Preserve the receipt file until all pending records have
 been acknowledged. A pending record without a receipt currently requires
@@ -343,7 +361,8 @@ do not resend notices before the next policy deadline.
 
 The public workflow uploads **no artifacts**. The scheduler captures child
 stdout/stderr into `diagnostics.log` inside its private output directory and
-prints only a fixed success/failure message. Snapshots, private Project
+prints only a fixed success message or an allowlisted failure stage and exit
+code; exception text stays private. Snapshots, private Project
 history, rendered plans, and Slack DM receipts must not be copied into public
 logs or repository artifacts. The local output directory is restricted to its
 owner; existing successful notification history remains in the private Project.

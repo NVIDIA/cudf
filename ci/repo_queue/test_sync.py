@@ -3,6 +3,7 @@
 
 """Replay Project synchronization, GitHub handoffs, and interrupted DM deliveries."""
 
+import base64
 import json
 import tempfile
 import unittest
@@ -12,7 +13,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from actions import preview
-from sync import MARKER, ProjectCards, metadata
+from slack_dm_test import SlackRejected
+from sync import END, MARKER, START, ProjectCards, managed_body, metadata
 from test_actions import CONFIG, python_item, snapshot
 from test_report import NOW, POLICY, REQUESTED, request, review
 from track import delivery_history, recover_receipts, send_notifications
@@ -51,6 +53,16 @@ class FakeGitHub:
                         "pageInfo": {"hasNextPage": False},
                     }
                 }
+            }
+        if "... on DraftIssue{id title body" in query:
+            return {
+                "node": deepcopy(
+                    next(
+                        item["content"]
+                        for item in self.items.values()
+                        if item["content"]["id"] == variables["id"]
+                    )
+                )
             }
         if "user(login:" in query:
             return {"user": {"id": "UID:" + variables["login"]}}
@@ -503,7 +515,12 @@ class SyncTests(unittest.TestCase):
             metadata(item["content"]["body"])["action"]["source_sha"],
             "new-head",
         )
-        self.assertEqual(status["name"], "In progress")
+        persisted = next(
+            value
+            for value in item["fieldValues"]["nodes"]
+            if value["field"]["name"] == "Status"
+        )
+        self.assertEqual(persisted["name"], "In progress")
 
     def test_dm_send_rerun_and_separate_production_clocks(self):
         cards, _ = self.sync()
@@ -569,7 +586,7 @@ class SyncTests(unittest.TestCase):
 
         def fail_ack(*args):
             calls.append(args)
-            if len(calls) == 2:
+            if len(calls) >= 2:
                 raise RuntimeError("Project unavailable")
             return original_save(*args)
 
@@ -585,6 +602,7 @@ class SyncTests(unittest.TestCase):
                         return_value={"channel": "D123", "ts": "1.0"},
                     )
                 )
+                stack.enter_context(patch("track.time.sleep"))
                 with self.assertRaisesRegex(
                     RuntimeError, "Project unavailable"
                 ):
@@ -600,6 +618,223 @@ class SyncTests(unittest.TestCase):
             record = cards.cards[key]["data"]["deliveries"][ROUTE]
             self.assertNotIn("pending", record)
             self.assertEqual(record["thread_ts"], "1.0")
+
+    def test_transient_ack_failure_retries_without_another_slack_send(self):
+        cards, plan = self.sync()
+        plan["actions"] = plan["actions"][:1]
+        original = cards.save
+        calls = []
+
+        def save(*args):
+            calls.append(args)
+            if len(calls) == 2:
+                raise RuntimeError("Temporary Project failure")
+            return original(*args)
+
+        with ExitStack() as stack:
+            directory = stack.enter_context(tempfile.TemporaryDirectory())
+            stack.enter_context(patch.object(cards, "save", side_effect=save))
+            stack.enter_context(patch("track.time.sleep"))
+            post = stack.enter_context(
+                patch(
+                    "track.post", return_value={"channel": "D123", "ts": "1.0"}
+                )
+            )
+            sent = send_notifications(
+                cards,
+                plan,
+                ROUTE,
+                "U01PXPJ5741",
+                "secret",
+                {},
+                Path(directory) / "receipts.json",
+            )
+            self.assertEqual(sent, [plan["actions"][0]["key"]])
+            self.assertEqual(post.call_count, 1)
+        self.assertEqual(recover_receipts(self.cards(), ROUTE, {}), [])
+
+    def test_definite_slack_rejection_clears_pending_and_can_be_retried(self):
+        cards, plan = self.sync()
+        plan["actions"] = plan["actions"][:1]
+        with ExitStack() as stack:
+            directory = stack.enter_context(tempfile.TemporaryDirectory())
+            stack.enter_context(
+                patch(
+                    "track.post",
+                    side_effect=SlackRejected("Slack API: invalid_auth"),
+                )
+            )
+            with self.assertRaises(SlackRejected):
+                send_notifications(
+                    cards,
+                    plan,
+                    ROUTE,
+                    "U01PXPJ5741",
+                    "secret",
+                    {},
+                    Path(directory) / "receipts.json",
+                )
+        self.assertEqual(recover_receipts(self.cards(), ROUTE, {}), [])
+        self.assertNotIn(
+            "first_notified_at",
+            self.cards().cards[plan["actions"][0]["key"]]["data"][
+                "deliveries"
+            ][ROUTE],
+        )
+
+    def test_metadata_must_be_inside_block_and_structurally_complete(self):
+        self.sync()
+        initial = deepcopy(self.github.items)
+        for damage in (
+            "outside",
+            "deliveries",
+            "record",
+            "owner",
+            "since",
+            "transition",
+            "status",
+        ):
+            with self.subTest(damage=damage):
+                self.github.items = deepcopy(initial)
+                native = self.github.items["1"]
+                body = native["content"]["body"]
+                data = metadata(body)
+                if damage == "outside":
+                    marker = MARKER.search(body).group()
+                    native["content"]["body"] = (
+                        START + "\n" + END + "\n" + marker
+                    )
+                else:
+                    if damage == "deliveries":
+                        data.pop("deliveries")
+                    elif damage == "record":
+                        data["deliveries"][ROUTE] = []
+                    elif damage == "transition":
+                        data["status_transition"] = {"to": "Complete"}
+                    elif damage == "status":
+                        data["manual_status"] = "Invalid option"
+                    else:
+                        data["action"].pop(damage)
+                    encoded = base64.b64encode(
+                        json.dumps(data).encode()
+                    ).decode()
+                    native["content"]["body"] = MARKER.sub(
+                        "<!-- cudf-work-tracking:v1:" + encoded + " -->", body
+                    )
+                count = len(self.github.mutations)
+                with self.assertRaisesRegex(ValueError, "Project item 1"):
+                    self.cards()
+                self.assertEqual(len(self.github.mutations), count)
+
+    def test_fresh_notes_survive_and_concurrent_managed_updates_abort(self):
+        cards, plan = self.sync()
+        action = plan["actions"][0]
+        native = self.github.items[cards.cards[action["key"]]["item"]["id"]]
+        native["content"]["body"] += "Fresh maintainer note\n"
+        updated = deepcopy(cards.cards[action["key"]]["data"])
+        updated["resolution"] = "Updated reason"
+        cards.save(action["key"], updated, {})
+        self.assertIn("Fresh maintainer note", native["content"]["body"])
+        concurrent = {**updated, "resolution": "Another writer"}
+        native["content"]["body"] = managed_body(
+            concurrent, native["content"]["body"]
+        )
+        with self.assertRaisesRegex(RuntimeError, "fresh read"):
+            cards.save(
+                action["key"], {**updated, "resolution": "Stale overwrite"}, {}
+            )
+        self.assertEqual(
+            metadata(native["content"]["body"])["resolution"], "Another writer"
+        )
+
+    def test_partial_status_writes_resume_without_creating_manual_override(
+        self,
+    ):
+        for fail_after_status in (False, True):
+            with self.subTest(fail_after_status=fail_after_status):
+                self.setUp()
+                cards, plan = self.sync()
+                key = plan["actions"][0]["key"]
+                self.data["pull_request"]["draft"] = True
+                original = self.github.graphql
+
+                def fail(query, variables):
+                    if (
+                        not fail_after_status
+                        and "updateProjectV2ItemFieldValue(" in query
+                        and variables["input"]["fieldId"] == "Status"
+                    ):
+                        raise RuntimeError("Field write failed")
+                    if (
+                        fail_after_status
+                        and "updateProjectV2DraftIssue(" in query
+                        and "status_transition"
+                        not in json.dumps(metadata(variables["input"]["body"]))
+                    ):
+                        raise RuntimeError("Finalization failed")
+                    return original(query, variables)
+
+                with patch.object(self.github, "graphql", side_effect=fail):
+                    with self.assertRaises(RuntimeError):
+                        self.sync()
+                self.assertIn(
+                    "status_transition", self.cards().cards[key]["data"]
+                )
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["values"]["Status"], "Deferred"
+                )
+                self.assertNotIn("manual_status", cards.cards[key]["data"])
+                self.assertNotIn("status_transition", cards.cards[key]["data"])
+                self.data["pull_request"]["draft"] = False
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["values"]["Status"], "Awaiting action"
+                )
+
+    def test_conflict_closure_is_not_clearance_and_reopen_preserves_manual_status(
+        self,
+    ):
+        self.data["pull_request"]["requested_reviewers"] = []
+        review(self.data, "APPROVED")
+        self.data["pull_request"]["mergeable"] = False
+        cards, plan = self.sync()
+        key = plan["actions"][0]["key"]
+        native = self.github.items[cards.cards[key]["item"]["id"]]
+        next(
+            f
+            for f in native["fieldValues"]["nodes"]
+            if f["field"]["name"] == "Status"
+        )["name"] = "In progress"
+        self.data["issue"]["state"] = "closed"
+        cards, _ = self.sync()
+        self.assertNotIn("resolved_at", cards.cards[key]["data"])
+        self.data["issue"]["state"] = "open"
+        cards, plan = self.sync()
+        self.assertEqual(plan["actions"][0]["key"], key)
+        self.assertEqual(cards.cards[key]["values"]["Status"], "In progress")
+
+    def test_manually_completed_conflict_records_clearance_once(self):
+        self.data["pull_request"]["requested_reviewers"] = []
+        review(self.data, "APPROVED")
+        self.data["pull_request"]["mergeable"] = False
+        cards, plan = self.sync()
+        key = plan["actions"][0]["key"]
+        native = self.github.items[cards.cards[key]["item"]["id"]]
+        next(
+            f
+            for f in native["fieldValues"]["nodes"]
+            if f["field"]["name"] == "Status"
+        )["name"] = "Complete"
+        self.data["pull_request"]["mergeable"] = True
+        cards, plan = self.sync()
+        self.assertEqual(cards.cards[key]["data"]["resolved_at"], NOW)
+        again, second = self.sync()
+        self.assertEqual(
+            [a["key"] for a in plan["actions"]],
+            [a["key"] for a in second["actions"]],
+        )
+        self.assertEqual(again.changes, [])
 
     def test_reminder_and_escalation_use_the_initial_dm_thread(self):
         self.sync()

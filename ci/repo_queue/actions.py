@@ -21,7 +21,9 @@ from report import (
     lifecycle,
     parse_time,
     queue_age,
+    validate_history,
 )
+from storage import write_private
 
 ROOT = Path(__file__).parent
 QUEUE_ACTIONS = {
@@ -140,7 +142,7 @@ def make_action(
     if kind == "Clarify handoff":
         age, overdue = None, True
     elif kind in {"Respond", "Resolve conflicts"}:
-        # Author aging also needs the prior revision and activity observations.
+        # Author aging uses confirmed activity retained across snapshots.
         age, overdue = None, None
     else:
         age, overdue = queue_age(since, now, threshold)
@@ -347,7 +349,12 @@ def author_inactivity(action, item, policy, now, routing_history):
         (old for old in routing_history or [] if old["key"] == action["key"]),
         None,
     )
-    since = author_clock(item, action["since"], now, previous)
+    since = author_clock(item, action["since"], previous)
+    if previous and previous.get("source_sha") != action["source_sha"]:
+        action["uncertainty"] = [
+            *action["uncertainty"],
+            "Head changed without confirmed push actor; commit authorship does not establish author activity",
+        ]
     action["last_author_activity_at"] = since
     threshold = policy["thresholds"]["Waiting for author"]
     days = threshold["days"]
@@ -463,6 +470,7 @@ def preview(
         raise ValueError("snapshot repository does not match configuration")
     policy = {**policy, "triage_owner": "@" + config["primary_contact"]}
     now = snapshot["collected_at"]
+    validate_history(routing_history, now)
     actions, omitted = [], []
     for item in snapshot["items"]:
         selected, reason = candidates(
@@ -475,6 +483,19 @@ def preview(
             )
     missing = set()
     for action in actions:
+        previous = next(
+            (
+                old
+                for old in routing_history or []
+                if old["key"] == action["key"]
+            ),
+            {},
+        )
+        action["source_observed_at"] = (
+            previous.get("source_observed_at", now)
+            if previous.get("source_sha") == action["source_sha"]
+            else now
+        )
         if action["kind"] in {"Respond", "Resolve conflicts"}:
             author_inactivity(
                 action,
@@ -498,10 +519,11 @@ def preview(
             action["project_fields"][field] = (
                 parse_time(value).date().isoformat() if value else None
             )
-        if action["owner"].casefold() not in {
-            name.casefold() for name in config["slack"]["users"]
-        }:
-            missing.add(action["owner"])
+        for recipient in notification_recipients(action, config):
+            if recipient.casefold() not in {
+                name.casefold() for name in config["slack"]["users"]
+            }:
+                missing.add(recipient)
         action["slack_preview"] = slack_text(action, config, project_state)
     return {
         "mode": "preview; no Project cards or Slack messages written",
@@ -599,8 +621,7 @@ def main():
         if args.format == "json"
         else render_markdown(plan)
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(content)
+    write_private(args.output, content)
 
 
 if __name__ == "__main__":

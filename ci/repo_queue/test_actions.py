@@ -59,6 +59,13 @@ class ActionTests(unittest.TestCase):
         saved = snapshot(data)
         saved["collected_at"] = "2026-11-23T12:00:00Z"
         data["observed_at"] = "2026-11-23T11:59:00Z"
+        data["timeline"].append(
+            {
+                "event": "commented",
+                "user": {"login": "author"},
+                "created_at": data["observed_at"],
+            }
+        )
         history = [first]
         action = preview(saved, POLICY, CONFIG, routing_history=history)[
             "actions"
@@ -176,11 +183,11 @@ class ActionTests(unittest.TestCase):
             "<https://github.com/author|@author>", action["slack_preview"]
         )
 
-    def test_new_author_head_is_activity_once_at_first_observation(self):
+    def test_commit_authorship_does_not_prove_who_pushed(self):
         data = python_item()
         review(data, "CHANGES_REQUESTED")
         first = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
-        data["pull_request"]["head"]["sha"] = "new-head"
+        data["pull_request"]["head"]["sha"] = "maintainer-rebased-head"
         data["head_commit_author"] = "author"
         saved = snapshot(data)
         saved["collected_at"] = "2026-11-21T12:00:00Z"
@@ -188,21 +195,124 @@ class ActionTests(unittest.TestCase):
             "actions"
         ][0]
         self.assertEqual(action["key"], first["key"])
-        self.assertEqual(
-            action["last_author_activity_at"], saved["collected_at"]
+        self.assertEqual(action["last_author_activity_at"], REVIEWED)
+        self.assertTrue(action["overdue"])
+        self.assertTrue(
+            any("push actor" in note for note in action["uncertainty"])
         )
-        later = saved["collected_at"]
+
+    def test_missing_mappings_only_include_actual_recipients(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        saved = snapshot(data)
+        self.assertEqual(
+            preview(saved, POLICY, CONFIG)["missing_slack_mappings"], []
+        )
         saved["collected_at"] = "2026-11-25T12:00:00Z"
-        again = preview(saved, POLICY, CONFIG, routing_history=[action])[
-            "actions"
-        ][0]
-        self.assertEqual(again["last_author_activity_at"], later)
-        self.assertFalse(again["overdue"])
-        data["head_commit_author"] = "robot[bot]"
-        other = preview(saved, POLICY, CONFIG, routing_history=[first])[
-            "actions"
-        ][0]
-        self.assertEqual(other["last_author_activity_at"], REVIEWED)
+        config = deepcopy(CONFIG)
+        config["slack"]["users"].pop("vyasr")
+        self.assertEqual(
+            preview(saved, POLICY, config)["missing_slack_mappings"], ["vyasr"]
+        )
+
+    def test_future_routing_history_is_rejected_before_aging(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        action = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        for field in ("source_observed_at", "last_author_activity_at"):
+            future = {**action, field: "2026-12-01T00:00:00Z"}
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, "--routing-history"):
+                    preview(
+                        snapshot(data),
+                        POLICY,
+                        CONFIG,
+                        routing_history=[future],
+                    )
+                with self.assertRaisesRegex(ValueError, "--routing-history"):
+                    make_report(
+                        snapshot(data),
+                        POLICY,
+                        "2026-12-02T00:00:00Z",
+                        [future],
+                    )
+
+    def test_consumed_rerequest_and_withdrawal_have_distinct_ownership(self):
+        for response, expected in (
+            (False, ["Respond"]),
+            (True, ["Clarify handoff"]),
+        ):
+            with self.subTest(response=response):
+                data = python_item()
+                review(data, "CHANGES_REQUESTED")
+                request(data, at="2026-11-10T12:00:00Z")
+                data["pull_request"]["requested_reviewers"] = []
+                if response:
+                    review(data, "COMMENTED", at="2026-11-11T12:00:00Z")
+                data["timeline"].append(
+                    {
+                        "event": "review_request_removed",
+                        "created_at": NOW,
+                        "requested_reviewer": {"login": "reviewer"},
+                    }
+                )
+                plan = preview(snapshot(data), POLICY, CONFIG)
+                self.assertEqual(
+                    [a["kind"] for a in plan["actions"]], expected
+                )
+                if not response:
+                    self.assertEqual(plan["actions"][0]["owner"], "author")
+
+    def test_latest_withdrawn_rerequest_returns_author_after_prior_comment_review(
+        self,
+    ):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        request(data, at="2026-11-08T12:00:00Z")
+        review(data, "COMMENTED", at="2026-11-09T12:00:00Z")
+        request(data, at="2026-11-10T12:00:00Z")
+        data["pull_request"]["requested_reviewers"] = []
+        data["timeline"].append(
+            {
+                "event": "review_request_removed",
+                "created_at": "2026-11-11T12:00:00Z",
+                "requested_reviewer": {"login": "reviewer"},
+            }
+        )
+        review(data, "COMMENTED", at=NOW)
+        action = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        self.assertEqual(
+            (action["kind"], action["owner"]), ("Respond", "author")
+        )
+
+    def test_consumed_comment_review_does_not_revive_changes_request(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        request(data, at="2026-11-10T12:00:00Z")
+        review(data, "COMMENTED", at="2026-11-11T12:00:00Z")
+        data["pull_request"]["requested_reviewers"] = []
+        self.assertNotIn(
+            "Respond",
+            [
+                a["kind"]
+                for a in preview(snapshot(data), POLICY, CONFIG)["actions"]
+            ],
+        )
+
+    def test_current_request_without_timeline_suppresses_definite_author_handoff(
+        self,
+    ):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED")
+        data["pull_request"]["requested_reviewers"] = [{"login": "reviewer"}]
+        action = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        self.assertEqual(action["kind"], "Review")
+        self.assertIsNone(action["overdue"])
+        self.assertTrue(
+            any(
+                "collection may have raced" in n for n in action["uncertainty"]
+            )
+        )
 
     def test_incomplete_reply_history_preserves_owner_but_prevents_escalation(
         self,

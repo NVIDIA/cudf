@@ -49,12 +49,100 @@ def metadata(body):
         return None
     if len(matches) != 1 or body.count(START) != 1 or body.count(END) != 1:
         raise ValueError("Ambiguous managed card metadata")
+    marker = MARKER.search(body)
+    if not body.index(START) < marker.start() < marker.end() < body.index(END):
+        raise ValueError("Metadata marker must be inside the managed block")
     data = json.loads(base64.b64decode(matches[0], validate=True))
-    if data.get("version") != 1 or not data["action"]["key"].startswith(
-        "cudf-action:v1:"
-    ):
-        raise ValueError("Unsupported managed card metadata")
+    validate_metadata(data)
     return data
+
+
+def validate_metadata(data):
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError("Unsupported managed card metadata")
+    action = data.get("action")
+    required = (
+        "key",
+        "source",
+        "title",
+        "kind",
+        "owner",
+        "component",
+        "description",
+        "handoff_evidence",
+    )
+    if not isinstance(action, dict) or any(
+        not isinstance(action.get(name), str) for name in required
+    ):
+        raise ValueError("Invalid managed action fields")
+    if (
+        not action["key"].startswith("cudf-action:v1:")
+        or type(action.get("number")) is not int
+    ):
+        raise ValueError("Invalid managed action identity")
+    if (
+        "since" not in action
+        or "source_sha" not in action
+        or (
+            action["source_sha"] is not None
+            and not isinstance(action["source_sha"], str)
+        )
+    ):
+        raise ValueError("Invalid managed source or waiting time")
+    for name in ("since", "last_author_activity_at", "source_observed_at"):
+        if action.get(name) is not None:
+            parse_time(action[name])
+    for name in ("observations", "uncertainty"):
+        if not isinstance(action.get(name), list) or any(
+            not isinstance(v, str) for v in action[name]
+        ):
+            raise ValueError("Invalid managed action notes")
+    if "author_inactivity_days" in action and (
+        type(action["author_inactivity_days"]) is not int
+        or action["author_inactivity_days"] < 1
+    ):
+        raise ValueError("Invalid author inactivity threshold")
+    for name in ("resolved_at", "closed_at"):
+        if name in data:
+            parse_time(data[name])
+    for name in ("written_status", "manual_status", "resolution"):
+        if name in data and not isinstance(data[name], str):
+            raise ValueError("Invalid managed disposition")
+    deliveries = data.get("deliveries")
+    if not isinstance(deliveries, dict):
+        raise ValueError("Invalid managed deliveries")
+    for route, record in deliveries.items():
+        if not isinstance(route, str) or not isinstance(record, dict):
+            raise ValueError("Invalid managed delivery record")
+        for name in ("first_notified_at", "last_notified_at", "escalated_at"):
+            if name in record:
+                parse_time(record[name])
+        for name in ("thread_ts", "channel"):
+            if name in record and not isinstance(record[name], str):
+                raise ValueError("Invalid delivery thread")
+        if "pending" in record:
+            pending = record["pending"]
+            if not isinstance(pending, dict) or any(
+                not isinstance(pending.get(k), str)
+                for k in ("id", "kind", "prepared_at")
+            ):
+                raise ValueError("Invalid pending delivery")
+            parse_time(pending["prepared_at"])
+    statuses = {"Awaiting action", "In progress", "Deferred", "Complete"}
+    for name in ("written_status", "manual_status"):
+        if name in data and data[name] not in statuses:
+            raise ValueError("Invalid managed Status")
+    transition = data.get("status_transition")
+    if transition is not None and (
+        not isinstance(transition, dict)
+        or "from" not in transition
+        or transition.get("to") not in statuses
+        or (
+            transition.get("from") is not None
+            and transition["from"] not in statuses
+        )
+    ):
+        raise ValueError("Invalid pending Status transition")
 
 
 def managed_body(data, previous=""):
@@ -109,6 +197,8 @@ def action_record(action):
             "uncertainty",
         ]
     }
+    if "source_observed_at" in action:
+        result["source_observed_at"] = action["source_observed_at"]
     if "author_inactivity_days" in action:
         result["author_inactivity_days"] = action["author_inactivity_days"]
         result["last_author_activity_at"] = action.get(
@@ -167,12 +257,27 @@ def disposition(old, item, current, omitted, config):
     return None
 
 
+def resolution_time(data):
+    # Legacy closure records did not distinguish closing a PR from fixing its conflicts.
+    if (
+        data["action"]["kind"] == "Resolve conflicts"
+        and data.get("resolution", "").startswith("Source closed")
+        and "closed_at" not in data
+    ):
+        return None
+    return data.get("resolved_at")
+
+
 def status_data(card=None):
     """Keep manual intent even while a source transition temporarily overrides it."""
     if card is None:
         return {"version": 1, "deliveries": {}}
     data = deepcopy(card["data"])
     status = card["values"].get("Status")
+    transition = data.get("status_transition")
+    if transition and status in {transition["from"], transition["to"]}:
+        return data
+    data.pop("status_transition", None)
     written = data.get("written_status")
     # Earlier versions recorded automatic dispositions only as reasons.
     if written is None:
@@ -216,7 +321,12 @@ class ProjectCards:
                 for value in item["fieldValues"]["nodes"]
                 if value.get("field")
             }
-            data = metadata(content.get("body", ""))
+            try:
+                data = metadata(content.get("body", ""))
+            except (ValueError, TypeError, KeyError, AttributeError) as error:
+                raise ValueError(
+                    f"Invalid metadata on Project item {item['id']}: {error}"
+                ) from None
             if data is None:
                 if str(values.get("Action key", "")).startswith(
                     "cudf-action:"
@@ -243,13 +353,16 @@ class ProjectCards:
             self.cards[key] = {"item": item, "data": data, "values": values}
 
     def routing_history(self):
-        return [
-            {
-                **deepcopy(card["data"]["action"]),
-                "resolved_at": card["data"].get("resolved_at"),
-            }
-            for card in self.cards.values()
-        ]
+        result = []
+        for card in self.cards.values():
+            data = card["data"]
+            result.append(
+                {
+                    **deepcopy(data["action"]),
+                    "resolved_at": resolution_time(data),
+                }
+            )
+        return result
 
     def mutate(self, name, input_type, value, selection):
         return self.github.graphql(
@@ -268,10 +381,57 @@ class ProjectCards:
             self.users[login] = user["id"]
         return self.users[login]
 
+    def write_content(self, card, data, owner, title):
+        assignee = self.user_id(owner)
+        fresh = self.github.graphql(
+            "query($id:ID!){node(id:$id){... on DraftIssue{id title body assignees(first:100){nodes{id login} pageInfo{hasNextPage}}}}}",
+            {"id": card["item"]["content"]["id"]},
+        )["node"]
+        if (
+            fresh is None
+            or fresh["assignees"]["pageInfo"]["hasNextPage"]
+            or metadata(fresh["body"]) != card["data"]
+        ):
+            raise RuntimeError(
+                "Managed card changed during refresh; retry from a fresh read"
+            )
+        body = managed_body(data, fresh["body"])
+        self.mutate(
+            "updateProjectV2DraftIssue",
+            "UpdateProjectV2DraftIssueInput",
+            {
+                "draftIssueId": fresh["id"],
+                "title": title,
+                "body": body,
+                "assigneeIds": [assignee],
+            },
+            "draftIssue { id }",
+        )
+        card["item"]["content"] = {
+            **fresh,
+            "title": title,
+            "body": body,
+            "assignees": {
+                "nodes": [{"login": owner}],
+                "pageInfo": {"hasNextPage": False},
+            },
+        }
+        card["data"] = deepcopy(data)
+
     def save(self, key, data, values):
         card = self.cards.get(key)
         if card and card["item"]["isArchived"]:
             return
+        data = deepcopy(data)
+        if "Status" in values:
+            current = (card or {}).get("values", {}).get("Status")
+            if current != values["Status"]:
+                data["status_transition"] = {
+                    "from": current,
+                    "to": values["Status"],
+                }
+            else:
+                data.pop("status_transition", None)
         title = data["action"]["title"]
         old_content = card["item"]["content"] if card else {}
         body = managed_body(data, old_content.get("body", ""))
@@ -318,21 +478,17 @@ class ProjectCards:
             card = {"item": result, "data": {}, "values": {}}
             self.cards[key] = card
         elif content_changed:
-            self.mutate(
-                "updateProjectV2DraftIssue",
-                "UpdateProjectV2DraftIssueInput",
-                {"draftIssueId": old_content["id"], **content},
-                "draftIssue { id }",
+            self.write_content(card, data, owner, title)
+        if not card.get("data"):
+            card["item"]["content"].update(
+                title=title,
+                body=body,
+                assignees={
+                    "nodes": [{"login": owner}],
+                    "pageInfo": {"hasNextPage": False},
+                },
             )
-        card["item"]["content"].update(
-            title=title,
-            body=body,
-            assignees={
-                "nodes": [{"login": owner}],
-                "pageInfo": {"hasNextPage": False},
-            },
-        )
-        card["data"] = deepcopy(data)
+            card["data"] = deepcopy(data)
         for name, value in changed.items():
             field = self.fields[name]
             common = {
@@ -370,6 +526,11 @@ class ProjectCards:
                 )
             card["values"][name] = value
 
+        if "Status" in values and card["data"].get("status_transition"):
+            completed = deepcopy(card["data"])
+            completed.pop("status_transition")
+            self.write_content(card, completed, owner, title)
+
     def reconcile(self, plan, snapshot):
         desired = {action["key"]: action for action in plan["actions"]}
         for key, action in desired.items():
@@ -381,6 +542,7 @@ class ProjectCards:
             data["written_status"] = values["Status"]
             data.pop("resolution", None)
             data.pop("resolved_at", None)
+            data.pop("closed_at", None)
             self.save(key, data, values)
         sources = {
             item["issue"]["html_url"]: item for item in snapshot["items"]
@@ -388,10 +550,19 @@ class ProjectCards:
         omitted = {item["number"]: item["reason"] for item in plan["omitted"]}
         for key, card in list(self.cards.items()):
             old = card["data"]["action"]
+            if key in desired or old["source"] not in sources:
+                continue
+            item = sources[old["source"]]
+            conflict_cleared = (
+                old["kind"] == "Resolve conflicts"
+                and item["issue"]["state"] == "open"
+                and item.get("pull_request", {}).get("mergeable") is True
+                and not resolution_time(card["data"])
+            )
             if (
-                key in desired
-                or old["source"] not in sources
-                or card["values"].get("Status") == "Complete"
+                card["values"].get("Status") == "Complete"
+                and not conflict_cleared
+                and not card["data"].get("status_transition")
             ):
                 continue
             current = [
@@ -410,7 +581,14 @@ class ProjectCards:
                 data["resolution"] = reason
                 data["written_status"] = status
                 if status == "Complete":
-                    data["resolved_at"] = snapshot["collected_at"]
+                    if conflict_cleared:
+                        data["resolved_at"] = snapshot["collected_at"]
+                    elif old["kind"] != "Resolve conflicts":
+                        data.setdefault(
+                            "resolved_at", snapshot["collected_at"]
+                        )
+                    if item["issue"]["state"] == "closed":
+                        data.setdefault("closed_at", snapshot["collected_at"])
                 self.save(
                     key,
                     data,

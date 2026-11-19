@@ -15,11 +15,13 @@ libcudf also provides a precompiled AST interpreter that evaluates expressions w
 - The input dimensionality it supports (scalar versus columnar)
 - Register pressure and memory bandwidth usage for complex expressions
 - Materializing intermediate results in shared memory instead of registers, which can reduce performance for complex expressions
-- Longer AOT compilation and libcudf build times because the interpreter must support all possible expressions and input types, creating a combinatorial number of code paths for the compiler to optimize
+- Longer libcudf build times because the interpreter must support all possible expressions and input types, creating a combinatorial number of code paths for the compiler to optimize.
 
 ### 2. Architecture-Specific Optimizations and Policies
 
-JIT compilation is useful for workloads whose optimization policies—such as memory layouts, vectorization policies, kernel configurations, and GPU-specific tuning—cannot be determined until runtime. Precompiling kernels for every possible configuration is infeasible because of the combinatorial number of code paths and the resulting AOT compilation time. Instead, JIT compilation generates kernels specialized for the current workload, potentially improving code generation and performance.
+JIT compilation is useful for workloads whose optimization policies — such as memory layouts, vectorization policies, kernel configurations, and GPU-specific tuning — cannot be determined until runtime.
+
+Precompiling kernels for every possible configuration is infeasible because of the combinatorial number of code paths and the resulting AOT compilation time. Instead, JIT compilation generates kernels specialized for the current workload, potentially improving code generation and performance.
 
 ### 3. Long-Running High-Throughput Workloads
 
@@ -35,11 +37,15 @@ JIT latency depends on whether compiled kernels and precompiled headers are alre
 
 ### Cold and Hot Runs
 
-A cold run compiles a kernel that has not yet been cached, whereas a hot run reuses a cached kernel. Cold runs can be significantly slower because JIT compilation includes parsing and resolving C++ code, generating PTX, and compiling the PTX into machine code. Determine whether the workload can tolerate cold-run latency or run long enough to amortize it. Benchmarks should include both cold and hot runs to characterize the workload accurately.
+A cold run compiles a kernel that has not yet been cached, whereas a hot run reuses a cached kernel. Cold runs can be significantly slower because JIT compilation includes parsing and resolving C++ code, generating PTX, and compiling the PTX into machine code.
+
+Determine whether the workload can tolerate cold-run latency or run long enough to amortize it. Benchmarks should include both cold and hot runs to characterize the workload accurately.
 
 ### Precompiled Header Cache
 
-libcudf uses precompiled headers (PCHs) to speed up CUDA JIT compilation. PCHs are fully resolved ASTs of the CUDA C++ headers. They eliminate the need to parse and resolve that code during each JIT compilation. The details of this representation are internal to NVRTC; they are neither exposed to users nor portable across compilers.
+libcudf uses precompiled headers (PCHs) to speed up CUDA JIT compilation. PCHs are serialized compiler ASTs of CUDA C++ code.
+
+They eliminate the need to parse and resolve that code during each JIT compilation request. The details of the representations are internal to the compilers and are not portable across compilers.
 
 PCHs are currently generated during the first cold JIT compilation of a kernel, so the first request always uses a cold PCH cache. The generated PCHs are cached and reused for subsequent kernel compilations. Consequently, the first cold compilation is slower because it incurs the full cost of CUDA C++ frontend compilation.
 

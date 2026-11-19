@@ -260,6 +260,9 @@ def concatenate_chunks(
         )
 
 
+# The largest row count libcudf accepts (cudf::size_type is an int32).
+_MAX_LIBCUDF_ROWS = 2**31 - 1
+
 _BINOPS = {
     plc.binaryop.BinaryOperator.EQUAL,
     plc.binaryop.BinaryOperator.NOT_EQUAL,
@@ -1284,7 +1287,9 @@ class Scan(IR):
                 csv_builder = (
                     plc.io.csv.CsvReaderOptions.builder(plc.io.SourceInfo([path]))
                     .nrows(
-                        min(n_rows + skip_left, 2**31 - 1) if read_partial else n_rows
+                        min(n_rows + skip_left, _MAX_LIBCUDF_ROWS)
+                        if read_partial
+                        else n_rows
                     )
                     .skiprows(skiprows + csv_skip_rows)
                     .skip_blank_lines(skip_blank_lines=False)

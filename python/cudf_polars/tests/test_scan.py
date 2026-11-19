@@ -410,7 +410,7 @@ def test_scan_csv_multi_slice_concatenates_only_retained_rows(
 
 
 def test_scan_csv_multi_slice_large_length(engine: pl.GPUEngine, csv_files):
-    q = pl.scan_csv(csv_files).slice(1, 2**31 - 1)
+    q = pl.scan_csv(csv_files).slice(1, np.iinfo(np.int32).max)
     assert_gpu_result_equal(q, engine=engine)
 
 

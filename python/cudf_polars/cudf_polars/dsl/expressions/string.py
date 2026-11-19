@@ -26,6 +26,7 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
     from typing import Self
 
     from polars import _plr as polars
@@ -262,6 +263,19 @@ class StringFunction(Expr):
                     "extract_all does not support patterns that can match "
                     "an empty string"
                 )
+            tokens = tuple(self._iter_regex_tokens(parsed))
+            # libcudf also matches $ before a final newline, unlike polars
+            if (
+                not parsed.state.flags & re.MULTILINE
+                and (
+                    re._constants.AT,  # type: ignore[attr-defined]
+                    re._constants.AT_END,  # type: ignore[attr-defined]
+                )
+                in tokens
+            ):
+                raise NotImplementedError(
+                    "extract_all does not support $ outside of multiline mode"
+                )
             try:
                 pl.select(pl.lit("", dtype=pl.String).str.extract_all(pattern))
             except pl.exceptions.ComputeError as e:
@@ -379,6 +393,24 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "str.to_integer only supports base 10 on the GPU engine"
                 )
+
+    @staticmethod
+    def _iter_regex_tokens(
+        tokens: Iterable[tuple[Any, Any]],
+    ) -> Iterator[tuple[Any, Any]]:
+        """Yield the (opcode, argument) tokens of a parsed regex, recursively."""
+        sub_pattern = re._parser.SubPattern  # type: ignore[attr-defined]
+        for op, av in tokens:
+            yield op, av
+            if op is re._constants.IN or isinstance(av, sub_pattern):  # type: ignore[attr-defined]
+                yield from StringFunction._iter_regex_tokens(av)
+            elif isinstance(av, tuple | list):
+                for value in av:
+                    if isinstance(value, sub_pattern):
+                        yield from StringFunction._iter_regex_tokens(value)
+                    elif isinstance(value, list):
+                        for branch in value:
+                            yield from StringFunction._iter_regex_tokens(branch)
 
     @staticmethod
     def _has_unsupported_class_or_word_boundary(pattern: str) -> bool:

@@ -1111,6 +1111,12 @@ def test_extract_all_scalar_input(engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_extract_all_multiline_end_anchor(engine: pl.GPUEngine) -> None:
+    lf = pl.LazyFrame({"a": ["a\nba\n", "ab", None]})
+    q = lf.select(pl.col("a").str.extract_all("(?m)a$"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": pl.Series([], dtype=pl.String)})
     q = lf.select(pl.col("a").str.extract_all(r"\d+"))
@@ -1138,6 +1144,8 @@ def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
         "a(?i)b",
         r"\p{L}+",
         r"\x{61}",
+        "a$",
+        "(?:b|a$)",
     ],
 )
 def test_extract_all_pattern_unsupported(

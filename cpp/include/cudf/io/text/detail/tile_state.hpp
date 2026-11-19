@@ -5,12 +5,16 @@
 
 #pragma once
 
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
 #include <cub/block/block_scan.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 
 namespace CUDF_EXPORT cudf {
 namespace io {
@@ -68,17 +72,14 @@ struct scan_tile_state_view {
 
 template <typename T>
 struct scan_tile_state {
-  rmm::device_uvector<cuda::atomic<scan_tile_status, cuda::thread_scope_device>> tile_status;
-  rmm::device_uvector<T> tile_state_partial;
-  rmm::device_uvector<T> tile_state_inclusive;
+  cuda::device_buffer<cuda::atomic<scan_tile_status, cuda::thread_scope_device>> tile_status;
+  cuda::device_buffer<T> tile_state_partial;
+  cuda::device_buffer<T> tile_state_inclusive;
 
-  scan_tile_state(cudf::size_type num_tiles,
-                  cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
-    : tile_status(rmm::device_uvector<cuda::atomic<scan_tile_status, cuda::thread_scope_device>>(
-        num_tiles, stream, mr)),
-      tile_state_partial(rmm::device_uvector<T>(num_tiles, stream, mr)),
-      tile_state_inclusive(rmm::device_uvector<T>(num_tiles, stream, mr))
+  scan_tile_state(cudf::size_type num_tiles, cuda::stream_ref stream, cudf::memory_resources mr)
+    : tile_status(stream, mr.get_output_mr(), num_tiles, cuda::no_init),
+      tile_state_partial(stream, mr.get_output_mr(), num_tiles, cuda::no_init),
+      tile_state_inclusive(stream, mr.get_output_mr(), num_tiles, cuda::no_init)
   {
   }
 
@@ -93,7 +94,11 @@ struct scan_tile_state {
   inline T get_inclusive_prefix(cudf::size_type tile_idx, cuda::stream_ref stream) const
   {
     auto const offset = (tile_idx + tile_status.size()) % tile_status.size();
-    return tile_state_inclusive.element(offset, stream);
+    T value;
+    CUDF_CUDA_TRY(
+      cudf::detail::memcpy_async(&value, tile_state_inclusive.data() + offset, sizeof(T), stream));
+    stream.sync();
+    return value;
   }
 };
 

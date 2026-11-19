@@ -16,6 +16,8 @@
 
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -197,7 +199,7 @@ decompress_page_data(host_span<ColumnChunkDesc const> chunks,
                      host_span<PageInfo> subpass_pages,
                      host_span<bool const> subpass_page_mask,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr);
+                     cudf::memory_resources mr);
 
 /**
  * @brief Detect malformed parquet input data
@@ -228,7 +230,7 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   cuda::stream_ref stream);
 
 /**
- * @brief Computes the per-page buffer sizes required for string offsets.
+ * @brief Computes the buffer sizes required for string offsets, summed per column.
  *
  * For non-dictionary, non-FLBA string columns, this computes the size needed
  * to store string offsets (uint32_t per value) for each page.
@@ -239,18 +241,18 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to use for allocating the returned device_buffer
- * @returns A vector of size_t values, one for each page, indicating the size needed for string
- * offsets
+ * @returns For each page, the string offset buffer size in bytes of that page and the earlier
+ * pages in its column
  */
 cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkDesc const> chunks,
                                                         device_span<PageInfo const> pages,
                                                         size_t skip_rows,
                                                         size_t num_rows,
                                                         cuda::stream_ref stream,
-                                                        rmm::device_async_resource_ref mr);
+                                                        cudf::memory_resources mr);
 
 /**
- * @brief Computes the per-page buffer sizes required for level decode preprocessing.
+ * @brief Computes the buffer sizes required for level decode preprocessing, summed per column.
  *
  * This computes the memory needed to store decoded definition and repetition levels
  * during the preprocessing step. This memory is used by preprocess_levels_kernel().
@@ -262,8 +264,8 @@ cuda::device_buffer<size_t> compute_string_offset_sizes(device_span<ColumnChunkD
  * @param num_rows Number of rows to read in the pass
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource to use for allocating the returned device_buffer
- * @returns A vector of size_t values, one for each page, indicating the size needed for level
- * decode preprocessing
+ * @returns For each page, the level decode buffer size in bytes of that page and the earlier pages
+ * in its column
  */
 cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDesc const> chunks,
                                                        device_span<PageInfo const> pages,
@@ -271,7 +273,29 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
                                                        size_t skip_rows,
                                                        size_t num_rows,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr);
+                                                       cudf::memory_resources mr);
+
+/**
+ * @brief Computes the nz map scratch sizes, summed per column.
+ *
+ * `allocate_level_decode_space` allocates a `page_nz_map` for each page `classify_nz_map_kind`
+ * selects, plus the page's rank map.
+ *
+ * @param chunks List of column chunk descriptors
+ * @param pages List of page information
+ * @param skip_rows Starting row for the pass
+ * @param num_rows Number of rows to read in the pass
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource to use for allocating the returned device_buffer
+ * @returns For each page, the nz map scratch size in bytes of that page and the earlier pages in
+ * its column
+ */
+cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc const> chunks,
+                                                 device_span<PageInfo const> pages,
+                                                 size_t skip_rows,
+                                                 size_t num_rows,
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr);
 
 /**
  * @brief Computes the level decode buffer sizes for a single page.
@@ -297,8 +321,7 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageType const& pag
                                                              size_t& rep_level_size);
 
 /**
- * @brief Add the cost of decompression codec scratch space to the per-page cumulative
- * size information
+ * @brief Add per-column cumulative scratch sizes to the per-page cumulative size information
  */
 void include_scratch_size(device_span<size_t const> pages,
                           device_span<cumulative_page_info> c_info,
@@ -844,6 +867,53 @@ CUDF_HOST_DEVICE inline void compute_page_level_decode_sizes(PageInfo const& pag
 
   // Compute space for repetition levels
   rep_level_size = has_repetition ? num_to_decode * level_type_size : 0;
+}
+
+/**
+ * @brief Decide which nz map consumer, if any, can decode @p page.
+ *
+ * Called by `compute_nz_map_sizes` (input pass read limit) and `allocate_level_decode_space`
+ * (allocation), so both see the same pages.
+ *
+ * @param page Page to classify
+ * @param chunk Column chunk the page belongs to
+ * @return The page's nz map kind, or `NONE` if no consumer can decode it
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline nz_map_kind classify_nz_map_kind(PageInfo const& page,
+                                                                       ColumnChunkDesc const& chunk)
+{
+  // The encodings with an nz map consumer.
+  bool const has_consumer =
+    BitAnd(page.kernel_mask,
+           BitOr(decode_kernel_mask::DELTA_BINARY, decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
+  if (!has_consumer) { return nz_map_kind::NONE; }
+
+  // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta
+  // leaves keep decoding their own levels.
+  bool const is_flat = chunk.max_level[level_type::REPETITION] == 0 && chunk.max_nesting_depth <= 1;
+  return is_flat ? nz_map_kind::DELTA_FLAT : nz_map_kind::NONE;
+}
+
+/**
+ * @brief Computes the size of the valid-rank map for a page with a flat nz map.
+ *
+ * One `uint32_t` per value the producer can index: the page's values in the pass's row range, the
+ * same count its definition levels are decoded for. A required page gets none, since its map is
+ * the identity and the consumer computes it from the rank.
+ *
+ * @param page Page with a flat nz map
+ * @param chunk Column chunk the page belongs to
+ * @param skip_rows Starting row for the pass
+ * @param num_rows Number of rows to read in the pass
+ * @return Size of the page's rank map in bytes
+ */
+[[nodiscard]] CUDF_HOST_DEVICE inline size_t compute_page_rank_map_size(
+  PageInfo const& page, ColumnChunkDesc const& chunk, size_t skip_rows, size_t num_rows)
+{
+  if (chunk.max_level[level_type::DEFINITION] == 0) { return 0; }
+  return cuda::std::min(static_cast<size_t>(page.num_input_values),
+                        precompute_page_num_values_in_range(page, chunk, skip_rows, num_rows)) *
+         sizeof(uint32_t);
 }
 
 /**

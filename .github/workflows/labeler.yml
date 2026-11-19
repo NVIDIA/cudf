@@ -13,6 +13,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          allow-unsafe-pr-checkout: true
           persist-credentials: false
           sparse-checkout: .github/labeler.yml
           sparse-checkout-cone-mode: false

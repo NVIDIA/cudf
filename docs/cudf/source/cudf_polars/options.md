@@ -20,10 +20,10 @@ opts = StreamingOptions(
 with RayEngine.from_options(opts) as engine:
     result = (
         pl.scan_parquet("/data/*.parquet")
-          .filter(pl.col("amount") > 100)
-          .group_by("customer_id")
-          .agg(pl.col("amount").sum())
-          .collect(engine=engine)
+        .filter(pl.col("amount") > 100)
+        .group_by("customer_id")
+        .agg(pl.col("amount").sum())
+        .collect(engine=engine)
     )
 ```
 
@@ -70,10 +70,12 @@ Boolean environment variables accept `{"1", "true", "yes", "y"}` as true and
 Unknown keys raise `TypeError` and `None` values leave the field unspecified:
 
 ```python
-opts = StreamingOptions.from_dict({
-    "num_streaming_threads": 8,
-    "fallback_mode": "silent",
-})
+opts = StreamingOptions.from_dict(
+    {
+        "num_streaming_threads": 8,
+        "fallback_mode": "silent",
+    }
+)
 ```
 
 This is convenient when options come from a config file or CLI.
@@ -108,6 +110,7 @@ Environment variables follow these patterns:
 |--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
 | `num_py_executors`       | Workers for the internal Python `ThreadPoolExecutor`.                                                                                               | `8`         |
 | `fallback_mode`          | When an unsupported operation forces a fallback to CPU execution: `"warn"`, `"raise"`, `"silent"`.                                                  | `"warn"`    |
+| `rank_local_cpu_compute` | When to evaluate IR nodes on the CPU with Polars: `"never"` or `"always"`. With `"always"`, unsupported nodes still run on the GPU. | `"never"`   |
 | `max_rows_per_partition` | Maximum number of rows per partition. Only used for in-memory `DataFrame` sources, never for disk IO or dynamic planning.                           | `1_000_000` |
 | `broadcast_limit`        | Maximum number of bytes for broadcast joins.                                                                                                        | auto        |
 | `target_partition_size`  | Target partition size in bytes. Used for IO and dynamic planning. `0` means auto.                                                                   | auto        |

@@ -10,8 +10,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <algorithm>
 #include <ranges>
 #include <vector>

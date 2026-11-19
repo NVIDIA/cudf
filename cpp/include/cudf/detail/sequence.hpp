@@ -16,34 +16,34 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::sequence(size_type, scalar const&, scalar const&,cuda::stream_ref
- * stream,rmm::device_async_resource_ref)
+ * stream,cudf::memory_resources)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  scalar const& step,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::sequence(size_type, scalar const&, cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * cudf::memory_resources)
  */
 std::unique_ptr<column> sequence(size_type size,
                                  scalar const& init,
                                  cuda::stream_ref stream,
-                                 rmm::device_async_resource_ref mr);
+                                 cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::calendrical_month_sequence(size_type size,
  *                                           scalar const& init,
  *                                           size_type months,
- *                                           rmm::device_async_resource_ref mr)
+ *                                           cudf::memory_resources mr)
  */
 std::unique_ptr<cudf::column> calendrical_month_sequence(size_type size,
                                                          scalar const& init,
                                                          size_type months,
                                                          cuda::stream_ref stream,
-                                                         rmm::device_async_resource_ref mr);
+                                                         cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

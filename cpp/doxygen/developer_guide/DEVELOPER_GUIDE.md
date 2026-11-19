@@ -1741,6 +1741,15 @@ Use `cudf::empty_like()` to create an empty column from an existing `cudf::colum
 cuIO is a component of libcudf that provides GPU-accelerated reading and writing of data file
 formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and JSON_Lines.
 
+libcudf does not have a binary data type, so as a convenience the Parquet reader reads `BINARY`
+columns as `STRING` columns by default. If the binary data is not valid UTF-8, using the resulting
+`STRING` column with other libcudf APIs is undefined behavior, as described in
+[libcudf does not introspect data](#libcudf-does-not-introspect-data). Setting
+`cudf::io::reader_column_schema::set_convert_binary_to_strings(false)` reads these columns as
+`LIST<UINT8>` instead. Note that the total number of bytes in a `LIST<UINT8>` column is limited by
+the [`size_type`](#cudfsize_type) row count limit of its child column, a limit that does not apply
+to the bytes in a `STRING` column.
+
 // TODO: add more detail and move to a separate file.
 
 # Debugging Tips

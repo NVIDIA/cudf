@@ -12,13 +12,13 @@ import polars as pl
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column, DataType
+from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 
 if TYPE_CHECKING:
     from collections.abc import Hashable
 
-    from cudf_polars.containers import DataFrame
+    from cudf_polars.containers import DataFrame, DataType
 
 __all__ = ["Literal", "LiteralColumn"]
 
@@ -43,10 +43,6 @@ class Literal(Expr):
     value: Any  # Python scalar
 
     def __init__(self, dtype: DataType, value: Any) -> None:
-        if value is None and dtype.id() == plc.TypeId.EMPTY:
-            # TypeId.EMPTY not supported by libcudf
-            # cuDF Python also maps EMPTY to INT8
-            dtype = DataType(pl.datatypes.Int8())
         self.dtype = dtype
         self.value = value
         self.children = ()
@@ -111,9 +107,11 @@ class LiteralColumn(Expr):
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
-        return Column(
-            plc.Column.from_arrow(self.value, stream=df.stream), dtype=self.dtype
-        )
+        value = self.value
+        if isinstance(value.dtype, pl.Null):
+            # Null columns are stored as all-null INT8 (see DataType).
+            value = value.cast(pl.Int8())
+        return Column(plc.Column.from_arrow(value, stream=df.stream), dtype=self.dtype)
 
     @property
     def agg_request(self) -> NoReturn:  # noqa: D102

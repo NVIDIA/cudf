@@ -222,6 +222,12 @@ containing runtime execution context). To perform the
 evaluation, one should use the base class (generic) `evaluate` method
 which handles the recursive evaluation of child nodes.
 
+`do_evaluate` must not modify its input dataframes. It must not write
+to their device data, and must not add, remove or rename their
+columns. The only permitted change to an input is recording sortedness
+metadata that is true of the data, as `Column.check_sorted` does. The
+result may share device memory with the inputs.
+
 Plan nodes must also declare an `_n_non_child_args` attribute giving
 the length of the `_non_child_args` tuple. This is used by tracing to know
 how many non-child (dataframe) inputs to expect without introspection.

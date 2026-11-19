@@ -50,7 +50,6 @@ requirements:
     - fsspec >=0.6.0
     - nvtx >=0.2.1
     - packaging
-    - cachetools
     - rich
 
 about:

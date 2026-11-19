@@ -361,7 +361,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
 }
 
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>
-std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const& get_parquet_with_stats(
+std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const& create_parquet_with_stats(
   cudf::size_type str_col_value,
   cudf::io::compression_type compression,
   std::vector<std::string> column_names,
@@ -485,55 +485,56 @@ std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const& get_parq
     .first->second;
 }
 
-#define INSTANTIATE_GET_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE)             \
-  template std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const&                 \
-  get_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(cudf::size_type,              \
-                                                                     cudf::io::compression_type,   \
-                                                                     std::vector<std::string>,     \
-                                                                     std::vector<cudf::size_type>, \
-                                                                     cuda::stream_ref)
+#define INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE) \
+  template std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const&        \
+  create_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(                  \
+    cudf::size_type,                                                                      \
+    cudf::io::compression_type,                                                           \
+    std::vector<std::string>,                                                             \
+    std::vector<cudf::size_type>,                                                         \
+    cuda::stream_ref)
 
-#define INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(T)       \
-  INSTANTIATE_GET_PARQUET_WITH_STATS(T, 1, true, false); \
-  INSTANTIATE_GET_PARQUET_WITH_STATS(T, 1, true, true)
+#define INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(T)       \
+  INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, false); \
+  INSTANTIATE_CREATE_PARQUET_WITH_STATS(T, 1, true, true)
 
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 4, true, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(int32_t, 2, true, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 4, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(int32_t, 2, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::timestamp_ms, 2, true, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 2, true, false);
 
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint8_t, 1, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint16_t, 1, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 1, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint64_t, 1, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(cudf::duration_ms, 1, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint8_t, 1, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint16_t, 1, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 1, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint64_t, 1, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(cudf::duration_ms, 1, false, false);
 
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint8_t, 2, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint16_t, 2, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint32_t, 2, false, false);
-INSTANTIATE_GET_PARQUET_WITH_STATS(uint64_t, 2, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint8_t, 2, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint16_t, 2, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint32_t, 2, false, false);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS(uint64_t, 2, false, false);
 
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int8_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int16_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int32_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(int64_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint8_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint16_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint32_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(uint64_t);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(float);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(double);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_D);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_ms);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_us);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::timestamp_ns);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_us);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(cudf::string_view);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal32);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal64);
-INSTANTIATE_GET_PARQUET_WITH_STATS_DICT(numeric::decimal128);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int8_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int16_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int32_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(int64_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint8_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint16_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint32_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(uint64_t);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(float);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(double);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_D);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_ms);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_us);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::timestamp_ns);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ms);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_us);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::duration_ns);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(cudf::string_view);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal32);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal64);
+INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT(numeric::decimal128);
 
-#undef INSTANTIATE_GET_PARQUET_WITH_STATS_DICT
-#undef INSTANTIATE_GET_PARQUET_WITH_STATS
+#undef INSTANTIATE_CREATE_PARQUET_WITH_STATS_DICT
+#undef INSTANTIATE_CREATE_PARQUET_WITH_STATS

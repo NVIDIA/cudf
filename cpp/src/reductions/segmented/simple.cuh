@@ -23,6 +23,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/concepts>
@@ -212,7 +213,7 @@ std::unique_ptr<column> fixed_point_segmented_reduction(
       // The product aggregation requires updating the scale of the fixed-point output column.
       // The output scale needs to be the maximum count of all segments multiplied by
       // the input scale value.
-      rmm::device_uvector<size_type> const counts =
+      cuda::device_buffer<size_type> const counts =
         cudf::reduction::detail::segmented_counts(col.null_mask(),
                                                   col.has_nulls(),
                                                   offsets,

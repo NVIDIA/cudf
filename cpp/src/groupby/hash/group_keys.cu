@@ -6,10 +6,11 @@
 #include "group_keys.hpp"
 #include "groupby/common/utils.hpp"
 #include "hash_csr_kernels.cuh"
-#include "helpers.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -215,15 +216,13 @@ stable_grouped_rows(size_type num_rows,
 
   cuda::device_buffer<size_type> ordered_labels(stream, labels_mr, num_rows, cuda::no_init);
   cuda::device_buffer<size_type> ordered_rows(stream, rows_mr, num_rows, cuda::no_init);
-  auto const end_bit =
-    cuda::std::bit_width(static_cast<cuda::std::uint32_t>(filtered ? num_groups : num_groups - 1));
-  auto const sorted = sort_pairs({input_labels.data(), input_rows.data()},
-                                 {ordered_labels.data(), ordered_rows.data()},
-                                 num_rows,
-                                 0,
-                                 end_bit,
-                                 stream,
-                                 mr);
+  auto const sorted = sort_by_label({input_labels.data(), input_rows.data()},
+                                    {ordered_labels.data(), ordered_rows.data()},
+                                    num_rows,
+                                    num_groups,
+                                    filtered,
+                                    stream,
+                                    mr);
   auto grouped_rows =
     sorted.values == input_rows.data() ? std::move(input_rows) : std::move(ordered_rows);
   if (filtered) {
@@ -534,6 +533,20 @@ pair_buffers sort_pairs(pair_buffers input,
   auto const env = cuda::std::execution::env{stream, mr_prop};
   CUDF_CUDA_TRY(cub::DeviceRadixSort::SortPairs(keys, values, num_items, begin_bit, end_bit, env));
   return {keys.Current(), values.Current()};
+}
+
+pair_buffers sort_by_label(pair_buffers input,
+                           pair_buffers alternate,
+                           size_type num_rows,
+                           size_type num_groups,
+                           bool filtered,
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
+{
+  // Sort only the bits of the largest label, which is `num_groups` when rows are excluded.
+  auto const end_bit =
+    cuda::std::bit_width(static_cast<cuda::std::uint32_t>(filtered ? num_groups : num_groups - 1));
+  return sort_pairs(input, alternate, num_rows, 0, end_bit, stream, mr);
 }
 
 }  // namespace cudf::groupby::detail::hash

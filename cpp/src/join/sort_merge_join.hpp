@@ -20,6 +20,7 @@
 #include <cuda/buffer>
 #include <cuda/stream>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -207,7 +208,18 @@ class sort_merge_join {
   std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_offsets;  ///< Start of each run in sorted order; the first `num_right_runs + 1`
                         ///< entries are valid, including the row-count sentinel
-  size_type num_right_runs{};   ///< Number of distinct key runs in the processed right table
+  size_type num_right_runs{};  ///< Number of distinct key runs in the processed right table
+
+  /**
+   * @brief Right run keys stored as the integer type that the typed key search reads.
+   */
+  struct typed_run_keys {
+    cuda::device_buffer<std::byte> keys;     ///< Key value of each run
+    cuda::device_buffer<std::byte> samples;  ///< Sampled run keys searched before `keys`
+  };
+  std::optional<typed_run_keys>
+    right_typed_run_keys;  ///< Present when the right keys are a single null-free 32- or 64-bit
+                           ///< integer or chrono column
   null_equality compare_nulls;  ///< Null comparison mode
 
   /**

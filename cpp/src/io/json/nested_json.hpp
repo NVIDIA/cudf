@@ -148,8 +148,8 @@ struct device_json_column {
   // The inferred type of this column (list, struct, or value/string column)
   json_col_t type = json_col_t::Unknown;
 
-  rmm::device_uvector<row_offset_t> string_offsets;
-  rmm::device_uvector<row_offset_t> string_lengths;
+  cuda::device_buffer<row_offset_t> string_offsets;
+  cuda::device_buffer<row_offset_t> string_lengths;
 
   // Row offsets (LIST offsets child data; always 32-bit)
   rmm::device_uvector<int32_t> child_offsets;
@@ -190,8 +190,8 @@ struct device_json_column {
    * @param mr Optional, resource with which to allocate
    */
   device_json_column(cuda::stream_ref stream, cudf::memory_resources mr)
-    : string_offsets(0, stream),
-      string_lengths(0, stream),
+    : string_offsets(stream, mr.get_temporary_mr(), 0, cuda::no_init),
+      string_lengths(stream, mr.get_temporary_mr(), 0, cuda::no_init),
       child_offsets(0, stream, mr.get_output_mr()),
       validity(stream, mr.get_output_mr())
   {
@@ -285,7 +285,7 @@ void get_stack_context(device_span<SymbolT const> json_in,
  * @return Returns the post-processed token stream
  */
 CUDF_EXPORT
-std::pair<rmm::device_uvector<PdaTokenT>, rmm::device_uvector<SymbolOffsetT>> process_token_stream(
+std::pair<cuda::device_buffer<PdaTokenT>, cuda::device_buffer<SymbolOffsetT>> process_token_stream(
   device_span<PdaTokenT const> tokens,
   device_span<SymbolOffsetT const> token_indices,
   cuda::stream_ref stream,

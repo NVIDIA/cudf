@@ -7,8 +7,7 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/std/utility>
 
 namespace cudf {
@@ -28,7 +27,7 @@ using index_type = cuda::std::pair<side, cudf::size_type>;
 /**
  * @brief Vector of `index_type` values.
  */
-using index_vector = rmm::device_uvector<index_type>;
+using index_vector = cuda::device_buffer<index_type>;
 
 /**
  * @copydoc std::unique_ptr<cudf::table> merge(

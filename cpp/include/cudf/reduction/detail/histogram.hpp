@@ -11,8 +11,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -31,7 +30,7 @@ namespace reduction::detail {
  * @return A pair of array contains the (stable-order) indices of the distinct rows in the input
  * table, and their corresponding distinct counts
  */
-[[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>, std::unique_ptr<column>>
+[[nodiscard]] std::pair<std::unique_ptr<cuda::device_buffer<size_type>>, std::unique_ptr<column>>
 compute_row_frequencies(table_view const& input,
                         std::optional<column_view> const& partial_counts,
                         cuda::stream_ref stream,

@@ -13,6 +13,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
@@ -941,7 +942,8 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
 
   auto const filepath = temp_env->get_temp_filepath("FloatingPointWithNaNStats.parquet");
   cudf::io::parquet_writer_options const out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected);
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
   cudf::io::write_parquet(out_opts);
 
   auto const source = cudf::io::datasource::create(filepath);
@@ -969,6 +971,37 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
   // a null alongside the NaN does not interfere with NaN detection
   EXPECT_FALSE(stats_f_nan_null.min_value.has_value());
   EXPECT_FALSE(stats_f_nan_null.max_value.has_value());
+
+  // NaNs are counted, and chunks with NaNs have no column index
+  std::array<int64_t, 5> const expected_nan_counts{1, 1, 4, 0, 1};
+  for (std::size_t c = 0; c < expected_nan_counts.size(); ++c) {
+    auto const& chunk = fmd.row_groups[0].columns[c];
+    EXPECT_EQ(get_statistics(chunk).nan_count, expected_nan_counts[c]);
+    if (expected_nan_counts[c] == 0) {
+      EXPECT_EQ(read_column_index(source, chunk).nan_counts, std::vector<int64_t>{0});
+    } else {
+      EXPECT_EQ(chunk.column_index_length, 0);
+    }
+  }
+
+  // Round trip: `col != 1` prunes the NaN-free constant row group, keeping only the one with a NaN
+  column_wrapper<float> col_rt{{1.0f, 1.0f, 1.0f, 1.0f, 1.0f, nanf, 3.0f, 2.0f}};
+  auto const rt_filepath =
+    temp_env->get_temp_filepath("FloatingPointWithNaNStatsRoundTrip.parquet");
+  cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
+                            cudf::io::sink_info{rt_filepath}, table_view{{col_rt}})
+                            .row_group_size_rows(4)
+                            .max_page_size_rows(4)
+                            .max_page_fragment_size(4));
+  auto one_value     = cudf::numeric_scalar<float>(1.0f);
+  auto const one     = cudf::ast::literal(one_value);
+  auto const col_ref = cudf::ast::column_reference(0);
+  auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, one);
+  auto const result  = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{rt_filepath}).filter(filter));
+  EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 1);
+  column_wrapper<float> expected_rt{{nanf, 3.0f, 2.0f}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected_rt}}, result.tbl->view());
 }
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)
@@ -1614,6 +1647,27 @@ TEST_F(ParquetWriterTest, DictionaryAlwaysTest)
   };
   EXPECT_TRUE(used_dict(0));
   EXPECT_TRUE(used_dict(1));
+}
+
+TEST_F(ParquetWriterTest, DISABLED_DictionaryMoreColumnsThanMaxGridY)
+{
+  // More columns than the CUDA grid y-dimension limit (65535)
+  constexpr cudf::size_type num_cols = 70'000;
+
+  auto const col      = cudf::test::strings_column_wrapper({"a", "b", "a", "c"});
+  auto const expected = table_view{std::vector<cudf::column_view>(num_cols, col)};
+
+  auto const filepath = temp_env->get_temp_filepath("DictionaryMoreColumnsThanMaxGridY.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto const result = cudf::io::read_parquet(in_opts);
+
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
 TEST_F(ParquetWriterTest, DictionaryPageSizeEst)
@@ -2420,6 +2474,40 @@ TEST_F(ParquetWriterTest, DeltaBinaryNzIdxTailIteration33)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 }
 
+TEST_F(ParquetWriterTest, DeltaBinaryMixedMiniBlockWidths)
+{
+  constexpr int num_rows   = 100'000;
+  constexpr int run_length = 96;
+
+  // Runs of small steps separated by jumps wider than 32 bits, so that each block mixes
+  // mini-blocks of at most 32 bits and of more than 32 bits
+  std::mt19937_64 engine{31337};
+  std::uniform_int_distribution<int64_t> jump{int64_t{1} << 40, int64_t{1} << 50};
+  std::uniform_int_distribution<int64_t> step{0, (int64_t{1} << 10) - 1};
+  std::vector<int64_t> values(num_rows);
+  int64_t value = 0;
+  for (int i = 0; i < num_rows; ++i) {
+    value += (i % run_length == 0) ? jump(engine) : step(engine);
+    values[i] = value;
+  }
+  auto const col      = column_wrapper<int64_t>{values.begin(), values.end(), no_nulls()};
+  auto const expected = table_view({col});
+
+  cudf::io::table_input_metadata expected_metadata(expected);
+  expected_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BINARY_PACKED);
+
+  auto const filepath = temp_env->get_temp_filepath("DeltaBinaryMixedMiniBlockWidths.parquet");
+  cudf::io::parquet_writer_options out_opts =
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(expected_metadata);
+  cudf::io::write_parquet(out_opts);
+
+  cudf::io::parquet_reader_options in_opts =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+  auto result = cudf::io::read_parquet(in_opts);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
 std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata>
 make_byte_stream_split_table(bool as_struct)
 {
@@ -2429,22 +2517,35 @@ make_byte_stream_split_table(bool as_struct)
   auto col1_data = random_values<int64_t>(num_rows);
   auto col2_data = random_values<float>(num_rows);
   auto col3_data = random_values<double>(num_rows);
+  auto col4_data = random_values<int8_t>(num_rows);
+  auto col5_data = random_values<int16_t>(num_rows);
+  auto col6_data = random_values<uint8_t>(num_rows);
+  auto col7_data = random_values<uint16_t>(num_rows);
 
   column_wrapper<int32_t> col0{col0_data.begin(), col0_data.end(), no_nulls()};
   column_wrapper<int64_t> col1{col1_data.begin(), col1_data.end(), no_nulls()};
   column_wrapper<float> col2{col2_data.begin(), col2_data.end(), no_nulls()};
   column_wrapper<double> col3{col3_data.begin(), col3_data.end(), no_nulls()};
+  // 8- and 16-bit integers are stored as INT32
+  column_wrapper<int8_t> col4{col4_data.begin(), col4_data.end(), no_nulls()};
+  column_wrapper<int16_t> col5{col5_data.begin(), col5_data.end(), no_nulls()};
+  column_wrapper<uint8_t> col6{col6_data.begin(), col6_data.end(), no_nulls()};
+  column_wrapper<uint16_t> col7{col7_data.begin(), col7_data.end(), no_nulls()};
 
   // throw in a list to make sure both decoders are working
-  auto col4 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
+  auto col8 = make_parquet_list_col<int32_t>(engine, num_rows, 5, true);
 
   std::vector<std::unique_ptr<cudf::column>> columns;
-  columns.reserve(5);
+  columns.reserve(9);
   columns.push_back(col0.release());
   columns.push_back(col1.release());
   columns.push_back(col2.release());
   columns.push_back(col3.release());
-  columns.push_back(std::move(col4));
+  columns.push_back(col4.release());
+  columns.push_back(col5.release());
+  columns.push_back(col6.release());
+  columns.push_back(col7.release());
+  columns.push_back(std::move(col8));
 
   return [&]() -> std::pair<std::unique_ptr<cudf::table>, cudf::io::table_input_metadata> {
     auto const encoding = cudf::io::column_encoding::BYTE_STREAM_SPLIT;
@@ -2469,11 +2570,15 @@ make_byte_stream_split_table(bool as_struct)
       expected_metadata.column_metadata[0].child(1).set_name("int64s");
       expected_metadata.column_metadata[0].child(2).set_name("floats");
       expected_metadata.column_metadata[0].child(3).set_name("doubles");
-      expected_metadata.column_metadata[0].child(4).set_name("int32list");
-      for (int idx = 0; idx <= 3; idx++) {
+      expected_metadata.column_metadata[0].child(4).set_name("int8s");
+      expected_metadata.column_metadata[0].child(5).set_name("int16s");
+      expected_metadata.column_metadata[0].child(6).set_name("uint8s");
+      expected_metadata.column_metadata[0].child(7).set_name("uint16s");
+      expected_metadata.column_metadata[0].child(8).set_name("int32list");
+      for (int idx = 0; idx <= 7; idx++) {
         expected_metadata.column_metadata[0].child(idx).set_encoding(encoding);
       }
-      expected_metadata.column_metadata[0].child(4).child(1).set_encoding(encoding);
+      expected_metadata.column_metadata[0].child(8).child(1).set_encoding(encoding);
 
       return {std::move(tbl), expected_metadata};
     }
@@ -2487,12 +2592,16 @@ make_byte_stream_split_table(bool as_struct)
     expected_metadata.column_metadata[1].set_name("int64s");
     expected_metadata.column_metadata[2].set_name("floats");
     expected_metadata.column_metadata[3].set_name("doubles");
-    expected_metadata.column_metadata[4].set_name("int32list");
-    for (int idx = 0; idx <= 3; idx++) {
+    expected_metadata.column_metadata[4].set_name("int8s");
+    expected_metadata.column_metadata[5].set_name("int16s");
+    expected_metadata.column_metadata[6].set_name("uint8s");
+    expected_metadata.column_metadata[7].set_name("uint16s");
+    expected_metadata.column_metadata[8].set_name("int32list");
+    for (int idx = 0; idx <= 7; idx++) {
       expected_metadata.column_metadata[idx].set_encoding(encoding);
     }
 
-    expected_metadata.column_metadata[4].child(1).set_encoding(encoding);
+    expected_metadata.column_metadata[8].child(1).set_encoding(encoding);
     return {std::move(tbl), expected_metadata};
   }();
 }

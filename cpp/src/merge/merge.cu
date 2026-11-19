@@ -22,14 +22,15 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -230,7 +231,7 @@ index_vector generate_merged_indices(table_view const& left_table,
   auto left_begin  = cudf::detail::make_counting_transform_iterator(0, left_gen);
   auto right_begin = cudf::detail::make_counting_transform_iterator(0, right_gen);
 
-  index_vector merged_indices(total_size, stream, mr.get_output_mr());
+  index_vector merged_indices(stream, mr.get_output_mr(), total_size, cuda::no_init);
 
   auto const has_nulls =
     nullate::DYNAMIC{cudf::has_nulls(left_table) or cudf::has_nulls(right_table)};
@@ -292,7 +293,7 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
   size_type const right_size = right_table.num_rows();
   size_type const total_size = left_size + right_size;
 
-  index_vector merged_indices(total_size, stream, mr.get_output_mr());
+  index_vector merged_indices(stream, mr.get_output_mr(), total_size, cuda::no_init);
 
   auto const left_indices_col = cudf::detail::lower_bound(
     right_table, left_table, column_order, null_precedence, stream, mr.get_temporary_mr());
@@ -334,7 +335,8 @@ index_vector generate_merged_indices_nested(table_view const& left_table,
 struct column_merger {
   explicit column_merger(index_vector const& row_order) : row_order_(row_order) {}
 
-  template <typename Element, CUDF_ENABLE_IF(not is_rep_layout_compatible<Element>())>
+  template <typename Element>
+    requires(not cudf::concepts::rep_layout_compatible<Element>)
   std::unique_ptr<column> operator()(column_view const&,
                                      column_view const&,
                                      cuda::stream_ref,
@@ -345,12 +347,11 @@ struct column_merger {
 
   // column merger operator;
   //
-  template <typename Element>
+  template <cudf::concepts::rep_layout_compatible Element>
   std::unique_ptr<column> operator()(column_view const& lcol,
                                      column_view const& rcol,
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
-    requires(is_rep_layout_compatible<Element>())
   {
     auto lsz         = lcol.size();
     auto merged_size = lsz + rcol.size();

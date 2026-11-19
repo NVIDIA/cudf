@@ -30,6 +30,7 @@ from rapidsmpf.streaming.core.memory_reserve_or_wait import (
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.ir import IR, Join, Projection
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import (
@@ -410,7 +411,6 @@ async def _collect_small_side_for_broadcast(
                 rows += chunk_rows
             if group:
                 groups.append(group)
-            del chunks
             for group in groups:
                 group_size = sum(chunk.data_alloc_size() for chunk in group)
                 group, extra = await make_table_chunks_available_or_wait(  # noqa: PLW2901
@@ -426,6 +426,7 @@ async def _collect_small_side_for_broadcast(
                             context=ir_context,
                         )
                     )
+                del group
 
     return dfs, size
 
@@ -434,18 +435,14 @@ async def _broadcast_join_large_chunk(
     context: Context,
     ir: Join,
     ir_context: IRExecutionContext,
-    ch_out: Channel[TableChunk],
     small_dfs: list[DataFrame],
     small_child: IR,
     large_chunk: TableChunk,
     large_child: IR,
-    seq_num: int,
     small_size: int,
     broadcast_side: Literal["left", "right"],
-    *,
-    tracer: ActorTracer | None,
-) -> int:
-    """Join one large-side chunk with the small DataFrame(s) and send the result."""
+) -> TableChunk:
+    """Join one large-side chunk with the small DataFrame(s)."""
     large_df = chunk_to_frame(large_chunk, large_child)
     large_chunk_size = large_chunk.data_alloc_size()
 
@@ -462,23 +459,20 @@ async def _broadcast_join_large_chunk(
     ):
         for sdf in dfs_to_join:
             result = await ir_context.to_thread(
-                ir.do_evaluate,
-                *ir._non_child_args,
+                evaluate_ir,
+                ir,
                 *([large_df, sdf] if broadcast_side == "right" else [sdf, large_df]),
                 context=ir_context,
             )
             join_results.append(result)
+            del result
 
         df = _concat(*join_results, context=ir_context)
         del join_results
 
-    output_chunk = TableChunk.from_pylibcudf_table(
+    return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
-    output_rows = output_chunk.shape[0]
-    await send_chunk(context, ch_out, output_chunk, seq_num, tracer=tracer)
-    del df, large_df
-    return output_rows
 
 
 async def broadcast_join(
@@ -568,19 +562,21 @@ async def broadcast_join(
             net_memory_delta=missing_net_memory_delta,
         )
         input_rows += large_chunk.shape[0]
-        output_rows += await _broadcast_join_large_chunk(
+        output_chunk = await _broadcast_join_large_chunk(
             context,
             ir,
             ir_context,
-            ch_out,
             small_dfs,
             small_child,
             large_chunk,
             large_child,
-            msg.sequence_number,
             small_size,
             broadcast_side,
-            tracer=tracer,
+        )
+        del large_chunk
+        output_rows += output_chunk.shape[0]
+        await send_chunk(
+            context, ch_out, output_chunk, msg.sequence_number, tracer=tracer
         )
 
     if prefilter_statistics is not None:
@@ -800,15 +796,11 @@ def _make_ordered_strategy(
     if ir.options[0] not in ("Inner", "Left", "Semi", "Anti"):
         return None
 
-    left_scheme = left_partitioning.inter_rank_scheme
-    right_scheme = right_partitioning.inter_rank_scheme
-    if not isinstance(left_scheme, OrderScheme) or not isinstance(
-        right_scheme, OrderScheme
-    ):
+    left_ordering = left_partitioning.get_ordering(level="flat")
+    right_ordering = right_partitioning.get_ordering(level="flat")
+    if left_ordering is None or right_ordering is None:
         return None
 
-    left_ordering = left_scheme.orderings[0]
-    right_ordering = right_scheme.orderings[0]
     # adjust_ordering needs a strict target partitioning. Prefer the left side
     # for output metadata, then fall back to the right side if only it is strict.
     reference = left_ordering if left_ordering.strict_boundaries else right_ordering
@@ -912,8 +904,8 @@ async def _join_chunks(
         ):
             df = await ir_context.to_thread(
                 partial(
-                    ir.do_evaluate,
-                    *ir._non_child_args,
+                    evaluate_ir,
+                    ir,
                     chunk_to_frame(left_chunk, left),
                     chunk_to_frame(right_chunk, right),
                     context=ir_context,
@@ -924,6 +916,7 @@ async def _join_chunks(
         output_chunk = TableChunk.from_pylibcudf_table(
             df.table, df.stream, exclusive_view=True, br=context.br()
         )
+        del df
         await send_chunk(
             context,
             ch_out,
@@ -931,7 +924,6 @@ async def _join_chunks(
             left_msg.sequence_number,
             tracer=tracer,
         )
-        del df
 
     await ch_out.drain(context)
 

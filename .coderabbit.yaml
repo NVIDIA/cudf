@@ -8,7 +8,6 @@ reviews:
   poem: false
   auto_review:
     enabled: true
-    auto_incremental_review: true
     # Long-running PRs need review coverage after early revisions.
     auto_pause_after_reviewed_commits: 0
     drafts: false

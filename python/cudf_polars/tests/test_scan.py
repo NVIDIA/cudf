@@ -393,8 +393,29 @@ def test_scan_csv_multi_slice(engine: pl.GPUEngine, csv_files, zlice):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_scan_csv_multi_slice_concatenates_only_retained_rows(
+    engine: pl.GPUEngine, csv_files, monkeypatch
+):
+    concatenated = []
+    concatenate = plc.concatenate.concatenate
+
+    def record(tables, *args, **kwargs):
+        concatenated.append(sum(t.num_rows() for t in tables))
+        return concatenate(tables, *args, **kwargs)
+
+    monkeypatch.setattr(plc.concatenate, "concatenate", record)
+    q = pl.scan_csv(csv_files).slice(11, 3)
+    assert_gpu_result_equal(q, engine=engine)
+    assert max(concatenated, default=0) < 11
+
+
 def test_scan_csv_multi_slice_large_length(engine: pl.GPUEngine, csv_files):
     q = pl.scan_csv(csv_files).slice(1, 2**31 - 1)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_multi_slice_no_columns(engine: pl.GPUEngine, csv_files):
+    q = pl.scan_csv(csv_files).slice(5, 14).select(pl.lit(1))
     assert_gpu_result_equal(q, engine=engine)
 
 

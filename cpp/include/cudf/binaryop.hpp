@@ -21,7 +21,6 @@
 
 #include <memory>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 /**
@@ -106,8 +105,13 @@ enum class binary_operator : int32_t {
   INVALID_BINARY     ///< invalid operation
 };
 
-/// Binary operation common type default
-template <typename L, typename R>
+/**
+ * @brief Binary operation common type default
+ *
+ * The third template parameter is unused. It is deprecated and will be removed in a future
+ * release.
+ */
+template <typename L, typename R, typename = void>
 struct binary_op_common_type {};
 
 /// @cond
@@ -115,7 +119,7 @@ struct binary_op_common_type {};
 template <typename L, typename R>
   requires(has_common_type_v<L, R>)
 struct binary_op_common_type<L, R> {
-  using type = std::common_type_t<L, R>;
+  using type = cuda::std::common_type_t<L, R>;
 };
 
 template <cudf::concepts::fixed_point L, cuda::std::floating_point R>

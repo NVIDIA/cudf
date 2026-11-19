@@ -275,8 +275,7 @@ constexpr __uint128_t large_power_of_10()
  * @param pow10 The power-of-10 of the denominator, from 0 to 9 inclusive.
  * @return Returns value / 10^pow10
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline T divide_power10_32bit(T value, int pow10)
 {
   // Computing division this way is much faster than the alternatives.
@@ -326,8 +325,7 @@ CUDF_HOST_DEVICE inline T divide_power10_32bit(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator, from 0 to 19 inclusive.
  * @return Returns value / 10^pow10
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline T divide_power10_64bit(T value, int pow10)
 {
   return value / ipow<uint64_t, Radix::BASE_10>(pow10);
@@ -341,8 +339,7 @@ CUDF_HOST_DEVICE inline T divide_power10_64bit(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator, from 0 to 38 inclusive.
  * @return Returns value / 10^pow10.
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T divide_power10_128bit(T value, int pow10)
 {
   return value / ipow<__uint128_t, Radix::BASE_10>(pow10);
@@ -356,8 +353,7 @@ CUDF_HOST_DEVICE inline constexpr T divide_power10_128bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 9 inclusive.
  * @return Returns value * 10^pow10
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_32bit(T value, int pow10)
 {
   // See comments in divide_power10_32bit() for discussion.
@@ -384,8 +380,7 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_32bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 19 inclusive.
  * @return Returns value * 10^pow10
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_64bit(T value, int pow10)
 {
   return value * ipow<uint64_t, Radix::BASE_10>(pow10);
@@ -399,8 +394,7 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_64bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier, from 0 to 38 inclusive.
  * @return Returns value * 10^pow10.
  */
-template <typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T multiply_power10_128bit(T value, int pow10)
 {
   return value * ipow<__uint128_t, Radix::BASE_10>(pow10);
@@ -418,8 +412,7 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10_128bit(T value, int pow10)
  * @param pow10 The power-of-10 of the multiplier.
  * @return Returns value * 10^pow10
  */
-template <typename Rep, typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <typename Rep, cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T multiply_power10(T value, int pow10)
 {
   // Use this function if you have no knowledge of what pow10 might be
@@ -445,8 +438,7 @@ CUDF_HOST_DEVICE inline constexpr T multiply_power10(T value, int pow10)
  * @param pow10 The power-of-10 of the denominator.
  * @return Returns value / 10^pow10
  */
-template <typename Rep, typename T>
-  requires(cuda::std::is_unsigned_v<T>)
+template <typename Rep, cuda::std::unsigned_integral T>
 CUDF_HOST_DEVICE inline constexpr T divide_power10(T value, int pow10)
 {
   // Use this function if you have no knowledge of what pow10 might be
@@ -468,8 +460,7 @@ CUDF_HOST_DEVICE inline constexpr T divide_power10(T value, int pow10)
  * @param bit_shift The number of bits to shift left
  * @return The bit-shifted integer, except max value if UB would occur
  */
-template <typename IntegerType>
-  requires(cuda::std::is_unsigned_v<IntegerType>)
+template <cuda::std::unsigned_integral IntegerType>
 CUDF_HOST_DEVICE inline IntegerType guarded_left_shift(IntegerType value, int bit_shift)
 {
   // Bit shifts larger than this are undefined behavior
@@ -486,8 +477,7 @@ CUDF_HOST_DEVICE inline IntegerType guarded_left_shift(IntegerType value, int bi
  * @param bit_shift The number of bits to shift right
  * @return The bit-shifted integer, which is zero on underflow
  */
-template <typename IntegerType>
-  requires(cuda::std::is_unsigned_v<IntegerType>)
+template <cuda::std::unsigned_integral IntegerType>
 CUDF_HOST_DEVICE inline IntegerType guarded_right_shift(IntegerType value, int bit_shift)
 {
   // Bit shifts larger than this are undefined behavior

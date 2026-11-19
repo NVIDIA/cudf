@@ -70,7 +70,7 @@ struct nullate {
  * @tparam IndexType The type of the dictionary indices
  * @tparam KeyType The type of the dictionary keys
  */
-template <cudf::concepts::index_type IndexType, cuda::std::totally_ordered KeyType>
+template <cudf::concepts::index_type IndexType, cudf::concepts::dictionary_key KeyType>
 struct dictionary_element {
   using index_type = IndexType;  ///< The type of the dictionary indices
   using key_type   = KeyType;    ///< The type of the dictionary keys

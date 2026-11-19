@@ -161,22 +161,30 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
   auto const d_str    = d_strings.element<string_view>(str_idx);
   auto const d_target = d_targets[str_idx];
 
-  // byte range [begin,end) to search and the character position of `begin`
-  auto const [begin, end, start_char_pos] = [d_str, start, stop] {
+  // byte range [begin,end) to search; for character positions, `begin` is past the end of the
+  // string when `start` is more characters than the string has
+  auto const [begin, end, past_end] = [d_str, start, stop] {
     if constexpr (as_bytes) {
+      // a `start` past the end is below `last` below, so no target is found
       auto const size_bytes = d_str.size_bytes();
-      return cuda::std::tuple{start, (stop < 0 || stop > size_bytes) ? size_bytes : stop, start};
+      return cuda::std::tuple{start, (stop < 0 || stop > size_bytes) ? size_bytes : stop, false};
     } else {
       auto const [begin, left_over] = bytes_to_character_position(d_str, start);
-      if (stop < 0) { return cuda::std::tuple{begin, d_str.size_bytes(), start - left_over}; }
-      if (stop <= start) { return cuda::std::tuple{begin, begin, start - left_over}; }
+      if (stop < 0) { return cuda::std::tuple{begin, d_str.size_bytes(), left_over > 0}; }
+      if (stop <= start) { return cuda::std::tuple{begin, begin, left_over > 0}; }
       // we count from `begin` instead of recounting from the beginning of the string
       auto const end =
         begin + cuda::std::get<0>(bytes_to_character_position(
                   string_view(d_str.data() + begin, d_str.size_bytes() - begin), stop - start));
-      return cuda::std::tuple{begin, end, start - left_over};
+      return cuda::std::tuple{begin, end, left_over > 0};
     }
   }();
+
+  // start is past the end of the string, so even an empty target is not found
+  if (past_end) {
+    if (lane_idx == 0) { d_results[str_idx] = -1; }
+    return;
+  }
 
   // each thread compares the target with the thread's individual starting byte
   size_type position = forward ? cuda::std::numeric_limits<size_type>::max() : -1;
@@ -202,7 +210,7 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
       d_results[str_idx] = found ? result : -1;
     } else {
       d_results[str_idx] =
-        found ? start_char_pos + characters_in_string(d_str.data() + begin, result - begin) : -1;
+        found ? start + characters_in_string(d_str.data() + begin, result - begin) : -1;
     }
   }
 }
@@ -345,18 +353,23 @@ std::unique_ptr<column> find(strings_column_view const& input,
                                      stream,
                                      mr);
   // if input is empty or all-null then we are done
-  if (input.size() == input.null_count()) { return results; }
+  if (input.size() == input.null_count()) {
+    results->set_null_mask(
+      cudf::detail::create_null_mask(input.size(), cudf::mask_state::ALL_NULL, stream, mr),
+      input.size());
+    return results;
+  }
+
+  // AND the bitmasks from input and target
+  auto [null_mask, null_count] =
+    cudf::detail::bitmask_and(table_view({input.parent(), target.parent()}), stream, mr);
+  results->set_null_mask(std::move(null_mask), null_count);
 
   // call find utility with target iterator
   auto d_targets  = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(input, target_itr, *results, start, -1, stream, mr);
-
-  // AND the bitmasks from input and target
-  auto [null_mask, null_count] =
-    cudf::detail::bitmask_and(table_view({input.parent(), target.parent()}), stream, mr);
-  results->set_null_mask(std::move(null_mask), null_count);
   return results;
 }
 

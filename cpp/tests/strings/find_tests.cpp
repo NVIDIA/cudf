@@ -549,6 +549,8 @@ TEST_F(StringsFindTest, ZeroSizeStringsColumn)
   EXPECT_EQ(results->size(), 0);
   results = cudf::strings::ends_with(strings_view, strings_view);
   EXPECT_EQ(results->size(), 0);
+  results = cudf::strings::find(strings_view, strings_view);
+  EXPECT_EQ(results->size(), 0);
   results = cudf::strings::count(strings_view, cudf::string_scalar("é"));
   EXPECT_EQ(results->size(), 0);
 }
@@ -572,6 +574,30 @@ TEST_F(StringsFindTest, EmptyTarget)
     {0, 0, 0, 0, 0, 0}, {true, true, false, true, true, true});
   results = cudf::strings::find(strings_view, cudf::string_scalar(""));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_find);
+  // a targets column of only empty strings has no character data
+  cudf::test::strings_column_wrapper targets({"", "", "", "", "", ""});
+  results = cudf::strings::find(strings_view, cudf::strings_column_view(targets));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_find);
+  {
+    // rows longer than 64 bytes on average are searched warp-per-row
+    std::string utf8;  // 100 bytes, 50 characters
+    for (int i = 0; i < 50; ++i) {
+      utf8 += "é";
+    }
+    cudf::test::strings_column_wrapper long_strings({std::string(100, 'a'), utf8});
+    cudf::test::strings_column_wrapper long_targets({"", ""});
+    auto const long_view    = cudf::strings_column_view(long_strings);
+    auto const targets_view = cudf::strings_column_view(long_targets);
+    using expected_t        = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+    results                 = cudf::strings::find(long_view, targets_view);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({0, 0}));
+    results = cudf::strings::find(long_view, targets_view, 50);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({50, 50}));
+    results = cudf::strings::find(long_view, targets_view, 100);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({100, -1}));
+    results = cudf::strings::find(long_view, targets_view, 101);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({-1, -1}));
+  }
 
   auto expected_rfind = cudf::strings::count_characters(strings_view);
   results             = cudf::strings::rfind(strings_view, cudf::string_scalar(""));
@@ -645,10 +671,37 @@ TEST_F(StringsFindTest, AllNull)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
   results = cudf::strings::ends_with(strings_view, targets_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
+  results = cudf::strings::find(strings_view, targets_view);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
   results = cudf::strings::find_instance(strings_view, cudf::string_scalar("e"), 0);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
   results = cudf::strings::count(strings_view, cudf::string_scalar(""));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
+}
+
+TEST_F(StringsFindTest, FindWithTargetsSliced)
+{
+  cudf::test::strings_column_wrapper strings({"Héllo", "", "", "lease"},
+                                             {true, false, false, true});
+  cudf::test::strings_column_wrapper targets({"é", "a", "e", "s"});
+  {
+    // the sliced input rows are all null while the parent column is not
+    auto const sliced_strings = cudf::slice(strings, {1, 3}).front();
+    auto const sliced_targets = cudf::slice(targets, {1, 3}).front();
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
+      {0, 0}, cudf::test::iterators::all_nulls());
+    auto const results = cudf::strings::find(cudf::strings_column_view(sliced_strings),
+                                             cudf::strings_column_view(sliced_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
+  {
+    auto const sliced_strings = cudf::slice(strings, {2, 4}).front();
+    auto const sliced_targets = cudf::slice(targets, {2, 4}).front();
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 3}, {false, true});
+    auto const results = cudf::strings::find(cudf::strings_column_view(sliced_strings),
+                                             cudf::strings_column_view(sliced_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+  }
 }
 
 TEST_F(StringsFindTest, ErrorCheck)

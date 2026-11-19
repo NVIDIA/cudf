@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from packaging.version import parse
 
 import polars as pl
 
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
 
     import cudf_polars.engine.core
     from cudf_polars.engine.core import StreamingEngine
+
+PYARROW_VERSION_LT_24 = parse(pa.__version__) < parse("24")
 
 
 @pytest.fixture(scope="module")
@@ -753,8 +756,7 @@ def test_split_scan_hybrid(
 
 
 @pytest.mark.skipif(
-    int(pa.__version__.split(".", 1)[0]) < 24,
-    reason="pyarrow writes Parquet bloom filters from 24.0",
+    PYARROW_VERSION_LT_24, reason="pyarrow writes Parquet bloom filters from 24.0"
 )
 def test_hybrid_scan_bloom_filters(
     tmp_path: Path, streaming_engine_factory: Callable[..., StreamingEngine]
@@ -769,6 +771,8 @@ def test_hybrid_scan_bloom_filters(
         row_group_size=250,
         bloom_filter_options={"y": {"ndv": 1_000, "fpp": 0.0001}},
     )
+    # Stats keep only the last row group, which holds "v990". A misread bloom
+    # filter would prune it too and return no rows.
     q = pl.scan_parquet(source).filter(pl.col("y") == "v990")
     assert_gpu_result_equal(q, engine=streaming_engine)
 

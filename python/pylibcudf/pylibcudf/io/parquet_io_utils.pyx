@@ -93,6 +93,8 @@ cpdef list fetch_bloom_filters_to_device(
     """
     cdef Stream _stream = _get_stream(stream)
     cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
+    if source_info is None:
+        raise TypeError("source_info must not be None")
     cdef vector[unique_ptr[datasource]] sources
     with nogil:
         sources = make_datasources(source_info.c_obj)
@@ -105,6 +107,8 @@ cpdef list fetch_bloom_filters_to_device(
     cdef vector[byte_range_info] ranges_vec
     cdef ByteRangeInfo bri
     for bri in byte_ranges:
+        if bri is None:
+            raise TypeError("byte_ranges must not contain None")
         ranges_vec.push_back(bri.c_obj)
 
     cdef pair[
@@ -174,6 +178,8 @@ cpdef list fetch_byte_ranges_to_device(
     """
     cdef Stream _stream = _get_stream(stream)
     cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
+    if source_info is None:
+        raise TypeError("source_info must not be None")
     cdef vector[unique_ptr[datasource]] sources = make_datasources(source_info.c_obj)
     if sources.size() != 1:
         raise ValueError(
@@ -184,6 +190,8 @@ cpdef list fetch_byte_ranges_to_device(
     cdef vector[byte_range_info] ranges_vec
     cdef ByteRangeInfo bri
     for bri in byte_ranges:
+        if bri is None:
+            raise TypeError("byte_ranges must not contain None")
         ranges_vec.push_back(bri.c_obj)
 
     cdef pair[vector[device_buffer], vector[device_span[const_uint8_t]]] fetched
@@ -241,6 +249,10 @@ cpdef bytes fetch_page_index_to_host(
     ValueError
         If ``source_info`` does not describe exactly one source.
     """
+    if source_info is None:
+        raise TypeError("source_info must not be None")
+    if page_index_range is None:
+        raise TypeError("page_index_range must not be None")
     cdef vector[unique_ptr[datasource]] sources = make_datasources(source_info.c_obj)
     if sources.size() != 1:
         raise ValueError(

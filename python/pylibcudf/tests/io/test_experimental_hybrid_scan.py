@@ -363,6 +363,57 @@ def test_hybrid_scan_filter_row_groups_with_bloom_filters(
         )
 
 
+@requires_pyarrow_bloom_filters
+def test_fetch_bloom_filters_to_device_all_empty(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+) -> None:
+    """Empty bloom filter ranges give empty views and prune no row groups."""
+    buf = io.BytesIO()
+    pq.write_table(
+        simple_parquet_table,
+        buf,
+        row_group_size=row_group_size,
+        bloom_filter_options={"col1": BLOOM_FILTER_OPTIONS},
+    )
+    options = plc.io.parquet.ParquetReaderOptions()
+    reader = HybridScanReader(extract_parquet_footer(buf.getvalue()), options)
+    row_groups = reader.all_row_groups(options)
+    options.set_filter(
+        Operation(
+            ASTOperator.EQUAL,
+            ColumnNameReference("col1"),
+            Literal(plc.Scalar.from_arrow(pa.scalar("absent"))),
+        )
+    )
+    byte_ranges = [
+        plc.io.text.ByteRangeInfo(r.offset, 0)
+        for r in reader.bloom_filters_byte_ranges(row_groups, options)
+    ]
+    bitsets = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+        plc.io.SourceInfo([buf]),
+        byte_ranges,
+        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+    )
+    assert [b.nbytes for b in bitsets] == [0] * len(row_groups)
+    assert (
+        reader.filter_row_groups_with_bloom_filters(
+            bitsets, row_groups, options
+        )
+        == row_groups
+    )
+
+
+def test_fetch_bloom_filters_to_device_rejects_none() -> None:
+    policy = plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE
+    with pytest.raises(TypeError, match="source_info"):
+        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(None, [], policy)
+    with pytest.raises(TypeError, match="byte_ranges"):
+        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+            plc.io.SourceInfo([io.BytesIO(b"")]), [None], policy
+        )
+
+
 def test_hybrid_scan_column_chunk_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,

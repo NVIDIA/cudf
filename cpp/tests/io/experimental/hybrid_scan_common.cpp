@@ -361,7 +361,7 @@ std::vector<std::vector<cudf::size_type>> filter_row_groups_with_dictionaries(
 }
 
 template <typename T, size_t NumTableConcats, bool IsConstantStrings, bool IsNullable>
-std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const* get_parquet_with_stats(
+std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const& get_parquet_with_stats(
   cudf::size_type str_col_value,
   cudf::io::compression_type compression,
   std::vector<std::string> column_names,
@@ -384,7 +384,7 @@ std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const* get_parq
                                column_order,
                                reinterpret_cast<std::uintptr_t>(stream.get())};
   if (auto const it = stats_fixtures->inputs.find(key); it != stats_fixtures->inputs.end()) {
-    return &it->second;
+    return it->second;
   }
 
   auto col0 = testdata::ascending<T>();
@@ -480,13 +480,13 @@ std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const* get_parq
 
   cudf::io::write_parquet(out_opts, stream);
 
-  return &stats_fixtures->inputs
-            .emplace(std::move(key), std::pair{std::move(table), std::move(buffer)})
-            .first->second;
+  return stats_fixtures->inputs
+    .emplace(std::move(key), std::pair{std::move(table), std::move(buffer)})
+    .first->second;
 }
 
 #define INSTANTIATE_GET_PARQUET_WITH_STATS(T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE)             \
-  template std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const*                 \
+  template std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const&                 \
   get_parquet_with_stats<T, NUM_CONCATS, CONSTANT_STRINGS, NULLABLE>(cudf::size_type,              \
                                                                      cudf::io::compression_type,   \
                                                                      std::vector<std::string>,     \

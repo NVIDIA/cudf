@@ -708,8 +708,8 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
   auto pairs2 = to_sorted_pairs(result2);
   auto pairs3 = to_sorted_pairs(result3);
 
-  EXPECT_TRUE(std::equal(pairs1.begin(), pairs1.end(), pairs2.begin()));
-  EXPECT_TRUE(std::equal(pairs1.begin(), pairs1.end(), pairs3.begin()));
+  EXPECT_EQ(pairs1, pairs2);
+  EXPECT_EQ(pairs1, pairs3);
 
   for (auto const& [left_idx, right_idx] : pairs1) {
     EXPECT_GE(left_idx, 0);

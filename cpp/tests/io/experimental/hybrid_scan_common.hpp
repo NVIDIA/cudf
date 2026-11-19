@@ -141,14 +141,21 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
  * @note `column_order` must be a permutation of {0, 1, 2}; passing a non-permutation (e.g.
  *       {0, 0, 1}) is undefined behavior.
  *
- * @return Non-null pointer to the shared table and Parquet host buffer, owned by the GTest
+ * @note The stream and the memory resource used to allocate a cached fixture must remain alive
+ * until the GTest environment teardown releases it; test-local streams and resources are unsafe.
+ *
+ * @return Reference to the shared table and Parquet host buffer, owned by the GTest
  * environment until teardown
  */
 template <typename T,
           size_t NumTableConcats,
           bool IsConstantStrings = true,
           bool IsNullable        = false>
-[[nodiscard]] std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const*
+// The returned reference belongs to the cache, not to any temporary argument.
+#if __has_cpp_attribute(gnu::no_dangling)
+[[gnu::no_dangling]]
+#endif
+[[nodiscard]] std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const&
 get_parquet_with_stats(cudf::size_type str_col_value             = 100,
                        cudf::io::compression_type compression    = cudf::io::compression_type::AUTO,
                        std::vector<std::string> column_names     = {"col0", "col1", "col2"},

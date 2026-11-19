@@ -19,6 +19,7 @@
 #include <thrust/execution_policy.h>
 #endif
 
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
 

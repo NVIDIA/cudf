@@ -14,6 +14,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 
 namespace cudf::io::parquet::detail {
 

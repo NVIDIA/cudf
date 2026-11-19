@@ -521,14 +521,6 @@ class StringFunction(Expr):
             child, arg = self.children
             plc_column = child.evaluate(df, context=context).obj
             plc_targets = arg.evaluate(df, context=context).obj
-            if plc_column.size() == 0:
-                # contains_multiple launches a kernel with grid_1d sized
-                # against the input rows, which asserts num_blocks > 0.
-                # Skip the kernel call on empty input.
-                return Column(
-                    make_empty_column(self.dtype, df.stream),
-                    dtype=self.dtype,
-                )
             if ascii_case_insensitive:
                 plc_column = plc.strings.case.to_lower(plc_column, stream=df.stream)
                 plc_targets = plc.strings.case.to_lower(plc_targets, stream=df.stream)

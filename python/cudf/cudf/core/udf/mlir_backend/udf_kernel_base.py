@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import functools
 from abc import ABC, abstractmethod
+from typing import Any
 
 import numpy as np
 from numba_cuda_mlir import cuda, types
@@ -26,11 +28,44 @@ from cudf.core.udf.utils import (
     _mask_get,
     _masked_array_type_from_col,
     _supported_cols_from_frame,
-    precompiled as kernel_cache,
 )
 from cudf.utils.performance_tracking import _performance_tracking
 
 __all__ = ["ApplyKernelBase"]
+
+
+class _KernelCacheKey:
+    """
+    Cache key for compiled kernels that hashes on the compilation key only.
+
+    ``kernel`` is the ``ApplyKernelBase`` that compiles on a cache miss. It
+    must be cleared after the lookup so the cache does not keep the kernel's
+    frame (and its device memory) alive.
+    """
+
+    __slots__ = ("kernel", "key")
+
+    def __init__(self, key: tuple, kernel: "ApplyKernelBase") -> None:
+        self.key = key
+        self.kernel: ApplyKernelBase | None = kernel
+
+    def __hash__(self) -> int:
+        return hash(self.key)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, _KernelCacheKey) and self.key == other.key
+
+
+@functools.lru_cache(maxsize=32)
+def _compile_kernel_cached(cache_key: _KernelCacheKey) -> tuple[Any, np.dtype]:
+    assert cache_key.kernel is not None
+    kernel, scalar_return_type = cache_key.kernel.compile_kernel()
+    np_return_type = (
+        numpy_support.as_dtype(scalar_return_type)
+        if scalar_return_type.is_internal
+        else scalar_return_type.np_dtype
+    )
+    return kernel, np_return_type
 
 
 class ApplyKernelBase(ABC):
@@ -192,21 +227,13 @@ class ApplyKernelBase(ABC):
         the kernel and store it in the cache.
         """
 
-        cache_key = _generate_cache_key(
-            self.frame, self.func, self.args, suffix=self.kernel_type
+        cache_key = _KernelCacheKey(
+            _generate_cache_key(
+                self.frame, self.func, self.args, suffix=self.kernel_type
+            ),
+            self,
         )
-
-        if kernel_cache.get(cache_key) is not None:
-            kernel, masked_or_scalar = kernel_cache[cache_key]
-            return kernel, masked_or_scalar
-
-        kernel, scalar_return_type = self.compile_kernel()
-
-        np_return_type = (
-            numpy_support.as_dtype(scalar_return_type)
-            if scalar_return_type.is_internal
-            else scalar_return_type.np_dtype
-        )
-
-        kernel_cache[cache_key] = (kernel, np_return_type)
-        return kernel, np_return_type
+        try:
+            return _compile_kernel_cached(cache_key)
+        finally:
+            cache_key.kernel = None

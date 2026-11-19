@@ -557,12 +557,33 @@ class NumericalColumn(NumericalBaseColumn):
                     f"{other_cudf_dtype.type.__name__}"
                 )
             if self.dtype.kind == "b" and other_cudf_dtype.kind == "b":
+                # Retain nullable Boolean dtype regardless of operand order.
+                bool_dtype = self.dtype
+                if (
+                    op in {"__and__", "__or__"}
+                    and not is_pandas_nullable_extension_dtype(self.dtype)
+                    and is_pandas_nullable_extension_dtype(other_cudf_dtype)
+                ):
+                    bool_dtype = other_cudf_dtype
                 out_dtype = get_dtype_of_same_kind(
-                    self.dtype, np.dtype(np.bool_)
+                    bool_dtype, np.dtype(np.bool_)
                 )
             elif self.dtype.kind == "b" or other_cudf_dtype.kind == "b":
                 out_dtype = get_dtype_of_same_kind(
                     out_dtype, np.dtype(np.bool_)
+                )
+
+            if (
+                op in {"__and__", "__or__"}
+                and self.dtype.kind == "b"
+                and other_cudf_dtype.kind == "b"
+                and out_dtype.kind == "b"
+                and is_pandas_nullable_extension_dtype(out_dtype)
+            ):
+                op = (
+                    "__null_logical_and__"
+                    if op == "__and__"
+                    else "__null_logical_or__"
                 )
 
         elif (
@@ -1402,7 +1423,9 @@ def _normalize_find_and_replace_input(
     col_to_normalize_dtype = normalized_column.dtype
     if isinstance(col_to_normalize, list):
         if normalized_column.is_all_null:
-            normalized_column = normalized_column.astype(input_column_dtype)
+            normalized_column = column_empty(
+                len(normalized_column), dtype=input_column_dtype
+            )
         if normalized_column.can_cast_safely(input_column_dtype):
             return normalized_column.astype(input_column_dtype)
         col_to_normalize_dtype = normalized_column._min_column_type(  # type: ignore[attr-defined]

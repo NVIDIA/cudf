@@ -3307,6 +3307,24 @@ def test_datetimelike_arrow_backed_comparisons_pandas_compat(
         assert_eq(comparison_op(s, other), comparison_op(gs, gother))
 
 
+@pytest.mark.parametrize(
+    "left_dtype, right_dtype",
+    [
+        ("datetime64[ns]", "timestamp[ns][pyarrow]"),
+        ("timestamp[ns][pyarrow]", "datetime64[ns]"),
+    ],
+)
+def test_mixed_timestamp_comparisons_pandas_compat(
+    left_dtype, right_dtype, comparison_op
+):
+    left = pd.Series([1, None, 3, 4], dtype=left_dtype)
+    right = pd.Series([None, 2, 3, 5], dtype=right_dtype)
+    expected = comparison_op(left, right)
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = comparison_op(cudf.from_pandas(left), cudf.from_pandas(right))
+    assert_eq(expected, result)
+
+
 def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):
     s = pd.Series(
         pd.arrays.ArrowExtensionArray(

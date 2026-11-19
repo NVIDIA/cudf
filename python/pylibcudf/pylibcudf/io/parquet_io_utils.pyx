@@ -93,7 +93,9 @@ cpdef list fetch_bloom_filters_to_device(
     """
     cdef Stream _stream = _get_stream(stream)
     cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
-    cdef vector[unique_ptr[datasource]] sources = make_datasources(source_info.c_obj)
+    cdef vector[unique_ptr[datasource]] sources
+    with nogil:
+        sources = make_datasources(source_info.c_obj)
     if sources.size() != 1:
         raise ValueError(
             f"fetch_bloom_filters_to_device requires exactly one source, "

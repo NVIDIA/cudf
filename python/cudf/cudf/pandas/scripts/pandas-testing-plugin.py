@@ -12331,10 +12331,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_lf_first_hourly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_regular_first": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_shared_ax": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[DataFrame-idx0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[DataFrame-idx1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[Series-idx0]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_pickle_fig[Series-idx3]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_upsample": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_y_ts": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/plotting/test_datetimelike.py::TestTSPlot::test_to_weekly_resampling_disallow_how_kwd": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12421,10 +12417,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_end_of_string[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12482,8 +12474,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_index_raises": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_index_one_two_groups": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_lookarounds[string=object-(ab)-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_extract.py::test_extract_optional_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_optional_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12586,11 +12576,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
-    # 96216291366). Nondeterministic rather than a deterministic
-    # incompatibility: test_to_datetime_iso8601_fails passed in the previous
-    # run of this same shard.
-    "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_to_datetime_iso8601_fails[True-2012-01-01-%Y-%m-%d %H]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
 }
 
 # Keep keys in alphabetical order

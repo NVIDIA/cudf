@@ -1093,20 +1093,36 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releaseArenaMemoryResource(JNIEnv
   JNI_CATCH(env, );
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
-  JNIEnv* env, jclass clazz, jlong init, jlong release, jboolean fabric)
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Rmm_newCudaAsyncMemoryResource(
+  JNIEnv* env, jclass clazz, jlong init, jlong release, jint handle_type)
 {
+  // handle_type is RmmCudaAsyncMemoryResource.HandleType.nativeId, which matches
+  // allocation_handle_type. Its values are the cudaMemAllocationHandleType values, except that RMM
+  // spells fabric as 0x8 because cudaMemHandleTypeFabric is not defined before CUDA 12.4.
+  using ht        = rmm::mr::cuda_async_memory_resource::allocation_handle_type;
+  auto const type = static_cast<ht>(handle_type);
+  JNI_ARG_CHECK(env,
+                type == ht::none || type == ht::posix_file_descriptor || type == ht::fabric,
+                "unsupported handle type",
+                nullptr);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
 
-    auto handle_type =
-      fabric ? std::optional{rmm::mr::cuda_async_memory_resource::allocation_handle_type::fabric}
-             : std::nullopt;
+    auto const export_type = type == ht::none ? std::nullopt : std::optional<ht>{type};
 
-    return make_jni_resource(rmm::mr::cuda_async_memory_resource{init, release, handle_type});
+    // {resource handle, cudaMemPool_t}. The pool handle is read here because the resource is
+    // type-erased once it is wrapped for Java.
+    cudf::jni::native_jlongArray result(env, 2);
+    rmm::mr::cuda_async_memory_resource res{init, release, export_type};
+    cudaMemPool_t pool = res.pool_handle();
+    // The first element access can throw. Do it while res is still owned here, so a failure
+    // cannot leak the resource that make_jni_resource hands off as a raw handle.
+    result[1] = reinterpret_cast<jlong>(pool);
+    result[0] = make_jni_resource(std::move(res));
+    return result.get_jArray();
   }
-  JNI_CATCH(env, 0);
+  JNI_CATCH(env, nullptr);
 }
 
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_Rmm_releaseCudaAsyncMemoryResource(JNIEnv* env,

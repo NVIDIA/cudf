@@ -1,10 +1,27 @@
 # AI Code Review Guidelines - cuDF C++/CUDA
 
-**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Focus ONLY on CRITICAL and HIGH issues.
+**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Prioritize concrete correctness, compatibility, performance, and test coverage risks; assign severity by impact.
 
-**Target**: Sub-3% false positive rate. Be direct, concise, minimal.
+**Evidence**: State a concrete trigger and consequence. Treat precision as an evaluation metric, not a percentage that a prompt can guarantee.
 
 **Context**: cuDF C++ layer (libcudf) provides GPU-accelerated DataFrame operations using CUDA, with dependencies on RMM, libcudacxx, thrust, and CUB. The authoritative reference for libcudf conventions is `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`.
+
+## Regression evidence
+
+- Check that tests exercise the intended dispatch path, including wide offsets,
+  selected codecs, nullable and required inputs, and sizes across warp/block or
+  parser-window boundaries; flag a concrete bypass rather than requesting every
+  combination for every change.
+- For numerical changes, inspect NaN, infinity, overflow, cancellation, and
+  reduction-order behavior against the intended reference semantics.
+- Check asynchronous buffer ownership through completion, including exception
+  paths and repeated use on different streams.
+- For optimization claims, identify the affected small and large workloads,
+  initialization cost, peak memory, and cold versus warm JIT behavior.
+  Do not infer a measured regression from a source-level concern.
+- Before proposing a replacement for custom code, name the existing helper or
+  library primitive and check its semantic constraints; measurements can justify
+  keeping the custom implementation.
 
 ## IGNORE These Issues
 

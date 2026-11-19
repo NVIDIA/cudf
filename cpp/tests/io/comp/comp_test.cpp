@@ -479,22 +479,10 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
       }
     }
   }
-  {
-    // Host decompression forced on where supported: only Brotli has no host decompressor, so every
-    // other element must not need device scratch space
-    tmp_env_var const host_decomp{host_decomp_env_var, "ON"};
-    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "STABLE"};
-    auto const sizes = check();
-    for (size_t i = 0; i < infos.size(); ++i) {
-      if (infos[i].type != compression_type::BROTLI) { EXPECT_EQ(sizes[i], 0) << "element " << i; }
-    }
-  }
-  {
-    // nvCOMP disabled: libcudf kernels, only the Brotli kernel needs scratch space. Compare against
-    // independently computed sizes, since `check` cannot catch a wrong engine choice that both
-    // functions share.
-    tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
-    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "OFF"};
+  for (auto const [host, policy] : {std::pair{"ON", "STABLE"}, std::pair{"OFF", "OFF"}}) {
+    // Host decompression forced on, or nvCOMP disabled: only the Brotli kernel needs scratch space
+    tmp_env_var const host_decomp{host_decomp_env_var, host};
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, policy};
     auto const sizes = check();
     for (size_t i = 0; i < infos.size(); ++i) {
       auto const expected = infos[i].type == compression_type::BROTLI and infos[i].num_pages > 0

@@ -164,14 +164,16 @@ public class JoinMatchContext implements AutoCloseable {
         throw new IllegalArgumentException("Partition " + i +
             " must be a left and right gather map pair");
       }
-      leftLens[i] = partition[0].getRowCount();
-      rightLens[i] = partition[1].getRowCount();
+      GatherMap leftPartial = partition[0];
+      GatherMap rightPartial = partition[1];
+      leftLens[i] = leftPartial.getRowCount();
+      rightLens[i] = rightPartial.getRowCount();
       if (leftLens[i] != rightLens[i]) {
         throw new IllegalArgumentException("Partition " + i +
             " gather maps differ in length, left: " + leftLens[i] + " right: " + rightLens[i]);
       }
-      leftAddrs[i] = partition[0].getBufferAddress();
-      rightAddrs[i] = partition[1].getBufferAddress();
+      leftAddrs[i] = leftPartial.getBufferAddress();
+      rightAddrs[i] = rightPartial.getBufferAddress();
     }
     long[] data = finalizePartitionedFullJoin(leftAddrs, leftLens, rightAddrs, rightLens,
         (int) leftRowCount, (int) hashJoin.getRowCount());

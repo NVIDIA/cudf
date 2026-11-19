@@ -237,7 +237,9 @@ class QuentBrowserRole:
     format_version: int
     context_count: int
     event_count: int
-    model_name: str = "cudf-polars"
+    model_name: Literal["cudf-polars"] = dataclasses.field(
+        default="cudf-polars", init=False
+    )
 
 
 Role = NightlyRole | NsysRole | QuentRole | QuentBrowserRole

@@ -9,8 +9,26 @@
   },
   "scope": {
     "component": "Python",
-    "labels": ["Python", "cudf.pandas", "cudf-polars", "pylibcudf"],
-    "team_slugs": ["cudf-python-codeowners", "cudf-polars-codeowners"]
+    "labels": [
+      "Python",
+      "cudf.pandas",
+      "cudf-polars",
+      "pylibcudf",
+      "libcudf"
+    ],
+    "team_slugs": [
+      "cudf-python-codeowners",
+      "cudf-polars-codeowners",
+      "cudf-cpp-codeowners",
+      "cudf-cmake-codeowners"
+    ],
+    "label_components": {
+      "Python": "Python",
+      "cudf.pandas": "Python",
+      "cudf-polars": "Python",
+      "pylibcudf": "Python",
+      "libcudf": "C++"
+    }
   },
   "primary_contact": "vyasr",
   "escalation_contact": "vyasr",

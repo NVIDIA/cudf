@@ -110,6 +110,16 @@ def notification_state(action, config, history, now):
     }
 
 
+def component(item, config):
+    labels = {label["name"] for label in item["issue"]["labels"]}
+    # Prefer the first configured match so cross-component PRs keep stable cards.
+    components = config["scope"].get("label_components", {})
+    return next(
+        (name for label, name in components.items() if label in labels),
+        config["scope"]["component"],
+    )
+
+
 def make_action(
     item,
     row,
@@ -125,6 +135,7 @@ def make_action(
     discriminator="",
 ):
     issue = item["issue"]
+    action_component = component(item, config)
     identity = [
         issue["html_url"],
         kind,
@@ -166,7 +177,7 @@ def make_action(
         "kind": kind,
         "description": description,
         "owner": owner,
-        "component": config["scope"]["component"],
+        "component": action_component,
         "status": "Awaiting action",
         "since": since,
         "age_days": age,
@@ -178,7 +189,7 @@ def make_action(
         "project_fields": {
             "Status": "Awaiting action",
             "Next action": kind,
-            "Component": config["scope"]["component"],
+            "Component": action_component,
             "Attention": attention,
             "Waiting since": parse_time(since).date().isoformat()
             if since
@@ -194,7 +205,7 @@ def candidates(item, config, policy, now, routing_history=None):
     issue = item["issue"]
     labels = {label["name"] for label in issue["labels"]}
     if not labels.intersection(config["scope"]["labels"]):
-        return [], "No confirmed Python component label"
+        return [], "No confirmed configured component label"
     evidence = lifecycle(item, policy)
     row = classify(item, policy, now, routing_history, evidence)
     if row["queue"] in {
@@ -538,13 +549,13 @@ def preview(
 
 def render_markdown(plan):
     lines = [
-        "# Python action preview",
+        "# Action preview",
         "",
         plan["mode"],
         "",
         f"As of {plan['as_of']}; {len(plan['actions'])} proposed action cards.",
         "",
-        "Candidates come from the saved sample, not the complete Python backlog. "
+        "Candidates come from the saved sample, not the complete repository backlog. "
         "Unlabeled issues require component classification before inclusion.",
         "",
         "Reviewer/routing escalation clocks start at successful notification. "

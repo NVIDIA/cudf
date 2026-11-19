@@ -133,7 +133,7 @@ These tests run without cuDF, CUDA, GitHub credentials, or network access.
 
 ## Project setup and configuration
 
-[config.json](config.json) records the agreed NVIDIA Project, Python scope,
+[config.json](config.json) records the agreed NVIDIA Project, Python and C++ scope,
 `vyasr` as primary/escalation contact, Slack destination, and reminder policy.
 Slack IDs are identifiers, not posting credentials. Delivery is disabled.
 The Project is private; its intended audience needs read access before Slack
@@ -169,7 +169,7 @@ python3 ci/repo_queue/actions.py /tmp/cudf-queue/python-snapshot.json \
 
 `actions.py` emits a proposal; it has no publication or delivery capability.
 Each requested individual reviewer gets an independent action and clock.
-Team-only Python requests route to the primary contact to name a reviewer;
+Team-only in-scope requests route to the primary contact to name a reviewer;
 an existing named reviewer prevents a redundant team-routing action.
 An outstanding reviewer action remains visible while a different person owes
 an author response on the same PR.
@@ -260,7 +260,7 @@ Add `--apply` to synchronize Project-only draft action cards, or add both
 `--apply --send-dm` to synchronize and send notifications to the primary
 contact's bot DM. The token prompt and `SLACK_BOT_TOKEN` behavior match the
 smoke test. The production channel is never a delivery target for this command.
-Real owner mentions are retained. At most ten source issues/PRs can be selected.
+Real owner mentions are retained. At most 50 distinct source issues/PRs can be selected.
 Run from one machine and use the same output directory for each tracking run;
 the local lock prevents concurrent runs using that directory. Cross-machine
 concurrent writers are not supported.
@@ -406,10 +406,15 @@ reconciled through this command.
 
 ## Scheduled DM delivery
 
-[scheduled.json](scheduled.json) limits unattended runs to the three agreed
+[scheduled.json](scheduled.json) limits unattended runs to an explicit selection of up to 50
 tracked sources. It is an explicit allowlist, including closed sources so their
 cards can complete. Editing it is the way to expand the selection. No sampling or
 backlog-wide collection happens in the scheduled job.
+
+The current selection spans Python and C++ PRs. Component labels populate the
+board using the ordered `scope.label_components` mapping; Python takes precedence
+for PRs carrying both labels. Both components use `vyasr` for routing and
+escalation, and all Slack messages continue to go only to his bot DM.
 
 The workflow in `.github/workflows/repo-queue.yml` runs daily at 17:17 UTC
 and can be dispatched manually. It only runs in `NVIDIA/cudf` on its default

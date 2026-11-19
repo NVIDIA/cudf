@@ -38,6 +38,24 @@ def snapshot(data):
 
 
 class ActionTests(unittest.TestCase):
+    def test_component_labels_preserve_python_and_enable_cpp(self):
+        for labels, expected in [
+            (["libcudf"], "C++"),
+            (["Python", "libcudf"], "Python"),
+            (["libcudf", "Python"], "Python"),
+        ]:
+            with self.subTest(labels=labels):
+                data = python_item()
+                data["issue"]["labels"] = [{"name": label} for label in labels]
+                request(data, "reviewer")
+                actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+                self.assertTrue(actions)
+                for action in actions:
+                    self.assertEqual(action["component"], expected)
+                    self.assertEqual(
+                        action["project_fields"]["Component"], expected
+                    )
+
     def test_bot_changes_requests_route_to_a_human(self):
         data = python_item()
         data["issue"]["user"] = {"login": "dependabot[bot]", "type": "Bot"}
@@ -419,33 +437,46 @@ class ActionTests(unittest.TestCase):
         )
 
     def test_team_only_request_routes_to_primary_for_named_reviewer(self):
-        data = python_item()
-        data["pull_request"]["requested_teams"] = [
-            {"slug": "cudf-python-codeowners"}
-        ]
-        data["timeline"] = [
-            {
-                "event": "review_requested",
-                "created_at": REQUESTED,
-                "requested_team": {"slug": "cudf-python-codeowners"},
-            }
-        ]
-        actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
-        self.assertEqual(len(actions), 1)
-        self.assertEqual(actions[0]["owner"], "vyasr")
-        self.assertEqual(actions[0]["kind"], "Assign reviewer")
-        request(data, "named")
-        actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
-        self.assertEqual([action["owner"] for action in actions], ["named"])
+        for label, team in [
+            ("Python", "cudf-python-codeowners"),
+            ("libcudf", "cudf-cpp-codeowners"),
+            ("libcudf", "cudf-cmake-codeowners"),
+        ]:
+            with self.subTest(team=team):
+                data = python_item()
+                data["issue"]["labels"] = [{"name": label}]
+                data["pull_request"]["requested_teams"] = [{"slug": team}]
+                data["timeline"] = [
+                    {
+                        "event": "review_requested",
+                        "created_at": REQUESTED,
+                        "requested_team": {"slug": team},
+                    }
+                ]
+                actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+                self.assertEqual(len(actions), 1)
+                self.assertEqual(actions[0]["owner"], "vyasr")
+                self.assertEqual(actions[0]["kind"], "Assign reviewer")
+                request(data, "named")
+                actions = preview(snapshot(data), POLICY, CONFIG)["actions"]
+                self.assertEqual(
+                    [action["owner"] for action in actions], ["named"]
+                )
 
-    def test_unlabeled_issue_and_cpp_only_work_are_not_silently_routed_to_python(
+    def test_unlabeled_and_unsupported_work_require_component_classification(
         self,
     ):
-        data = item()
-        request(data)
-        result = preview(snapshot(data), POLICY, CONFIG)
-        self.assertEqual(result["actions"], [])
-        self.assertIn("No confirmed Python", result["omitted"][0]["reason"])
+        for labels in ([], [{"name": "Java"}]):
+            with self.subTest(labels=labels):
+                data = item()
+                data["issue"]["labels"] = labels
+                request(data)
+                result = preview(snapshot(data), POLICY, CONFIG)
+                self.assertEqual(result["actions"], [])
+                self.assertIn(
+                    "No confirmed configured component",
+                    result["omitted"][0]["reason"],
+                )
 
     def test_drafts_do_not_create_routine_actions(self):
         data = python_item()

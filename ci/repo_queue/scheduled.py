@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from progress import read_stage, record_stage
+from selection import validate_numbers
 from slack_dm_test import slack_token
 
 ROOT = Path(__file__).parent
@@ -23,15 +24,7 @@ def command(selection, mode, output_dir):
     if not isinstance(selection, dict):
         raise ValueError("scheduled selection must be an object")
     numbers = selection.get("numbers")
-    if (
-        not isinstance(numbers, list)
-        or not 1 <= len(numbers) <= 10
-        or any(type(number) is not int or number < 1 for number in numbers)
-        or len(set(numbers)) != len(numbers)
-    ):
-        raise ValueError(
-            "scheduled numbers must contain 1–10 distinct positive integers"
-        )
+    validate_numbers(numbers)
     if mode not in {"preview", "refresh", "dm", "rehearsal"}:
         raise ValueError("unknown tracking mode")
     if mode == "rehearsal":

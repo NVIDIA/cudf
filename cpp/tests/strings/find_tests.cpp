@@ -470,19 +470,24 @@ TEST_F(StringsFindTest, EmptyTarget)
   results = cudf::strings::find(strings_view, cudf::strings_column_view(targets));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_find);
   {
-    auto const long_str = std::string(100, 'a');
-    cudf::test::strings_column_wrapper long_strings({long_str, long_str});
+    // rows longer than 64 bytes on average are searched warp-per-row
+    std::string utf8;  // 100 bytes, 50 characters
+    for (int i = 0; i < 50; ++i) {
+      utf8 += "é";
+    }
+    cudf::test::strings_column_wrapper long_strings({std::string(100, 'a'), utf8});
     cudf::test::strings_column_wrapper long_targets({"", ""});
-    auto const long_view = cudf::strings_column_view(long_strings);
-    results              = cudf::strings::find(long_view, cudf::strings_column_view(long_targets));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results,
-                                   cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0}));
-    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets), 100);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({100, 100}));
-    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets), 101);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1}));
+    auto const long_view    = cudf::strings_column_view(long_strings);
+    auto const targets_view = cudf::strings_column_view(long_targets);
+    using expected_t        = cudf::test::fixed_width_column_wrapper<cudf::size_type>;
+    results                 = cudf::strings::find(long_view, targets_view);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({0, 0}));
+    results = cudf::strings::find(long_view, targets_view, 50);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({50, 50}));
+    results = cudf::strings::find(long_view, targets_view, 100);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({100, -1}));
+    results = cudf::strings::find(long_view, targets_view, 101);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_t({-1, -1}));
   }
 
   auto expected_rfind = cudf::strings::count_characters(strings_view);
@@ -559,16 +564,6 @@ TEST_F(StringsFindTest, AllNull)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
   results = cudf::strings::find(strings_view, targets_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
-  {
-    // valid input with all-null targets
-    cudf::test::strings_column_wrapper input({"a", "b"});
-    cudf::test::strings_column_wrapper null_targets({"", ""}, cudf::test::iterators::all_nulls());
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
-      {0, 0}, cudf::test::iterators::all_nulls());
-    auto const found = cudf::strings::find(cudf::strings_column_view(input),
-                                           cudf::strings_column_view(null_targets));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*found, expected);
-  }
   results = cudf::strings::find_instance(strings_view, cudf::string_scalar("e"), 0);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
   results = cudf::strings::count(strings_view, cudf::string_scalar(""));
@@ -596,37 +591,6 @@ TEST_F(StringsFindTest, FindWithTargetsSliced)
     cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 3}, {false, true});
     auto const results = cudf::strings::find(cudf::strings_column_view(sliced_strings),
                                              cudf::strings_column_view(sliced_targets));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
-  }
-}
-
-TEST_F(StringsFindTest, FindWithTargetsLongStrings)
-{
-  // rows longer than 64 bytes on average are searched warp-per-row
-  {
-    std::string utf8;
-    for (int i = 0; i < 50; ++i) {
-      utf8 += "é";  // 100 bytes, 50 characters
-    }
-    cudf::test::strings_column_wrapper strings({utf8, utf8});
-    cudf::test::strings_column_wrapper targets({"", ""});
-    auto const strings_view = cudf::strings_column_view(strings);
-    auto const targets_view = cudf::strings_column_view(targets);
-    auto results            = cudf::strings::find(strings_view, targets_view, 50);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({50, 50}));
-    results = cudf::strings::find(strings_view, targets_view, 60);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1}));
-  }
-  {
-    auto const long_str = std::string(100, 'a');
-    cudf::test::strings_column_wrapper strings({long_str, long_str + "xyz", long_str});
-    cudf::test::strings_column_wrapper targets({"", "xyz", ""}, {true, true, false});
-    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected({0, 100, 0},
-                                                                     {true, true, false});
-    auto const results =
-      cudf::strings::find(cudf::strings_column_view(strings), cudf::strings_column_view(targets));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   }
 }

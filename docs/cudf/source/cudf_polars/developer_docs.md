@@ -636,7 +636,10 @@ Outputs default to `coverage-results/cudf-polars-comparison/`. Keep
 `.coverage.local`, `.coverage.upstream-in-memory`, `.coverage.upstream-spmd`,
 and `coverage-comparison.json` together. The JSON classifies local-only,
 upstream-only, and shared lines with up to 20 context samples per line;
-the databases retain all contexts.
+the databases retain all contexts. The nightly `cudf-polars-coverage-comparison`
+job runs this command on one configuration and uploads these files together as
+the `cudf-polars-coverage-comparison` GitHub artifact, including
+after suite failures. PR jobs do not run the comparison.
 
 To retrieve all local contexts, replace the filename and line below with
 exact values from the report:

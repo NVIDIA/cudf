@@ -63,6 +63,8 @@ def rehearse(config, directory, sender, start, progress_dir=None):
     directory.mkdir(parents=True, exist_ok=True)
     progress_dir = progress_dir or directory
     record_stage(progress_dir, "configuration")
+    member = recipient(config)
+    route = "dm-rehearsal:" + member
     clock_path = directory / "clock.json"
     if not clock_path.exists():
         save_json(clock_path, {"start": start})
@@ -73,8 +75,6 @@ def rehearse(config, directory, sender, start, progress_dir=None):
     journal = (
         json.loads(journal_path.read_text()) if journal_path.exists() else {}
     )
-    member = recipient(config)
-    route = "dm-rehearsal:" + member
     if recover_receipts(cards, route, journal):
         raise RuntimeError(
             "Uncertain rehearsal send; inspect the DM before retrying"

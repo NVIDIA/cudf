@@ -78,6 +78,25 @@ class SlackDMTests(unittest.TestCase):
             )
             self.assertEqual(json.loads(request.data)["channel"], "U123")
 
+    def test_confirmed_token_and_permission_errors_are_rejections(self):
+        for code in (
+            "not_allowed_token_type",
+            "token_expired",
+            "token_revoked",
+            "ratelimited",
+            "missing_scope",
+        ):
+            with ExitStack() as stack:
+                stack.enter_context(self.subTest(code=code))
+                urlopen = stack.enter_context(
+                    patch("slack_dm_test.urllib.request.urlopen")
+                )
+                urlopen.return_value = BytesIO(
+                    json.dumps({"ok": False, "error": code}).encode()
+                )
+                with self.assertRaises(SlackRejected):
+                    post("secret", payload("U123", "test"))
+
     def test_partial_success_and_unknown_slack_errors_remain_ambiguous(self):
         for code in ("internal_error", "fatal_error", "unknown_server_error"):
             with ExitStack() as stack:

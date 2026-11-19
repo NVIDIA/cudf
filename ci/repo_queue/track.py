@@ -33,8 +33,17 @@ def delivery_history(cards, route):
     }
 
 
-def acknowledge(cards, key, route, pending, receipt):
+def delivery_card(cards, key):
     card = cards.cards[key]
+    if card["item"]["isArchived"]:
+        raise RuntimeError(
+            "Restore archived Project card before recovering delivery: " + key
+        )
+    return card
+
+
+def acknowledge(cards, key, route, pending, receipt):
+    card = delivery_card(cards, key)
     data = deepcopy(card["data"])
     record = data["deliveries"][route]
     if record.get("pending") and record["pending"]["id"] != pending["id"]:
@@ -79,7 +88,7 @@ def acknowledge_with_retry(cards, key, route, pending, receipt):
 
 
 def clear_rejected_delivery(cards, key, route, pending):
-    data = deepcopy(cards.cards[key]["data"])
+    data = deepcopy(delivery_card(cards, key)["data"])
     record = data["deliveries"][route]
     if not record.get("pending"):
         return
@@ -95,6 +104,7 @@ def recover_receipts(cards, route, journal):
         pending = card["data"]["deliveries"].get(route, {}).get("pending")
         if not pending:
             continue
+        delivery_card(cards, key)
         receipt = journal.get(pending["id"])
         if receipt:
             acknowledge_with_retry(cards, key, route, pending, receipt)

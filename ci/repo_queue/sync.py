@@ -450,7 +450,10 @@ class ProjectCards:
         card = self.cards.get(key)
         if card and card["item"]["isArchived"]:
             return
+        previous_data = deepcopy(card["data"]) if card else None
         data = deepcopy(data)
+        if self.apply and card and "Status" in values:
+            self.check_current_status(card)
         if "Status" in values:
             current = (card or {}).get("values", {}).get("Status")
             if current != values["Status"]:
@@ -519,7 +522,25 @@ class ProjectCards:
             card["data"] = deepcopy(data)
         for name, value in changed.items():
             if name == "Status":
-                self.check_current_status(card)
+                try:
+                    self.check_current_status(card)
+                except RuntimeError:
+                    # No Status mutation was attempted; avoid claiming a manual target as ours.
+                    rollback = (
+                        deepcopy(previous_data)
+                        if previous_data is not None
+                        else deepcopy(data)
+                    )
+                    if previous_data is None:
+                        rollback.pop("status_transition", None)
+                        rollback.pop("written_status", None)
+                    self.write_content(
+                        card,
+                        rollback,
+                        rollback["action"]["owner"],
+                        rollback["action"]["title"],
+                    )
+                    raise
             field = self.fields[name]
             common = {
                 "projectId": self.config["project"]["id"],

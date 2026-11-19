@@ -19,6 +19,60 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 # Other API errors may represent partial success, including internal_error/fatal_error.
 DEFINITE_REJECTIONS = {
+    "access_denied",
+    "accesslimited",
+    "agent_prompt_display_not_allowed",
+    "app_access_restricted",
+    "as_user_not_supported",
+    "attachment_payload_limit_exceeded",
+    "cannot_reply_to_message",
+    "deprecated_endpoint",
+    "draft_already_deleted",
+    "draft_has_conflict",
+    "draft_not_found",
+    "duplicate_channel_not_found",
+    "duplicate_message_not_found",
+    "enterprise_is_restricted",
+    "invalid_arg_name",
+    "invalid_array_arg",
+    "invalid_blocks",
+    "invalid_blocks_format",
+    "invalid_charset",
+    "invalid_form_data",
+    "invalid_metadata_format",
+    "invalid_metadata_schema",
+    "invalid_post_type",
+    "markdown_text_conflict",
+    "message_limit_exceeded",
+    "messages_tab_disabled",
+    "metadata_must_be_sent_from_app",
+    "metadata_too_large",
+    "method_deprecated",
+    "missing_argument",
+    "missing_file_data",
+    "missing_post_type",
+    "msg_blocks_too_long",
+    "not_allowed_token_type",
+    "org_login_required",
+    "posting_to_channel_denied",
+    "ratelimited",
+    "request_timeout",
+    "restricted_action",
+    "restricted_action_non_threadable_channel",
+    "restricted_action_read_only_channel",
+    "restricted_action_thread_locked",
+    "restricted_action_thread_only_channel",
+    "send_on_behalf_not_allowed",
+    "slack_connect_canvas_sharing_blocked",
+    "slack_connect_file_link_sharing_blocked",
+    "slack_connect_lists_sharing_blocked",
+    "team_access_not_granted",
+    "team_not_found",
+    "token_expired",
+    "token_revoked",
+    "too_many_attachments",
+    "too_many_contact_cards",
+    "two_factor_setup_required",
     "invalid_auth",
     "not_authed",
     "account_inactive",
@@ -55,7 +109,9 @@ def recipient(config):
         login.casefold(): member
         for login, member in config["slack"]["users"].items()
     }
-    member = users[contact]
+    member = users.get(contact)
+    if not member:
+        raise ValueError("Primary contact requires a Slack user mapping")
     if not re.fullmatch(r"U[A-Z0-9]+", member):
         raise ValueError("DM recipient must be a Slack user ID")
     return member

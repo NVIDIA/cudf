@@ -1028,6 +1028,117 @@ class SyncTests(unittest.TestCase):
             cards.cards[key]["data"]["manual_status"], "In progress"
         )
 
+    def test_manual_status_matching_transition_target_is_preserved(self):
+        for during_write in (False, True):
+            with self.subTest(during_write=during_write):
+                self.setUp()
+                cards, _ = self.sync()
+                self.data["pull_request"]["draft"] = True
+                cards = self.cards()
+                key = next(iter(cards.cards))
+                native = self.github.items[cards.cards[key]["item"]["id"]]
+                original_data = deepcopy(cards.cards[key]["data"])
+                status = next(
+                    f
+                    for f in native["fieldValues"]["nodes"]
+                    if f["field"]["name"] == "Status"
+                )
+                original = self.github.graphql
+                changed = []
+
+                def manual_edit(query, variables):
+                    result = original(query, variables)
+                    if (
+                        during_write
+                        and "updateProjectV2DraftIssue(" in query
+                        and not changed
+                    ):
+                        changed.append(True)
+                        status["name"] = "Deferred"
+                    return result
+
+                if not during_write:
+                    status["name"] = "Deferred"
+                plan = preview(
+                    snapshot(self.data),
+                    POLICY,
+                    self.config,
+                    routing_history=cards.routing_history(),
+                )
+                with patch.object(
+                    self.github, "graphql", side_effect=manual_edit
+                ):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "Status changed"
+                    ):
+                        cards.reconcile(plan, snapshot(self.data))
+                self.assertEqual(
+                    metadata(native["content"]["body"]), original_data
+                )
+                cards, _ = self.sync()
+                self.data["pull_request"]["draft"] = False
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["values"]["Status"], "Deferred"
+                )
+                self.assertEqual(
+                    cards.cards[key]["data"]["manual_status"], "Deferred"
+                )
+
+    def test_archived_pending_delivery_requires_restoration_before_recovery(
+        self,
+    ):
+        cards, plan = self.sync()
+        plan["actions"] = plan["actions"][:1]
+        key = plan["actions"][0]["key"]
+        native = self.github.items[cards.cards[key]["item"]["id"]]
+        original = self.github.graphql
+
+        def archive_during_ack(query, variables):
+            if (
+                "updateProjectV2ItemFieldValue(" in query
+                and variables["input"]["fieldId"] == "Slack thread"
+            ):
+                native["isArchived"] = True
+                raise RuntimeError("Write failed while card was archived")
+            return original(query, variables)
+
+        with ExitStack() as stack:
+            directory = stack.enter_context(tempfile.TemporaryDirectory())
+            path = Path(directory) / "receipts.json"
+            stack.enter_context(patch("track.time.sleep"))
+            post = stack.enter_context(
+                patch(
+                    "track.post", return_value={"channel": "D123", "ts": "1.0"}
+                )
+            )
+            with patch.object(
+                self.github, "graphql", side_effect=archive_during_ack
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Restore archived Project card"
+                ):
+                    send_notifications(
+                        cards, plan, ROUTE, "U01PXPJ5741", "secret", {}, path
+                    )
+            journal = json.loads(path.read_text())
+            for receipts in ({}, journal):
+                with self.assertRaisesRegex(
+                    RuntimeError, "Restore archived Project card"
+                ):
+                    recover_receipts(self.cards(), ROUTE, receipts)
+            self.assertIn(
+                "pending",
+                metadata(native["content"]["body"])["deliveries"][ROUTE],
+            )
+            native["isArchived"] = False
+            restored = self.cards()
+            self.assertEqual(recover_receipts(restored, ROUTE, journal), [])
+            self.assertNotIn(
+                "pending", restored.cards[key]["data"]["deliveries"][ROUTE]
+            )
+            self.assertEqual(post.call_count, 1)
+
     def test_reminder_and_escalation_use_the_initial_dm_thread(self):
         self.sync()
         with tempfile.TemporaryDirectory() as directory:

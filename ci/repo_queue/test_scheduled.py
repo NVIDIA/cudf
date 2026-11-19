@@ -220,6 +220,19 @@ class RehearsalTests(unittest.TestCase):
                 rehearsal_main()
             self.assertEqual(read_stage(directory), "slack_delivery")
 
+    def test_missing_rehearsal_recipient_reports_configuration(self):
+        config = deepcopy(self.config)
+        config["slack"]["users"].pop(config["primary_contact"])
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            with self.assertRaisesRegex(ValueError, "Slack user mapping"):
+                rehearse(
+                    config, directory, self.sender, "2026-11-16T12:00:00Z"
+                )
+            self.assertEqual(read_stage(directory), "configuration")
+            self.assertFalse((directory / "cards.json").exists())
+        self.assertEqual(self.messages, [])
+
     def test_rehearsal_reports_configuration_and_recovery_failures(self):
         for phase in ("configuration", "receipt_recovery"):
             with ExitStack() as stack:

@@ -289,6 +289,9 @@ record both the old and intended values so a partial write can be retried
 without mistaking the automation's own changes for a manual override.
 The native Status is checked again immediately before changing it. An
 intervening edit aborts the refresh so the next run can reconcile fresh intent.
+Status is also checked before publishing transition metadata; if the final
+check detects an edit before any Status mutation, the staged metadata is rolled
+back only while it still matches this run's write.
 As with body updates, the API leaves a short race between that read and write.
 Closing a conflicting PR completes its card without recording conflict
 clearance; reopening the same conflict resumes that episode. Confirmed
@@ -320,7 +323,9 @@ failed write; the Slack post itself is not retried. An uncertain send with no lo
 further delivery for inspection; this is deliberately not an exactly-once
 delivery guarantee. Preserve the receipt file until all pending records have
 been acknowledged. A pending record without a receipt currently requires
-manual reconciliation after inspecting the DM.
+manual reconciliation after inspecting the DM. An archived card with pending
+intent must be restored before recovery can complete; a skipped archived-card
+write is never treated as a successful acknowledgment.
 
 The command saves the refreshed snapshot, DM plan, delivery receipts, and
 result under the output directory. These files contain no bot token.

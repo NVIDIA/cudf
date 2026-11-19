@@ -18,6 +18,7 @@ from progress import read_stage, record_stage
 from rehearse import KEY, rehearse
 from rehearse import main as rehearsal_main
 from scheduled import command, main
+from selection import MAX_TRACKED_SOURCES
 from test_actions import CONFIG
 
 
@@ -40,6 +41,12 @@ class ScheduledTests(unittest.TestCase):
         self.assertTrue(rehearsal[1].endswith("rehearse.py"))
         self.assertNotIn("--apply", rehearsal)
 
+    def test_larger_selection_preserves_all_sources(self):
+        numbers = list(range(1, MAX_TRACKED_SOURCES + 1))
+        result = command({"numbers": numbers}, "dm", Path("/tmp/queue"))
+        self.assertEqual(result[3 : 3 + len(numbers)], list(map(str, numbers)))
+        self.assertEqual(result[-2:], ["--apply", "--send-dm"])
+
     def test_invalid_selection_is_rejected_before_a_child_can_run(self):
         for numbers in (
             None,
@@ -49,7 +56,7 @@ class ScheduledTests(unittest.TestCase):
             [0],
             [-1],
             [1, 1],
-            list(range(1, 12)),
+            list(range(1, MAX_TRACKED_SOURCES + 2)),
         ):
             with self.subTest(numbers=numbers), self.assertRaises(ValueError):
                 command({"numbers": numbers}, "dm", Path("/tmp/queue"))

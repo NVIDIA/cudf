@@ -19,6 +19,7 @@ from actions import notification_recipients, preview
 from collect import GitHub, collect_item, timestamp
 from progress import record_stage
 from project import read_project
+from selection import validate_numbers
 from slack_dm_test import SlackRejected, payload, post, recipient, slack_token
 from storage import save_json
 from sync import ProjectCards
@@ -198,11 +199,10 @@ def main():
     args = parser.parse_args()
     if args.send_dm and not args.apply:
         parser.error("--send-dm requires --apply")
-    if (
-        any(number < 1 for number in args.numbers)
-        or len(set(args.numbers)) > 10
-    ):
-        parser.error("select 1–10 positive issue/PR numbers for work tracking")
+    try:
+        validate_numbers(args.numbers)
+    except ValueError as error:
+        parser.error(str(error))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     record_stage(args.output_dir, "configuration")
     config = json.loads(args.config.read_text())

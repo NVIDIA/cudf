@@ -4,8 +4,7 @@ This Project tracks **the next action and its owner**, separately from the
 underlying issue or pull request. Each action is a Project-only draft item;
 it is never converted into a repository issue by this automation.
 
-The initial scope covers Python-related work. The Project also has a C++
-component for future expansion. Vyas Ramasubramani (`vyasr`) is the automation's
+The scope covers Python and C++ work. Vyas Ramasubramani (`vyasr`) is the automation's
 primary routing contact and escalation contact.
 
 ## Find your work

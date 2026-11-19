@@ -449,7 +449,11 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
     if (lane_id == 0 && start_value == 0) { total_bytes = db.last_value; }
 
     uleb128_t lane_sum = 0;
-    uleb128_t lane_max = 0;
+    // The decode kernel copies every string before start_value into the temp buffer. The stream
+    // stores the first value in the header (`db.last_value`), not a mini-block, so we must account
+    // for that to ensure that we allocate temp buffer space inclusive of what is needed for the
+    // first string.
+    uleb128_t lane_max = lane_id == 0 ? static_cast<uleb128_t>(db.last_value) : 0;
     while (db.current_value_idx < end_value && db.current_value_idx < db.num_encoded_values(true)) {
       if (not db.advance_past_first_value(warp)) { break; }
 

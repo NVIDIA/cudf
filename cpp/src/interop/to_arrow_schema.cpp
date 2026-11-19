@@ -266,7 +266,7 @@ unique_schema_t to_arrow_schema(cudf::table_view const& input,
 {
   std::vector<detail::arrow_schema_column> columns;
   columns.reserve(input.num_columns());
-  std::transform(input.begin(), input.end(), std::back_inserter(columns), [](auto const& column) {
+  std::ranges::transform(input, std::back_inserter(columns), [](auto const& column) {
     return detail::to_arrow_schema_column(column);
   });
   return detail::to_arrow_schema(columns, metadata);

@@ -34,18 +34,6 @@ reviews:
   # Note: Detailed C++/CUDA and Python review guidelines are in cpp/REVIEW_GUIDELINES.md and python/REVIEW_GUIDELINES.md,
   # with package-specific additions in python/pylibcudf/REVIEW_GUIDELINES.md and python/cudf_polars/REVIEW_GUIDELINES.md
   path_instructions:
-    - path: "**/*"
-      instructions: |
-        Report concrete correctness, compatibility, performance, or test coverage risks.
-        Give the triggering input or execution path and impact. Deduplicate by root cause,
-        including findings in earlier review summaries and outside-diff comments.
-        Distinguish inspected code, existing CI evidence, and checks actually executed.
-        For new APIs, check callers, bindings and documentation even if unchanged.
-        Before requesting another test or benchmark, search for existing coverage and
-        identify the missing behavior or measurement; prefer extending existing cases.
-        Check that tests reach the claimed path: size thresholds, GPU versus fallback,
-        codecs, partition counts, and exception types can allow a test to pass otherwise.
-
     - path: "docs/**/*"
       instructions: |
         For documentation changes, focus on:
@@ -81,6 +69,7 @@ knowledge_base:
   opt_out: false
   code_guidelines:
     filePatterns:
+      - "REVIEW_GUIDELINES.md"
       - "cpp/REVIEW_GUIDELINES.md"
       - "python/REVIEW_GUIDELINES.md"
       # Package-specific guidelines; each applies to its own directory tree

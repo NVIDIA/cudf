@@ -16,8 +16,9 @@ existing human and CodeRabbit reviews. The repository is NVIDIA/cudf.
 - Use available GitHub tools or authenticated gh without printing credentials.
   If Git authentication fails because SSH forwarding disconnected, stop and ask
   the user to restart after reconnecting it.
-- Read the REVIEW_GUIDELINES.md files applicable to the changed paths, including
-  package-specific guides under python/pylibcudf and python/cudf_polars when present.
+- Read the root REVIEW_GUIDELINES.md and the guides applicable to the changed paths,
+  including package-specific guides under python/pylibcudf and python/cudf_polars
+  when present.
   For libcudf conventions, the authority is
   cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md. Consult TESTING.md,
   BENCHMARKING.md, DOCUMENTATION.md, or PROFILING.md there when relevant.

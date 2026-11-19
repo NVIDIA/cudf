@@ -134,6 +134,7 @@ template <typename L, typename R>
 using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
 
 namespace detail {
+// Keeps the requires expression out of the documented declaration, which Sphinx cannot parse
 template <typename L, typename R>
 concept binary_op_has_common_type_impl = requires { typename binary_op_common_type_t<L, R>; };
 }  // namespace detail

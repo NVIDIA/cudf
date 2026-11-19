@@ -17,6 +17,7 @@ from polars.testing import assert_frame_equal
 import pylibcudf as plc
 
 import cudf_polars.dsl.cpu_evaluate as cpu_evaluate_module
+import cudf_polars.streaming.actor_graph.utils as actor_utils
 from cudf_polars import Translator
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
@@ -562,6 +563,62 @@ def test_on_oom_replays_on_cpu(left, on_oom_engine, cpu_calls, filter_oom):
     assert cpu_calls["Filter"] == filter_oom["Filter"]
     # Nodes that do not run out of memory stay on the GPU.
     assert cpu_calls.keys() == {"Filter"}
+
+
+@pytest.fixture
+def overbooking_engine(streaming_engine_factory):
+    # A one byte device limit makes every reservation overbook.
+    return streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=4,
+            raise_on_fail=True,
+            fallback_mode="silent",
+            rank_local_cpu_compute="on_oom",
+            spill_device_limit="1",
+            memory_reserve_timeout="1ms",
+        )
+    )
+
+
+@pytest.fixture
+def evaluate_ir_modes(monkeypatch):
+    """Record the ``rank_local_cpu_compute`` mode of each IR node type evaluated."""
+    modes: collections.defaultdict[str, set[RankLocalCPUComputeMode]] = (
+        collections.defaultdict(set)
+    )
+    lock = threading.Lock()
+    original = actor_utils.evaluate_ir
+
+    def recording(node, *dfs, context):
+        with lock:
+            modes[type(node).__name__].add(context.rank_local_cpu_compute)
+        return original(node, *dfs, context=context)
+
+    monkeypatch.setattr(actor_utils, "evaluate_ir", recording)
+    return modes
+
+
+def test_on_oom_overbooking_evaluates_on_cpu(
+    left, overbooking_engine, cpu_calls, evaluate_ir_modes
+):
+    q = left.filter(pl.col("a") > 2).with_columns(c=pl.col("a") * 2)
+    assert_gpu_result_equal(q, engine=overbooking_engine)
+    # The overbooked reservation switches the evaluation to "always", so the
+    # Filter runs on the CPU without a GPU attempt first.
+    assert evaluate_ir_modes["Filter"] == {RankLocalCPUComputeMode.ALWAYS}
+    assert cpu_calls["Filter"] > 0
+
+
+def test_on_oom_overbooking_already_available(overbooking_engine, evaluate_ir_modes):
+    # Rolling reserves memory for an input that is already available, which
+    # takes the already_available branch of evaluate_chunk.
+    df = pl.LazyFrame(
+        {"orderby": [1, 4, 8, 10, 12, 13, 14, 22], "values": [1, 2, 3, 4, 5, 6, 7, 8]}
+    )
+    q = df.rolling("orderby", period="4i").agg(pl.col("values").sum())
+    assert_gpu_result_equal(q, engine=overbooking_engine)
+    # The overbooked reservation switches the evaluation to "always".
+    assert evaluate_ir_modes["Rolling"] == {RankLocalCPUComputeMode.ALWAYS}
 
 
 def test_on_oom_without_oom_stays_on_gpu(left, on_oom_engine, cpu_calls):

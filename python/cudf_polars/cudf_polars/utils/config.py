@@ -227,7 +227,10 @@ class RankLocalCPUComputeMode(enum.StrEnum):
     * ``RankLocalCPUComputeMode.NEVER`` : Always evaluate on the GPU.
     * ``RankLocalCPUComputeMode.ON_OOM`` : Evaluate on the GPU. If that raises
       ``MemoryError`` and the operation is supported, evaluate it again on the
-      CPU with Polars.
+      CPU with Polars. If the memory reservation for an evaluation overbooks
+      the device memory limit, evaluate the supported operations on the CPU
+      without a GPU attempt. These reservations may overbook even when
+      ``allow_overbooking_by_default`` is off.
     * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported operation
       on the CPU with Polars. Unsupported operations are evaluated on the GPU.
     """

@@ -55,7 +55,7 @@ def to_numeric(
         * {'float'}: all floating types greater or equal to `np.float32`
 
         Note that downcast behavior is decoupled from parsing. Errors
-        encountered during downcast is raised regardless of ``errors``
+        encountered during downcasting are raised regardless of the ``errors``
         parameter.
     dtype_backend : None
         Not implemented.

@@ -40,6 +40,12 @@ class GroupByJITDataFrame(Row):
     can_be_jitted can fall back to non-JIT (same as numba-cuda NumbaKeyError).
     """
 
+    @property
+    def return_as(self):
+        raise UDFError(
+            "JIT GroupBy.apply() does not support returning a DataFrame."
+        )
+
     def typeof(self, key):
         if key not in self.fields:
             raise TypingError(

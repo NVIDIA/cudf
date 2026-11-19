@@ -1,10 +1,11 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/default_stream.hpp>
 #include <cudf_test/table_utilities.hpp>
 
 #include <cudf/column/column_view.hpp>
@@ -190,4 +191,44 @@ TEST_F(GatherTestStr, GatherRandomStringsColumn)
   cudf::test::strings_column_wrapper expected(h_expected.begin(), h_expected.end());
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->view().column(0), expected);
+}
+
+TEST_F(GatherTestStr, MixedLengthsStringParallel)
+{
+  auto const stream = cudf::test::get_default_stream();
+  std::vector<std::string> values{"prefix"};
+  for (auto length : {0, 1, 2, 3, 4, 15, 16, 17, 31, 32, 33, 127, 128, 129, 511, 1024, 1025}) {
+    values.emplace_back(length, 'a' + values.size());
+    if (length > 4) { values.back().replace(0, 4, "éé"); }
+    if (length > 1) { values.back()[length / 2] = '\0'; }
+  }
+  std::vector<bool> valid(values.size(), true);
+  valid[8] = false;
+  cudf::test::strings_column_wrapper input(values.begin(), values.end(), valid.begin());
+  auto const rows   = static_cast<cudf::size_type>(values.size() - 1);
+  auto const sliced = cudf::slice(cudf::column_view{input}, {1, rows + 1}, stream)[0];
+
+  std::vector<cudf::size_type> indices;
+  for (auto i = rows; i > 0; --i) {
+    indices.push_back(i - 1);
+  }
+  // Repeated long strings keep the average above the string-parallel threshold.
+  indices.insert(indices.end(), {rows - 1, rows - 1, rows, -1});
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> map(indices.begin(), indices.end());
+  auto result = cudf::gather(cudf::table_view{{sliced}},
+                             map,
+                             cudf::out_of_bounds_policy::NULLIFY,
+                             cudf::negative_index_policy::NOT_ALLOWED,
+                             stream);
+
+  std::vector<std::string> expected_values;
+  std::vector<bool> expected_valid;
+  for (auto i : indices) {
+    auto const is_valid = i >= 0 && i < rows && valid[i + 1];
+    expected_values.push_back(is_valid ? values[i + 1] : "");
+    expected_valid.push_back(is_valid);
+  }
+  cudf::test::strings_column_wrapper expected(
+    expected_values.begin(), expected_values.end(), expected_valid.begin());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view().column(0));
 }

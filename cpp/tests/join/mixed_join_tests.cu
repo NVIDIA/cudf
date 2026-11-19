@@ -708,8 +708,17 @@ TEST_F(MixedInnerJoinTestInt32, LargeDataMultiBlockCoordination)
   auto pairs2 = to_sorted_pairs(result2);
   auto pairs3 = to_sorted_pairs(result3);
 
-  EXPECT_EQ(pairs1, pairs2);
-  EXPECT_EQ(pairs1, pairs3);
+  auto expect_same_pairs = [](auto const& lhs, auto const& rhs) {
+    ASSERT_EQ(lhs.size(), rhs.size());
+    auto const [lhs_it, rhs_it] = std::mismatch(lhs.begin(), lhs.end(), rhs.begin());
+    if (lhs_it != lhs.end()) {
+      ADD_FAILURE() << "first mismatch at index " << std::distance(lhs.begin(), lhs_it) << ": ("
+                    << lhs_it->first << ", " << lhs_it->second << ") vs (" << rhs_it->first << ", "
+                    << rhs_it->second << ")";
+    }
+  };
+  expect_same_pairs(pairs1, pairs2);
+  expect_same_pairs(pairs1, pairs3);
 
   for (auto const& [left_idx, right_idx] : pairs1) {
     EXPECT_GE(left_idx, 0);

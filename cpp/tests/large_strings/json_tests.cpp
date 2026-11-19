@@ -38,7 +38,9 @@ INSTANTIATE_TEST_SUITE_P(JsonLargeReaderTest,
 TEST_P(JsonLargeReaderTest, MultiBatch)
 {
   // this test runs over 1.5 hours when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) {
+    GTEST_SKIP() << "Takes over 1.5 hours under racecheck";
+  }
 
   cudf::io::compression_type const comptype = GetParam();
 

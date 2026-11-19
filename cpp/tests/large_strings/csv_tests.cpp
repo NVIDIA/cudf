@@ -23,7 +23,9 @@ struct CsvLargeReaderTest : public cudf::test::StringsLargeTest {};
 
 TEST_F(CsvLargeReaderTest, InputExceedsCompactOffsets)
 {
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) {
+    GTEST_SKIP() << "Too slow under racecheck with a large (over 4 GiB) input";
+  }
 
   // Scoped so the >4 GiB input is removed as soon as the test ends.
   temp_directory const temp_dir{"csv_large"};

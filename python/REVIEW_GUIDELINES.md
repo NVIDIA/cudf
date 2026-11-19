@@ -26,7 +26,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues
+## CRITICAL Issues (Report confirmed issues)
 
 ### Memory Safety
 - Memory leaks from improper resource management
@@ -55,7 +55,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - Missing cleanup in `__del__` or context managers
 - Circular references preventing garbage collection
 
-## HIGH Issues
+## HIGH Issues (Comment if Substantial)
 
 ### Performance Issues
 - Unnecessary host-device data transfers
@@ -87,7 +87,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - Parameters not documented
 - New public API not added to docs
 
-## MEDIUM Issues
+## MEDIUM Issues (Comment Selectively)
 
 - Edge cases not handled (empty DataFrames, single-element Series)
 - Missing input validation for edge cases

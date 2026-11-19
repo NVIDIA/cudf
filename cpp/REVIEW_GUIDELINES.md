@@ -30,7 +30,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues
+## CRITICAL Issues (Report confirmed issues)
 
 ### GPU/CUDA Errors
 - Unchecked CUDA errors (kernel launches, memory operations, synchronization)
@@ -65,7 +65,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - Changes to data structures exposed in public headers (`cpp/include/cudf/`, `cpp/include/nvtext/`)
 - Missing `[[deprecated]]` attribute, `@deprecated` doxygen tag, or PR labels ("deprecation" / "breaking")
 
-## HIGH Issues
+## HIGH Issues (Comment if Substantial)
 
 ### Performance Issues
 - Unnecessary host-device synchronization blocking GPU pipeline
@@ -121,7 +121,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 - **Using external datasets** (tests must not depend on external resources)
 - New tests that duplicate existing coverage (same function, same class of input, same assertion) instead of extending an existing test, type list, or `INSTANTIATE_TEST_SUITE_P` list; cite the covering test
 
-## MEDIUM Issues
+## MEDIUM Issues (Comment Selectively)
 
 - Missing input validation (negative dimensions, null pointers)
 - Deprecated CUDA API usage

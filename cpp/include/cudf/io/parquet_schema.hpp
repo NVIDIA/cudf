@@ -979,8 +979,6 @@ struct DataPageHeader {
   Encoding definition_level_encoding = Encoding::PLAIN;
   /// Encoding used for repetition levels
   Encoding repetition_level_encoding = Encoding::PLAIN;
-  /// Optional statistics for the data in this page
-  std::optional<Statistics> statistics;
 };
 
 /**
@@ -1002,8 +1000,6 @@ struct DataPageHeaderV2 {
   int32_t repetition_levels_byte_length = 0;
   /// Whether the values are compressed.
   bool is_compressed = true;
-  /// Optional statistics for the data in this page
-  std::optional<Statistics> statistics;
 };
 
 /**

@@ -112,7 +112,6 @@ dependencies:
 - sqlalchemy>=2.0.18
 - streamz
 - sysroot_linux-64==2.28
-- typing_extensions>=4.0.0
 - ucxx==0.54.*,>=0.0.0a0
 - zlib>=1.2.13
 - zstandard

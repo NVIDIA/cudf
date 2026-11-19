@@ -1152,7 +1152,6 @@ dependencies:
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
           - polars>=2.0,<2.2
-          - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

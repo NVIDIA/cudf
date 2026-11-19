@@ -501,7 +501,7 @@ class reader_impl {
   /**
    * @brief Evaluates the filter against decoded rows, including any prepended index columns.
    */
-  [[nodiscard]] std::unique_ptr<column> compute_filter(table_view input) const;
+  [[nodiscard]] std::unique_ptr<column> compute_row_filter(table_view input) const;
 
   /**
    * @brief Calculate the number of rows read from each source in the output chunk

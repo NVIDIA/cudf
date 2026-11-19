@@ -1064,12 +1064,12 @@ column_selection_options reader_impl::make_column_selection_options(
     .case_sensitive_names   = options.is_enabled_case_sensitive_names()};
 }
 
-std::unique_ptr<column> reader_impl::compute_filter(table_view input) const
+std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
 {
   auto const num_prepended_cols = static_cast<size_type>(_options.prepend_source_index_column) +
                                   static_cast<size_type>(_options.prepend_row_index_column);
   auto const expr = _expr_conv.get_converted_expr();
-  post_read_filter const filter{
+  row_filter const filter{
     expr.value().get(), std::move(input), num_prepended_cols, _stream, _mr.as_temporary()};
   auto const mr      = _mr.get_temporary_mr();
   auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
@@ -1159,7 +1159,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    auto predicate = compute_filter(read_table->view());
+    auto predicate = compute_row_filter(read_table->view());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

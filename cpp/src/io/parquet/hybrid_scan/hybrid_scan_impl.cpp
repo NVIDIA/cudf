@@ -1259,7 +1259,8 @@ table_with_metadata hybrid_scan_reader_impl::finalize_output(
   if constexpr (std::is_same_v<RowMaskView, cudf::mutable_column_view>) {
     CUDF_EXPECTS(columns_mode == read_columns_mode::FILTER_COLUMNS, "Invalid read mode");
 
-    auto final_row_mask = compute_filter(read_table->view());
+    // Evaluate the filter with column references adjusted for any prepended columns.
+    auto final_row_mask = compute_row_filter(read_table->view());
     CUDF_EXPECTS(final_row_mask->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");
 

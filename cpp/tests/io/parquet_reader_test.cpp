@@ -4238,6 +4238,20 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
       check(operation{ast_operator::LOGICAL_AND, is_valid, first_group}, {1}, {20}, 1);
       check(operation{ast_operator::LOGICAL_OR, is_null, first_group}, {0, 1, 2}, {10, 20, 30}, 2);
       check(operation{ast_operator::LOGICAL_OR, is_valid, first_group}, {0, 1, 3}, {10, 20, 40}, 2);
+
+      auto const comparison      = operation{ast_operator::EQUAL, ref, cutoff_literal};
+      auto const null_comparison = operation{ast_operator::IS_NULL, comparison};
+      auto const unmatched_id    = operation{ast_operator::EQUAL, id_ref, cutoff_literal};
+      // Reject the nested comparison even when the scalar predicate matches no rows.
+      auto const invalid_filter =
+        operation{ast_operator::LOGICAL_AND, unmatched_id, null_comparison};
+      auto const read_options = cudf::io::parquet_reader_options::builder(
+                                  cudf::io::source_info{cudf::host_span<char const>{buffer}})
+                                  .column_names({"id"})
+                                  .use_jit_filter(use_jit)
+                                  .filter(invalid_filter)
+                                  .build();
+      EXPECT_THROW(cudf::io::read_parquet(read_options), std::invalid_argument);
     }
   }
 }

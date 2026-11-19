@@ -364,11 +364,11 @@ std::vector<std::string> names_from_expression::to_vector() &&
           std::make_move_iterator(_column_names.end())};
 }
 
-post_read_filter::post_read_filter(ast::expression const& expr,
-                                   table_view input,
-                                   size_type offset,
-                                   cuda::stream_ref stream,
-                                   cudf::memory_resources mr)
+row_filter::row_filter(ast::expression const& expr,
+                       table_view input,
+                       size_type offset,
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr)
   : _input{std::move(input)}, _offset{offset}, _stream{stream}, _mr{std::move(mr)}, _expr{expr}
 {
   _expr = expr.accept(*this);
@@ -389,19 +389,18 @@ parquet_filter_normalizer::get_converted_expr() const
   return _converted_expr;
 }
 
-std::reference_wrapper<ast::expression const> post_read_filter::visit(ast::literal const& expr)
+std::reference_wrapper<ast::expression const> row_filter::visit(ast::literal const& expr)
 {
   return expr;
 }
 
-std::reference_wrapper<ast::expression const> post_read_filter::visit(
-  ast::column_reference const& expr)
+std::reference_wrapper<ast::expression const> row_filter::visit(ast::column_reference const& expr)
 {
   return _tree.push(
     ast::column_reference{expr.get_column_index() + _offset, expr.get_table_source()});
 }
 
-std::reference_wrapper<ast::expression const> post_read_filter::visit(ast::operation const& expr)
+std::reference_wrapper<ast::expression const> row_filter::visit(ast::operation const& expr)
 {
   if (expr.get_operator() == ast::ast_operator::IS_NULL) {
     auto const operand = extract_unary_operand(expr);
@@ -423,8 +422,7 @@ std::reference_wrapper<ast::expression const> post_read_filter::visit(ast::opera
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 
-std::reference_wrapper<ast::expression const> post_read_filter::visit(
-  ast::column_name_reference const&)
+std::reference_wrapper<ast::expression const> row_filter::visit(ast::column_name_reference const&)
 {
   CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
 }
@@ -547,15 +545,21 @@ void parquet_expression_simplifier::validate_column_reference(
                std::out_of_range);
 }
 
-void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
+void parquet_expression_simplifier::validate_operands(ast::expression const& expr,
+                                                      bool allow_nested) const
 {
   // Validate column references and traverse operations. Literals don't really need validation.
   if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&expr); col_ref != nullptr) {
     validate_column_reference(*col_ref);
+    CUDF_EXPECTS(
+      allow_nested or not cudf::is_nested(_output_dtypes[col_ref->get_column_index()]),
+      "Struct and list columns are only supported as IS_NULL operands in Parquet filters",
+      std::invalid_argument);
   } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
              operation != nullptr) {
+    auto const permits_nested = operation->get_operator() == ast::ast_operator::IS_NULL;
     for (auto const& operand : operation->get_operands()) {
-      validate_operands(operand.get());
+      validate_operands(operand.get(), permits_nested);
     }
   } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
     // Column name references must not exist in the normalized filter expression

@@ -257,13 +257,13 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
  * @brief Prepares a filter for decoded rows by offsetting column references and
  * replacing nested null checks with references to boolean columns.
  */
-class post_read_filter : public ast::detail::expression_transformer {
+class row_filter : public ast::detail::expression_transformer {
  public:
-  post_read_filter(ast::expression const& expr,
-                   table_view input,
-                   size_type offset,
-                   cuda::stream_ref stream,
-                   cudf::memory_resources mr);
+  row_filter(ast::expression const& expr,
+             table_view input,
+             size_type offset,
+             cuda::stream_ref stream,
+             cudf::memory_resources mr);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -418,7 +418,7 @@ class parquet_expression_simplifier {
   /**
    * @brief Validates operands in `expr`
    */
-  void validate_operands(ast::expression const& expr) const;
+  void validate_operands(ast::expression const& expr, bool allow_nested = false) const;
 };
 
 /**

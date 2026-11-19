@@ -520,8 +520,7 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
 {
   auto const rows    = input.num_rows();
   auto const columns = input.num_columns();
-  CUDF_EXPECTS(std::distance(begin, end) == rows,
-               "Permutation size must match the input row count");
+  CUDF_EXPECTS((end - begin) == rows, "Permutation size must match the input row count");
   if (columns == 0) {
     return std::make_unique<table>(std::vector<std::unique_ptr<column>>{}, rows);
   }

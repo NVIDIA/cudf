@@ -3302,7 +3302,7 @@ class AsofJoin(IR):
         right_on: expr.NamedExpr,
         left_by: tuple[str, ...],
         right_by: tuple[str, ...],
-        options: tuple[Zlice | None, str, bool],
+        options: tuple[Zlice | None, str, bool, bool],
         left: IR,
         right: IR,
     ) -> None:
@@ -3324,18 +3324,19 @@ class AsofJoin(IR):
         right_on: expr.NamedExpr,
         left_by: tuple[str, ...],
         right_by: tuple[str, ...],
-        options: tuple[Zlice | None, str, bool],
+        options: tuple[Zlice | None, str, bool, bool],
         left: DataFrame,
         right: DataFrame,
         *,
         context: IRExecutionContext,
     ) -> DataFrame:
         """Sort the right keys, probe them, and gather the matching payload."""
-        zlice, suffix, coalesce = options
+        zlice, suffix, coalesce, check_sortedness = options
         discarded = set(right_by)
         if coalesce and left_on.name == right_on.name:
             discarded.add(right_on.name)
-        if right.column_names_set <= discarded:
+        has_payload = bool(right.column_names_set - discarded)
+        if not has_payload and (right_by or not check_sortedness):
             return left.slice(zlice)
 
         right_on_col = broadcast(
@@ -3343,23 +3344,45 @@ class AsofJoin(IR):
             target_length=right.num_rows,
             stream=right.stream,
         )[0]
+        # libcudf accepts unordered left keys, so only check the right key.
+        if not right_by and check_sortedness:
+            sorted_nulls_first = right_on_col.check_sorted(
+                order=plc.types.Order.ASCENDING,
+                null_order=plc.types.NullOrder.BEFORE,
+                stream=right.stream,
+            )
+            if not sorted_nulls_first and not (
+                right_on_col.null_count
+                and right_on_col.check_sorted(
+                    order=plc.types.Order.ASCENDING,
+                    null_order=plc.types.NullOrder.AFTER,
+                    stream=right.stream,
+                )
+            ):
+                raise pl.exceptions.InvalidOperationError(
+                    "argument in operation 'asof_join' is not sorted, "
+                    "please sort the 'expr/series/column' first"
+                )
+        else:
+            # Trust Polars' sorted-input contract, but enforce libcudf's
+            # additional requirement that nulls precede non-null keys.
+            sorted_nulls_first = not right_by and (
+                (
+                    right_on_col.is_sorted == plc.types.Sorted.YES
+                    and right_on_col.order == plc.types.Order.ASCENDING
+                    and right_on_col.null_order == plc.types.NullOrder.BEFORE
+                )
+                or right_on_col.null_count == 0
+            )
+        if not has_payload:
+            return left.slice(zlice)
+
         right_by_cols = [right.column_map[name].obj for name in right_by]
         # TODO: Carry RowOrdering through to recognize composite (by..., on)
         # ordering and avoid sorting the right side again.
-        right_key = (
-            right.column_map[right_on.value.name]
-            if not right_by and isinstance(right_on.value, expr.Col)
-            else None
-        )
-        already_sorted = (
-            right_key is not None
-            and right_key.is_sorted == plc.types.Sorted.YES
-            and right_key.order == plc.types.Order.ASCENDING
-            and right_key.null_order == plc.types.NullOrder.BEFORE
-        )
-        if already_sorted:
+        if sorted_nulls_first:
             joiner = plc.join.AsofJoin(
-                plc.Table(right_by_cols), right_on_col.obj, stream=right.stream
+                plc.Table([]), right_on_col.obj, stream=right.stream
             )
         else:
             keys = plc.Table([*right_by_cols, right_on_col.obj])

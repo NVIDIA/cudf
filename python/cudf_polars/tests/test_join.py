@@ -70,6 +70,33 @@ def test_asof_join_no_right_payload(engine: pl.GPUEngine):
     assert_gpu_result_equal(left.join_asof(right, on="time").slice(1, 1), engine=engine)
 
 
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_checks_right_sortedness(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [2, 1], **({"value": [20, 10]} if payload else {})})
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        left.join_asof(right, on="time").collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_right_nulls_last(in_memory_engine: pl.GPUEngine, check_sortedness):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [1, 2, None], "value": [10, 20, 30]}).sort(
+        "time", nulls_last=True
+    )
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", check_sortedness=check_sortedness),
+        engine=in_memory_engine,
+    )
+
+
+def test_asof_join_unordered_left(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [2, 1]})
+    right = pl.LazyFrame({"time": [1, 2], "value": [10, 20]}).sort("time")
+    result = left.join_asof(right, on="time").collect(engine=in_memory_engine)
+    assert result.to_dict(as_series=False) == {"time": [2, 1], "value": [20, 10]}
+
+
 @pytest.mark.engine_params(["in-memory"])
 def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
     dtype = pl.Duration("ns")

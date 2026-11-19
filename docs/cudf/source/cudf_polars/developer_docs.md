@@ -555,9 +555,9 @@ with opaque_memory_usage(
 
 The size of an opaque reservation is a best-effort estimate. Base it on
 quantities that cudf-polars knows, such as the size of the inputs, the
-expected output, or `split_and_pack_cost` for a pack or copy of a slice. Do
-not model libcudf internals, such as sort workspace or temporary buffers, so
-that cudf-polars does not depend on how libcudf allocates. The rapidsmpf
+expected output, or `split_and_pack_cost` for a pack or copy of a slice.
+Knowledge of libcudf internals, such as sort workspace or temporary buffers,
+may be used to improve an estimate, but it is not required. The rapidsmpf
 reservation system tolerates an inexact estimate, because allocations inside
 `opaque_memory_usage` are not capped by the reservation.
 

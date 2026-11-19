@@ -155,9 +155,9 @@ real memory effect. Use no unexplained multipliers, and no extra
 reservation for a single-chunk concat.
 
 The size of a reservation passed to `opaque_memory_usage` is a best-effort
-estimate based on the inputs and the expected output. Do not ask for sizing
-that models libcudf internals, such as sort workspace or temporary buffers.
-The rapidsmpf reservation system tolerates an inexact estimate.
+estimate based on the inputs and the expected output. It may use knowledge
+of libcudf internals, such as sort workspace or temporary buffers, but do not
+require it. The rapidsmpf reservation system tolerates an inexact estimate.
 
 ```python
 # Bad: blocks the event loop and can overbook

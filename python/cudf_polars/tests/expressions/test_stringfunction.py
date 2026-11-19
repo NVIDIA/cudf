@@ -1073,16 +1073,16 @@ def test_extract_groups(engine: pl.GPUEngine, ldf_extract):
 @pytest.mark.parametrize(
     "pattern",
     [
-        r"\d+",
+        "[0-9]+",
         r"[a-z]",
         "a",
-        r"(?:\d)\d",
-        r"\w+",
-        r"\d+--\d+",
+        "(?:[0-9])[0-9]",
+        "[a-zA-Z0-9_]+",
+        "[0-9]+--[0-9]+",
         r"\[[ab]",
         "a~~b",
         "[]a]",
-        r"[^]\s]+",
+        "[^] ]+",
     ],
 )
 def test_extract_all(engine: pl.GPUEngine, pattern: str) -> None:
@@ -1107,7 +1107,7 @@ def test_extract_all(engine: pl.GPUEngine, pattern: str) -> None:
 
 def test_extract_all_scalar_input(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": [1, 2, 3]})
-    q = lf.select(pl.lit("a12").str.extract_all(r"\d"))
+    q = lf.select(pl.lit("a12").str.extract_all("[0-9]"))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -1133,15 +1133,15 @@ def test_extract_all_multiline_end_anchor(engine: pl.GPUEngine) -> None:
 
 def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": pl.Series([], dtype=pl.String)})
-    q = lf.select(pl.col("a").str.extract_all(r"\d+"))
+    q = lf.select(pl.col("a").str.extract_all("[0-9]+"))
     assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize(
     "pattern",
     [
-        r"(\d)(\d)?",
-        r"(\d)\d",
+        "([0-9])([0-9])?",
+        "([0-9])[0-9]",
         "a*",
         r"\b",
         "a|",
@@ -1166,6 +1166,15 @@ def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
         "a{10000}",
         "a{2,10000}",
         "a{10000,}?",
+        r"\d",
+        r"\D+",
+        r"\w+",
+        r"\W",
+        r"\s",
+        r"\S+",
+        r"[^]\s]+",
+        r"\b.",
+        r"a\B",
     ],
 )
 def test_extract_all_pattern_unsupported(

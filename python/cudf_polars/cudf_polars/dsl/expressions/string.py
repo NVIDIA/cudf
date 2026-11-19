@@ -279,6 +279,23 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "extract_all does not support $ outside of multiline mode"
                 )
+            # libcudf's \d, \w, \s, and \b do not follow the Unicode
+            # definitions that polars uses
+            if any(
+                op is re._constants.CATEGORY  # type: ignore[attr-defined]
+                or (
+                    op is re._constants.AT  # type: ignore[attr-defined]
+                    and av
+                    in {
+                        re._constants.AT_BOUNDARY,  # type: ignore[attr-defined]
+                        re._constants.AT_NON_BOUNDARY,  # type: ignore[attr-defined]
+                    }
+                )
+                for op, av in tokens
+            ):
+                raise NotImplementedError(
+                    r"extract_all does not support \d, \w, \s, \b, or their negations"
+                )
             # libcudf reads at most 3 digits of a repetition bound and treats
             # longer bounds as literal characters
             repeats = {

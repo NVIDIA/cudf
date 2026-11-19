@@ -251,6 +251,7 @@ async def default_node_multi(
                     strict=True,
                 )
             ]
+            del chunks
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
                     evaluate_ir, ir, *dfs, context=ir_context

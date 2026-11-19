@@ -104,7 +104,7 @@ __forceinline__ __device__ void copy_string_warp(char const* in_start,
   for (int64_t ichar = out_start_aligned + warp_lane * out_datatype_size; ichar < out_end_aligned;
        ichar += cudf::detail::warp_size * out_datatype_size) {
     // The bounds already align out_chars + ichar; avoid converting back to a uint4 index.
-    *cuda::std::bit_cast<uint4*>(out_chars + ichar) = load_uint4(in_start + ichar - out_start);
+    *cuda::std::bit_cast<uint4*>(out_chars + ichar) = load_uint4(in_start + (ichar - out_start));
   }
 
   if (out_end_aligned <= out_start_aligned) {

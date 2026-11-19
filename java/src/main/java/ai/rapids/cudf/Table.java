@@ -2996,7 +2996,6 @@ public final class Table implements AutoCloseable {
    * @return a match context that the caller must close
    */
   public JoinMatchContext leftJoinMatchContext(HashJoin rightHash) {
-    checkMatchContextColumns(rightHash);
     return new JoinMatchContext(this, rightHash, JoinKind.LEFT);
   }
 
@@ -3298,7 +3297,6 @@ public final class Table implements AutoCloseable {
    * @return a match context that the caller must close
    */
   public JoinMatchContext innerJoinMatchContext(HashJoin rightHash) {
-    checkMatchContextColumns(rightHash);
     return new JoinMatchContext(this, rightHash, JoinKind.INNER);
   }
 
@@ -3553,22 +3551,14 @@ public final class Table implements AutoCloseable {
   /**
    * Probes this table once for a full equi-join and keeps the matches in a
    * {@link JoinMatchContext} for partitioned retrieval. Collect the partition results and call
-   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[], GatherMap[], long, long)}
+   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[]...)}
    * to append the unmatched right rows.
    *
    * @param rightHash hash table built from join key columns from the right table
    * @return a match context that the caller must close
    */
   public JoinMatchContext fullJoinMatchContext(HashJoin rightHash) {
-    checkMatchContextColumns(rightHash);
     return new JoinMatchContext(this, rightHash, JoinKind.FULL);
-  }
-
-  private void checkMatchContextColumns(HashJoin rightHash) {
-    if (getNumberOfColumns() != rightHash.getNumberOfColumns()) {
-      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
-          " rightKeys: " + rightHash.getNumberOfColumns());
-    }
   }
 
   /**

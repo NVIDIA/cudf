@@ -14,7 +14,9 @@ import org.slf4j.LoggerFactory;
  * such as {@link Table#innerJoinMatchContext(HashJoin)}, used to read match counts and output
  * size, and used to retrieve a range of the left table with {@link #partitionGatherMaps(int, int)}.
  *
- * <p>The context must be closed, and the owning HashJoin must stay open for its lifetime.</p>
+ * <p>The context must be closed, and the HashJoin it was created from must stay open for its
+ * lifetime. The context keeps its own reference to the left table, so the caller may close that
+ * table at any time.</p>
  *
  * <p>This class is not thread safe. A context should be created, used and closed on one thread.</p>
  */
@@ -61,6 +63,7 @@ public class JoinMatchContext implements AutoCloseable {
   private final JoinMatchContextCleaner cleaner;
   private final HashJoin hashJoin;
   private final JoinKind joinKind;
+  private final long leftRowCount;
   private boolean isClosed = false;
 
   /**
@@ -69,8 +72,13 @@ public class JoinMatchContext implements AutoCloseable {
    * thread that created it.
    */
   JoinMatchContext(Table leftKeys, HashJoin hashJoin, JoinKind joinKind) {
+    if (leftKeys.getNumberOfColumns() != hashJoin.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, left: " +
+          leftKeys.getNumberOfColumns() + " right: " + hashJoin.getNumberOfColumns());
+    }
     this.hashJoin = hashJoin;
     this.joinKind = joinKind;
+    this.leftRowCount = leftKeys.getRowCount();
     this.cleaner = new JoinMatchContextCleaner(leftKeys);
     try {
       cleaner.addRef();
@@ -102,8 +110,7 @@ public class JoinMatchContext implements AutoCloseable {
 
   /**
    * The per-row match counts as an INT32 column. The caller owns the returned column.
-   * The column is copied asynchronously on the calling thread's stream, so the context must not
-   * be closed from another thread until that stream has been synchronized.
+   * The column is copied asynchronously on the calling thread's stream.
    */
   public ColumnVector getMatchCounts() {
     ensureOpen();
@@ -113,7 +120,7 @@ public class JoinMatchContext implements AutoCloseable {
   /**
    * Gather maps for a contiguous range of left rows. For FULL joins the complement
    * of unmatched right rows is not included. Call
-   * {@link #finalizePartitionedFullJoin(GatherMap[], GatherMap[], long, long)} once all
+   * {@link #finalizePartitionedFullJoin(GatherMap[]...)} once all
    * partitions have been retrieved.
    *
    * @param leftStart inclusive start row in the left table
@@ -128,41 +135,41 @@ public class JoinMatchContext implements AutoCloseable {
   }
 
   /**
-   * Concatenate per-partition full join results and append the unmatched right rows.
-   * The two input arrays must have the same length and must come from
-   * {@link #partitionGatherMaps(int, int)} calls on FULL join contexts.
+   * Concatenate the partition results of a FULL join and append the unmatched right rows.
+   * The row counts come from the left table and the HashJoin this context was created from.
+   * The input gather maps are not closed.
    *
-   * @param leftPartials per-partition left gather maps
-   * @param rightPartials per-partition right gather maps
-   * @param leftRowCount total rows in the original left table
-   * @param rightRowCount total rows in the right table
+   * <p>The partitions are not checked against this context. They must be the results of
+   * {@link #partitionGatherMaps(int, int)} calls on this context that together cover each left
+   * row exactly once, otherwise the result is incorrect.</p>
+   *
+   * @param partitions the left and right gather map pair of each partition
    * @return the full join left and right gather maps
+   * @throws IllegalStateException if this is not a FULL join context
    */
-  public static GatherMap[] finalizePartitionedFullJoin(GatherMap[] leftPartials,
-                                                        GatherMap[] rightPartials,
-                                                        long leftRowCount,
-                                                        long rightRowCount) {
-    if (leftPartials.length != rightPartials.length) {
-      throw new IllegalArgumentException("partition arrays must have the same length");
+  public GatherMap[] finalizePartitionedFullJoin(GatherMap[]... partitions) {
+    ensureOpen();
+    if (joinKind != JoinKind.FULL) {
+      throw new IllegalStateException("Expected a FULL join context, got " + joinKind);
     }
-    if (leftRowCount < 0 || leftRowCount > Integer.MAX_VALUE
-        || rightRowCount < 0 || rightRowCount > Integer.MAX_VALUE) {
-      throw new IllegalArgumentException("row counts must be between 0 and " + Integer.MAX_VALUE
-          + ", got left=" + leftRowCount + " right=" + rightRowCount);
-    }
-    int n = leftPartials.length;
+    int n = partitions.length;
     long[] leftAddrs = new long[n];
     long[] leftLens = new long[n];
     long[] rightAddrs = new long[n];
     long[] rightLens = new long[n];
     for (int i = 0; i < n; i++) {
-      leftAddrs[i] = leftPartials[i].getBufferAddress();
-      leftLens[i] = leftPartials[i].getRowCount();
-      rightAddrs[i] = rightPartials[i].getBufferAddress();
-      rightLens[i] = rightPartials[i].getRowCount();
+      GatherMap[] partition = partitions[i];
+      if (partition == null || partition.length != 2) {
+        throw new IllegalArgumentException("Partition " + i +
+            " must be a left and right gather map pair");
+      }
+      leftAddrs[i] = partition[0].getBufferAddress();
+      leftLens[i] = partition[0].getRowCount();
+      rightAddrs[i] = partition[1].getBufferAddress();
+      rightLens[i] = partition[1].getRowCount();
     }
     long[] data = finalizePartitionedFullJoin(leftAddrs, leftLens, rightAddrs, rightLens,
-        (int) leftRowCount, (int) rightRowCount);
+        (int) leftRowCount, (int) hashJoin.getRowCount());
     return Table.buildJoinGatherMaps(data);
   }
 

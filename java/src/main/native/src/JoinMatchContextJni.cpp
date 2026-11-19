@@ -65,12 +65,9 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_JoinMatchContext_create(
     auto const left = reinterpret_cast<cudf::table_view const*>(j_left_view);
     auto const hash = reinterpret_cast<cudf::hash_join const*>(j_hash_join);
 
-    auto match_ctx =
+    auto part_ctx = std::make_unique<cudf::join_partition_context>();
+    part_ctx->left_table_context =
       std::make_unique<cudf::join_match_context>(build_match_context(*hash, *left, j_kind));
-    auto part_ctx                = std::make_unique<cudf::join_partition_context>();
-    part_ctx->left_table_context = std::move(match_ctx);
-    part_ctx->left_start_idx     = 0;
-    part_ctx->left_end_idx       = 0;
     return cudf::jni::release_as_jlong(part_ctx);
   }
   JNI_CATCH(env, 0);

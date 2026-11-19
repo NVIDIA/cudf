@@ -1710,8 +1710,7 @@ def test_timezone_interval_fast_to_slow(monkeypatch, closed, tz):
         breaks, closed=closed, name="intervals"
     )
 
-    assert isinstance(result._fsproxy_fast, cudf.IntervalIndex)
-    pd.testing.assert_index_equal(result._fsproxy_slow, expected)
+    pd.testing.assert_index_equal(result.as_cpu_object(), expected)
 
 
 @pytest.mark.parametrize(

@@ -188,7 +188,7 @@ class IntervalColumn(ColumnBase):
     ) -> pd.Index:
         if arrow_type or isinstance(self.dtype, pd.ArrowDtype):
             return super().to_pandas(nullable=nullable, arrow_type=arrow_type)
-        elif nullable and not arrow_type:
+        if nullable:
             raise NotImplementedError(
                 f"pandas does not have a native nullable type for {self.dtype}."
             )

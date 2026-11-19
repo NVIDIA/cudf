@@ -13,17 +13,14 @@ from datetime import timedelta
 from pathlib import Path
 
 from report import (
-    author_activity_since,
+    author_clock,
     classify,
     elapsed_days,
     escape,
-    event_link,
-    human_reviews,
     is_human,
+    lifecycle,
     parse_time,
-    ready_since,
-    requested_key,
-    review_requests,
+    queue_age,
 )
 
 ROOT = Path(__file__).parent
@@ -142,13 +139,11 @@ def make_action(
     threshold = policy["thresholds"].get(queue or row["queue"])
     if kind == "Clarify handoff":
         age, overdue = None, True
+    elif kind in {"Respond", "Resolve conflicts"}:
+        # Author aging also needs the prior revision and activity observations.
+        age, overdue = None, None
     else:
-        age = (
-            elapsed_days(since, now, threshold["business_days"])
-            if since and threshold
-            else None
-        )
-        overdue = age > threshold["days"] if age is not None else None
+        age, overdue = queue_age(since, now, threshold)
     attention = (
         "Needs routing"
         if kind == "Clarify handoff"
@@ -198,7 +193,8 @@ def candidates(item, config, policy, now, routing_history=None):
     labels = {label["name"] for label in issue["labels"]}
     if not labels.intersection(config["scope"]["labels"]):
         return [], "No confirmed Python component label"
-    row = classify(item, policy, now)
+    evidence = lifecycle(item, policy)
+    row = classify(item, policy, now, routing_history, evidence)
     if row["queue"] in {
         "Closed since selection",
         "Draft",
@@ -220,9 +216,12 @@ def candidates(item, config, policy, now, routing_history=None):
         ),
         None,
     )
+    author = (
+        issue["user"]["login"] if is_human(issue["user"], policy) else None
+    )
     author_conflict = (
         pr is not None
-        and is_human(issue["user"], policy)
+        and author is not None
         and policy.get("routing", {}).get("merge_conflicts") == "author"
         and (
             pr.get("mergeable") is False
@@ -251,15 +250,16 @@ def candidates(item, config, policy, now, routing_history=None):
         ]
         result.append(action)
     if pr:
-        events = sorted(
-            (event for event in item["timeline"] if event.get("created_at")),
-            key=lambda event: parse_time(event["created_at"]),
-        )
-        requests = review_requests(pr, events, policy)
+        requests = evidence["requests"]
         individuals = [
-            request for request in requests if request[0].startswith("user:")
+            r for r in requests if r["identity"].startswith("user:")
         ]
-        for identity, actor, since in requests:
+        for request in requests:
+            identity, actor, since = (
+                request["identity"],
+                request["actor"],
+                request["since"],
+            )
             team = (
                 identity.split(":", 1)[1]
                 if identity.startswith("team:")
@@ -269,27 +269,12 @@ def candidates(item, config, policy, now, routing_history=None):
                 individuals or team not in config["scope"]["team_slugs"]
             ):
                 continue
-            ready = ready_since(issue, events)
-            event_date = since
-            since = (
-                max(since, ready, key=parse_time) if since and ready else None
-            )
             kind = "Assign reviewer" if team else "Review"
             queue = (
                 "Needs reviewer assignment"
                 if team
-                else "Waiting for another review"
-                if human_reviews(item, policy)
-                else "Waiting for first review"
+                else evidence["review_queue"]
             )
-            request_events = [
-                event
-                for event in events
-                if event["event"] == "review_requested"
-                and requested_key(event) == identity
-                and event["created_at"] == event_date
-            ]
-            evidence = event_link(issue, request_events, event_date)
             result.append(
                 make_action(
                     item,
@@ -300,7 +285,7 @@ def candidates(item, config, policy, now, routing_history=None):
                     kind,
                     primary if team else actor.lstrip("@"),
                     since,
-                    evidence,
+                    request["evidence"],
                     f"Select a named reviewer for {actor}"
                     if team
                     else "Submit the requested review or explicitly hand it off",
@@ -316,7 +301,10 @@ def candidates(item, config, policy, now, routing_history=None):
             "Assign reviewer",
         }:
             return result, None
-        owner = issue["user"]["login"] if kind == "Respond" else primary
+        if kind == "Respond" and author is None:
+            kind = "Clarify handoff"
+            description = f"Identify a human to address changes requested from bot author @{issue['user']['login']}"
+        owner = author if kind == "Respond" else primary
         since = row["since"]
         if kind == "Inspect blockers":
             resolved = [
@@ -334,7 +322,7 @@ def candidates(item, config, policy, now, routing_history=None):
                 since = max(
                     [*resolved, *([since] if since else [])], key=parse_time
                 )
-        evidence = (
+        handoff_evidence = (
             row["evidence"][0]["url"] if row["evidence"] else issue["html_url"]
         )
         result.append(
@@ -347,7 +335,7 @@ def candidates(item, config, policy, now, routing_history=None):
                 kind,
                 owner,
                 since,
-                evidence,
+                handoff_evidence,
                 description,
             )
         )
@@ -359,27 +347,13 @@ def author_inactivity(action, item, policy, now, routing_history):
         (old for old in routing_history or [] if old["key"] == action["key"]),
         None,
     )
-    dates = [author_activity_since(item, action["since"]) or now]
-    if previous and previous.get("last_author_activity_at"):
-        dates.append(previous["last_author_activity_at"])
-    if (
-        previous
-        and previous.get("source_sha")
-        and previous.get("source_sha") != action["source_sha"]
-        and (item.get("head_commit_author") or "").casefold()
-        == action["owner"].casefold()
-    ):
-        # First observation is reliable; a commit's authored date is not its push time.
-        dates.append(now)
-    since = max(dates, key=parse_time)
-    complete = "review_comments" in item and bool(action["since"])
-    action["last_author_activity_at"] = since if complete else None
-    days = policy["thresholds"]["Waiting for author"]["days"]
+    since = author_clock(item, action["since"], now, previous)
+    action["last_author_activity_at"] = since
+    threshold = policy["thresholds"]["Waiting for author"]
+    days = threshold["days"]
     action["author_inactivity_days"] = days
-    age = elapsed_days(since, now) if complete else None
-    action.update(
-        age_days=age, overdue=age > days if age is not None else None
-    )
+    age, overdue = queue_age(since, now, threshold)
+    action.update(age_days=age, overdue=overdue)
     action["attention"] = (
         "Unknown age"
         if age is None
@@ -389,7 +363,7 @@ def author_inactivity(action, item, policy, now, routing_history):
     )
     action["project_fields"]["Attention"] = action["attention"]
     action["project_fields"]["Last author activity"] = (
-        parse_time(since).date().isoformat() if complete else None
+        parse_time(since).date().isoformat() if since else None
     )
     if action["kind"] == "Respond":
         action["description"] = (

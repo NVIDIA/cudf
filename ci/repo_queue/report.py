@@ -149,6 +149,82 @@ def author_activity_since(item, since):
     return max(dates, key=parse_time) if dates else None
 
 
+def queue_age(since, now, threshold):
+    age = (
+        elapsed_days(since, now, threshold["business_days"])
+        if since and threshold
+        else None
+    )
+    return age, age > threshold["days"] if age is not None else None
+
+
+def author_clock(item, since, now, previous=None, observed_at=None):
+    if "review_comments" not in item or not since:
+        return None
+    dates = [author_activity_since(item, since)]
+    if previous and previous.get("last_author_activity_at"):
+        dates.append(previous["last_author_activity_at"])
+    if (
+        previous
+        and previous.get("source_sha")
+        and previous["source_sha"] != item["pull_request"]["head"]["sha"]
+        and (item.get("head_commit_author") or "").casefold()
+        == item["issue"]["user"]["login"].casefold()
+    ):
+        # A commit's authored date is not its push time; use its first observation.
+        dates.append(item.get("observed_at") or observed_at or now)
+    return max(dates, key=parse_time)
+
+
+def lifecycle(item, policy):
+    """Normalize handoff evidence once for aggregate reports and individual cards."""
+    issue = item["issue"]
+    events = sorted(
+        (e for e in item["timeline"] if e.get("created_at")),
+        key=lambda e: parse_time(e["created_at"]),
+    )
+    pr = item.get("pull_request")
+    reviews = human_reviews(item, policy) if pr else []
+    effective = {}
+    for review in reviews:
+        # A comment-only review does not revoke an earlier decision.
+        if review["state"] != "COMMENTED":
+            effective[review["user"]["login"].casefold()] = review
+    ready = ready_since(issue, events) if pr else None
+    requests = []
+    for identity, actor, requested_at in (
+        review_requests(pr, events, policy) if pr else []
+    ):
+        request_events = [
+            e
+            for e in events
+            if e["event"] == "review_requested"
+            and requested_key(e) == identity
+            and e["created_at"] == requested_at
+        ]
+        requests.append(
+            {
+                "identity": identity,
+                "actor": actor,
+                "requested_at": requested_at,
+                "since": max(requested_at, ready, key=parse_time)
+                if requested_at and ready
+                else None,
+                "evidence": event_link(issue, request_events, requested_at),
+            }
+        )
+    return {
+        "events": events,
+        "reviews": reviews,
+        "effective": list(effective.values()),
+        "requests": requests,
+        "ready": ready,
+        "review_queue": "Waiting for another review"
+        if reviews
+        else "Waiting for first review",
+    }
+
+
 def observed_blockers(item):
     pr = item.get("pull_request")
     if not pr:
@@ -194,13 +270,13 @@ def observed_blockers(item):
     return blockers
 
 
-def classify(item, policy, now):
+def classify(
+    item, policy, now, routing_history=None, evidence=None, observed_at=None
+):
     issue = item["issue"]
     labels = {label["name"] for label in issue["labels"]}
-    events = sorted(
-        (event for event in item["timeline"] if event.get("created_at")),
-        key=lambda event: parse_time(event["created_at"]),
-    )
+    evidence = evidence or lifecycle(item, policy)
+    events = evidence["events"]
     components = sorted(labels & policy["component_owners"].keys())
     owner_teams = sorted(
         {"@" + policy["component_owners"][label] for label in components}
@@ -272,24 +348,17 @@ def classify(item, policy, now):
             "Explicit label: " + ", ".join(sorted(matched)),
         )
     else:
-        reviews = human_reviews(item, policy)
-        effective = {}
-        for review in reviews:
-            # A comment-only review does not revoke an earlier decision.
-            if review["state"] != "COMMENTED":
-                effective[review["user"]["login"].casefold()] = review
+        reviews = evidence["reviews"]
         changes = [
-            review
-            for review in effective.values()
-            if review["state"] == "CHANGES_REQUESTED"
+            r
+            for r in evidence["effective"]
+            if r["state"] == "CHANGES_REQUESTED"
         ]
         approvals = [
-            review
-            for review in effective.values()
-            if review["state"] == "APPROVED"
+            r for r in evidence["effective"] if r["state"] == "APPROVED"
         ]
-        requests = review_requests(pr, events, policy)
-        clocks = {key: since for key, _, since in requests}
+        requests = evidence["requests"]
+        clocks = {r["identity"]: r["requested_at"] for r in requests}
         unaddressed = [
             review
             for review in changes
@@ -320,25 +389,18 @@ def classify(item, policy, now):
                 unaddressed[0]["html_url"],
             )
         elif requests:
-            dates = [since for _, _, since in requests]
+            dates = [r["since"] for r in requests]
             since = min(dates, key=parse_time) if all(dates) else None
-            ready = ready_since(issue, events)
-            if since and ready:
-                since = max(since, ready, key=parse_time)
-            else:
-                since = None
             assign(
-                "Waiting for another review"
-                if reviews
-                else "Waiting for first review",
-                ", ".join(actor for _, actor, _ in requests),
+                evidence["review_queue"],
+                ", ".join(r["actor"] for r in requests),
                 since,
                 "Outstanding GitHub review requests; clock uses the "
                 "oldest request, bounded by readiness/reopening",
                 event_link(issue, events, since),
             )
             row["review_requests"] = [
-                {"actor": actor, "since": date} for _, actor, date in requests
+                {"actor": r["actor"], "since": r["since"]} for r in requests
             ]
         elif approvals:
             assign(
@@ -363,7 +425,7 @@ def classify(item, policy, now):
             assign(
                 "Needs reviewer assignment",
                 routing,
-                ready_since(issue, events),
+                evidence["ready"],
                 "Ready PR with no human review or outstanding human/team "
                 "review request",
             )
@@ -386,17 +448,28 @@ def classify(item, policy, now):
         if row["since"]:
             age_since = row["since"]
             if row["queue"] == "Waiting for author":
-                age_since = (
-                    author_activity_since(item, row["since"])
-                    if "review_comments" in item
-                    else None
+                previous = next(
+                    (
+                        a
+                        for a in routing_history or []
+                        if a["source"] == issue["html_url"]
+                        and a["kind"] == "Respond"
+                        and a["since"] == row["since"]
+                    ),
+                    None,
                 )
+                age_since = author_clock(
+                    item, row["since"], now, previous, observed_at
+                )
+                if routing_history is None:
+                    row["uncertainty"].append(
+                        "No routing history supplied; revision-based author activity is unavailable"
+                    )
                 row["last_author_activity_at"] = age_since
             if age_since:
-                row["age_days"] = elapsed_days(
-                    age_since, now, threshold["business_days"]
+                row["age_days"], row["overdue"] = queue_age(
+                    age_since, now, threshold
                 )
-                row["overdue"] = row["age_days"] > threshold["days"]
         else:
             row["uncertainty"].append(
                 "Waiting-since event unavailable; aging is unknown"
@@ -404,7 +477,7 @@ def classify(item, policy, now):
     return row
 
 
-def make_report(snapshot, policy, now=None):
+def make_report(snapshot, policy, now=None, routing_history=None):
     if snapshot.get("schema_version") != 1:
         raise ValueError("unsupported snapshot schema_version")
     now = now or snapshot["collected_at"]
@@ -416,7 +489,16 @@ def make_report(snapshot, policy, now=None):
         "as_of": now,
         "selection": snapshot["selection"],
         "policy": policy,
-        "items": [classify(item, policy, now) for item in snapshot["items"]],
+        "items": [
+            classify(
+                item,
+                policy,
+                now,
+                routing_history,
+                observed_at=snapshot["collected_at"],
+            )
+            for item in snapshot["items"]
+        ],
     }
 
 
@@ -528,12 +610,20 @@ def main():
     parser.add_argument(
         "--format", choices=["markdown", "json"], default="markdown"
     )
+    parser.add_argument(
+        "--routing-history",
+        type=Path,
+        help="Prior action observations for revision-based author activity",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     report = make_report(
         json.loads(args.snapshot.read_text()),
         json.loads(args.policy.read_text()),
         args.now,
+        json.loads(args.routing_history.read_text())
+        if args.routing_history
+        else None,
     )
     content = (
         json.dumps(report, indent=2) + "\n"

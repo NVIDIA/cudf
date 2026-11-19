@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from actions import preview
 from pilot import delivery_history, recover_receipts, send_notifications
-from sync import ProjectCards, metadata
+from sync import MARKER, ProjectCards, metadata
 from test_actions import CONFIG, python_item, snapshot
 from test_report import NOW, POLICY, REQUESTED, request, review
 
@@ -130,6 +130,98 @@ class FakeGitHub:
 
 
 class SyncTests(unittest.TestCase):
+    def test_automatic_dispositions_resume_but_manual_statuses_survive(self):
+        for transition in ("draft", "closed", "parked"):
+            with self.subTest(transition=transition):
+                self.setUp()
+                self.data["pull_request"]["requested_reviewers"] = []
+                review(self.data, "CHANGES_REQUESTED", who="unsolicited")
+                cards, plan = self.sync()
+                key = plan["actions"][0]["key"]
+                if transition == "draft":
+                    self.data["pull_request"]["draft"] = True
+                elif transition == "closed":
+                    self.data["issue"]["state"] = "closed"
+                else:
+                    self.data["issue"]["labels"].append({"name": "parked"})
+                with patch.dict(POLICY, {"parked_labels": ["parked"]}):
+                    self.sync()
+                self.data["pull_request"]["draft"] = False
+                self.data["issue"]["state"] = "open"
+                self.data["issue"]["labels"] = [{"name": "Python"}]
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["values"]["Status"], "Awaiting action"
+                )
+                self.assertNotIn("resolution", cards.cards[key]["data"])
+                self.assertNotIn("resolved_at", cards.cards[key]["data"])
+                for manual in ("Deferred", "Complete", "In progress"):
+                    native = self.github.items[cards.cards[key]["item"]["id"]]
+                    status = next(
+                        f
+                        for f in native["fieldValues"]["nodes"]
+                        if f["field"]["name"] == "Status"
+                    )
+                    status["name"] = manual
+                    cards, _ = self.sync()
+                    self.assertEqual(
+                        cards.cards[key]["values"]["Status"], manual
+                    )
+                    self.data["pull_request"]["draft"] = True
+                    self.sync()
+                    self.data["pull_request"]["draft"] = False
+                    cards, _ = self.sync()
+                    self.assertEqual(
+                        cards.cards[key]["values"]["Status"], manual
+                    )
+
+    def test_legacy_dispositions_resume_without_losing_manual_overrides(self):
+        for status, expected in (
+            ("Deferred", "Awaiting action"),
+            ("Complete", "Complete"),
+        ):
+            with self.subTest(status=status):
+                self.setUp()
+                cards, plan = self.sync()
+                key = plan["actions"][0]["key"]
+                data = deepcopy(cards.cards[key]["data"])
+                data.pop("written_status")
+                data["resolution"] = "Source is draft."
+                cards.save(key, data, {"Status": status})
+                cards, _ = self.sync()
+                self.assertEqual(
+                    cards.cards[key]["values"]["Status"], expected
+                )
+                self.assertNotIn("resolution", cards.cards[key]["data"])
+
+    def test_damaged_managed_identity_aborts_before_duplicate_or_mutation(
+        self,
+    ):
+        for damage in ("marker", "all_body", "corrupt_marker"):
+            with self.subTest(damage=damage):
+                self.setUp()
+                self.sync()
+                native = self.github.items["1"]
+                if damage == "all_body":
+                    native["content"]["body"] = (
+                        "Accidentally replaced the body"
+                    )
+                elif damage == "corrupt_marker":
+                    native["content"]["body"] = native["content"][
+                        "body"
+                    ].replace(
+                        "cudf-work-tracking:v1:", "cudf-work-tracking:v1:!"
+                    )
+                else:
+                    native["content"]["body"] = MARKER.sub(
+                        "", native["content"]["body"]
+                    )
+                count = len(self.github.mutations)
+                with self.assertRaisesRegex(ValueError, "metadata"):
+                    self.sync()
+                self.assertEqual(len(self.github.mutations), count)
+                self.assertEqual(len(self.github.items), 2)
+
     def test_author_activity_updates_clock_without_completing_or_reassigning_card(
         self,
     ):

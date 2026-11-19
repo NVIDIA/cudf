@@ -107,6 +107,30 @@ class ProjectTests(unittest.TestCase):
         value = field_input(SCHEMA["fields"][0], old)
         self.assertIn(old["options"][0], value["singleSelectOptions"])
 
+    def test_option_presentation_changes_are_applied_without_changing_ids(
+        self,
+    ):
+        for property_name, value in (
+            ("color", "RED"),
+            ("description", "Updated policy"),
+        ):
+            state = configured_state()
+            schema = deepcopy(SCHEMA)
+            schema["fields"][0]["options"][0][property_name] = value
+            self.assertIn(
+                {"kind": "field", "name": "Status"},
+                plan_setup(state, schema, "readme"),
+            )
+            old = state["fields"][2]
+            updated = field_input(schema["fields"][0], old)
+            self.assertEqual(
+                updated["singleSelectOptions"][0]["id"],
+                old["options"][0]["id"],
+            )
+            self.assertEqual(
+                updated["singleSelectOptions"][0][property_name], value
+            )
+
     def test_configured_project_is_noop_without_any_mutation(self):
         state = configured_state()
         self.assertEqual(plan_setup(state, SCHEMA, "readme"), [])

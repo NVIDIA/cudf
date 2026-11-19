@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import getpass
 import json
 import os
 import sys
@@ -19,7 +18,7 @@ from pathlib import Path
 from actions import notification_recipients, preview
 from collect import GitHub, collect_item, timestamp
 from project import read_project
-from slack_dm_test import payload, post, recipient
+from slack_dm_test import payload, post, recipient, slack_token
 from sync import ProjectCards
 
 ROOT = Path(__file__).parent
@@ -133,7 +132,7 @@ def send_notifications(
         journal[pending["id"]] = receipt
         # A local receipt repairs a successful send whose subsequent Project write failed.
         save_json(journal_path, journal)
-        print(json.dumps({"sent": key, **receipt}), flush=True)
+        print(json.dumps({"delivered": kind}), flush=True)
         acknowledge(cards, key, route, pending, receipt)
         sent.append(key)
     return sent
@@ -186,15 +185,7 @@ def main():
                 )
         token = None
         if args.send_dm:
-            token = os.environ.get("SLACK_BOT_TOKEN")
-            if not token:
-                if not sys.stdin.isatty():
-                    parser.error(
-                        "set SLACK_BOT_TOKEN or use an interactive terminal"
-                    )
-                token = getpass.getpass("Slack bot token (hidden): ").strip()
-            if not token:
-                parser.error("missing Slack bot token")
+            token = slack_token()
         snapshot = {
             "schema_version": 1,
             "repository": config["repository"],

@@ -102,9 +102,14 @@ def field_input(spec, existing=None):
 def field_matches(spec, existing):
     if not existing:
         return False
-    field_input(spec, existing)
-    actual = {option["name"] for option in existing.get("options", [])}
-    return all(option["name"] in actual for option in spec.get("options", []))
+    desired = field_input(spec, existing)
+    if spec["data_type"] != "SINGLE_SELECT":
+        return True
+    actual = {option["id"]: option for option in existing.get("options", [])}
+    return all(
+        "id" in option and actual.get(option["id"]) == option
+        for option in desired["singleSelectOptions"]
+    )
 
 
 def view_for(spec, views):

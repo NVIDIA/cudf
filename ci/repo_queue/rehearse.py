@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import getpass
 import json
-import os
 import sys
 from copy import deepcopy
 from datetime import timedelta
@@ -25,7 +23,7 @@ from pilot import (
     send_notifications,
 )
 from report import parse_time
-from slack_dm_test import post, recipient
+from slack_dm_test import post, recipient, slack_token
 
 ROOT = Path(__file__).parent
 KEY = "cudf-action:v1:dm-reminder-rehearsal"
@@ -140,13 +138,7 @@ def main():
     config = json.loads((ROOT / "pilot.json").read_text())
     token = None
     if args.send_dm:
-        token = os.environ.get("SLACK_BOT_TOKEN")
-        if not token and sys.stdin.isatty():
-            token = getpass.getpass("Slack bot token (hidden): ").strip()
-        if not token:
-            parser.error(
-                "SLACK_BOT_TOKEN or an interactive token prompt is required"
-            )
+        token = slack_token()
     # Preview receipts must never suppress a later real DM rehearsal.
     directory = args.output_dir / (
         "rehearsal-dm" if args.send_dm else "rehearsal-preview"

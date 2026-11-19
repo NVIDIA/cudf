@@ -41,11 +41,3 @@ jobs:
         run: >-
           python3 ci/repo_queue/scheduled.py --mode "$PILOT_MODE"
           --output-dir "$RUNNER_TEMP/cudf-work-tracking"
-      - name: Retain snapshots and delivery receipts even after failure
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: cudf-work-tracking-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cudf-work-tracking/
-          if-no-files-found: ignore
-          retention-days: 30

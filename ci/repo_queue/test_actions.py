@@ -15,6 +15,7 @@ from actions import (
     preview,
     slack_text,
 )
+from report import make_report
 from test_report import NOW, POLICY, REQUESTED, REVIEWED, item, request, review
 
 CONFIG = json.loads(Path(__file__).with_name("pilot.json").read_text())
@@ -37,6 +38,51 @@ def snapshot(data):
 
 
 class ActionTests(unittest.TestCase):
+    def test_bot_changes_requests_route_to_a_human(self):
+        data = python_item()
+        data["issue"]["user"] = {"login": "dependabot[bot]", "type": "Bot"}
+        review(data, "CHANGES_REQUESTED", who="human")
+        action = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        self.assertEqual(
+            (action["kind"], action["owner"]),
+            ("Clarify handoff", CONFIG["primary_contact"]),
+        )
+        self.assertIn("dependabot[bot]", action["description"])
+        self.assertNotIn("author_inactivity_days", action)
+
+    def test_report_and_board_share_history_aware_author_clock(self):
+        data = python_item()
+        review(data, "CHANGES_REQUESTED", who="reviewer")
+        first = preview(snapshot(data), POLICY, CONFIG)["actions"][0]
+        data["pull_request"]["head"]["sha"] = "new-head"
+        data["head_commit_author"] = "author"
+        saved = snapshot(data)
+        saved["collected_at"] = "2026-11-23T12:00:00Z"
+        data["observed_at"] = "2026-11-23T11:59:00Z"
+        history = [first]
+        action = preview(saved, POLICY, CONFIG, routing_history=history)[
+            "actions"
+        ][0]
+        report = make_report(saved, POLICY, routing_history=history)["items"][
+            0
+        ]
+        self.assertEqual(
+            action["last_author_activity_at"], data["observed_at"]
+        )
+        for field in ("last_author_activity_at", "age_days", "overdue"):
+            self.assertEqual(action[field], report[field])
+        later = make_report(saved, POLICY, "2026-11-24T12:00:00Z", history)[
+            "items"
+        ][0]
+        self.assertAlmostEqual(later["age_days"], 1 + 60 / 86400)
+        standalone = make_report(saved, POLICY)["items"][0]
+        self.assertTrue(
+            any(
+                "No routing history" in message
+                for message in standalone["uncertainty"]
+            )
+        )
+
     def test_unrequested_changes_reviewer_keeps_author_owner_after_reply(self):
         data = python_item()
         review(data, "CHANGES_REQUESTED", who="unsolicited")

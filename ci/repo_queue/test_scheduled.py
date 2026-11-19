@@ -74,30 +74,38 @@ class ScheduledTests(unittest.TestCase):
         self.assertEqual(error.exception.code, 2)
         run.assert_not_called()
 
-    def test_child_failure_is_propagated_to_the_scheduler(self):
-        with ExitStack() as stack:
-            stack.enter_context(patch.dict(os.environ, {}, clear=True))
-            stack.enter_context(
-                patch(
-                    "sys.argv",
-                    [
-                        "scheduled.py",
-                        "--mode",
-                        "preview",
-                        "--output-dir",
-                        "/tmp/queue",
-                    ],
+    def test_child_output_is_private_on_success_and_failure(self):
+        for status in (0, 7):
+            with ExitStack() as stack:
+                directory = stack.enter_context(tempfile.TemporaryDirectory())
+                public = stack.enter_context(redirect_stdout(StringIO()))
+                stack.enter_context(patch.dict(os.environ, {}, clear=True))
+                stack.enter_context(
+                    patch(
+                        "sys.argv", ["scheduled.py", "--output-dir", directory]
+                    )
                 )
-            )
-            stack.enter_context(
-                patch(
-                    "scheduled.subprocess.run",
-                    return_value=CompletedProcess([], 7),
+
+                def child(command, **kwargs):
+                    kwargs["stdout"].write("PRIVATE PROJECT STATE\n")
+                    kwargs["stderr"].write("PRIVATE DM RECEIPT\n")
+                    return CompletedProcess(command, status)
+
+                stack.enter_context(
+                    patch("scheduled.subprocess.run", side_effect=child)
                 )
-            )
-            with self.assertRaises(SystemExit) as error:
-                main()
-        self.assertEqual(error.exception.code, 7)
+                with self.assertRaises(SystemExit) as error:
+                    main()
+                self.assertEqual(error.exception.code, status)
+                self.assertNotIn("PRIVATE", public.getvalue())
+                private = (Path(directory) / "diagnostics.log").read_text()
+                self.assertIn("PRIVATE PROJECT STATE", private)
+                self.assertIn("PRIVATE DM RECEIPT", private)
+                self.assertEqual(
+                    (Path(directory) / "diagnostics.log").stat().st_mode
+                    & 0o077,
+                    0,
+                )
 
 
 class RehearsalTests(unittest.TestCase):

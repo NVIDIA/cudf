@@ -19,6 +19,17 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 
 
+def slack_token(*, allow_prompt=True):
+    token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    if not token and allow_prompt and sys.stdin.isatty():
+        token = getpass.getpass("Slack bot token (hidden): ").strip()
+    if not token:
+        raise RuntimeError(
+            "SLACK_BOT_TOKEN is required; interactive commands can prompt in a terminal"
+        )
+    return token
+
+
 def recipient(config):
     contact = config["primary_contact"].casefold()
     users = {
@@ -107,15 +118,7 @@ def main():
     if not args.send:
         print(json.dumps(message, indent=2))
         return
-    token = os.environ.get("SLACK_BOT_TOKEN")
-    if not token:
-        if not sys.stdin.isatty():
-            parser.error(
-                "set SLACK_BOT_TOKEN or run in an interactive terminal"
-            )
-        token = getpass.getpass("Slack bot token (hidden): ").strip()
-    if not token:
-        parser.error("missing Slack bot token")
+    token = slack_token()
     parent = post(token, message)
     print(json.dumps({"test_parent": parent}), flush=True)
     reply = post(

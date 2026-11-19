@@ -62,7 +62,13 @@ Rendering defaults to the snapshot's collection time, making replay
 deterministic. Use `--now 2026-11-20T12:00:00Z` to assess aging at a later time;
 this extrapolates from the saved state and does not refresh GitHub metadata.
 Machine-readable output includes the applied policy, per-reviewer request
-timestamps, evidence, observations, and uncertainty.
+timestamps, evidence, observations, and uncertainty. Pass
+`--routing-history /path/to/routing-history.json` from a prior pilot run to
+include first-observation clocks for author-attributed revisions. Without
+history, the report explicitly marks revision-based author activity as
+unavailable. Reports and action cards share the same handoff normalization
+and author-clock calculation; aggregate reports and individual reviewer
+cards remain separate presentations.
 
 The initial policy uses these thresholds:
 
@@ -165,7 +171,9 @@ an author response on the same PR.
 The action-routing policy sends GitHub-confirmed merge conflicts to the PR
 author as Resolve conflicts actions, replacing generic primary-contact
 inspection/clarification cards. Requested reviewers retain their independent
-actions. Failed CI alone does not identify the next owner. The underlying
+actions. A bot-authored changes-requested PR routes to the primary contact
+to identify a human responder, avoiding unassignable bot logins.
+Failed CI alone does not identify the next owner. The underlying
 report retains its lifecycle classification and lists CI/conflict observations
 separately; the action planner determines the concrete work and owner.
 
@@ -263,8 +271,13 @@ handoffs supersede old cards with an explanatory disposition. Closure completes
 cards, while draft/deferred sources defer them. Losing a component label or
 an ambiguous absence does not establish completion. Manual In progress,
 Deferred, and Complete statuses survive refreshes of the same current action.
-Archived cards are not changed or notified. The underlying issues and PRs
-are not modified.
+Archived cards are not changed or notified. Automatic draft/closed
+dispositions are reversed when the same action becomes active again; manual
+Deferred, Complete, and In progress overrides remain in place. Automatic status
+provenance is stored in the managed metadata. Older pilot records use their
+recorded disposition to recognize automatic transitions. Missing or damaged
+metadata on a card with a managed Action key stops the run before creating
+cards. The underlying issues and PRs are not modified.
 
 DM delivery history is durable in each draft card's managed metadata, keyed
 separately from any future production destination. Subsequent due reminders
@@ -328,15 +341,23 @@ the file lock does not coordinate different machines. Project metadata keeps
 the authoritative notification history across fresh runners. Repeated runs
 do not resend notices before the next policy deadline.
 
-Every run retains snapshots, plans, results, and receipts as an artifact for
-30 days, including on failure. If Slack succeeds but the Project acknowledgment
-fails, download that run's artifact to a local directory and run `pilot.py`
-with that directory as `--output-dir` to recover from `dm-receipts.json`.
-Restore the entire directory, including the receipts; do not start with a new
-empty directory for recovery. A pending send without a receipt stops further
-DM delivery for inspection. The workflow does not automatically download old
-artifacts or retry uncertain sends. Pause the workflow before local recovery,
-and resume it afterward.
+The public workflow uploads **no artifacts**. The scheduler captures child
+stdout/stderr into `diagnostics.log` inside its private output directory and
+prints only a fixed success/failure message. Snapshots, private Project
+history, rendered plans, and Slack DM receipts must not be copied into public
+logs or repository artifacts. The local output directory is restricted to its
+owner; existing successful notification history remains in the private Project.
+
+For a local failure after Slack succeeds but before Project acknowledgment,
+rerun `pilot.py` with the same output directory to recover from
+`dm-receipts.json`. Do not discard receipts or switch directories during
+recovery. Hosted runners are ephemeral: their local diagnostics and receipts
+are not retained after a job ends. If acknowledgment fails there, the pending
+record in the private Project blocks further delivery, and an operator must
+inspect the bot DM and reconcile the uncertain attempt before retrying. This
+tradeoff keeps recovery data private without adding another storage service;
+it does not provide automatic recovery after an ambiguous hosted-runner send.
+Pause the workflow before local recovery and resume it afterward.
 
 ## Accelerated reminder rehearsal
 
@@ -364,8 +385,9 @@ use a new directory only when deliberately starting another rehearsal.
 
 The workflow's manual `rehearsal` mode performs the same sequence using its
 Slack secret, with no Project access required. Each new workflow execution
-starts a new rehearsal; inspect the previous run's artifact and DM before
-retrying a failed rehearsal. A rehearsal never runs on the daily schedule.
+starts a new rehearsal; inspect the DM before retrying a failed rehearsal.
+Its hosted-runner files are not retained. A rehearsal never runs on the daily
+schedule.
 
 ## Remaining implementation and rollout
 
@@ -375,7 +397,7 @@ handoffs still require maintainer judgment; the classifier does not infer
 owners from arbitrary comments.
 
 The workflow only supplies triggers, permissions, concurrency, credentials,
-and artifact retention. Selection, event interpretation, policy, rendering,
+and invocation. Selection, event interpretation, policy, rendering,
 and delivery live in scripts that run from a terminal.
 
 The release-sync pagination issue and existing Project status automation

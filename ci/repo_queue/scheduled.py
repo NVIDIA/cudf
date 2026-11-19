@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from slack_dm_test import slack_token
+
 ROOT = Path(__file__).parent
 
 
@@ -67,21 +69,36 @@ def main():
     selected = command(
         json.loads(args.selection.read_text()), args.mode, args.output_dir
     )
-    if args.mode in {"dm", "rehearsal"} and not os.environ.get(
-        "SLACK_BOT_TOKEN"
-    ):
-        parser.error("SLACK_BOT_TOKEN is required for unattended DM delivery")
+    if args.mode in {"dm", "rehearsal"}:
+        try:
+            slack_token(allow_prompt=False)
+        except RuntimeError as error:
+            parser.error(str(error))
     if os.environ.get("GITHUB_ACTIONS") == "true" and args.mode != "rehearsal":
         if not os.environ.get("GH_TOKEN"):
             parser.error(
                 "GH_TOKEN must provide access to the organization Project"
             )
-    # Let the child retain its receipt files and diagnostics on failure.
-    raise SystemExit(subprocess.run(selected, check=False).returncode)
+    # Private Project metadata and DM receipts must not become public Actions logs.
+    os.umask(0o077)
+    args.output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    args.output_dir.chmod(0o700)
+    with (args.output_dir / "diagnostics.log").open("a") as diagnostics:
+        result = subprocess.run(
+            selected, stdout=diagnostics, stderr=diagnostics, check=False
+        )
+    print(
+        "Pilot completed."
+        if result.returncode == 0
+        else "Pilot failed. Inspect pending deliveries in the private Project before retrying."
+    )
+    raise SystemExit(result.returncode)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError) as error:
-        sys.exit(str(error))
+    except (OSError, ValueError):
+        sys.exit(
+            "Pilot could not start; inspect its private local configuration and diagnostics."
+        )

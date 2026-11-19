@@ -44,6 +44,8 @@ fieldValues(first:100) {
 def metadata(body):
     matches = MARKER.findall(body)
     if not matches:
+        if START in body or END in body or "<!-- cudf-work-tracking:" in body:
+            raise ValueError("Missing or damaged managed card metadata")
         return None
     if len(matches) != 1 or body.count(START) != 1 or body.count(END) != 1:
         raise ValueError("Ambiguous managed card metadata")
@@ -165,6 +167,30 @@ def disposition(old, item, current, omitted, config):
     return None
 
 
+def status_data(card=None):
+    """Keep manual intent even while a source transition temporarily overrides it."""
+    if card is None:
+        return {"version": 1, "deliveries": {}}
+    data = deepcopy(card["data"])
+    status = card["values"].get("Status")
+    written = data.get("written_status")
+    # Earlier pilot versions recorded automatic dispositions only as reasons.
+    if written is None:
+        if data.get("resolved_at"):
+            written = "Complete"
+        elif data.get("resolution") in {
+            "Source is draft.",
+            "Source is explicitly deferred.",
+        }:
+            written = "Deferred"
+    if status != written:
+        if status in {"In progress", "Deferred", "Complete"}:
+            data["manual_status"] = status
+        else:
+            data.pop("manual_status", None)
+    return data
+
+
 class ProjectCards:
     def __init__(self, github, config, state, apply=False):
         self.github, self.config, self.state, self.apply = (
@@ -183,8 +209,19 @@ class ProjectCards:
             github, config["project"]["id"], "items", ITEM_SELECTION
         ):
             content = item.get("content") or {}
+            values = {
+                value["field"]["name"]: value.get(
+                    "text", value.get("name", value.get("date"))
+                )
+                for value in item["fieldValues"]["nodes"]
+                if value.get("field")
+            }
             data = metadata(content.get("body", ""))
             if data is None:
+                if str(values.get("Action key", "")).startswith(
+                    "cudf-action:"
+                ):
+                    raise ValueError("Missing metadata for managed Action key")
                 continue
             if (
                 item["fieldValues"]["pageInfo"]["hasNextPage"]
@@ -201,13 +238,6 @@ class ProjectCards:
                 )
             if key in self.cards:
                 raise ValueError("Duplicate managed action key: " + key)
-            values = {
-                value["field"]["name"]: value.get(
-                    "text", value.get("name", value.get("date"))
-                )
-                for value in item["fieldValues"]["nodes"]
-                if value.get("field")
-            }
             if values.get("Action key", key) != key:
                 raise ValueError("Card body and Action key disagree")
             self.cards[key] = {"item": item, "data": data, "values": values}
@@ -344,19 +374,13 @@ class ProjectCards:
         desired = {action["key"]: action for action in plan["actions"]}
         for key, action in desired.items():
             previous = self.cards.get(key)
-            data = (
-                deepcopy(previous["data"])
-                if previous
-                else {"version": 1, "deliveries": {}}
-            )
+            data = status_data(previous)
             data["action"] = action_record(action)
             values = dict(action["project_fields"])
-            if previous and previous["values"].get("Status") in {
-                "In progress",
-                "Deferred",
-                "Complete",
-            }:
-                values["Status"] = previous["values"]["Status"]
+            values["Status"] = data.get("manual_status", values["Status"])
+            data["written_status"] = values["Status"]
+            data.pop("resolution", None)
+            data.pop("resolved_at", None)
             self.save(key, data, values)
         sources = {
             item["issue"]["html_url"]: item for item in snapshot["items"]
@@ -382,8 +406,9 @@ class ProjectCards:
             )
             if result:
                 status, reason = result
-                data = deepcopy(card["data"])
+                data = status_data(card)
                 data["resolution"] = reason
+                data["written_status"] = status
                 if status == "Complete":
                     data["resolved_at"] = snapshot["collected_at"]
                 self.save(

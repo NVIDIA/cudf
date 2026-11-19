@@ -1039,7 +1039,6 @@ dependencies:
           - make
           - myst-nb
           - numpydoc
-          - scipy
           - sphinx>=8.1.0
           - sphinx-copybutton
           - sphinx-remove-toctrees
@@ -1051,7 +1050,6 @@ dependencies:
         packages:
           - ipython
           - notebook
-          - scipy
   py_version:
     specific:
       - output_types: conda

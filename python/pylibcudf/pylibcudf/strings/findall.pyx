@@ -16,9 +16,8 @@ if TYPE_CHECKING:
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.cuda_stream_ref cimport stream_ref
 
-__all__ = ["findall", "find_re", "find_re_bytes"]
+__all__ = ["findall", "find_re"]
 
 cpdef Column findall(
     Column input, RegexProgram pattern, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
@@ -89,50 +88,6 @@ cpdef Column find_re(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_findall.find_re(
-            c_input,
-            pattern.c_obj.get()[0],
-            _cs,
-            mr.get_mr()
-        )
-
-    return Column.from_libcudf(move(c_result), _stream, mr)
-
-
-cpdef Column find_re_bytes(
-    Column input, RegexProgram pattern, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None
-):
-    """
-    Returns byte offsets where the pattern first matches
-    the elements in input strings.
-
-    This is the same as :py:func:`find_re` except that the returned
-    values are byte offsets instead of character positions.
-
-    For details, see :cpp:func:`find_re_bytes`
-
-    Parameters
-    ----------
-    input : Column
-        Strings instance for this operation
-    pattern : RegexProgram
-        Regex pattern
-    stream : CudaStreamLike | None
-        CUDA stream on which to perform the operation.
-    mr : DeviceMemoryResource | None
-        Device memory resource used to allocate the returned column's device memory.
-
-    Returns
-    -------
-    Column
-        New column of integers
-    """
-    cdef unique_ptr[column] c_result
-    cdef Stream _stream = _get_stream(stream)
-    cdef stream_ref _cs = _stream.view()
-    mr = _get_memory_resource(mr)
-    cdef column_view c_input = input.view()
-    with nogil:
-        c_result = cpp_findall.find_re_bytes(
             c_input,
             pattern.c_obj.get()[0],
             _cs,

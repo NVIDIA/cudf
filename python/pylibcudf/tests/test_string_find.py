@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -254,32 +254,3 @@ def test_ends_with_column(data_col, target_col):
     )
     got = plc.strings.find.ends_with(plc_data_col, plc_target_col)
     assert_column_eq(expect, got)
-
-
-@pytest.mark.parametrize("start, stop", [(0, -1), (2, -1), (0, 5), (3, 8)])
-@pytest.mark.parametrize("target", ["b", "é", "日本", ""])
-@pytest.mark.parametrize("forward", [True, False])
-def test_find_bytes(start, stop, target, forward):
-    data = ["ÄbÇ", "日本b", "abc", "x", "", None, "ébé日本b"]
-    plc_col = plc.Column.from_arrow(pa.array(data))
-    plc_target = plc.Scalar.from_arrow(pa.scalar(target))
-    func = (
-        plc.strings.find.find_bytes
-        if forward
-        else plc.strings.find.rfind_bytes
-    )
-    got = func(plc_col, plc_target, start, stop)
-
-    tgt = target.encode()
-
-    def find_bytes(elem):
-        if elem is None:
-            return None
-        b = elem.encode()
-        end = len(b) if stop < 0 or stop > len(b) else stop
-        if not tgt:
-            return -1 if start > len(b) else (start if forward else end)
-        return b.find(tgt, start, end) if forward else b.rfind(tgt, start, end)
-
-    expected = pa.array([find_bytes(elem) for elem in data], type=pa.int32())
-    assert_column_eq(expected, got)

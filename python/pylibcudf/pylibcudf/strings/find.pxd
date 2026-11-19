@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from pylibcudf.column cimport Column
@@ -20,24 +20,6 @@ cpdef Column find(
 )
 
 cpdef Column rfind(
-    Column input,
-    Scalar target,
-    size_type start=*,
-    size_type stop=*,
-    object stream = *,
-    DeviceMemoryResource mr=*,
-)
-
-cpdef Column find_bytes(
-    Column input,
-    Scalar target,
-    size_type start=*,
-    size_type stop=*,
-    object stream = *,
-    DeviceMemoryResource mr=*,
-)
-
-cpdef Column rfind_bytes(
     Column input,
     Scalar target,
     size_type start=*,

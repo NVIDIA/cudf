@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
@@ -16,22 +16,6 @@ def find(
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def rfind(
-    input: Column,
-    target: Scalar,
-    start: int = 0,
-    stop: int = -1,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Column: ...
-def find_bytes(
-    input: Column,
-    target: Scalar,
-    start: int = 0,
-    stop: int = -1,
-    stream: CudaStreamLike | None = None,
-    mr: DeviceMemoryResource | None = None,
-) -> Column: ...
-def rfind_bytes(
     input: Column,
     target: Scalar,
     start: int = 0,

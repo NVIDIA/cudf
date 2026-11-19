@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 import re
 
@@ -51,22 +51,6 @@ def test_find_re():
     )
     expect = pa.array(
         [0, 2, 3, -1],
-        type=got.type().to_arrow(value_type=pa.string()),
-    )
-    assert_column_eq(expect, got)
-
-
-def test_find_re_bytes():
-    arr = pa.array(["bunny", "rabbit", "hāre", "dog", None])
-    pattern = "[eb]"
-    got = plc.strings.findall.find_re_bytes(
-        plc.Column.from_arrow(arr),
-        plc.strings.regex_program.RegexProgram.create(
-            pattern, plc.strings.regex_flags.RegexFlags.DEFAULT
-        ),
-    )
-    expect = pa.array(
-        [0, 2, 4, -1, None],
         type=got.type().to_arrow(value_type=pa.string()),
     )
     assert_column_eq(expect, got)

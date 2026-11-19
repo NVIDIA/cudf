@@ -497,8 +497,8 @@ examples.
 Passing data that does not satisfy the requirements of its declared type results in
 **undefined behavior**. libcudf makes no guarantees about the results of any API given such input:
 it may produce incorrect results, produce different results across libcudf versions, raise an
-error, or behave in other unspecified ways. This applies to every API that accepts the data, not only APIs specific to that
-type.
+error, or behave in other unspecified ways. This applies to every API that accepts the data, not
+only APIs specific to that type.
 
 For example, a `STRING` column must contain only valid UTF-8 encoded data. Storing arbitrary binary
 (non-UTF-8) bytes in a `STRING` column is not supported, even though libcudf does not prevent
@@ -1741,11 +1741,12 @@ Use `cudf::empty_like()` to create an empty column from an existing `cudf::colum
 cuIO is a component of libcudf that provides GPU-accelerated reading and writing of data file
 formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and JSON_Lines.
 
-libcudf does not have a binary data type, so as a convenience the Parquet reader reads `BINARY`
-columns as `STRING` columns by default but the result could be
-[undefined behavior when calling other libcudf APIs](#libcudf-does-not-introspect-data). Setting
-`cudf::io::reader_column_schema::set_convert_binary_to_strings(false)` reads these columns as
-`LIST<UINT8>` instead, subject to the [`size_type`](#cudfsize_type) limit on total bytes.
+libcudf does not have a binary data type, so as a convenience the Parquet and ORC readers read
+`BINARY` columns, and the Avro reader reads `bytes` columns, as `STRING` columns but the result
+could be [undefined behavior when calling other libcudf APIs](#libcudf-does-not-introspect-data).
+The Parquet reader can instead read these columns as `LIST<UINT8>` by setting
+`cudf::io::reader_column_schema::set_convert_binary_to_strings(false)`, subject to the
+[`size_type`](#cudfsize_type) limit on total bytes.
 
 // TODO: add more detail and move to a separate file.
 

@@ -64,10 +64,14 @@ def test_asof_join_empty_right(engine: pl.GPUEngine):
 
 
 @pytest.mark.engine_params(["in-memory", "spmd-small"])
-def test_asof_join_no_right_payload(engine: pl.GPUEngine):
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_no_right_payload(engine: pl.GPUEngine, *, check_sortedness: bool):
     left = pl.LazyFrame({"time": [1, 2]})
     right = pl.LazyFrame({"time": [1, 2]})
-    assert_gpu_result_equal(left.join_asof(right, on="time").slice(1, 1), engine=engine)
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", check_sortedness=check_sortedness).slice(1, 1),
+        engine=engine,
+    )
 
 
 @pytest.mark.parametrize("invalid_side", ["left", "right"])

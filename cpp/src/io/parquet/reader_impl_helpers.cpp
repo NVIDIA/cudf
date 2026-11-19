@@ -209,14 +209,15 @@ namespace {
 /**
  * @brief Check if two schema elements have the same physical and annotated type.
  *
- * Compare logical types when both elements have one, else fall back to (deprecated) converted
- * types.
+ * Both elements must either have a logical type or not. Compare logical types if they do, else
+ * fall back to (deprecated) converted types.
  */
 [[nodiscard]] bool compare_schema_types(SchemaElement const& lhs, SchemaElement const& rhs)
 {
-  auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
-                                   ? compare_logical_types(*lhs.logical_type, *rhs.logical_type)
-                                   : lhs.converted_type == rhs.converted_type;
+  auto const annotations_match =
+    lhs.logical_type.has_value() == rhs.logical_type.has_value() and
+    (lhs.logical_type.has_value() ? compare_logical_types(*lhs.logical_type, *rhs.logical_type)
+                                  : lhs.converted_type == rhs.converted_type);
   return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
          lhs.decimal_scale == rhs.decimal_scale and lhs.decimal_precision == rhs.decimal_precision;
 }

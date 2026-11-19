@@ -109,8 +109,8 @@ def test_series_mask_inplace_int_into_temporal_pandas_compat(dtype):
     "nat",
     [
         pd.NaT,
-        np.datetime64("NaT"),
-        np.timedelta64("NaT"),
+        np.datetime64("NaT", "ns"),
+        np.timedelta64("NaT", "ns"),
     ],
 )
 def test_series_where_nat_invalid_for_masked_dtypes(dtype, nat):
@@ -123,7 +123,7 @@ def test_series_where_nat_invalid_for_masked_dtypes(dtype, nat):
         gsr.where(cudf.Series([True, True, False]), nat)
 
 
-@pytest.mark.parametrize("nat", [pd.NaT, np.datetime64("NaT")])
+@pytest.mark.parametrize("nat", [pd.NaT, np.datetime64("NaT", "ns")])
 def test_series_where_nat_valid_for_datetime(nat):
     gsr = cudf.Series(pd.to_datetime(["2020-01-01", "2020-01-02"]))
     result = gsr.where(cudf.Series([True, False]), nat)

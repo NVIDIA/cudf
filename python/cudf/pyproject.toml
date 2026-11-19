@@ -52,7 +52,6 @@ test = [
     "cramjam",
     "cuda-core[cu13]>=1.0,<2",
     "fastavro>=0.22.9",
-    "hypothesis>=6.131.7",
     "msgpack",
     "pytest-benchmark",
     "pytest-cases>=3.8.2",

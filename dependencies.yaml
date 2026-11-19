@@ -1302,7 +1302,6 @@ dependencies:
         packages:
           - cramjam
           - *fastavro
-          - hypothesis>=6.131.7
           - pytest-benchmark
           - pytest-cases>=3.8.2
           - rapids-cli
@@ -1369,6 +1368,7 @@ dependencies:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           # https://github.com/narwhals-dev/narwhals/blob/main/pyproject.toml#L67
+          - hypothesis>=6.131.7
           - pytest-env
           # narwhals uses the uv_build backend, so its editable install needs
           # uv and uv-build available (with --no-build-isolation)

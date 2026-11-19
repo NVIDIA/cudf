@@ -39,7 +39,6 @@ dependencies:
 - fsspec>=0.6.0
 - gcc_linux-64=14.*
 - gdb
-- hypothesis>=6.131.7
 - identify>=2.5.20
 - include-what-you-use==0.24.0
 - ipykernel

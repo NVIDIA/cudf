@@ -70,6 +70,17 @@ def test_asof_join_no_right_payload(engine: pl.GPUEngine):
     assert_gpu_result_equal(left.join_asof(right, on="time").slice(1, 1), engine=engine)
 
 
+@pytest.mark.parametrize("invalid_side", ["left", "right"])
+def test_asof_join_no_payload_evaluates_keys(
+    in_memory_engine: pl.GPUEngine, invalid_side: str
+):
+    left = pl.LazyFrame({"g": ["bad" if invalid_side == "left" else "1"]})
+    right = pl.LazyFrame({"g": ["bad" if invalid_side == "right" else "1"]})
+    query = left.join_asof(right, on=pl.col("g").cast(pl.Int64), by="g")
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="conversion from"):
+        query.collect(engine=in_memory_engine)
+
+
 @pytest.mark.parametrize("payload", [False, True])
 def test_asof_join_checks_right_sortedness(in_memory_engine: pl.GPUEngine, payload):
     left = pl.LazyFrame({"time": [1, 2]})

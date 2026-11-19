@@ -3348,14 +3348,18 @@ class AsofJoin(IR):
         if coalesce and left_on.name == right_on.name:
             discarded.add(right_on.name)
         has_payload = bool(right.column_names_set - discarded)
-        if not has_payload and (right_by or not check_sortedness):
-            return left.slice(zlice)
-
+        left_on_col = broadcast(
+            left_on.value.evaluate(left),
+            target_length=left.num_rows,
+            stream=left.stream,
+        )[0]
         right_on_col = broadcast(
             right_on.value.evaluate(right),
             target_length=right.num_rows,
             stream=right.stream,
         )[0]
+        if not has_payload and (right_by or not check_sortedness):
+            return left.slice(zlice)
         # libcudf accepts unordered left keys, so only check the right key.
         if not right_by and check_sortedness:
             sorted_nulls_first = right_on_col.check_sorted(
@@ -3419,11 +3423,6 @@ class AsofJoin(IR):
 
         right_payload = right.discard_columns(discarded)
 
-        left_on_col = broadcast(
-            left_on.value.evaluate(left),
-            target_length=left.num_rows,
-            stream=left.stream,
-        )[0]
         with context.stream_ordered_after(left, right) as stream:
             gather_map = joiner.join(
                 plc.Table([left.column_map[name].obj for name in left_by]),

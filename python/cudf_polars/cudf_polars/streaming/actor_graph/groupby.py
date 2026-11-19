@@ -1404,7 +1404,7 @@ async def groupby_actor(
         # RapidsMPF permits ID reuse after AllGather.extract_all completes.
         # Any strategy-selection AllGather finishes before reduction starts.
         if output_count == 1:
-            await _tree_reduce(
+            tree_reduce = _tree_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1416,6 +1416,8 @@ async def groupby_actor(
                 aggregated=aggregated,
                 tracer=tracer,
             )
+            del aggregated
+            await tree_reduce
         elif ordered_keys is not None:
             local_count = (
                 min(2, max(1, aggregated.shape[0]))
@@ -1456,7 +1458,7 @@ async def groupby_actor(
             del aggregated
             await ordered_run
         else:
-            await _shuffle_reduce(
+            shuffle_reduce = _shuffle_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1472,6 +1474,8 @@ async def groupby_actor(
                 input_drained=input_drained,
                 tracer=tracer,
             )
+            del aggregated
+            await shuffle_reduce
 
 
 @generate_ir_sub_network.register(GroupBy)

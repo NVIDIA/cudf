@@ -1742,9 +1742,8 @@ cuIO is a component of libcudf that provides GPU-accelerated reading and writing
 formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and JSON_Lines.
 
 libcudf does not have a binary data type, so as a convenience the Parquet reader reads `BINARY`
-columns as `STRING` columns by default. If the binary data is not valid UTF-8, using the resulting
-`STRING` column with other libcudf APIs is undefined behavior, as described in
-[libcudf does not introspect data](#libcudf-does-not-introspect-data). Setting
+columns as `STRING` columns by default but the result could be
+[undefined behavior when calling other libcudf APIs](#libcudf-does-not-introspect-data). Setting
 `cudf::io::reader_column_schema::set_convert_binary_to_strings(false)` reads these columns as
 `LIST<UINT8>` instead, subject to the [`size_type`](#cudfsize_type) limit on total bytes.
 

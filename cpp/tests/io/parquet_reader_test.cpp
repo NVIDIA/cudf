@@ -2827,10 +2827,12 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   EXPECT_FALSE(read_metadata(std::array{annotated_inline}).schema_info[0].is_file.has_value());
 }
 
-TEST_F(ParquetReaderTest, VariantAndPlainStructAcrossSources)
+TEST_F(ParquetReaderTest, VariantGroupsAcrossSources)
 {
-  // A VARIANT group and a plain struct with the same binary children across sources throw, with
-  // or without mismatched schemas, as only the VARIANT binary leaves skip category conversion
+  // VARIANT binary leaves read from multiple sources keep their bytes when strings are converted
+  // to categories. A VARIANT group and a plain struct with the same binary children across
+  // sources throw, with or without mismatched schemas, as only the VARIANT binary leaves skip
+  // category conversion
 
   cudf::test::strings_column_wrapper metadata_col{"m"};
   cudf::test::strings_column_wrapper value_col{"v"};
@@ -2870,6 +2872,13 @@ TEST_F(ParquetReaderTest, VariantAndPlainStructAcrossSources)
   };
 
   for (auto const allow_mismatched : {true, false}) {
+    auto const result  = read(std::array{variant_group, variant_group}, allow_mismatched);
+    auto const variant = result.tbl->view().column(0);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(variant.child(0),
+                                        cudf::test::lists_column_wrapper<uint8_t>{{'m'}, {'m'}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(variant.child(1),
+                                        cudf::test::lists_column_wrapper<uint8_t>{{'v'}, {'v'}});
+
     EXPECT_THROW(read(std::array{variant_group, plain_struct}, allow_mismatched), std::logic_error);
     EXPECT_THROW(read(std::array{plain_struct, variant_group}, allow_mismatched), std::logic_error);
   }

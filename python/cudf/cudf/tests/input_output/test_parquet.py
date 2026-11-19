@@ -775,15 +775,28 @@ def test_parquet_reader_file_logical_type(datadir):
 
 
 @pytest.mark.parametrize(
-    "filename",
+    "filename, columns",
     [
-        "file_logical_type.parquet",
-        "variant_multirow.parquet",
-        "duckdb_variant_sample.parquet",
+        ("file_logical_type.parquet", None),
+        ("variant_multirow.parquet", None),
+        ("variant_nested_unshredded.parquet", None),
+        ("variant_nested_shredded.parquet", None),
+        # Skip the shredded `v.typed_value.{n,k}.value` leaves, which are still
+        # hashed as their parents aren't annotated VARIANT (see #25425)
+        (
+            "duckdb_variant_sample.parquet",
+            [
+                "id",
+                "v.metadata",
+                "v.value",
+                "v.typed_value.n.typed_value",
+                "v.typed_value.k.typed_value",
+            ],
+        ),
     ],
 )
 def test_parquet_reader_logical_group_binary_not_categorized(
-    datadir, filename
+    datadir, filename, columns
 ):
     # Binary children of FILE (`inline`) and VARIANT (`metadata`, `value`)
     # groups stay `list<uint8>` when strings are converted to categories, while
@@ -797,6 +810,8 @@ def test_parquet_reader_logical_group_binary_not_categorized(
             .convert_strings_to_categories(convert_strings_to_categories)
             .build()
         )
+        if columns is not None:
+            options.set_column_names(columns)
         return plc.io.parquet.read_parquet(options).tbl.to_arrow().schema.types
 
     def categorized(typ):

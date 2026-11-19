@@ -75,7 +75,6 @@ class AllGatherManager:
             self._manager.allgather.insert(
                 sequence_number, chunk.into_packed_data(extra)
             )
-            del chunk
 
         def __enter__(self) -> AllGatherManager.Inserter:
             """Enter the context manager."""

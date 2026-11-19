@@ -12,6 +12,7 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/replace.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
@@ -58,8 +59,7 @@ namespace {
 /**
  * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
  *
- * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
- * unavailable page-level statistics (represented as nulls)
+ * Null rows are treated as pruned
  */
 struct row_mask_accessor {
   bool const* data;               ///< Row mask data, adjusted for the column view offset
@@ -80,8 +80,8 @@ struct row_mask_accessor {
 
   __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
   {
-    if (data[row_idx]) { return true; }
-    return null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx);
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return false; }
+    return data[row_idx];
   }
 };
 
@@ -774,8 +774,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
-  // Drop the null mask if it was allocated but ended up empty
-  if (segment_mask->nullable() and segment_mask->null_count() == 0) {
+  // Statistics can't decide the null segments so retain them and drop the null mask
+  if (segment_mask->nullable()) {
+    if (segment_mask->null_count() > 0) {
+      segment_mask =
+        cudf::detail::replace_nulls(segment_mask->view(),
+                                    cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
+                                    stream,
+                                    temp_mr);
+    }
     segment_mask->set_null_mask(
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
   }

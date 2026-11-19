@@ -1746,9 +1746,7 @@ columns as `STRING` columns by default. If the binary data is not valid UTF-8, u
 `STRING` column with other libcudf APIs is undefined behavior, as described in
 [libcudf does not introspect data](#libcudf-does-not-introspect-data). Setting
 `cudf::io::reader_column_schema::set_convert_binary_to_strings(false)` reads these columns as
-`LIST<UINT8>` instead. Note that the total number of bytes in a `LIST<UINT8>` column is limited by
-the [`size_type`](#cudfsize_type) row count limit of its child column, a limit that does not apply
-to the bytes in a `STRING` column.
+`LIST<UINT8>` instead, subject to the [`size_type`](#cudfsize_type) limit on total bytes.
 
 // TODO: add more detail and move to a separate file.
 

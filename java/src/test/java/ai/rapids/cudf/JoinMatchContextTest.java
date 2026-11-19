@@ -216,6 +216,20 @@ public class JoinMatchContextTest {
     }
   }
 
+  @Test
+  void testFinalizeRejectsMismatchedPairLengths() {
+    try (Table build = new Table.TestBuilder().column(0, 1, 1, 2, 3).build();
+         HashJoin hashJoin = new HashJoin(build, true);
+         Table probe = new Table.TestBuilder().column(1, 5, 3, 7).build();
+         JoinMatchContext ctx = probe.fullJoinMatchContext(hashJoin);
+         CloseableArray<GatherMap> p0 = CloseableArray.wrap(ctx.partitionGatherMaps(0, 2));
+         CloseableArray<GatherMap> p1 = CloseableArray.wrap(ctx.partitionGatherMaps(2, 4))) {
+      // The p0 left map has 3 rows and the p1 right map has 2.
+      assertThrows(IllegalArgumentException.class,
+          () -> ctx.finalizePartitionedFullJoin(new GatherMap[]{p0.get(0), p1.get(1)}));
+    }
+  }
+
   private static JoinMatchContext createContext(Table probe, HashJoin hashJoin, JoinKind kind) {
     switch (kind) {
       case INNER: return probe.innerJoinMatchContext(hashJoin);

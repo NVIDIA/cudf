@@ -146,6 +146,7 @@ public class JoinMatchContext implements AutoCloseable {
    * @param partitions the left and right gather map pair of each partition
    * @return the full join left and right gather maps
    * @throws IllegalStateException if this is not a FULL join context
+   * @throws IllegalArgumentException if a partition is not a pair of equal length gather maps
    */
   public GatherMap[] finalizePartitionedFullJoin(GatherMap[]... partitions) {
     ensureOpen();
@@ -163,10 +164,14 @@ public class JoinMatchContext implements AutoCloseable {
         throw new IllegalArgumentException("Partition " + i +
             " must be a left and right gather map pair");
       }
-      leftAddrs[i] = partition[0].getBufferAddress();
       leftLens[i] = partition[0].getRowCount();
-      rightAddrs[i] = partition[1].getBufferAddress();
       rightLens[i] = partition[1].getRowCount();
+      if (leftLens[i] != rightLens[i]) {
+        throw new IllegalArgumentException("Partition " + i +
+            " gather maps differ in length, left: " + leftLens[i] + " right: " + rightLens[i]);
+      }
+      leftAddrs[i] = partition[0].getBufferAddress();
+      rightAddrs[i] = partition[1].getBufferAddress();
     }
     long[] data = finalizePartitionedFullJoin(leftAddrs, leftLens, rightAddrs, rightLens,
         (int) leftRowCount, (int) hashJoin.getRowCount());

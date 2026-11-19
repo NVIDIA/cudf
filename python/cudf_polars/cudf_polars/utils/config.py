@@ -67,6 +67,7 @@ __all__ = [
     "JoinFilterPushdownOptions",
     "MaxConcurrentIOTasks",
     "ParquetOptions",
+    "RankLocalCPUComputeMode",
     "RayContext",
     "SPMDContext",
     "StreamingExecutor",
@@ -217,6 +218,19 @@ class StreamingFallbackMode(enum.StrEnum):
     WARN = "warn"
     RAISE = "raise"
     SILENT = "silent"
+
+
+class RankLocalCPUComputeMode(enum.StrEnum):
+    """
+    When the streaming executor evaluates an IR node on the CPU with Polars.
+
+    * ``RankLocalCPUComputeMode.NEVER`` : Always evaluate on the GPU.
+    * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported IR node on
+      the CPU with Polars. Unsupported nodes are evaluated on the GPU.
+    """
+
+    NEVER = "never"
+    ALWAYS = "always"
 
 
 class Cluster(enum.StrEnum):
@@ -1075,6 +1089,11 @@ class StreamingExecutor:
 
         This can be set using the ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``
         environment variable.
+    rank_local_cpu_compute
+        When to evaluate IR nodes on the CPU with Polars instead of on the GPU.
+        ``RankLocalCPUComputeMode.NEVER`` by default. Only applies inside streaming
+        actors. This can be set using the
+        ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE`` environment variable.
     max_rows_per_partition
         The maximum number of rows to process per partition. 1_000_000 by default.
         When the number of rows exceeds this value, the query will be split into
@@ -1239,6 +1258,13 @@ class StreamingExecutor:
             default=StreamingFallbackMode.WARN,
         )
     )
+    rank_local_cpu_compute: RankLocalCPUComputeMode = dataclasses.field(
+        default_factory=_make_default_factory(
+            f"{_env_prefix}__RANK_LOCAL_CPU_COMPUTE",
+            RankLocalCPUComputeMode.__call__,
+            default=RankLocalCPUComputeMode.NEVER,
+        )
+    )
     max_rows_per_partition: int = dataclasses.field(
         default_factory=_make_default_factory(
             f"{_env_prefix}__MAX_ROWS_PER_PARTITION", int, default=1_000_000
@@ -1334,6 +1360,11 @@ class StreamingExecutor:
         # frozen dataclass, so use object.__setattr__
         object.__setattr__(
             self, "fallback_mode", StreamingFallbackMode(self.fallback_mode)
+        )
+        object.__setattr__(
+            self,
+            "rank_local_cpu_compute",
+            RankLocalCPUComputeMode(self.rank_local_cpu_compute),
         )
         if (
             isinstance(self.target_partition_size, int)

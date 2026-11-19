@@ -12,6 +12,7 @@ from pylibcudf.utils import CudaStreamLike
 
 __all__ = [
     "IOSubmissionPolicy",
+    "fetch_bloom_filters_to_device",
     "fetch_byte_ranges_to_device",
     "fetch_page_index_to_host",
 ]
@@ -20,12 +21,21 @@ class IOSubmissionPolicy(IntEnum):
     SERIALIZE = 0
     INTERLEAVE = 1
 
+def fetch_bloom_filters_to_device(
+    source_info: SourceInfo,
+    byte_ranges: list[ByteRangeInfo],
+    policy: IOSubmissionPolicy,
+    stream: CudaStreamLike | None = None,
+    mr: DeviceMemoryResource | None = None,
+    source_indices: list[int] | None = None,
+) -> list[gpumemoryview]: ...
 def fetch_byte_ranges_to_device(
     source_info: SourceInfo,
     byte_ranges: list[ByteRangeInfo],
     policy: IOSubmissionPolicy,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
+    source_indices: list[int] | None = None,
 ) -> list[gpumemoryview]: ...
 def fetch_page_index_to_host(
     source_info: SourceInfo,

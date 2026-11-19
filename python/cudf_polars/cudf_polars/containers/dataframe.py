@@ -372,7 +372,7 @@ class DataFrame:
         ----------
         stream
             CUDA stream used for device memory operations and kernel launches
-            on this dataframe.
+            on this dataframe. Defaults to the dataframe's own stream.
 
         Returns
         -------
@@ -381,7 +381,9 @@ class DataFrame:
         frames
             Two-tuple of frames suitable for passing to `plc.contiguous_split.unpack_from_memoryviews`
         """
-        packed = plc.contiguous_split.pack(self.table, stream=stream)
+        packed = plc.contiguous_split.pack(
+            self.table, stream=self.stream if stream is None else stream
+        )
 
         # Keyword arguments for `Column.__init__`.
         columns_kwargs: list[ColumnOptions] = [

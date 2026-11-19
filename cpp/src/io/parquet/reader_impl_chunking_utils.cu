@@ -765,10 +765,7 @@ cuda::device_buffer<size_t> compute_decompression_scratch_sizes(
   // retrieve to host so we can get compression scratch sizes
   auto temp_cost     = cudf::detail::make_pinned_vector_async<size_t>(pages.size(), stream);
   auto h_decomp_info = cudf::detail::make_pinned_vector(decomp_info, stream);
-  std::transform(
-    h_decomp_info.begin(), h_decomp_info.end(), temp_cost.begin(), [stream](auto const& d) {
-      return d.num_pages == 0 ? 0 : cudf::io::detail::get_decompression_scratch_size(d, stream);
-    });
+  cudf::io::detail::get_decompression_scratch_sizes(h_decomp_info, temp_cost, stream);
 
   cuda::device_buffer<size_t> d_temp_cost =
     cudf::detail::make_device_buffer(temp_cost, stream, temp_mr);

@@ -1229,12 +1229,6 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_constructor_with_datetimes2": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_datetime_date_tuple_columns_from_dict": "TODO: Add a reason for failure",
     "tests/frame/test_constructors.py::TestDataFrameConstructors::test_dict_keys_returns_rangeindex": "AssertionError: Index are different",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_datetime64[DataFrame-dict]": "TODO: Add a reason for failure",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_datetime64[Series-None]": "TODO: Add a reason for failure",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_timedelta64[DataFrame-dict-datetime64]": "TODO: Add a reason for failure",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_timedelta64[DataFrame-dict-timedelta64]": "TODO: Add a reason for failure",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_timedelta64[Series-None-datetime64]": "TODO: Add a reason for failure",
-    "tests/frame/test_constructors.py::TestFromScalar::test_out_of_s_bounds_timedelta64[Series-None-timedelta64]": "TODO: Add a reason for failure",
     "tests/frame/test_iteration.py::TestIteration::test_iteritems": "TODO: Add a reason for failure",
     "tests/frame/test_iteration.py::TestIteration::test_iterrows_corner": "TODO: Add a reason for failure",
     "tests/frame/test_iteration.py::TestIteration::test_itertuples": "TODO: Add a reason for failure",
@@ -3000,8 +2994,6 @@ NODEIDS_THAT_FAIL = {
     "tests/tools/test_to_datetime.py::TestToDatetime::test_mixed_offsets_with_native_datetime_utc_false_raises": "assert False",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-None-False]": "AssertionError: assert DatetimeIndex([1965-04-03 00:00:00, 1965-04-17 00:00:00, 1965-05-01 00:00:00,\n       1965-05-...",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_arrow[index-US/Central-False]": "AssertionError: assert Index([1965-04-03 00:00:00-06:00, 1965-04-17 00:00:00-06:00,\n       1965-05-01 00:00:00-05:00...",
-    "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_dt64d_out_of_bounds[False]": "TODO: Add a reason for failure",
-    "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_dt64d_out_of_bounds[True]": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_dtarr[None]": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestToDatetime::test_to_datetime_dtarr[US/Central]": "TODO: Add a reason for failure",
     "tests/tools/test_to_datetime.py::TestToDatetimeDataFrame::test_dataframe_str_dtype[False]": "TODO: Add a reason for failure",
@@ -12429,10 +12421,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_end_of_string[string=object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_extract.py::test_extract_expand_True_single_capture_group[index-string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12490,8 +12478,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_expand_capture_groups_index[uint8-string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_expand_index_raises": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_extract.py::test_extract_index_one_two_groups": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_lookarounds[string=object-(ab)-expected_data4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_extract.py::test_extract_optional_groups[string=str[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_extract.py::test_extract_optional_groups[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12594,11 +12580,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
-    # 96216291366). Nondeterministic rather than a deterministic
-    # incompatibility: test_to_datetime_iso8601_fails passed in the previous
-    # run of this same shard.
-    "tests/tools/test_to_datetime.py::TestToDatetimeMisc::test_to_datetime_iso8601_fails[True-2012-01-01-%Y-%m-%d %H]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
 }
 
 # Keep keys in alphabetical order

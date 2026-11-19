@@ -19,6 +19,8 @@
 #include <nanoarrow/nanoarrow.h>
 #include <nanoarrow/nanoarrow.hpp>
 
+#include <algorithm>
+#include <iterator>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -264,9 +266,9 @@ unique_schema_t to_arrow_schema(cudf::table_view const& input,
 {
   std::vector<detail::arrow_schema_column> columns;
   columns.reserve(input.num_columns());
-  for (auto const& column : input) {
-    columns.push_back(detail::to_arrow_schema_column(column));
-  }
+  std::transform(input.begin(), input.end(), std::back_inserter(columns), [](auto const& column) {
+    return detail::to_arrow_schema_column(column);
+  });
   return detail::to_arrow_schema(columns, metadata);
 }
 

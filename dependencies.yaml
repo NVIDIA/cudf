@@ -1331,7 +1331,6 @@ dependencies:
         packages:
           - rich
           - pytest-httpserver
-          - zstandard
           # Used by ci/timeout_with_stack.py utility
           - psutil
           - *pandas

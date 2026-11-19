@@ -1141,8 +1141,6 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - cachetools
-          - &numba numba>=0.60.0,<0.65.0
           - nvtx>=0.2.1
           - packaging
           - rich
@@ -1207,7 +1205,6 @@ dependencies:
         matrices:
           - matrix: {dependencies: "oldest"}
             packages:
-              - numba==0.60.0
               - *pandas
           - matrix: {dependencies: "latest"}
             packages:
@@ -1280,7 +1277,6 @@ dependencies:
           - &fastavro fastavro>=0.22.9
           - mmh3
           - nanoarrow
-          - *numba
           - *pandas
       - output_types: conda
         packages:
@@ -1402,10 +1398,6 @@ dependencies:
             packages: [*libcudf_unsuffixed]
   depends_on_numba_cuda_mlir:
     common:
-      - output_types: [conda, requirements, pyproject]
-        packages:
-          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
-          - numba>=0.60.0,<0.65.0
       - output_types: [conda]
         packages:
           - &numba_cuda_mlir numba-cuda-mlir>=0.3.0
@@ -1825,7 +1817,7 @@ dependencies:
           - jinja2
           - lxml
           - matplotlib-base
-          - *numba
+          - numba
           - numexpr
           - odfpy
           - openpyxl
@@ -1853,6 +1845,7 @@ dependencies:
           - jupyter_client
           - nbconvert
           - nbformat
+          - numba
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0

@@ -1332,7 +1332,7 @@ class Scan(IR):
                 capped = read_partial and n_rows + skip_left > _MAX_LIBCUDF_ROWS
                 if capped and num_rows == _MAX_LIBCUDF_ROWS:
                     raise NotImplementedError(
-                        "CSV file has more rows than libcudf can read at once"
+                        "CSV file has at least as many rows as libcudf can read at once"
                     )
                 if empty is None:
                     colnames = tbl_w_meta.column_names(include_children=False)
@@ -1357,7 +1357,10 @@ class Scan(IR):
                 table = plc.Table([], num_rows=sum(csv_rows_per_path))
                 colnames = []
             else:
-                table = plc.concatenate.concatenate(tables or [empty], stream=stream)
+                if not tables:
+                    assert empty is not None
+                    tables = [empty]
+                table = plc.concatenate.concatenate(tables, stream=stream)
             df = DataFrame.from_table(
                 table,
                 colnames,

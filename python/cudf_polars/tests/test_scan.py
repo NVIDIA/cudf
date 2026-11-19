@@ -415,7 +415,7 @@ def test_scan_csv_multi_slice_file_above_read_limit(
 ):
     monkeypatch.setattr(ir, "_MAX_LIBCUDF_ROWS", 5)
     q = pl.scan_csv(csv_files).slice(4, 2)
-    with pytest.raises(NotImplementedError, match="more rows than libcudf"):
+    with pytest.raises(NotImplementedError, match="as many rows as libcudf"):
         q.collect(engine=in_memory_engine)
 
 

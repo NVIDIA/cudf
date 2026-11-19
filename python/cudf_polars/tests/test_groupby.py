@@ -1062,6 +1062,7 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
         pl.lit(pl.Series([None], dtype=pl.Int64)).null_count(),
         (pl.col("j") + pl.lit(pl.Series([7, 8, 9]))).sum(),
         (pl.col("j") * pl.lit(pl.Series([7, 8]))).max(),
+        pl.lit(pl.Series([7, 8])).first(),
     ],
 )
 def test_groupby_list_or_series_literal_raises(
@@ -1084,6 +1085,21 @@ def test_groupby_list_or_series_literal_raises(
 def test_groupby_column_with_list_or_series_literal(
     engine: pl.GPUEngine, expr: pl.Expr
 ) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g", maintain_order=True).agg(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.lit([7, 8]).first(),
+        pl.lit([7, 8]).last(),
+        pl.lit(pl.Series([5])).max(),
+        pl.lit(pl.Series([None], dtype=pl.Int64)).min(),
+    ],
+)
+def test_groupby_single_value_literal_agg(engine: pl.GPUEngine, expr: pl.Expr) -> None:
     df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
     q = df.group_by("g", maintain_order=True).agg(expr)
     assert_gpu_result_equal(q, engine=engine)

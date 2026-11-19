@@ -57,6 +57,21 @@ def _is_literal_column_expr(value: expr.Expr) -> bool:
     ) and any(isinstance(node, expr.LiteralColumn) for node in leaves)
 
 
+def _is_single_value_literal_agg(agg: expr.Expr, context: ExecutionContext) -> bool:
+    # A one-element literal is broadcast to every row of the group, which
+    # these aggregations reduce to the literal's value.
+    return (
+        context == ExecutionContext.GROUPBY
+        and isinstance(agg, expr.Agg)
+        and agg.name in {"first", "last", "max", "min"}
+        and all(
+            len(node.value) == 1
+            for node in traversal(list(agg.children))
+            if isinstance(node, expr.LiteralColumn)
+        )
+    )
+
+
 def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
     nodes = tuple(traversal([value]))
     # Literals of list elements (e.g. the values of ``is_in``) are not
@@ -144,7 +159,11 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
-    if not agg.is_pointwise and any(map(_is_literal_column_expr, agg.children)):
+    if (
+        not agg.is_pointwise
+        and any(map(_is_literal_column_expr, agg.children))
+        and not _is_single_value_literal_agg(agg, context)
+    ):
         raise NotImplementedError(
             "Aggregating a list or Series literal in groupby/rolling"
         )

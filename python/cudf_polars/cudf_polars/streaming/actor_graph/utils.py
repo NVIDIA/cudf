@@ -29,10 +29,10 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
@@ -512,8 +512,8 @@ async def evaluate_chunk(
     if already_available:
         if not chunk.is_available():
             raise ValueError("already_available=True requires an available TableChunk")
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            chunk.data_alloc_size(), net_memory_delta=0
+        reservation = await reserve_memory(
+            context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
     else:
         chunk, reservation = await make_table_chunks_available_or_wait(
@@ -603,6 +603,12 @@ async def concat_batch(
     -------
     The table chunk after concatenation.
     """
+    if len(batch) == 1:
+        (chunk,) = batch
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context, chunk, reserve_extra=0, net_memory_delta=0
+        )
+        return chunk
     batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
@@ -623,8 +629,6 @@ async def concat_batch(
             ],
             context=ir_context,
         )
-        if len(batch) > 1:
-            del batch
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
@@ -659,7 +663,6 @@ async def evaluate_batch(
     first_ir = irs[0]
     input_schema = first_ir.children[0].schema
     chunk = await concat_batch(batch, context, input_schema, ir_context)
-    del batch
     return await evaluate_chunk(context, chunk, *irs, ir_context=ir_context)
 
 
@@ -735,7 +738,6 @@ async def chunkwise_evaluate(
             ir_context=chunk_ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
@@ -747,7 +749,6 @@ async def chunkwise_evaluate(
             ir_context=ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import decimal
 
@@ -59,7 +59,7 @@ def test_fillna_categorical_with_different_categories_raises():
         np.datetime64("2005-02"),
         np.datetime64("2005-02-25"),
         np.datetime64("2005-02-25T03:30"),
-        np.datetime64("nat"),
+        np.datetime64("nat", "ns"),
         "NaT",
     ],
 )
@@ -97,7 +97,7 @@ def test_datetime_fillna(data, datetime_types_as_str, fill_value):
     [
         np.timedelta64(4, "s"),
         np.timedelta64(456, "D"),
-        np.timedelta64("nat"),
+        np.timedelta64("nat", "ns"),
         np.timedelta64(1, "s"),
         np.timedelta64(1, "ms"),
         np.timedelta64(1, "us"),

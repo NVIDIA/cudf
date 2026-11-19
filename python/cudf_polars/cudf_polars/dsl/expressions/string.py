@@ -279,6 +279,24 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "extract_all does not support $ outside of multiline mode"
                 )
+            # libcudf reads at most 3 digits of a repetition bound and treats
+            # longer bounds as literal characters
+            repeats = {
+                re._constants.MAX_REPEAT,  # type: ignore[attr-defined]
+                re._constants.MIN_REPEAT,  # type: ignore[attr-defined]
+                re._constants.POSSESSIVE_REPEAT,  # type: ignore[attr-defined]
+            }
+            if any(
+                op in repeats
+                and any(
+                    bound is not re._constants.MAXREPEAT and bound > 999  # type: ignore[attr-defined]
+                    for bound in av[:2]
+                )
+                for op, av in tokens
+            ):
+                raise NotImplementedError(
+                    "extract_all does not support repetition bounds above 999"
+                )
             # libcudf stops parsing the pattern at a NUL character
             if "\x00" in pattern:
                 raise NotImplementedError(

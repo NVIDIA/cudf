@@ -10,6 +10,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/scalar/scalar.hpp>
 
 #include <limits>
@@ -154,6 +155,32 @@ TYPED_TEST(BinaryOperationNanSemanticsTest, NullMaxMin)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(make_column<T>({1, NaN, NaN, NaN, 2}), *result);
   result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MIN, type);
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(make_column<T>({1, NaN, NaN, NaN, 2}), *result);
+}
+
+TYPED_TEST(BinaryOperationNanSemanticsTest, SlicedAndEmpty)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = TestFixture::NaN;
+  auto const ordered = cudf::nan_semantics::TOTALLY_ORDERED;
+  auto const less    = cudf::binary_operator::LESS;
+
+  // The slices are {NaN, 1, null, 2} and {NaN, NaN, 1, null}
+  auto const lhs_full = make_column<T>({9, NaN, 1, 0, 2, 9}, {1, 1, 1, 0, 1, 1});
+  auto const rhs_full = make_column<T>({9, NaN, NaN, 1, 0, 9}, {1, 1, 1, 1, 0, 1});
+  auto const lhs      = cudf::slice(lhs_full, {1, 5}).front();
+  auto const rhs      = cudf::slice(rhs_full, {1, 5}).front();
+  auto const valids   = std::vector<bool>{1, 1, 0, 0};
+
+  auto result = cudf::binary_operation(lhs, rhs, less, bool_type, ordered);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({0, 1, 0, 0}, valids.begin()), *result);
+  result = cudf::binary_operation(lhs, rhs, less, bool_type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools({0, 0, 0, 0}, valids.begin()), *result);
+  result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_EQUALS, bool_type, ordered);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(bools{1, 0, 0, 0}, *result);
+
+  auto const empty = make_column<T>({});
+  result           = cudf::binary_operation(empty, empty, less, bool_type, ordered);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bools{}, *result);
 }
 
 struct BinaryOperationNanSemanticsMixedTest : public cudf::test::BaseFixture {};

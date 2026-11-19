@@ -218,6 +218,19 @@ def test_rolling_series_literal_raises(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [[7, 8], pl.Series("s", [7, 8]), pl.Series("s", [], dtype=pl.Int64)],
+    ids=["list", "series", "empty_series"],
+)
+def test_rolling_bare_list_or_series_literal(
+    engine: pl.GPUEngine, value: list[int] | pl.Series
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(pl.lit(value))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

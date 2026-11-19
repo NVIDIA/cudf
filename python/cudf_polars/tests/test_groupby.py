@@ -1084,3 +1084,16 @@ def test_groupby_column_with_list_or_series_literal(
     df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
     q = df.group_by("g", maintain_order=True).agg(expr)
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[7, 8], pl.Series("s", [7, 8]), pl.Series("s", [], dtype=pl.Int64)],
+    ids=["list", "series", "empty_series"],
+)
+def test_groupby_bare_list_or_series_literal(
+    engine: pl.GPUEngine, value: list[int] | pl.Series
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g", maintain_order=True).agg(pl.lit(value))
+    assert_gpu_result_equal(q, engine=engine)

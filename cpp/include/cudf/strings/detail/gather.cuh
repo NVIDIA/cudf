@@ -397,7 +397,10 @@ struct gather_string_column {
   char* output_chars;
 };
 namespace gather_strings_plan {
-constexpr std::size_t rows_per_copy_block = 64;
+constexpr int threads_per_block = 256;
+constexpr int lanes_per_row     = 4;
+static_assert(threads_per_block % lanes_per_row == 0);
+constexpr std::size_t rows_per_copy_block = threads_per_block / lanes_per_row;
 constexpr std::size_t max_copy_blocks     = 65'535;
 
 /** All warp lanes participate, including groups beyond the last row. */
@@ -406,8 +409,7 @@ __device__ inline void copy_group(gather_string_column col,
                                   size_type destination,
                                   size_type rows)
 {
-  constexpr int lanes = 4;
-  auto const lane     = threadIdx.x % lanes;
+  auto const lane = threadIdx.x % lanes_per_row;
   size_type begin = 0, length = 0, target = 0;
   if (source_row < static_cast<cuda::std::size_t>(rows)) {
     begin  = col.input_offsets[source_row];
@@ -418,7 +420,7 @@ __device__ inline void copy_group(gather_string_column col,
   auto long_rows   = __ballot_sync(0xffff'ffffu, lane == 0 && length > 128);
   auto medium_rows = __ballot_sync(0xffff'ffffu, lane == 0 && length > 8 && length <= 128);
   if (length <= 8) {
-    for (size_type byte = lane; byte < length; byte += lanes) {
+    for (size_type byte = lane; byte < length; byte += lanes_per_row) {
       col.output_chars[int64_t{target} + byte] = col.input_chars[int64_t{begin} + byte];
     }
   }
@@ -464,7 +466,7 @@ CUDF_KERNEL void copy_characters(gather_string_column const* columns,
   for (auto base = cuda::std::size_t{blockIdx.x} * rows_per_copy_block;
        base < static_cast<cuda::std::size_t>(rows);
        base += cuda::std::size_t{gridDim.x} * rows_per_copy_block) {
-    auto const output_row = base + threadIdx.x / 4;
+    auto const output_row = base + threadIdx.x / lanes_per_row;
     auto const in_bounds  = output_row < static_cast<cuda::std::size_t>(rows);
     auto const source     = in_bounds ? gather_map[output_row] : rows;
     auto const target     = in_bounds ? static_cast<size_type>(output_row) : 0;
@@ -593,9 +595,10 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
       gather_strings_plan::max_copy_blocks,
       cudf::detail::div_rounding_up_safe(static_cast<std::size_t>(rows),
                                          gather_strings_plan::rows_per_copy_block));
-    gather_strings_plan::
-      copy_characters<<<dim3(blocks, copy_columns.size()), 256, 0, stream.get()>>>(
-        device_columns.data(), begin, rows);
+    gather_strings_plan::copy_characters<<<dim3(blocks, copy_columns.size()),
+                                           gather_strings_plan::threads_per_block,
+                                           0,
+                                           stream.get()>>>(device_columns.data(), begin, rows);
     CUDF_CUDA_TRY(cudaPeekAtLastError());
   }
 

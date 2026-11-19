@@ -57,9 +57,9 @@ namespace hashing {
  */
 std::unique_ptr<column> murmurhash3_x86_32(
   table_view const& input,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the Apache Spark-compatible MurmurHash3 32-bit hash of each row
@@ -95,9 +95,9 @@ std::unique_ptr<column> murmurhash3_x86_32(
  */
 std::unique_ptr<column> spark_murmurhash3_x86_32(
   table_view const& input,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the MurmurHash3 64-bit hash value of each row in the given table
@@ -114,9 +114,9 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(
  */
 std::unique_ptr<table> murmurhash3_x64_128(
   table_view const& input,
-  uint64_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  uint64_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the MD5 hash value of each row in the given table
@@ -127,10 +127,9 @@ std::unique_ptr<table> murmurhash3_x64_128(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> md5(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> md5(table_view const& input,
+                            cuda::stream_ref stream   = cudf::get_default_stream(),
+                            cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the SHA-1 hash value of each row in the given table
@@ -141,10 +140,9 @@ std::unique_ptr<column> md5(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> sha1(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> sha1(table_view const& input,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the SHA-224 hash value of each row in the given table
@@ -155,10 +153,9 @@ std::unique_ptr<column> sha1(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> sha224(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> sha224(table_view const& input,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the SHA-256 hash value of each row in the given table
@@ -169,10 +166,9 @@ std::unique_ptr<column> sha224(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> sha256(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> sha256(table_view const& input,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the SHA-384 hash value of each row in the given table
@@ -183,10 +179,9 @@ std::unique_ptr<column> sha256(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> sha384(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> sha384(table_view const& input,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the SHA-512 hash value of each row in the given table
@@ -197,10 +192,9 @@ std::unique_ptr<column> sha384(
  *
  * @returns A column where each row is the hash of a row from the input
  */
-std::unique_ptr<column> sha512(
-  table_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> sha512(table_view const& input,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the XXHash_32 hash value of each row in the given table
@@ -218,9 +212,9 @@ std::unique_ptr<column> sha512(
  */
 std::unique_ptr<column> xxhash_32(
   table_view const& input,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the XXHash_64 hash value of each row in the given table
@@ -236,9 +230,9 @@ std::unique_ptr<column> xxhash_32(
  */
 std::unique_ptr<column> xxhash_64(
   table_view const& input,
-  uint64_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  uint64_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

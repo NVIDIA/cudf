@@ -325,6 +325,17 @@ def test_rolling_multirank_spmd(spmd_engine, tmp_path, kind) -> None:
     _assert_rolling_result(spmd_engine, source, kind, "-2i")
 
 
+@pytest.mark.engine_params(["ray"])
+@pytest.mark.parametrize("kind", ["range", "count"])
+def test_rolling_multirank_ray(streaming_engine_factory, tmp_path, kind) -> None:
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, target_partition_size=32)
+    )
+    source = tmp_path / "rolling.parquet"
+    _write_rolling_source(source)
+    _assert_rolling_result(engine, source, kind, "-2i")
+
+
 @pytest.mark.spmd
 def test_rolling_multirank_uint64(spmd_engine, tmp_path) -> None:
     source = tmp_path / "rolling-uint64.parquet"
@@ -897,8 +908,7 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
     ).filter(pl.len().over("k") == 2)
     if not isinstance(engine, SPMDEngine):
         # On Dask/Ray the fallback warning fires on worker processes and is
-        # invisible to ``pytest.warns``; the multi-rank fallback also
-        # doesn't preserve row order.
+        # invisible to ``pytest.warns``.
         request.applymarker(
             pytest.mark.xfail(
                 reason="https://github.com/NVIDIA/cudf/issues/22405",
@@ -911,3 +921,19 @@ def test_over_in_filter_unsupported(request, streaming_engine_factory) -> None:
         match=r"over\(...\) inside filter is not supported for multiple partitions.*",
     ):
         assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.spmd
+def test_over_in_filter_after_concat_preserves_order(streaming_engine_factory) -> None:
+    # https://github.com/NVIDIA/cudf/issues/22405: row order from an ordered
+    # concat must survive the over(...)-in-filter fallback on multi-rank engines.
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="silent"),
+    )
+    q = pl.concat(
+        [
+            pl.LazyFrame({"k": ["x", "y"], "v": [3, 2]}),
+            pl.LazyFrame({"k": ["x", "y"], "v": [5, 7]}),
+        ]
+    ).filter(pl.len().over("k") == 2)
+    assert_gpu_result_equal(q, engine=engine)

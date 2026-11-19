@@ -7,6 +7,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/detail/iterator.cuh>
@@ -108,3 +109,5 @@ TEST_F(RoaringBitmapErrorTest, EmptyProbeKeys)
   EXPECT_NO_THROW(std::ignore = bitmap.contains_async(
                     probe_keys->view(), stream, cudf::get_current_device_resource_ref()));
 }
+
+CUDF_TEST_PROGRAM_MAIN()

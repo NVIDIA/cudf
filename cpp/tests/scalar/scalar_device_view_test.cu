@@ -8,7 +8,7 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -100,24 +100,33 @@ template <typename ScalarDeviceViewType>
 CUDF_KERNEL void test_set_fixed_point_rep(ScalarDeviceViewType s,
                                           typename ScalarDeviceViewType::rep_type value)
 {
-  s.set_value(value);
+  s.set_rep(value);
 }
 
 TYPED_TEST(FixedPointScalarDeviceViewTest, SetRepresentation)
 {
   using rep_type = typename TypeParam::rep;
 
-  auto constexpr initial_value = rep_type{0};
-  auto constexpr value         = rep_type{12'345};
-  auto constexpr scale         = numeric::scale_type{-2};
-  cudf::fixed_point_scalar<TypeParam> s{initial_value, scale};
+  for (auto const scale : {-2, 0, 3}) {
+    SCOPED_TRACE(scale);
+    for (auto const valid : {false, true}) {
+      SCOPED_TRACE(valid);
+      for (auto const value : {rep_type{12'345}, rep_type{-12'345}}) {
+        cudf::fixed_point_scalar<TypeParam> s{rep_type{0}, numeric::scale_type{scale}, valid};
+        auto scalar_device_view = cudf::get_scalar_device_view(s);
+        test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
+                                                                                value);
+        CUDF_CHECK_CUDA(0);
 
-  auto scalar_device_view = cudf::get_scalar_device_view(s);
-  test_set_fixed_point_rep<<<1, 1, 0, cudf::get_default_stream().get()>>>(scalar_device_view,
-                                                                          value);
-  CUDF_CHECK_CUDA(0);
+        ASSERT_EQ(s.is_valid(), valid);
+        EXPECT_EQ(s.type().scale(), scale);
 
-  EXPECT_EQ(s.value(), value);
+        // Reading the stored representation requires a valid scalar.
+        s.set_valid_async(true);
+        EXPECT_EQ(s.value(), value);
+      }
+    }
+  }
 }
 
 TYPED_TEST(FixedPointScalarDeviceViewTest, SetValue)
@@ -195,9 +204,9 @@ TEST_F(StringScalarDeviceViewTest, Value)
 
   auto scalar_device_view = cudf::get_scalar_device_view(s);
   cudf::detail::device_scalar<bool> result{cudf::get_default_stream()};
-  auto value_v = cudf::detail::make_device_uvector(cudf::host_span<char const>{value},
-                                                   cudf::get_default_stream(),
-                                                   cudf::get_current_device_resource_ref());
+  auto value_v = cudf::detail::make_device_buffer(cudf::host_span<char const>{value},
+                                                  cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref());
 
   test_string_value<<<1, 1, 0, cudf::get_default_stream().get()>>>(
     scalar_device_view, value_v.data(), value.size(), result.data());

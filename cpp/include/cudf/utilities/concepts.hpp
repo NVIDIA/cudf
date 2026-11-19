@@ -76,6 +76,16 @@ template <typename T>
 concept integral_not_bool = cuda::std::integral<T> && !boolean<T>;
 
 /**
+ * @brief Satisfied if elements of type `T` can be used to index into a column.
+ *
+ * Index types are integral types other than `bool`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept index_type = integral_not_bool<T>;
+
+/**
  * @brief Satisfied if `T` is a cudf timestamp type.
  *
  * @tparam T The type to verify

@@ -22,6 +22,7 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -29,6 +30,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
@@ -77,14 +79,15 @@ std::unique_ptr<cudf::column> clamp_string_column(strings_column_view const& inp
                                                   OptionalScalarIterator hi_itr,
                                                   ReplaceScalarIterator hi_replace_itr,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref mr)
+                                                  cudf::memory_resources mr)
 {
   auto input_device_column = column_device_view::create(input.parent(), stream);
   auto d_input             = *input_device_column;
 
   auto fn = clamp_strings_fn<OptionalScalarIterator, ReplaceScalarIterator>{
     d_input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr};
-  rmm::device_uvector<cudf::strings::detail::string_index_pair> indices(input.size(), stream);
+  cuda::device_buffer<cudf::strings::detail::string_index_pair> indices(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{input.size()},
@@ -121,7 +124,7 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
                                                       scalar const& hi,
                                                       scalar const& hi_replace,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
   // add lo_replace and hi_replace to keys
   auto matched_column = [&] {
@@ -183,15 +186,16 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
                                 input.null_count());
 }
 
-template <typename T, typename OptionalScalarIterator, typename ReplaceScalarIterator>
+template <cudf::concepts::fixed_width T,
+          typename OptionalScalarIterator,
+          typename ReplaceScalarIterator>
 std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       OptionalScalarIterator lo_itr,
                                       ReplaceScalarIterator lo_replace_itr,
                                       OptionalScalarIterator hi_itr,
                                       ReplaceScalarIterator hi_replace_itr,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
-  requires(cudf::is_fixed_width<T>())
+                                      cudf::memory_resources mr)
 {
   auto output =
     detail::allocate_like(input, input.size(), mask_allocation_policy::NEVER, stream, mr);
@@ -233,15 +237,16 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
   return output;
 }
 
-template <typename T, typename OptionalScalarIterator, typename ReplaceScalarIterator>
+template <cudf::concepts::string_view T,
+          typename OptionalScalarIterator,
+          typename ReplaceScalarIterator>
 std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       OptionalScalarIterator lo_itr,
                                       ReplaceScalarIterator lo_replace_itr,
                                       OptionalScalarIterator hi_itr,
                                       ReplaceScalarIterator hi_replace_itr,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
-  requires(std::is_same_v<T, string_view>)
+                                      cudf::memory_resources mr)
 {
   return clamp_string_column(input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr, stream, mr);
 }
@@ -255,7 +260,7 @@ std::unique_ptr<column> clamp(column_view const& input,
                               OptionalScalarIterator hi_itr,
                               ReplaceScalarIterator hi_replace_itr,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   return clamper<T>(input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr, stream, mr);
 }
@@ -268,7 +273,7 @@ struct dispatch_clamp {
                                      scalar const& hi,
                                      scalar const& hi_replace,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     CUDF_EXPECTS(cudf::have_same_types(input, lo),
                  "mismatching types of scalar and input",
@@ -289,14 +294,13 @@ struct dispatch_clamp {
 };
 
 template <>
-std::unique_ptr<column> dispatch_clamp::operator()<cudf::list_view>(
-  column_view const& input,
-  scalar const& lo,
-  scalar const& lo_replace,
-  scalar const& hi,
-  scalar const& hi_replace,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+std::unique_ptr<column> dispatch_clamp::operator()<cudf::list_view>(column_view const& input,
+                                                                    scalar const& lo,
+                                                                    scalar const& lo_replace,
+                                                                    scalar const& hi,
+                                                                    scalar const& hi_replace,
+                                                                    cuda::stream_ref stream,
+                                                                    cudf::memory_resources mr)
 {
   CUDF_FAIL("clamp for list_view not supported");
 }
@@ -308,7 +312,7 @@ std::unique_ptr<column> dispatch_clamp::operator()<struct_view>(column_view cons
                                                                 scalar const& hi,
                                                                 scalar const& hi_replace,
                                                                 cuda::stream_ref stream,
-                                                                rmm::device_async_resource_ref mr)
+                                                                cudf::memory_resources mr)
 {
   CUDF_FAIL("clamp for struct_view not supported");
 }
@@ -320,7 +324,7 @@ std::unique_ptr<column> dispatch_clamp::operator()<dictionary32>(column_view con
                                                                  scalar const&,
                                                                  scalar const&,
                                                                  cuda::stream_ref,
-                                                                 rmm::device_async_resource_ref)
+                                                                 cudf::memory_resources)
 {
   CUDF_UNREACHABLE("clamp type-dispatch error");
 }
@@ -331,7 +335,7 @@ std::unique_ptr<column> dispatch_clamp::operator()<dictionary32>(column_view con
                                       scalar const& lo_replace,
                                       scalar const& hi,
                                       scalar const& hi_replace,
-                                      rmm::device_async_resource_ref mr);
+                                      cudf::memory_resources mr);
  *
  * @param[in] stream CUDA stream used for device memory operations and kernel launches.
  */
@@ -341,7 +345,7 @@ std::unique_ptr<column> clamp(column_view const& input,
                               scalar const& hi,
                               scalar const& hi_replace,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     cudf::have_same_types(lo, hi), "mismatching types of limit scalars", cudf::data_type_error);
@@ -379,7 +383,7 @@ std::unique_ptr<column> clamp(column_view const& input,
                               scalar const& hi,
                               scalar const& hi_replace,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::clamp(input, lo, lo_replace, hi, hi_replace, stream, mr);
@@ -390,7 +394,7 @@ std::unique_ptr<column> clamp(column_view const& input,
                               scalar const& lo,
                               scalar const& hi,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::clamp(input, lo, lo, hi, hi, stream, mr);

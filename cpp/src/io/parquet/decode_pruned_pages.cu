@@ -9,7 +9,8 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 
 namespace cudf::io::parquet::detail {
 

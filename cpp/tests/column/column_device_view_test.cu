@@ -19,11 +19,14 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/optional>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/transform.h>
 
 struct ColumnDeviceViewTest : public cudf::test::BaseFixture {
+  void test_mutable_nullable_element();
   void test_noncanonical_bool();
   void test_nullable_noncanonical_bool();
 };
@@ -61,6 +64,33 @@ TEST_F(ColumnDeviceViewTest, MismatchingType)
                             input_device_view->end<T>(),
                             output_device_view->begin<int64_t>()),
                cudf::logic_error);
+}
+
+void ColumnDeviceViewTest::test_mutable_nullable_element()
+{
+  auto const stream = cudf::get_default_stream();
+  auto input =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{99, 10, 20, 30, 40, 99},
+                                                    {false, true, false, true, false, true}}
+      .release();
+  auto const view = input->mutable_view();
+  cudf::mutable_column_view const sliced{view.type(), 4, view.head(), view.null_mask(), 2, 1};
+  auto const device_view = cudf::mutable_column_device_view::create(sliced, stream);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> const expected{10, -1, 30, -1};
+  auto output        = cudf::allocate_like(expected);
+  auto const indices = cuda::counting_iterator<cudf::size_type>{0};
+  thrust::transform(
+    rmm::exec_policy_nosync(stream),
+    indices,
+    indices + sliced.size(),
+    output->mutable_view().data<int32_t>(),
+    [col = *device_view] __device__(auto i) {
+      auto const value = col.nullable_element<int32_t>(i);
+      static_assert(cuda::std::is_same_v<decltype(value), cuda::std::optional<int32_t> const>);
+      return value.value_or(-1);
+    });
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, output->view());
 }
 
 void ColumnDeviceViewTest::test_noncanonical_bool()

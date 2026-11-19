@@ -1,10 +1,14 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 package ai.rapids.cudf;
 
+/**
+ * Global settings for the native cuDF library.
+ * Controls thresholds for kernel-based pinned copies and pinned host memory allocations.
+ */
 public class Cudf {
 
   static {

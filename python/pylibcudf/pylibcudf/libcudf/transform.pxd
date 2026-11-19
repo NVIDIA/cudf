@@ -27,6 +27,13 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 
+cdef extern from "cudf/udf.hpp" namespace "cudf" nogil:
+    cdef cppclass lto_fragment:
+        pass
+
+ctypedef const lto_fragment const_lto_fragment
+
+
 cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
     cdef cppclass scalar_column_view:
         scalar_column_view(
@@ -105,6 +112,7 @@ cdef extern from "cudf/transform.hpp" namespace "cudf" nogil:
     cdef unique_ptr[column] compute_column_jit(
         const table_view table,
         const expression& expr,
+        span[const_lto_fragment] fragments,
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler

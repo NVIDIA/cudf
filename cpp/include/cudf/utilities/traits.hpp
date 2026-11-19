@@ -192,7 +192,7 @@ bool is_numeric(data_type type);
 template <typename T>
 constexpr inline bool is_index_type()
 {
-  return concepts::integral_not_bool<T>;
+  return concepts::index_type<T>;
 }
 
 /**

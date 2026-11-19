@@ -21,19 +21,19 @@ namespace cudf {
 namespace detail {
 /**
  * @copydoc cudf::concatenate(std::span<column_view
- * const>,cuda::stream_ref,rmm::device_async_resource_ref)
+ * const>,cuda::stream_ref,cudf::memory_resources)
  */
 std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr);
+                                    cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::concatenate(std::span<table_view
- * const>,cuda::stream_ref,rmm::device_async_resource_ref)
+ * const>,cuda::stream_ref,cudf::memory_resources)
  */
 std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

@@ -1038,16 +1038,11 @@ dependencies:
           - *doxygen
           - make
           - myst-nb
-          - nbsphinx
           - numpydoc
-          - pandoc
           - scipy
           - sphinx>=8.1.0
-          - sphinx-autobuild
           - sphinx-copybutton
-          - sphinx-markdown-tables
           - sphinx-remove-toctrees
-          - sphinxcontrib-websupport
           - pip:
               - nvidia-sphinx-theme
   notebooks:

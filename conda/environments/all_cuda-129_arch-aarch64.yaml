@@ -60,7 +60,6 @@ dependencies:
 - nanoarrow
 - nbconvert
 - nbformat
-- nbsphinx
 - ninja
 - notebook
 - numba
@@ -72,7 +71,6 @@ dependencies:
 - openpyxl
 - packaging
 - pandas>=3.0.0,<3.1.0
-- pandoc
 - polars>=2.0,<2.2
 - pre-commit
 - psutil
@@ -100,12 +98,9 @@ dependencies:
 - s3fs>=2022.3.0
 - scikit-build-core>=0.11.0
 - scipy
-- sphinx-autobuild
 - sphinx-copybutton
-- sphinx-markdown-tables
 - sphinx-remove-toctrees
 - sphinx>=8.1.0
-- sphinxcontrib-websupport
 - sqlalchemy>=2.0.18
 - streamz
 - sysroot_linux-aarch64==2.28

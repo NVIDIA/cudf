@@ -13,6 +13,7 @@ from cython.operator cimport dereference
 
 from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.device_buffer cimport DeviceBuffer
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -106,7 +107,7 @@ cpdef list fetch_byte_ranges_to_device(
             std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
             policy,
             _stream.view().get(),
-            _mr.get_mr(),
+            to_device_resource_ref(_mr.get_mr()),
         )
 
     if fetched.first.size() != 1:

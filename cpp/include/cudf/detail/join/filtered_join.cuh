@@ -14,13 +14,13 @@
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuco/bucket_storage.cuh>
 #include <cuco/extent.cuh>
 #include <cuco/pair.cuh>
 #include <cuco/probing_scheme.cuh>
 #include <cuco/types.cuh>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <cstddef>
@@ -137,7 +137,7 @@ class filtered_join {
                 cudf::null_equality compare_nulls,
                 double load_factor,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                cuda::mr::any_device_resource mr);
 
   /**
    * @brief Returns indices of left table rows that have matching keys in the right table

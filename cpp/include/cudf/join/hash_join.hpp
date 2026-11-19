@@ -16,6 +16,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <optional>
@@ -85,9 +86,8 @@ class hash_join {
    */
   hash_join(cudf::table_view const& right,
             null_equality compare_nulls,
-            cuda::stream_ref stream = cudf::get_default_stream(),
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-              cudf::get_current_device_resource_ref());
+            cuda::stream_ref stream          = cudf::get_default_stream(),
+            cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct a hash join object for subsequent probe calls.
@@ -111,9 +111,8 @@ class hash_join {
             nullable_join has_nulls,
             null_equality compare_nulls,
             double load_factor,
-            cuda::stream_ref stream = cudf::get_default_stream(),
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-              cudf::get_current_device_resource_ref());
+            cuda::stream_ref stream          = cudf::get_default_stream(),
+            cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * Returns the row indices that can be used to construct the result of performing

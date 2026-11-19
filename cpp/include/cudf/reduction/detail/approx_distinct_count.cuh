@@ -14,6 +14,7 @@
 #include <cuco/hyperloglog_ref.cuh>
 #include <cuda/buffer>
 #include <cuda/functional>
+#include <cuda/memory_resource>
 #include <cuda/std/span>
 #include <cuda/stream>
 
@@ -85,7 +86,7 @@ class approx_distinct_count {
                         null_policy null_handling,
                         nan_policy nan_handling,
                         cuda::stream_ref stream,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        cuda::mr::any_device_resource mr);
 
   /**
    * @brief Constructs an owning approximate distinct count sketch from a table with standard
@@ -111,7 +112,7 @@ class approx_distinct_count {
                         null_policy null_handling,
                         nan_policy nan_handling,
                         cuda::stream_ref stream,
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                        cuda::mr::any_device_resource mr);
 
   /**
    * @brief Constructs a non-owning approximate distinct count sketch from user-allocated storage

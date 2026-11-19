@@ -13,7 +13,6 @@
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuco/operator.hpp>
 #include <cuda/buffer>

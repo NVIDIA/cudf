@@ -13,6 +13,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 /**
@@ -72,8 +73,7 @@ class filtered_join {
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs a filtered hash join object for subsequent probe calls.
@@ -95,8 +95,7 @@ class filtered_join {
                 cudf::null_equality compare_nulls,
                 double load_factor,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns a vector of row indices corresponding to a semi-join

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -78,7 +79,7 @@ cpdef Column find(
                 c_target,
                 start,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -89,7 +90,7 @@ cpdef Column find(
                 start,
                 stop,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -142,7 +143,7 @@ cpdef Column rfind(
             start,
             stop,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -196,7 +197,7 @@ cpdef Column contains(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -205,7 +206,7 @@ cpdef Column contains(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -263,7 +264,7 @@ cpdef Column starts_with(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -272,7 +273,7 @@ cpdef Column starts_with(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError(f"Invalid target {target}")
@@ -327,7 +328,7 @@ cpdef Column ends_with(
                 c_input,
                 c_target,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     elif ColumnOrScalar is Scalar:
         c_input = input.view()
@@ -336,7 +337,7 @@ cpdef Column ends_with(
                 c_input,
                 dereference(<string_scalar*>(target.c_obj.get())),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         raise ValueError(f"Invalid target {target}")

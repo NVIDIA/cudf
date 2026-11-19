@@ -19,7 +19,6 @@
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/functional>

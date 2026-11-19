@@ -27,8 +27,6 @@
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/functional>
 #include <cuda/std/cmath>
 #include <cuda/std/concepts>

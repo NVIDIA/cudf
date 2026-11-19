@@ -8,6 +8,7 @@
 #include <cudf/partitioning.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <rapidsmpf/error.hpp>
@@ -72,7 +73,7 @@ partition_and_split(
  */
 [[nodiscard]] std::size_t partition_and_pack_cost(cudf::table_view const& table,
                                                   cuda::stream_ref stream,
-                                                  rmm::device_async_resource_ref temp_mr);
+                                                  cuda::mr::device_resource_ref temp_mr);
 
 /**
  * @brief Partitions rows from the input table into multiple packed (serialized) tables.
@@ -165,7 +166,7 @@ partition_and_pack(cudf::table_view const& table,
  */
 [[nodiscard]] std::size_t split_and_pack_cost(cudf::table_view const& table,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref temp_mr);
+                                              cuda::mr::device_resource_ref temp_mr);
 
 /**
  * @brief Splits rows from the input table into multiple packed (serialized) tables.

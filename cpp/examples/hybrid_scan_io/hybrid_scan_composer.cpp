@@ -18,6 +18,7 @@
 
 #include <rmm/mr/aligned_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
 #include <nvtx3/nvtx3.hpp>
 
 #include <unordered_set>
@@ -231,7 +232,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
   cudf::io::parquet_reader_options const& options,
   bool verbose,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   if (verbose) { std::cout << "READER: Single step materialize...\n"; }
 
@@ -278,7 +279,7 @@ std::unique_ptr<cudf::table> two_step_materialize(
   cudf::io::parquet_reader_options const& options,
   bool verbose,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // Check whether to prune filter column data pages
   using cudf::io::parquet::experimental::use_data_page_mask;
@@ -384,7 +385,7 @@ std::unique_ptr<cudf::table> hybrid_scan(
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   bool verbose,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -438,7 +439,7 @@ template std::unique_ptr<cudf::table> hybrid_scan<true, false>(
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
   cuda::stream_ref,
-  rmm::device_async_resource_ref);
+  cuda::mr::device_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<true, true>(
   io_source const&,
@@ -446,7 +447,7 @@ template std::unique_ptr<cudf::table> hybrid_scan<true, true>(
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
   cuda::stream_ref,
-  rmm::device_async_resource_ref);
+  cuda::mr::device_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<false, false>(
   io_source const&,
@@ -454,7 +455,7 @@ template std::unique_ptr<cudf::table> hybrid_scan<false, false>(
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
   cuda::stream_ref,
-  rmm::device_async_resource_ref);
+  cuda::mr::device_resource_ref);
 
 template std::unique_ptr<cudf::table> hybrid_scan<false, true>(
   io_source const&,
@@ -462,4 +463,4 @@ template std::unique_ptr<cudf::table> hybrid_scan<false, true>(
   std::unordered_set<hybrid_scan_filter_type> const&,
   bool,
   cuda::stream_ref,
-  rmm::device_async_resource_ref);
+  cuda::mr::device_resource_ref);

@@ -21,8 +21,6 @@
 #include <cudf/logger.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>

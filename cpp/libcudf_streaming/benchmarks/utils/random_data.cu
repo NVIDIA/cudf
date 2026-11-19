@@ -13,6 +13,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/random>
 #include <thrust/transform.h>
 
@@ -27,7 +28,7 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
                                                        std::int32_t min_val,
                                                        std::int32_t max_val,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cuda::mr::device_resource_ref mr)
 {
   // Fill vector with random data.
   using index_t        = std::int64_t;
@@ -52,7 +53,7 @@ std::unique_ptr<cudf::column> random_column(cudf::size_type nrows,
                                             std::int32_t min_val,
                                             std::int32_t max_val,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cuda::mr::device_resource_ref mr)
 {
   auto vec =
     random_device_vector(rapidsmpf::safe_cast<std::size_t>(nrows), min_val, max_val, stream, mr);
@@ -65,7 +66,7 @@ cudf::table random_table(cudf::size_type ncolumns,
                          std::int32_t min_val,
                          std::int32_t max_val,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr)
+                         cuda::mr::device_resource_ref mr)
 {
   std::vector<std::unique_ptr<cudf::column>> cols;
   for (auto i = 0; i < ncolumns; ++i) {
@@ -74,7 +75,7 @@ cudf::table random_table(cudf::size_type ncolumns,
   return cudf::table(std::move(cols));
 }
 
-void random_fill(rapidsmpf::Buffer& buffer, rmm::device_async_resource_ref mr)
+void random_fill(rapidsmpf::Buffer& buffer, cuda::mr::device_resource_ref mr)
 {
   switch (buffer.mem_type()) {
     case rapidsmpf::MemoryType::DEVICE: {

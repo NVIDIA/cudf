@@ -13,6 +13,8 @@
 
 #include <rmm/mr/aligned_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
+
 #include <unordered_set>
 #include <vector>
 
@@ -52,7 +54,7 @@ std::vector<cudf::size_type> apply_row_group_filters(
   std::unordered_set<hybrid_scan_filter_type> const& filters,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   // Span to track current row group indices
   auto current_row_group_indices = input_row_group_indices;
@@ -130,7 +132,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
   cudf::host_span<cudf::size_type> current_row_group_indices,
   cudf::io::parquet_reader_options const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cuda::mr::device_resource_ref mr)
 {
   auto const all_column_chunk_byte_ranges =
     reader.all_column_chunks_byte_ranges(current_row_group_indices, options);
@@ -153,7 +155,7 @@ std::unique_ptr<cudf::table> single_step_materialize(
 std::unique_ptr<cudf::table> hybrid_scan(cudf::io::parquet_reader_options const& options,
                                          std::unordered_set<hybrid_scan_filter_type> const& filters,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cuda::mr::device_resource_ref mr)
 {
   // Input file buffer span
   auto const io_source = options.get_source();

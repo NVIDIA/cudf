@@ -11,6 +11,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -84,7 +85,7 @@ cpdef tuple[Table, list] hash_partition(
                 hash_function,
                 seed,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         columns_to_hash = keys
@@ -96,7 +97,7 @@ cpdef tuple[Table, list] hash_partition(
                 hash_function,
                 seed,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)
 
@@ -148,7 +149,7 @@ cpdef tuple[Table, list] partition(
             c_partition_map,
             c_num_partitions,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)
@@ -200,7 +201,7 @@ cpdef tuple[Table, list] round_robin_partition(
             c_num_partitions,
             c_start_partition,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)

@@ -10,6 +10,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -210,7 +211,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
 std::unique_ptr<column> scatter_rank(column_view const& rank,
                                      column_view const& scatter_map,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cuda::mr::device_resource_ref mr);
 
 }  // namespace detail
 }  // namespace groupby

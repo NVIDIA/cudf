@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -53,7 +54,7 @@ cdef class CharacterNormalizer:
                     do_lower_case,
                     c_tokens,
                     _cs,
-                    mr.get_mr()
+                    to_device_resource_ref(mr.get_mr())
                 )
             )
 
@@ -88,7 +89,7 @@ cpdef Column normalize_spaces(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_normalize.normalize_spaces(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -136,7 +137,7 @@ cpdef Column normalize_characters(
             dereference(normalizer.c_obj.get()),
             c_flags,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

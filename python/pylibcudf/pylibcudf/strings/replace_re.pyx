@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -66,7 +67,7 @@ cpdef Column replace_re(
 
     if replacement is None:
         replacement = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), to_device_resource_ref(mr.get_mr()))
         )
     c_input = input.view()
     with nogil:
@@ -77,7 +78,7 @@ cpdef Column replace_re(
                 dereference(<string_scalar*>(replacement.get())),
                 max_replace_count,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -125,7 +126,7 @@ cpdef Column replace_with_backrefs(
             prog.c_obj.get()[0],
             c_replacement,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

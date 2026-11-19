@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -43,7 +44,7 @@ cdef class WordPieceVocabulary:
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(cpp_load_wordpiece_vocabulary(
-                c_vocab, _cs, mr.get_mr()
+                c_vocab, _cs, to_device_resource_ref(mr.get_mr())
             ))
 
     __hash__ = None
@@ -90,7 +91,7 @@ cpdef Column wordpiece_tokenize(
             dereference(vocabulary.c_obj.get()),
             max_words_per_row,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

@@ -12,6 +12,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -99,11 +100,10 @@ class key_remapping {
    * @param mr Device memory resource used to allocate the internal hash table
    */
   key_remapping(cudf::table_view const& right,
-                null_equality compare_nulls   = null_equality::EQUAL,
-                cudf::compute_metrics metrics = cudf::compute_metrics::YES,
-                cuda::stream_ref stream       = cudf::get_default_stream(),
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                null_equality compare_nulls      = null_equality::EQUAL,
+                cudf::compute_metrics metrics    = cudf::compute_metrics::YES,
+                cuda::stream_ref stream          = cudf::get_default_stream(),
+                cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Remap right keys to integer IDs.

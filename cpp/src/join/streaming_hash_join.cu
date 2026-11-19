@@ -36,6 +36,7 @@
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/cmath>
+#include <cuda/memory_resource>
 #include <cuda/ptx>
 #include <cuda/std/array>
 #include <cuda/std/bit>
@@ -91,7 +92,7 @@ auto make_device_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   Factory factory,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using allocator_type  = cudf::detail::rmm_host_allocator<Equality>;
   auto host_comparators = std::vector<Equality, allocator_type>{
@@ -117,7 +118,7 @@ auto make_device_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using equality_type =
     row::equality::device_row_comparator<has_nested,
@@ -140,7 +141,7 @@ auto make_device_primitive_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cuda::mr::device_resource_ref temp_mr)
 {
   using equality_type = row::primitive::row_equality_comparator;
 
@@ -568,7 +569,7 @@ using join_indices = std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 
 join_indices make_join_indices(std::size_t size,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cuda::mr::device_resource_ref mr)
 {
   auto make_indices = [&] {
     return std::make_unique<rmm::device_uvector<size_type>>(size, stream, mr);

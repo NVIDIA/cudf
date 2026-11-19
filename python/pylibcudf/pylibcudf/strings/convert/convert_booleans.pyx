@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
 
 from cython.operator import dereference
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -62,7 +63,7 @@ cpdef Column to_booleans(
             c_input,
             dereference(c_true_string),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -117,7 +118,7 @@ cpdef Column from_booleans(
             dereference(c_true_string),
             dereference(c_false_string),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

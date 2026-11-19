@@ -14,8 +14,6 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/stream>
 
 #include <nanoarrow/nanoarrow.h>

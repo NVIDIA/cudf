@@ -15,8 +15,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/concepts>

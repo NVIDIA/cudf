@@ -16,6 +16,8 @@
 #include <rmm/cuda_stream_pool.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
+#include <cuda/memory_resource>
+
 #include <cassert>
 #include <ranges>
 #include <stdexcept>
@@ -42,7 +44,7 @@ struct hybrid_scan_single_step_fn {
   bool const use_page_index;
   bool const verbose;
   rmm::cuda_stream_pool const& stream_pool;
-  rmm::device_async_resource_ref mr;
+  cuda::mr::device_resource_ref mr;
 
   void operator()(int tid)
   {

@@ -20,6 +20,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -211,7 +212,7 @@ cdef class GroupBy:
         # ourselves.
         with nogil:
             c_res = dereference(self.c_obj).aggregate(
-                c_requests, _cs, mr.get_mr()
+                c_requests, _cs, to_device_resource_ref(mr.get_mr())
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
@@ -254,7 +255,7 @@ cdef class GroupBy:
             c_res = dereference(self.c_obj).scan(
                 c_requests,
                 _cs,
-                mr.get_mr(),
+                to_device_resource_ref(mr.get_mr()),
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
@@ -304,7 +305,7 @@ cdef class GroupBy:
                 c_offset,
                 c_fill_values,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         return (
             Table.from_libcudf(move(c_res.first), _stream, mr),
@@ -348,7 +349,7 @@ cdef class GroupBy:
                 c_value,
                 c_replace_policies,
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
         return (
             Table.from_libcudf(move(c_res.first), _stream, mr),
@@ -385,7 +386,7 @@ cdef class GroupBy:
         mr = _get_memory_resource(mr)
         if values:
             c_groups = dereference(self.c_obj).get_groups(
-                values.view(), _stream.view().get(), mr.get_mr()
+                values.view(), _stream.view().get(), to_device_resource_ref(mr.get_mr())
             )
             return (
                 c_groups.offsets,
@@ -395,7 +396,7 @@ cdef class GroupBy:
         else:
             # c_groups.values is nullptr - call get_groups with empty table view
             c_groups = dereference(self.c_obj).get_groups(
-                empty_view, _stream.view().get(), mr.get_mr()
+                empty_view, _stream.view().get(), to_device_resource_ref(mr.get_mr())
             )
             return (
                 c_groups.offsets,

@@ -12,6 +12,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
@@ -64,7 +65,7 @@ cpdef concatenate(
 
         with nogil:
             c_tbl_result = cpp_concatenate.concatenate(
-                c_tables, _cs, mr.get_mr()
+                c_tables, _cs, to_device_resource_ref(mr.get_mr())
             )
         return Table.from_libcudf(move(c_tbl_result), _stream, mr)
     elif isinstance(objects[0], Column):
@@ -73,7 +74,7 @@ cpdef concatenate(
 
         with nogil:
             c_col_result = cpp_concatenate.concatenate(
-                c_columns, _cs, mr.get_mr()
+                c_columns, _cs, to_device_resource_ref(mr.get_mr())
             )
         return Column.from_libcudf(move(c_col_result), _stream, mr)
     else:

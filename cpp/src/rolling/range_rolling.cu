@@ -20,7 +20,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>

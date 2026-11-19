@@ -45,7 +45,7 @@
  * @param name Memory resource name: "async", "pool", or "cuda"
  * @return Memory resource instance
  */
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(std::string const& name)
+cuda::mr::any_device_resource create_memory_resource(std::string const& name)
 {
   if (name == "pool") {
     return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},

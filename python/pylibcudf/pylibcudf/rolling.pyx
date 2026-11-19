@@ -15,6 +15,7 @@ from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .aggregation cimport Aggregation
@@ -187,7 +188,7 @@ cpdef Table grouped_range_rolling_window(
             dereference(following.c_obj.get()),
             crequests,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -252,7 +253,7 @@ cpdef Column rolling_window(
                 min_periods,
                 dereference(c_agg),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
     else:
         with nogil:
@@ -263,7 +264,7 @@ cpdef Column rolling_window(
                 min_periods,
                 dereference(c_agg),
                 _cs,
-                mr.get_mr()
+                to_device_resource_ref(mr.get_mr())
             )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -339,7 +340,7 @@ cpdef tuple[Column, Column] make_range_windows(
             dereference(preceding.c_obj.get()),
             dereference(following.c_obj.get()),
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return (
         Column.from_libcudf(move(result.first), _stream, mr),

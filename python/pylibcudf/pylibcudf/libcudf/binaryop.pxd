@@ -11,7 +11,7 @@ from pylibcudf.libcudf.scalar.scalar cimport scalar
 from pylibcudf.libcudf.types cimport data_type
 
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
@@ -63,7 +63,7 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         binary_operator op,
         data_type output_type,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -72,7 +72,7 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         binary_operator op,
         data_type output_type,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -81,7 +81,7 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         binary_operator op,
         data_type output_type,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] binary_operation (
@@ -90,7 +90,7 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         const string& op,
         data_type output_type,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
 cdef extern from "cudf/binaryop.hpp" namespace "cudf::binops" nogil:

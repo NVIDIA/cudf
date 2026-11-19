@@ -33,6 +33,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/atomic>
 #include <cuda/stream>
 #include <thrust/fill.h>
@@ -283,7 +284,7 @@ class key_remap_table : public key_remap_table_interface {
     cudf::null_equality compare_nulls,
     bool compute_metrics,
     cuda::stream_ref stream,
-    cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+    cuda::mr::any_device_resource mr)
     : _right_has_nested_columns{cudf::has_nested_columns(right)},
       _compare_nulls{compare_nulls},
       _right{right},
@@ -509,12 +510,11 @@ class key_remap_table : public key_remap_table_interface {
 /**
  * @brief Factory function to create a key remap hash table.
  */
-std::unique_ptr<key_remap_table_interface> create_key_remap_table(
-  cudf::table_view const& right,
-  cudf::null_equality compare_nulls,
-  bool compute_metrics,
-  cuda::stream_ref stream,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_view const& right,
+                                                                  cudf::null_equality compare_nulls,
+                                                                  bool compute_metrics,
+                                                                  cuda::stream_ref stream,
+                                                                  cuda::mr::any_device_resource mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -587,7 +587,7 @@ class key_remapping_impl {
                      cudf::null_equality compare_nulls,
                      bool compute_metrics,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cuda::mr::any_device_resource mr)
     : _right{right},
       _compare_nulls{compare_nulls},
       _compute_metrics{compute_metrics},
@@ -658,7 +658,7 @@ key_remapping::key_remapping(cudf::table_view const& right,
                              null_equality compare_nulls,
                              cudf::compute_metrics metrics,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<detail::key_remapping_impl>(
       right, compare_nulls, static_cast<bool>(metrics), stream, std::move(mr))}
 {

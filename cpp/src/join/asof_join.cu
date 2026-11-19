@@ -25,6 +25,7 @@
 #include <cub/device/device_select.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm>
 #include <cuda/std/execution>
 #include <cuda/stream>
@@ -113,7 +114,7 @@ struct probe_dispatch {
   size_type num_groups;
   size_type* output;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref temp_mr;
+  cuda::mr::device_resource_ref temp_mr;
   RowEqual row_equal;
 
   template <supported_on_type T>

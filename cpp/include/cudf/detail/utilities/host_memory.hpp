@@ -10,6 +10,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 
+#include <cuda/memory_resource>
+
 #include <cstddef>
 
 namespace cudf::detail {
@@ -18,7 +20,7 @@ namespace cudf::detail {
  *
  * @return Reference to the pageable memory resource
  */
-CUDF_EXPORT rmm::host_async_resource_ref get_pageable_memory_resource();
+CUDF_EXPORT cuda::mr::host_resource_ref get_pageable_memory_resource();
 
 /**
  * @brief Get the allocator to be used for the host memory allocation.

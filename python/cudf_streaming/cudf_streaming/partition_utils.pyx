@@ -14,16 +14,13 @@ from pylibcudf.contiguous_split cimport PackedColumns
 from pylibcudf.libcudf.table.table cimport table as cpp_table
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref, to_device_resource_ref
 from pylibcudf.table cimport Table
 from rmm.librmm.device_buffer cimport device_buffer
 from rmm.pylibrmm.stream cimport Stream
 
 from rapidsmpf._detail.exception_handling cimport ex_handler
-from rapidsmpf.memory.buffer_resource cimport (
-    BufferResource,
-    cpp_BufferResource,
-    device_async_resource_ref,
-)
+from rapidsmpf.memory.buffer_resource cimport BufferResource, cpp_BufferResource
 from rapidsmpf.memory.memory_reservation cimport (
     MemoryReservation,
     cpp_MemoryReservation,
@@ -53,7 +50,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
         "cudf_streaming::partition_and_pack_cost"(
             const table_view& table,
             stream_ref stream,
-            device_async_resource_ref temp_mr,
+            device_resource_ref temp_mr,
         ) except +ex_handler
 
     cdef unordered_map[uint32_t, cpp_PackedData] cpp_partition_and_pack_reserved \
@@ -79,7 +76,7 @@ cdef extern from "<cudf_streaming/partition_utils.hpp>" nogil:
         "cudf_streaming::split_and_pack_cost"(
             const table_view& table,
             stream_ref stream,
-            device_async_resource_ref temp_mr,
+            device_resource_ref temp_mr,
         ) except +ex_handler
 
     cdef unordered_map[uint32_t, cpp_PackedData] cpp_split_and_pack_reserved \
@@ -124,7 +121,7 @@ cpdef size_t partition_and_pack_cost(
     cdef table_view tbl = table.view()
     cdef size_t ret
     with nogil:
-        ret = cpp_partition_and_pack_cost(tbl, _stream, deref(_br).device_mr())
+        ret = cpp_partition_and_pack_cost(tbl, _stream, to_device_resource_ref(deref(_br).device_mr()))
     return ret
 
 
@@ -252,7 +249,7 @@ cpdef size_t split_and_pack_cost(
     cdef table_view tbl = table.view()
     cdef size_t ret
     with nogil:
-        ret = cpp_split_and_pack_cost(tbl, _stream, deref(_br).device_mr())
+        ret = cpp_split_and_pack_cost(tbl, _stream, to_device_resource_ref(deref(_br).device_mr()))
     return ret
 
 

@@ -18,6 +18,8 @@
 #include <cudf/transform.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <nvbench/nvbench.cuh>
 
 #include <array>
@@ -107,8 +109,8 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
 
@@ -139,8 +141,8 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
 
@@ -174,8 +176,8 @@ struct q9_data {
   cudf::column_view const& extendedprice,
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   CUDF_BENCHMARK_RANGE();
 
@@ -211,8 +213,8 @@ struct q9_data {
   cudf::column_view const& supplycost,
   cudf::column_view const& quantity,
   engine_type engine,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   switch (engine) {
     case engine_type::BINARYOP:
@@ -269,8 +271,8 @@ std::unique_ptr<table_with_names> compute_profit(
   nvbench::state& state,
   engine_type engine,
   q9_data const& data,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
 {
   auto joined_table = join_data(data);
   // Calculate the `nation`, `o_year`, and `amount` columns

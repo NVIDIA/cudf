@@ -7,8 +7,7 @@
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 
-#include <rmm/resource_ref.hpp>
-
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 /**
@@ -35,7 +34,7 @@ std::tuple<std::vector<rmm::device_buffer>,
 fetch_byte_ranges_async(cudf::io::datasource& datasource,
                         cudf::host_span<cudf::io::text::byte_range_info const> byte_ranges,
                         cuda::stream_ref stream,
-                        rmm::device_async_resource_ref mr)
+                        cuda::mr::device_resource_ref mr)
 {
   // Using libcudf utility but may have custom implementation in the future
   return cudf::io::parquet::fetch_byte_ranges_to_device_async(

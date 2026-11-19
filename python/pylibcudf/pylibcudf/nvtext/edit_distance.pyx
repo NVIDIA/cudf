@@ -9,6 +9,7 @@ from pylibcudf.libcudf.nvtext.edit_distance cimport (
     edit_distance as cpp_edit_distance,
 )
 
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -55,6 +56,6 @@ cpdef Column edit_distance(
     mr = _get_memory_resource(mr)
 
     with nogil:
-        c_result = cpp_edit_distance(c_strings, c_targets, _cs, mr.get_mr())
+        c_result = cpp_edit_distance(c_strings, c_targets, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)

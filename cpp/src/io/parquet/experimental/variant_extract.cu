@@ -44,6 +44,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/numeric>
 #include <cuda/std/array>
 #include <cuda/std/bit>
@@ -1628,7 +1629,7 @@ class staging_buffer {
   }
 
   [[nodiscard]] rmm::device_uvector<std::byte> upload(cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref temp_mr) const
+                                                      cuda::mr::device_resource_ref temp_mr) const
   {
     auto host = cudf::detail::make_pinned_vector_async<std::byte>(size_, stream);
     for (auto const& piece : pieces_) {

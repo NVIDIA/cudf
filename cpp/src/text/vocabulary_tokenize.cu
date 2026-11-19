@@ -32,6 +32,7 @@
 #include <cuco/static_map.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -102,7 +103,7 @@ using vocabulary_map_type = cuco::static_map<cudf::size_type,
 using col_device_view = std::invoke_result_t<decltype(&cudf::column_device_view::create),
                                              cudf::column_view,
                                              cuda::stream_ref,
-                                             rmm::device_async_resource_ref>;
+                                             cuda::mr::device_resource_ref>;
 
 struct tokenize_vocabulary::tokenize_vocabulary_impl {
   std::unique_ptr<cudf::column> const vocabulary;

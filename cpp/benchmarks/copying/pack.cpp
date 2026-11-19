@@ -13,7 +13,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/mr/pinned_host_memory_resource.hpp>
-#include <rmm/resource_ref.hpp>
+
+#include <cuda/memory_resource>
 
 #include <nvbench/nvbench.cuh>
 
@@ -66,7 +67,7 @@ void run_pack(nvbench::state& state, bool host_output)
   rmm::mr::pinned_host_memory_resource phmr;
   auto const mem_stats_logger = cudf::memory_stats_logger();
   auto const output_mr =
-    host_output ? rmm::device_async_resource_ref{phmr} : cudf::get_current_device_resource_ref();
+    host_output ? cuda::mr::device_resource_ref{phmr} : cudf::get_current_device_resource_ref();
 
   state.exec(nvbench::exec_tag::sync,
              [&](nvbench::launch&) { std::ignore = cudf::pack(table_view, stream, output_mr); });

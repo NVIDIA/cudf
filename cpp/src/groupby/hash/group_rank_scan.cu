@@ -18,6 +18,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -325,7 +326,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
 std::unique_ptr<column> scatter_rank(column_view const& rank,
                                      column_view const& scatter_map,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cuda::mr::device_resource_ref mr)
 {
   // Every row is written, so the output needs no initialization.
   auto result =

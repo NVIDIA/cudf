@@ -24,7 +24,6 @@
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
 #include <cuda/stream>
@@ -49,7 +48,7 @@ struct pinned_pool {
   rmm::mr::pool_memory_resource pool_mr;
 
   explicit pinned_pool(std::size_t pool_size)
-    : pool_mr{rmm::device_async_resource_ref{pinned_mr}, pool_size}
+    : pool_mr{cuda::mr::device_resource_ref{pinned_mr}, pool_size}
   {
   }
 
@@ -121,8 +120,7 @@ inline auto make_binning()
  *        Accepted types are "pool", "cuda", "async", "arena", "binning", and "managed".
  * @return Memory resource instance
  */
-inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(
-  std::string const& allocation_mode)
+inline cuda::mr::any_device_resource create_memory_resource(std::string const& allocation_mode)
 {
   if (allocation_mode == "binning") return make_binning();
   if (allocation_mode == "cuda") return make_cuda();

@@ -13,8 +13,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/stream>
 
 #include <memory>

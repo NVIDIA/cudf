@@ -17,8 +17,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cub/device/device_for.cuh>
 #include <cuda/stream>
 

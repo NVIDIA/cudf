@@ -12,6 +12,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/roaring_bitmap.hpp>
 
+#include <cuda/memory_resource>
+
 #include <queue>
 
 /**
@@ -152,7 +154,7 @@ class chunked_parquet_reader {
   bool _are_retentions;
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;
-  rmm::device_async_resource_ref _table_mr;
+  cuda::mr::device_resource_ref _table_mr;
 };
 
 /**

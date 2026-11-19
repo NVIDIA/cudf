@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp.memory cimport unique_ptr
@@ -8,7 +8,7 @@ from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.types cimport size_type
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 from rmm.librmm.device_uvector cimport device_uvector
 
@@ -20,7 +20,7 @@ cdef extern from "nvtext/deduplicate.hpp" namespace "nvtext" nogil:
         column_view source_strings,
         size_type min_width,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] resolve_duplicates(
@@ -28,7 +28,7 @@ cdef extern from "nvtext/deduplicate.hpp" namespace "nvtext" nogil:
         column_view indices,
         size_type min_width,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
 
     cdef unique_ptr[column] resolve_duplicates_pair(
@@ -38,5 +38,5 @@ cdef extern from "nvtext/deduplicate.hpp" namespace "nvtext" nogil:
         column_view indices2,
         size_type min_width,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

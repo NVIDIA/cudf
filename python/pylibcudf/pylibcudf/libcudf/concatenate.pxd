@@ -8,7 +8,7 @@ from pylibcudf.libcudf.table.table cimport table, table_view
 from pylibcudf.libcudf.utilities.span cimport host_span
 
 from cuda.bindings.cyruntime cimport cudaStream_t
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport device_resource_ref
 
 
 cdef extern from "cudf/concatenate.hpp" namespace "cudf" nogil:
@@ -24,10 +24,10 @@ cdef extern from "cudf/concatenate.hpp" namespace "cudf" nogil:
     cdef unique_ptr[column] concatenate(
         const vector[column_view] columns,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler
     cdef unique_ptr[table] concatenate(
         const vector[table_view] tables,
         cudaStream_t stream,
-        device_async_resource_ref mr
+        device_resource_ref mr
     ) except +libcudf_exception_handler

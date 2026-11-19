@@ -22,6 +22,7 @@
 #include <rmm/mr/pool_memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <filesystem>
@@ -192,7 +193,7 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
 
 }  // namespace
 
-cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool is_pool_used)
+cuda::mr::any_device_resource create_memory_resource(bool is_pool_used)
 {
   if (is_pool_used) {
     return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},

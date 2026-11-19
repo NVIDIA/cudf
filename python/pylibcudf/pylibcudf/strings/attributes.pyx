@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -44,7 +45,7 @@ cpdef Column count_characters(
     cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.count_characters(
-            c_source_strings, _cs, mr.get_mr()
+            c_source_strings, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -76,7 +77,7 @@ cpdef Column count_bytes(
     cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.count_bytes(
-            c_source_strings, _cs, mr.get_mr()
+            c_source_strings, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -108,7 +109,7 @@ cpdef Column code_points(
     cdef column_view c_source_strings = source_strings.view()
     with nogil:
         c_result = cpp_attributes.code_points(
-            c_source_strings, _cs, mr.get_mr()
+            c_source_strings, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

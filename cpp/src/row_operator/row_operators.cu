@@ -25,6 +25,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 
 #include <functional>
 #include <stdexcept>
@@ -870,7 +871,7 @@ std::shared_ptr<preprocessed_table> preprocessed_table::create(table_view const&
 two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref temp_mr)
+                                           cuda::mr::device_resource_ref temp_mr)
   : d_left_table{preprocessed_table::create(left, stream, temp_mr)},
     d_right_table{preprocessed_table::create(right, stream, temp_mr)}
 {

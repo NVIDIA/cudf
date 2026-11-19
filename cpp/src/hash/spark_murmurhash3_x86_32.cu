@@ -20,8 +20,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cub/device/device_for.cuh>
 #include <cuda/stream_ref>
 

@@ -19,7 +19,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/buffer>

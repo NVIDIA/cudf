@@ -9,9 +9,8 @@
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <type_traits>
@@ -40,18 +39,16 @@ class device_scalar {
 
   device_scalar() = delete;
 
-  explicit device_scalar(
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  explicit device_scalar(cuda::stream_ref stream,
+                         cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
     : _storage{stream, std::move(mr), 1, cuda::no_init},
       bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
   }
 
-  explicit device_scalar(
-    T const& initial_value,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+  explicit device_scalar(T const& initial_value,
+                         cuda::stream_ref stream,
+                         cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
     : _storage{stream, std::move(mr), 1, cuda::no_init},
       bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
@@ -60,7 +57,7 @@ class device_scalar {
 
   device_scalar(device_scalar const& other,
                 cuda::stream_ref stream,
-                rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref())
+                cuda::mr::device_resource_ref mr = cudf::get_current_device_resource_ref())
     : _storage{stream, mr, other._storage}, bounce_buffer{make_pinned_vector<T>(1, stream)}
   {
   }

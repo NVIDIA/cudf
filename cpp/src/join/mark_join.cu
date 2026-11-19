@@ -31,6 +31,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/memory_resource>
 #include <cuda/std/algorithm.max.h>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
@@ -605,7 +606,7 @@ mark_join::mark_join(cudf::table_view const& left,
                      double load_factor,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cuda::mr::any_device_resource mr)
   : _has_nested_columns{cudf::has_nested_columns(left)},
     _left{left},
     _nulls_equal{compare_nulls},
@@ -833,7 +834,7 @@ mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<detail::mark_join>(
       left, compare_nulls, detail::CUCO_DESIRED_LOAD_FACTOR, prefilter, stream, std::move(mr))}
 {
@@ -844,7 +845,7 @@ mark_join::mark_join(cudf::table_view const& left,
                      cudf::null_equality compare_nulls,
                      cudf::join_prefilter prefilter,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                     cuda::mr::any_device_resource mr)
   : _impl{std::make_unique<detail::mark_join>(
       left, compare_nulls, load_factor, prefilter, stream, std::move(mr))}
 {

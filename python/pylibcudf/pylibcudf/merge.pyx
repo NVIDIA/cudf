@@ -10,6 +10,7 @@ from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport null_order, order, size_type
 
 from rmm.pylibrmm.stream cimport Stream
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .table cimport Table
@@ -76,6 +77,6 @@ cpdef Table merge (
             c_column_order,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            to_device_resource_ref(mr.get_mr())
         )
     return Table.from_libcudf(move(c_result), _stream, mr)

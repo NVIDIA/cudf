@@ -11,6 +11,7 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
 #include <cuda/std/span>
 #include <cuda/stream>
 
@@ -126,12 +127,11 @@ class approx_distinct_count {
    * @param mr Device memory resource used to allocate the sketch storage
    */
   approx_distinct_count(table_view const& input,
-                        std::int32_t precision    = 12,
-                        null_policy null_handling = null_policy::EXCLUDE,
-                        nan_policy nan_handling   = nan_policy::NAN_IS_NULL,
-                        cuda::stream_ref stream   = cudf::get_default_stream(),
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                          cudf::get_current_device_resource_ref());
+                        std::int32_t precision           = 12,
+                        null_policy null_handling        = null_policy::EXCLUDE,
+                        nan_policy nan_handling          = nan_policy::NAN_IS_NULL,
+                        cuda::stream_ref stream          = cudf::get_default_stream(),
+                        cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs an approximate distinct count sketch from a table with specified standard
@@ -156,11 +156,10 @@ class approx_distinct_count {
    */
   approx_distinct_count(table_view const& input,
                         desired_standard_error error,
-                        null_policy null_handling = null_policy::EXCLUDE,
-                        nan_policy nan_handling   = nan_policy::NAN_IS_NULL,
-                        cuda::stream_ref stream   = cudf::get_default_stream(),
-                        cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                          cudf::get_current_device_resource_ref());
+                        null_policy null_handling        = null_policy::EXCLUDE,
+                        nan_policy nan_handling          = nan_policy::NAN_IS_NULL,
+                        cuda::stream_ref stream          = cudf::get_default_stream(),
+                        cuda::mr::any_device_resource mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs a non-owning sketch that operates on user-allocated storage

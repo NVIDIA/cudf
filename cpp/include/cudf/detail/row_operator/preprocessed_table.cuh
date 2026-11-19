@@ -10,9 +10,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/buffer>
+#include <cuda/memory_resource>
 #include <cuda/stream>
 
 #include <memory>
@@ -78,7 +78,7 @@ struct preprocessed_table {
   using table_device_view_owner = std::invoke_result_t<decltype(table_device_view::create),
                                                        table_view,
                                                        cuda::stream_ref,
-                                                       rmm::device_async_resource_ref>;
+                                                       cuda::mr::device_resource_ref>;
 
   preprocessed_table(table_device_view_owner&& table,
                      std::vector<cuda::device_buffer<cudf::bitmask_type>>&& null_buffers,

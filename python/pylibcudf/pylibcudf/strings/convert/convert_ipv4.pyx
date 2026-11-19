@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pylibcudf.typing import CudaStreamLike
+from pylibcudf.libcudf.utilities.memory_resource cimport to_device_resource_ref
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -46,7 +47,7 @@ cpdef Column ipv4_to_integers(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_ipv4.ipv4_to_integers(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -81,7 +82,7 @@ cpdef Column integers_to_ipv4(
     cdef column_view c_integers = integers.view()
     with nogil:
         c_result = cpp_convert_ipv4.integers_to_ipv4(
-            c_integers, _cs, mr.get_mr()
+            c_integers, _cs, to_device_resource_ref(mr.get_mr())
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -114,6 +115,6 @@ cpdef Column is_ipv4(Column input, object stream: CudaStreamLike | None = None, 
 
     cdef column_view c_input = input.view()
     with nogil:
-        c_result = cpp_convert_ipv4.is_ipv4(c_input, _cs, mr.get_mr())
+        c_result = cpp_convert_ipv4.is_ipv4(c_input, _cs, to_device_resource_ref(mr.get_mr()))
 
     return Column.from_libcudf(move(c_result), _stream, mr)

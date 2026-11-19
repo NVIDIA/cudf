@@ -10,6 +10,8 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/memory_resource>
+
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
@@ -199,8 +201,8 @@ class chunked_pack {
   explicit chunked_pack(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream               = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor that will be implemented as default. Declared with definition here because
@@ -266,8 +268,8 @@ class chunked_pack {
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
     cudf::table_view const& input,
     std::size_t user_buffer_size,
-    cuda::stream_ref stream                = cudf::get_default_stream(),
-    rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream               = cudf::get_default_stream(),
+    cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
  private:
   // internal state of contiguous split
@@ -305,8 +307,8 @@ packed_columns pack(cudf::table_view const& input,
  */
 std::size_t packed_size(
   cudf::table_view const& input,
-  cuda::stream_ref stream                = cudf::get_default_stream(),
-  rmm::device_async_resource_ref temp_mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream               = cudf::get_default_stream(),
+  cuda::mr::device_resource_ref temp_mr = cudf::get_current_device_resource_ref());
 
 namespace experimental {
 

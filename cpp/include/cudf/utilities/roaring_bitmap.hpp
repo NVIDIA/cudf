@@ -12,8 +12,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/resource_ref.hpp>
-
 #include <cuda/std/cstddef>
 #include <cuda/stream>
 

@@ -1704,6 +1704,9 @@ most operations.
 The `cudf/strings/detail/utf8.hpp` header also includes some utility methods for reading and writing
 (`to_char_utf8/from_char_utf8`) individual UTF-8 characters to/from byte arrays.
 
+See [Unicode Limitations](../unicode.md) for limits on the Unicode support in libcudf strings
+functions such as character type testing and case conversion.
+
 libcudf does not validate that the data in a strings column is valid UTF-8. Passing a strings column
 containing invalid UTF-8 (for example, arbitrary binary data) to any libcudf API is undefined
 behavior. See [libcudf does not introspect data](#libcudf-does-not-introspect-data) for details.

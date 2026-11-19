@@ -758,6 +758,7 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
     cudf::io::parquet::fetch_page_index_to_host(*datasource, reader->page_index_byte_range());
   reader->setup_page_index(*page_index_buffer);
   auto const row_groups = reader->all_row_groups(options);
+  ASSERT_EQ(reader->parquet_metadata().row_groups.size(), 3ul);
 
   // The NaN-free constant row group is pruned by its statistics
   EXPECT_EQ(reader->filter_row_groups_with_stats(row_groups, options, stream),

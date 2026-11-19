@@ -168,38 +168,6 @@ class QueryMode(enum.Enum):
 _STREAMING_FRONTENDS = frozenset({"dask", "ray", "spmd"})
 _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
 
-EXIT_SUCCESS = 0
-EXIT_QUERY_FAILURE = 3
-EXIT_VALIDATION_FAILURE = 4
-
-
-def benchmark_exit_code(
-    query_failures: list[tuple[int, int]],
-    validation_failures: list[int],
-) -> int:
-    """
-    Map a run's failures to the process exit code.
-
-    Parameters
-    ----------
-    query_failures
-        ``(query, iteration)`` pairs for queries that raised while running.
-    validation_failures
-        Queries whose results did not match the expected answer.
-
-    Returns
-    -------
-    int
-        0: Success
-        3: Query failure
-        4: Validation failure
-    """
-    if query_failures:
-        return EXIT_QUERY_FAILURE
-    if validation_failures:
-        return EXIT_VALIDATION_FAILURE
-    return EXIT_SUCCESS
-
 
 @dataclasses.dataclass
 class NightlyRole:
@@ -1544,14 +1512,13 @@ def _finalize_benchmark_run(
     serializable_engine_config: dict[str, Any],
     startup_duration_ms: float | None,
     shutdown_duration_ms: float | None,
-    artifact_error: BaseException | None = None,
+    artifact_error: Exception | None = None,
 ) -> None:
     """
     Summarize, serialize, and exit after a benchmark run.
 
     ``artifact_error`` is a failure while writing Quent traces. The run summary
-    is still written. A successful query run then exits with status 1; a query
-    or validation failure keeps its own non-zero status.
+    is still written before that error is re-raised.
     """
     if run_options.summarize:
         run_config.summarize()
@@ -1585,13 +1552,9 @@ def _finalize_benchmark_run(
         with run_options.output.open("a") as f:
             f.write(json.dumps(serializable_engine_config))
             f.write("\n")
-    code = benchmark_exit_code(query_failures, validation_failures)
     if artifact_error is not None:
-        print("Failed to write Quent artifacts", file=sys.stderr)
-        traceback.print_exception(artifact_error)
-        if code == EXIT_SUCCESS:
-            code = 1
-    sys.exit(code)
+        raise artifact_error
+    sys.exit(bool(query_failures or validation_failures))
 
 
 def run_polars_cpu(
@@ -1721,7 +1684,7 @@ def run_polars_spmd(
             prepare_validation_result=_allgather_result,
         )
         if engine.rank > 0:
-            sys.exit(benchmark_exit_code(query_failures, validation_failures))
+            sys.exit(bool(query_failures or validation_failures))
         run_config = dataclasses.replace(run_config, records=dict(records))
         # We need to create this before StreamingEngine.shutdown(), which clears engine.config
         if run_config.collect_traces:
@@ -1918,7 +1881,7 @@ def _write_quent_traces(
     *,
     quent_archive: Path,
     serializable_engine_config: dict[str, Any],
-) -> BaseException | None:
+) -> Exception | None:
     """
     Write the Quent ZIP, then the browser bundle derived from that ZIP.
 

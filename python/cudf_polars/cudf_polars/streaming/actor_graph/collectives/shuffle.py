@@ -204,8 +204,7 @@ class ShuffleManager:
                 target partition ID for each row. Must be row-aligned with
                 ``chunk``.
             ir_context
-                The IR execution context that provides the stream for the
-                reorder.
+                The IR execution context.
             """
             br = self._manager.context.br()
             # As in `insert_hash_keys`, this covers the reorder plus the pack.

@@ -8,14 +8,16 @@ description: Review cuDF pull requests or local diffs, using repository guidelin
 Review as a cuDF maintainer responsible for evidence-backed findings that add to
 existing human and CodeRabbit reviews. The repository is NVIDIA/cudf.
 
+Accept a PR link or number, a checked-out PR, or a local diff.
+
 ## Context
 
 - Fetch the PR metadata, base/head SHAs, diff, CI results, and existing review
   threads and submissions, including resolved and outside-diff comments.
   For local changes, record the compared revisions and uncommitted diff.
 - Use available GitHub tools or authenticated gh without printing credentials.
-  If Git authentication fails because SSH forwarding disconnected, stop and ask
-  the user to restart after reconnecting it.
+  If authentication fails, stop and report it. If those tools are unavailable,
+  use the public PR diff or REST API, or fetch the PR ref from a cuDF remote.
 - Read the root REVIEW_GUIDELINES.md and the guides applicable to the changed paths,
   including package-specific guides under python/pylibcudf and python/cudf_polars
   when present.
@@ -24,33 +26,51 @@ existing human and CodeRabbit reviews. The repository is NVIDIA/cudf.
   BENCHMARKING.md, DOCUMENTATION.md, or PROFILING.md there when relevant.
   Keep code-review policy in those shared guides, which CodeRabbit also consumes.
 
+For example, with GitHub CLI:
+
+```bash
+gh pr view <PR_NUMBER> --repo NVIDIA/cudf --json title,body,baseRefOid,headRefOid,files,statusCheckRollup
+gh pr diff <PR_NUMBER> --repo NVIDIA/cudf
+```
+
 ## Investigation
 
 - Trace changed behavior through callers, bindings, ownership, streams, and
   existing tests. Focus on the risks introduced by this diff.
 - Use the smallest experiment that resolves a material uncertainty: targeted
   builds, regression inputs, CPU/reference comparisons, sanitizers, or benchmarks.
-  Use the applicable build/test or performance skill and supported environment.
+  Use `build-test-cudf` for builds/tests or `perf-compare-cudf` for performance
+  comparisons, under .agents/skills/, in a supported environment.
   A review need not run the full suite or manufacture a finding.
 - Verify that execution uses the reviewed sources and matching native libraries.
-  A passing test is useful only if it reaches the intended implementation:
-  check collection, skips/xfails, fallback, size thresholds, codecs, partitions,
-  and selected build features as relevant.
+  Record relevant test selection, skips/xfails, dispatch conditions, and fallback
+  settings when establishing which implementation ran.
 - For suspected regressions, compare the same reproducer on base and head.
   For performance claims, control hardware/load and cache state, include the
   affected workload axes, and preserve raw measurements.
 - Extend existing coverage when useful; keep review experiments isolated from
   the developer's edits. Do not change the submitted patch as part of review.
-- If execution is unavailable, report the limitation and distinguish it from a
-  passing check. Code reasoning can establish a finding without execution.
 
 ## Result
 
 Save the review to .agents/reviews/<PR_NUMBER>/review.md (use a descriptive name
-for local diffs). Include the reviewed base/head SHAs, then findings ordered by
-impact. Each finding needs file/line, trigger, consequence, and supporting
-reasoning or a reproducer. Identify whether it is new or confirms an existing
-finding; keep confirmations with evidence rather than repeating the complaint.
-Include checks actually run and material gaps. Omit empty categories, praise,
-style nits, and an approval verdict unsupported by the investigation.
+for local diffs) with this structure:
+
+```markdown
+**Base:** compared revision
+**Head:** reviewed revision, including any uncommitted changes
+
+## Findings
+List findings by severity, or state "No findings".
+For each: severity, file:line, trigger, consequence, evidence or reproducer,
+and whether it is new or confirms an existing finding (link the original).
+
+## Checks run
+Commands and results, including evidence added to existing findings.
+
+## Gaps
+Material uncertainties and checks that could not be run, or "None".
+```
+
+Keep confirmations with their evidence rather than repeating the complaint.
 Posting to GitHub requires authorization from the user or invoking workflow.

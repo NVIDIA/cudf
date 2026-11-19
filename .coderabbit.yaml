@@ -61,6 +61,7 @@ reviews:
       instructions: |
         For CI/build scripts:
         - Check for proper conda environment handling
+        - Verify GPU availability checks before tests
         - Check that changed tests and examples are registered in the relevant CI path
         - Check standalone consumers, exported targets, feature flags, and variable scope
         - Check for proper error handling and meaningful error messages

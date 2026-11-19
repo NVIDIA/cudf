@@ -2,7 +2,7 @@
 
 **Role**: Act as a principal engineer with 10+ years experience in Python systems programming and GPU-accelerated data processing. Prioritize concrete correctness, compatibility, performance, and test coverage risks; assign severity by impact.
 
-**Evidence**: State a concrete trigger and consequence. Treat precision as an evaluation metric, not a percentage that a prompt can guarantee.
+Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including their severity definitions and evidence requirements.
 
 **Context**: cuDF Python layer provides GPU-accelerated DataFrame operations with a pandas-compatible API. The Python codebase includes multiple packages: cudf (high-level API), pylibcudf (Cython bindings to libcudf), cudf_polars (Polars GPU executor), dask_cudf (Dask integration), cudf_kafka, and custreamz.
 
@@ -13,8 +13,8 @@
 - For changed execution paths, check the relevant partition, dtype, null/NaN,
   slicing, and supported-version boundaries; identify concrete missing behavior
   rather than requesting a blanket test matrix.
-- For JIT reductions, inspect supported launch shapes, operand dtype/extent
-  agreement, all-NaN behavior, and numerical stability against the prior backend.
+- For changed algorithms, compare input-shape, type, missing-value, and numerical
+  behavior against the intended reference semantics.
 - For asynchronous transfers and interoperability, follow the owning objects
   until GPU work completes, including failure and repeated-use paths.
 
@@ -26,7 +26,7 @@
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues (Always Comment)
+## CRITICAL Issues
 
 ### Memory Safety
 - Memory leaks from improper resource management
@@ -55,7 +55,7 @@
 - Missing cleanup in `__del__` or context managers
 - Circular references preventing garbage collection
 
-## HIGH Issues (Comment if Substantial)
+## HIGH Issues
 
 ### Performance Issues
 - Unnecessary host-device data transfers
@@ -87,7 +87,7 @@
 - Parameters not documented
 - New public API not added to docs
 
-## MEDIUM Issues (Comment Selectively)
+## MEDIUM Issues
 
 - Edge cases not handled (empty DataFrames, single-element Series)
 - Missing input validation for edge cases

@@ -768,7 +768,6 @@ struct walker {
       auto const aligned  = aligned_word(p);
       auto const page_end = reinterpret_cast<uintptr_t>(end);
       uint64_t w[header_words];
-#pragma unroll
       for (uint32_t i = 0; i < header_words; ++i) {
         auto const word = aligned + word_bytes * i;
         // `clear_past_end` also checks `word < page_end`; repeating it here keeps the faster code
@@ -793,7 +792,6 @@ struct walker {
                       len <= max_varint_bytes && len + mini_block_count <= header_bytes;
     if (fits) {
       uint64_t v = 0;
-#pragma unroll
       for (uint32_t i = 0; i < max_varint_bytes; ++i) {
         uint64_t const byte =
           (i < word_bytes ? lo >> (byte_bits * i) : hi >> (byte_bits * (i - word_bytes))) & 0x7f;
@@ -915,14 +913,12 @@ __device__ __forceinline__ tile_input load_tile(walker& wk,
     uint32_t const used_bits = result.shift + items_per_lane * bits;
     auto const page_end      = reinterpret_cast<uintptr_t>(wk.end);
     auto const* const src    = reinterpret_cast<uint64_t const*>(aligned);
-#pragma unroll
     for (uint32_t i = 0; i < words_per_lane; ++i) {
       bool const needed =
         bits != 0 && i * word_bits < used_bits && aligned + word_bytes * i < page_end;
       result.words[i] = needed ? src[i] : 0;
     }
     if (aligned + word_bytes * words_per_lane > page_end) {
-#pragma unroll
       for (uint32_t i = 0; i < words_per_lane; ++i) {
         result.words[i] = clear_past_end(result.words[i], aligned + word_bytes * i, page_end);
       }
@@ -1003,7 +999,6 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
   uintptr_t prefetched = reinterpret_cast<uintptr_t>(p) & ~uintptr_t{cache_line_bytes - 1};
   auto const page_end  = reinterpret_cast<uintptr_t>(end);
   auto prefetch_burst  = [&]() {
-#pragma unroll
     for (uint32_t k = 0; k < prefetch_window / (cache_line_bytes * warp_lanes); ++k) {
       auto const line = prefetched + (k * warp_lanes + lane) * cache_line_bytes;
       if (line < page_end) {
@@ -1043,14 +1038,12 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     values[1] = unpack<1>(current);
     values[2] = unpack<2>(current);
     values[3] = unpack<3>(current);
-#pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       // Inactive entries must be zero, including their minimum-delta contribution.
       values[item] = lane * items_per_lane + item < remaining
                        ? values[item] + static_cast<uint64_t>(current.min_delta)
                        : uint64_t{0};
     }
-#pragma unroll
     for (uint32_t item = 1; item < items_per_lane; ++item) {
       values[item] += values[item - 1];
     }
@@ -1059,7 +1052,6 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     uint64_t const tile_total = warp.shfl(prefix, warp_lanes - 1);
     uint64_t const offset     = carry + prefix - lane_total;
     carry += tile_total;
-#pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       values[item] += offset;
     }
@@ -1181,7 +1173,6 @@ struct rank_map_output {
 
   __device__ __forceinline__ void prefetch(uint32_t tile_start, uint32_t value_limit)
   {
-#pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       uint32_t const ordinal = tile_start + item * warp_lanes + warp.thread_rank();
       next_rows[item]        = ordinal < value_limit ? row_of(ordinal) : 0;
@@ -1190,7 +1181,6 @@ struct rank_map_output {
 
   __device__ __forceinline__ void next_tile()
   {
-#pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       rows[item] = next_rows[item];
     }
@@ -1206,7 +1196,6 @@ struct rank_map_output {
     // Only the null fill reads them.
     int32_t previous[items_per_lane]{};
     if (fill_nulls) {
-#pragma unroll
       for (uint32_t item = 0; item < items_per_lane; ++item) {
         auto const from_lane_below = warp.shfl_up(rows[item], 1);
         auto const from_last_lane =
@@ -1215,7 +1204,6 @@ struct rank_map_output {
       }
       last_row = warp.shfl(rows[items_per_lane - 1], warp_lanes - 1);
     }
-#pragma unroll
     for (uint32_t item = 0; item < items_per_lane; ++item) {
       uint32_t const ordinal = tile_start + item * warp_lanes + lane;
       place_one(values[item], ordinal < value_limit, rows[item], previous[item] + 1);

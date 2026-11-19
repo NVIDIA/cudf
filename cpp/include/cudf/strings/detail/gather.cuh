@@ -546,6 +546,7 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
   cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
   gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
     device_columns.data(), columns, rows, device_sizes.data());
+  CUDF_CUDA_TRY(cudaPeekAtLastError());
   auto const char_sizes = cudf::detail::make_pinned_vector(device_sizes, stream);
 
   // Let the offsets utility construct the scan iterator to avoid nested index arithmetic.

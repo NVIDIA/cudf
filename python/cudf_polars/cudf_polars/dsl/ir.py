@@ -3302,21 +3302,24 @@ class ConditionalJoin(IR):
 
 def _check_asof_sorted(key: Column, *, stream: Stream) -> bool:
     """Validate non-null key order and report whether nulls come first."""
-    if key.check_sorted(
-        order=plc.types.Order.ASCENDING,
-        null_order=plc.types.NullOrder.BEFORE,
-        stream=stream,
-    ):
-        return True
     if key.null_count:
-        if key.check_sorted(
-            order=plc.types.Order.ASCENDING,
-            null_order=plc.types.NullOrder.AFTER,
+        table = plc.Table([key.obj])
+        if plc.sorting.is_sorted(
+            table,
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.BEFORE],
+            stream=stream,
+        ):
+            return True
+        if plc.sorting.is_sorted(
+            table,
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.AFTER],
             stream=stream,
         ):
             return False
         non_null = plc.stream_compaction.drop_nulls(
-            plc.Table([key.obj]), [0], 1, stream=stream
+            table, [0], 1, stream=stream
         ).columns()[0]
         if plc.sorting.is_sorted(
             plc.Table([non_null]),
@@ -3325,6 +3328,12 @@ def _check_asof_sorted(key: Column, *, stream: Stream) -> bool:
             stream=stream,
         ):
             return False
+    elif key.check_sorted(
+        order=plc.types.Order.ASCENDING,
+        null_order=plc.types.NullOrder.BEFORE,
+        stream=stream,
+    ):
+        return True
     raise pl.exceptions.InvalidOperationError(
         "argument in operation 'asof_join' is not sorted, "
         "please sort the 'expr/series/column' first"
@@ -3404,6 +3413,13 @@ class AsofJoin(IR):
                     or right_on_col.null_order == plc.types.NullOrder.BEFORE
                 )
             )
+            if sorted_nulls_first and right_on_col.null_count:
+                sorted_nulls_first = plc.sorting.is_sorted(
+                    plc.Table([right_on_col.obj]),
+                    [plc.types.Order.ASCENDING],
+                    [plc.types.NullOrder.BEFORE],
+                    stream=right.stream,
+                )
         if not has_payload:
             return left.slice(zlice)
 

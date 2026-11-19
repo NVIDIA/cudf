@@ -102,10 +102,14 @@ def test_asof_join_checks_left_sortedness(in_memory_engine: pl.GPUEngine, payloa
 
 
 @pytest.mark.parametrize("check_sortedness", [False, True])
-def test_asof_join_right_nulls_last(in_memory_engine: pl.GPUEngine, check_sortedness):
+@pytest.mark.parametrize("set_sorted", [False, True])
+def test_asof_join_right_nulls_last(
+    in_memory_engine: pl.GPUEngine, check_sortedness, set_sorted
+):
     left = pl.LazyFrame({"time": [1, 2, 3]})
-    right = pl.LazyFrame({"time": [1, 2, None], "value": [10, 20, 30]}).sort(
-        "time", nulls_last=True
+    right = pl.LazyFrame({"time": [1, 2, None], "value": [10, 20, 30]})
+    right = (
+        right.set_sorted("time") if set_sorted else right.sort("time", nulls_last=True)
     )
     assert_gpu_result_equal(
         left.join_asof(right, on="time", check_sortedness=check_sortedness),

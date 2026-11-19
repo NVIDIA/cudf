@@ -1,15 +1,21 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include "jni_utils.hpp"
 
+#include <rmm/detail/runtime_capabilities.hpp>
 #include <rmm/device_buffer.hpp>
 
 #ifdef CUDF_JNI_ENABLE_PROFILING
 #include <cuda_profiler_api.h>
 #endif
+
+#include <unistd.h>
+
+#include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -454,6 +460,132 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Cuda_deviceSynchronize(JNIEnv* env, j
   {
     cudf::jni::auto_set_device(env);
     CUDF_CUDA_TRY(cudaDeviceSynchronize());
+  }
+  JNI_CATCH(env, );
+}
+
+JNIEXPORT jboolean JNICALL Java_ai_rapids_cudf_Cuda_isMemPoolPosixFdSupported(JNIEnv* env, jclass)
+{
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    // The checks rmm::mr::cuda_async_memory_resource makes before it creates a pool with an export
+    // handle type.
+    return rmm::detail::runtime_async_alloc::is_supported() &&
+           rmm::detail::export_handle_type::is_supported(cudaMemHandleTypePosixFileDescriptor);
+  }
+  JNI_CATCH(env, false);
+}
+
+JNIEXPORT jint JNICALL Java_ai_rapids_cudf_Cuda_memPoolExportToPosixFd(JNIEnv* env,
+                                                                       jclass,
+                                                                       jlong jpool)
+{
+  JNI_NULL_CHECK(env, jpool, "pool is null", -1);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    int fd = -1;
+    CUDF_CUDA_TRY(cudaMemPoolExportToShareableHandle(
+      &fd, reinterpret_cast<cudaMemPool_t>(jpool), cudaMemHandleTypePosixFileDescriptor, 0));
+    return fd;
+  }
+  JNI_CATCH(env, -1);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Cuda_memPoolImportFromPosixFd(JNIEnv* env,
+                                                                          jclass,
+                                                                          jint jfd)
+{
+  JNI_TRY
+  {
+    // The imported pool holds its own reference to the memory, so the fd is closed whether or
+    // not the import succeeds. An open fd keeps the exporting process's memory alive after
+    // that process exits.
+    auto const close_fd = [jfd]() { ::close(jfd); };
+    cudaMemPool_t pool  = nullptr;
+    try {
+      cudf::jni::auto_set_device(env);
+      // For POSIX file descriptors the shareable handle is the fd value itself, not a pointer.
+      CUDF_CUDA_TRY(cudaMemPoolImportFromShareableHandle(
+        &pool,
+        reinterpret_cast<void*>(static_cast<std::intptr_t>(jfd)),
+        cudaMemHandleTypePosixFileDescriptor,
+        0));
+    } catch (...) {
+      close_fd();
+      throw;
+    }
+    close_fd();
+    return reinterpret_cast<jlong>(pool);
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Cuda_memPoolDestroy(JNIEnv* env, jclass, jlong jpool)
+{
+  JNI_NULL_CHECK(env, jpool, "pool is null", );
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    CUDF_CUDA_TRY(cudaMemPoolDestroy(reinterpret_cast<cudaMemPool_t>(jpool)));
+  }
+  JNI_CATCH(env, );
+}
+
+JNIEXPORT jbyteArray JNICALL Java_ai_rapids_cudf_Cuda_memPoolExportPointer(JNIEnv* env,
+                                                                           jclass,
+                                                                           jlong jptr)
+{
+  JNI_NULL_CHECK(env, jptr, "pointer is null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudaMemPoolPtrExportData export_data{};
+    CUDF_CUDA_TRY(cudaMemPoolExportPointer(&export_data, reinterpret_cast<void*>(jptr)));
+    cudf::jni::native_jbyteArray jbytes{
+      env, reinterpret_cast<jbyte const*>(&export_data), sizeof(export_data)};
+    return jbytes.get_jArray();
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Cuda_memPoolImportPointer(JNIEnv* env,
+                                                                      jclass,
+                                                                      jlong jpool,
+                                                                      jbyteArray jexport_data)
+{
+  JNI_NULL_CHECK(env, jpool, "pool is null", 0);
+  JNI_NULL_CHECK(env, jexport_data, "export data is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudf::jni::native_jbyteArray jbytes{env, jexport_data};
+    cudaMemPoolPtrExportData export_data{};
+    JNI_ARG_CHECK(env,
+                  jbytes.size() == static_cast<int>(sizeof(export_data)),
+                  "export data has the wrong size",
+                  0);
+    std::memcpy(&export_data, jbytes.data(), sizeof(export_data));
+    void* ptr = nullptr;
+    CUDF_CUDA_TRY(
+      cudaMemPoolImportPointer(&ptr, reinterpret_cast<cudaMemPool_t>(jpool), &export_data));
+    return reinterpret_cast<jlong>(ptr);
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT void JNICALL Java_ai_rapids_cudf_Cuda_freeAsync(JNIEnv* env,
+                                                          jclass,
+                                                          jlong jptr,
+                                                          jlong jstream)
+{
+  JNI_NULL_CHECK(env, jptr, "pointer is null", );
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    CUDF_CUDA_TRY(
+      cudaFreeAsync(reinterpret_cast<void*>(jptr), reinterpret_cast<cudaStream_t>(jstream)));
   }
   JNI_CATCH(env, );
 }

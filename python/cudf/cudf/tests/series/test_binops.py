@@ -249,7 +249,7 @@ _TIMEDELTA_SCALARS = [
     np.timedelta64(4, "s"),
     np.timedelta64(456, "D"),
     np.timedelta64(46, "h"),
-    np.timedelta64("nat"),
+    np.timedelta64("nat", "ns"),
     np.timedelta64(1, "s"),
     np.timedelta64(1, "ms"),
     np.timedelta64(1, "us"),
@@ -666,7 +666,7 @@ _DATETIME_SUBTRACT_OTHERS = [
     np.datetime64("2005-02"),
     np.datetime64("2005-02-25"),
     np.datetime64("2005-02-25T03:30"),
-    np.datetime64("nat"),
+    np.datetime64("nat", "ns"),
     # TODO: https://github.com/pandas-dev/pandas/issues/52295
 ]
 
@@ -2936,7 +2936,9 @@ def test_binops_decimal_scalar_compare(
     assert_eq(expected, actual)
 
 
-@pytest.mark.parametrize("null_scalar", [None, cudf.NA, np.datetime64("NaT")])
+@pytest.mark.parametrize(
+    "null_scalar", [None, cudf.NA, np.datetime64("NaT", "ns")]
+)
 def test_column_null_scalar_comparison(
     request, all_supported_types_as_str, null_scalar, comparison_op
 ):
@@ -3250,7 +3252,7 @@ def test_binops_float_scalar_decimal():
     "scalars",
     [
         pd.NaT,
-        np.datetime64("NaT"),
+        np.datetime64("NaT", "ns"),
         None,
         pd.NA,
         np.nan,
@@ -3338,3 +3340,38 @@ def test_arrow_backed_unsigned_subtract_overflow():
     gother = cudf.from_pandas(other)
     with pytest.raises(pa.ArrowInvalid):
         gs - gother
+
+
+@pytest.mark.parametrize("divisor", [float("inf"), float("-inf"), -1e18, 1e18])
+def test_float_pymod_edge_cases(divisor):
+    val = [1.0, -1.0, 2.5, 0.0, -0.0]
+    psr = pd.Series(val)
+    gsr = cudf.Series(val)
+    res_p = psr % divisor
+    res_g = gsr % divisor
+    assert_eq(res_p, res_g)
+    assert_eq(psr.mod(divisor), gsr.mod(divisor))
+    res_rp = divisor % psr
+    res_rg = divisor % gsr
+    assert_eq(res_rp, res_rg)
+    mask = ~np.isnan(res_rp.to_numpy())
+    np.testing.assert_equal(
+        np.signbit(res_rg.to_numpy()[mask]),
+        np.signbit(res_rp.to_numpy()[mask]),
+    )
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )
+
+
+def test_float_pymod_series():
+    psr1 = pd.Series([1.0, -1.0, 1.0, -1.0])
+    psr2 = pd.Series([float("inf"), float("inf"), -1e18, -1e18])
+    gsr1 = cudf.from_pandas(psr1)
+    gsr2 = cudf.from_pandas(psr2)
+    res_p = psr1 % psr2
+    res_g = gsr1 % gsr2
+    assert_eq(res_p, res_g)
+    np.testing.assert_equal(
+        np.signbit(res_g.to_numpy()), np.signbit(res_p.to_numpy())
+    )

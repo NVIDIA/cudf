@@ -21,6 +21,7 @@
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -130,22 +131,20 @@ struct dispatch_top_k_fn {
     }
   }
 
-  template <typename T>
-    requires(cudf::is_fixed_width<T>() and !cudf::is_chrono<T>())
+  template <cudf::concepts::fixed_width T>
+    requires(not cudf::concepts::chrono<T>)
   void operator()() const
   {
     select_rows<T>();
   }
 
-  template <typename T>
-    requires(cudf::is_chrono<T>())
+  template <cudf::concepts::chrono T>
   void operator()() const
   {
     select_rows<typename T::rep>();
   }
 
   template <typename T>
-    requires(not cudf::is_fixed_width<T>())
   void operator()() const
   {
     CUDF_UNREACHABLE("unexpected type for top_k fast path");

@@ -198,7 +198,8 @@ struct padded_string_sizes {
  * constructs the scan iterator and supplies its final zero itself; `size_at` only needs
  * to accept indices in `[0, rows)`.
  *
- * @tparam SizeFunction Device callable returning the byte size of a row
+ * @tparam SizeFunction Type of `size_at`. A `SizeFunction const&` must be callable on the device
+ * with a row index.
  * @param size_at Returns the byte size for row indices in `[0, rows)`
  * @param rows Number of strings
  * @param total_bytes Sum of the input sizes

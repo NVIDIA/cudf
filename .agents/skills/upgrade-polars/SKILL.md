@@ -50,7 +50,7 @@ Ground rules:
   had 37 unit failures and 153 (in-memory) / 65 (spmd) upstream failures. Treat CI as a smoke signal and triage from full local
   runs (`--maxfail=300`, `--maxfail=100000`). Read CI logs with
   `gh pr checks <pr>` and `gh run view --job <job-id> --log-failed`. PR CI also runs only the upstream tests selected by the GPU run
-  list (see "GPU test selection in PR CI" in Step 5), so a green PR says nothing about the unselected tests.
+  list (see `references/upstream-tests.md`), so a green PR says nothing about the unselected tests.
 - **Shared GPUs.** Check `nvidia-smi` before every run and never disturb other people's work. Use one GPU per process
   (`CUDA_VISIBLE_DEVICES`) and keep concurrent jobs on different GPUs. The streaming engine (and the xdist plugin runs) abort with
   `No GPUs found on current NUMA node N` when the process runs on CPUs of the other NUMA node. Find the GPU's node with
@@ -68,47 +68,15 @@ Ground rules:
   drafted issue". Agents must not edit shared dicts like `inject_gpu_engine.py`; you merge their commits with `git cherry-pick` and
   resolve the (usually append-only) conflicts. Give each agent a private scratch directory; shared scratch scripts get overwritten.
 
-## Resuming work on an open PR (keep local and GitHub in sync)
+## Resuming work on an open PR
 
-The branch on GitHub can change while you are away: the user squashes or rebases, force-pushes, accepts a review suggestion, edits
-the PR in the web UI, or a reviewer pushes. Your local checkout does not know until you fetch. Run this check before you edit,
-commit or push anything on an existing PR, and again right before every push.
+The PR branch on GitHub can change while you are away (squash, force-push, accepted suggestions, web edits). Before you edit,
+commit or push, and again before every push, fetch and compare with the PR branch on the remote that hosts the PR head (usually your fork). If history was rewritten, stop and ask the user.
 
-1. Fetch and compare. `<branch>` is the PR branch:
-   ```bash
-   git fetch origin <branch>
-   git status -sb
-   git log --oneline HEAD..origin/<branch>     # commits on GitHub that you do not have (remote ahead)
-   git log --oneline origin/<branch>..HEAD     # commits you have that GitHub does not (local ahead)
-   ```
-2. Act on what you find:
-   - **Both empty:** in sync; continue.
-   - **Only the remote is ahead:** `git pull --ff-only origin <branch>`, then read what arrived (`git log -p ORIG_HEAD..HEAD`) before
-     you build on it.
-   - **Only you are ahead:** push normally, with no force.
-   - **Both are non-empty (diverged):** find out whether history was rewritten. Test whether the remote still contains the last commit
-     you pushed (`git merge-base --is-ancestor <last-pushed-sha> origin/<branch>`; `git merge-base HEAD origin/<branch>` should print
-     that sha).
-     - **It does** (the user merged `main`, added commits, or accepted a suggestion): nothing was rewritten. Rebase your unpushed commits
-       onto the remote with `git rebase -S origin/<branch>` (`-S` keeps them signed), tell the user what arrived, and read the incoming
-       diff for files you also touch. Check that your last verification still applies: a merge of `main` can change code your tests cover.
-     - **It does not** (a squash, rebase or force-push): stop and tell the user. Do not merge, and do not force-push on your own. With the
-       user's agreement: first keep a copy (`git branch backup/<branch>-$(date +%F)`), then move only your new commits onto the remote with
-       `git cherry-pick` (your older commits are already inside the squash), resolve conflicts toward the remote side's intent, and check
-       the result with `git diff origin/<branch>`.
-3. Never `git push --force`. Use `--force-with-lease` only when the user explicitly asks for a history rewrite (for example to squash),
-   because it refuses to overwrite a remote that moved since your last fetch.
-4. Re-read the PR before changing anything on it: `gh pr view <n> --json headRefOid,body,reviews,comments,reviewDecision`, the inline review
-   comments (`gh api repos/<org>/<repo>/pulls/<n>/comments`) and CI (`gh pr checks <n>`). The user may have edited the description, so merge
-   your change into the current body; do not overwrite it from an old local file. The same applies to issues (`gh issue view` before
-   `gh issue edit`).
-5. After pushing, confirm the remote head is your commit (`git ls-remote origin <branch>`). Workflows on a draft PR do not start on their
-   own: the user has to comment `/ok to test <sha>` for the new head.
-6. After a squash by the user, your old commit hashes are no longer in the PR. Refer to commits by subject, and fix any note that quoted a
-   hash. State in the PR which commit the last full test run was on, so later edits can be judged against it.
-7. A branch can be checked out in only one worktree, so use the worktree that has it. Do not use bare `git stash` (the stash is shared
-   across worktrees); commit instead.
-8. When you address a review comment, say what you changed. Replying to or resolving threads is the user's call unless they ask you to.
+- Re-read the PR before changing it (`gh pr view <n> --json headRefOid,body,reviews,comments`, `gh pr checks <n>`). The user may have
+  edited the description, so merge your change into the current body instead of overwriting it.
+- CI does not start on its own for a draft PR: the user has to comment `/ok to test <sha>` for the new head.
+- State in the PR which commit the last full test run was on, so later edits can be judged against it.
 
 ## Step 1. Survey what changed upstream
 
@@ -210,49 +178,9 @@ To reproduce a failing CI job in its own container instead, use the `reproduce-c
 
 ## Step 3. Adapt the translator and expressions
 
-Run the code against the new polars and fix in this order.
-
-1. **IR version gate.** `Translator.translate_ir` in `cudf_polars/dsl/translate.py` rejects IR versions
-   it has not been validated against. The error message prints the version of the polars you are *adopting*
-   (for example `(16, 0)`), which is a version you must now support, **not** the value to put in the gate. Once the
-   code works against it, set the gate to the next minor, `>= (16, 1)`. Keep the `# pragma: no cover` on the raise.
-2. **Enum drift.** `tests/dsl/test_serialization.py::test_from_polars_all_names` compares polars' function
-   name enums with ours exactly. For each new member add `Name.X = auto()` (alphabetical) in
-   `dsl/expressions/{boolean,string,struct,temporal}.py`. If it is unsupported, ensure it raises
-   `NotImplementedError` so it falls back to CPU, and add a translation-raises test. Track unimplemented
-   new features in a drafted issue.
-3. **Changed IR/option payloads.** When a node gains or reshapes a field (for example `MergeSorted.key`
-   becoming a list, a new `HConcat` slot, `Sort.slice` becoming a 3-tuple), update the translate function and
-   the IR class. When an IR class signature changes, grep every constructor call (translator, `streaming/`,
-   tests). `ci/check_cudf_polars_ir.py` validates `do_evaluate` signatures.
-4. **New fallbacks.** If a new option cannot be honoured on GPU, raise `NotImplementedError` from the translator
-   (or the node constructor) with a clear message. Add `assert_ir_translation_raises(q, engine, NotImplementedError)`
-   tests; where the *upstream* test cannot pass on GPU, this is the preferred fix.
-5. **Semantic changes.** Fix when small (with a unit test). If it needs libcudf work or a redesign, fall back to CPU
-   and draft an issue.
-6. **Pass the stream.** Pass `stream=df.stream` to every pylibcudf call you add or touch (reviewers sweep for it).
-   Prefer `Column.astype` over hand-rolled cast checks, and drop `hasattr` guards for APIs that now always exist.
-7. **Imports.** Use `from polars import _plr as plrs` for the private Rust bindings. mypy needs the overrides already in
-   the root `pyproject.toml` for `polars._plr`.
-
-8. **Polars constant-folds literals into scans.** In 2.1 `select(pl.lit(<struct/enum>))` becomes a `DataFrameScan`, so the translator
-   never sees a `Literal` and a test that expects `NotImplementedError` from that query stops raising. Keep the raise test but build
-   the query with `with_columns` (or `when/then`), which still reaches the `Literal`, and add a small `assert_gpu_result_equal` test for
-   the folded `select` form. Check what a changed test now exercises (print `translator.errors`), not just that it passes.
-9. **Option payloads can change shape.** 2.1 added a join type whose `options[0]` is a 2-tuple (`("Left", "cross_and_filter")`) where
-   code unpacked a 3-tuple. Look at the kind of the payload before unpacking, and raise `NotImplementedError` for kinds you do not support.
-10. **A polars panic cannot be caught.** If a visitor call panics (for example `get_schema()` on a `BinaryOffset` column, which polars
-    maps to `unimplemented!()`), the exception is a `BaseException` and the visitor's arena lock is poisoned, so neither a catch nor the CPU
-    fallback works. Do not add a try/except. Xfail the affected tests with a reason and draft an issue for `pola-rs/polars`.
-11. **Optimizer rewrites that hide behind a visitor limit.** 2.1 lowers `x.sort_by(k).first()` in `group_by` to `min_by` with a "total
-    order" that the Python visitor refuses to expose, so such queries fall back to CPU. Where the rewrite is skipped (for example
-    `maintain_order=True`) keep the GPU path covered by passing that option in tests, and add a canary test that the default form raises.
-12. **Version-specific code.** The supported range spans two polars minors, but CI measures coverage on the newest. Code reachable
-    only on the older version gets `# pragma: no cover; polars 2.0 only` on its `if`/`raise` line; code now unreachable on the newer
-    version one gets a note naming that version. Re-run the coverage check after every polars-induced plan change.
-13. **mypy.** `DataType.polars_type` is the generic `pl.DataType`; narrow it with `assert isinstance(t, pl.Decimal)` before reading
-    `.precision`/`.scale`. Run `mypy --config-file=pyproject.toml cudf_polars tests` from `python/cudf_polars` and ignore the
-    `import-untyped`/`_expr_nodes` noise that comes from not having the hook's isolated environment.
+Run the code against the new polars and fix in this order: the IR version gate in `Translator.translate_ir`, enum drift
+(`test_from_polars_all_names`), changed IR/option payloads, new CPU fallbacks, then semantic changes. Read
+`references/translator-fixes.md` before starting; it lists each case with the fix that worked in earlier upgrades.
 
 Keep comments about polars behaviour short and link the polars issue/PR when there is one.
 
@@ -285,40 +213,8 @@ directory.) Notes:
 - Delete tests that no longer assert anything, and rewrite legacy canary tests (for example "unsupported feature" tests) when the
   feature becomes supported. Do not relax `check_exact`/`check_row_order` unless unavoidable.
 
-### Run the unit tests on the oldest supported polars too
-
-The supported range spans two minors, and CI tests both ends. Without this check, a PR that is green on the newest polars can fail the
-wheel job on the oldest, as the Polars 2.1 upgrade did (4 failures in CI, 71 in a full local run). Overlay the old polars on the same
-environment so nothing else changes (no `ray`/`dask` extras are lost, and the environment stays intact):
-
-```bash
-pip install --no-deps --target <tmp>/polars-old "polars==X.Y.Z" "polars-runtime-32==X.Y.Z"
-PYTHONPATH=<tmp>/polars-old:$PWD python -m pytest tests --maxfail=300 ...   # from python/cudf_polars
-python -c "import sys; sys.path.insert(0, '<tmp>/polars-old'); import polars; print(polars.__version__)"   # confirm
-```
-
-What usually breaks, and the fix:
-
-- **A test that asserts new behaviour** (a plan shape, a message, a broadcast rule): `pytest.mark.skipif(POLARS_VERSION_LT_NN, reason=...)`,
-  or assert per version when both versions matter (an explain test that expects merged scans on 2.1 and a `UNION` on 2.0).
-- **An xfail you deleted because it XPASSes on the new version** still fails on the old one. Keep it, conditional on the old version:
-  `pytest.mark.xfail(POLARS_VERSION_LT_NN, reason=...)`. Strict xfail only fires when the condition is true.
-- **A new xfail for new behaviour** needs `not POLARS_VERSION_LT_NN` in its condition, or it XPASSes (and fails) on the old version.
-- Define the flag next to the others in `cudf_polars/utils/versions.py` and delete it when the lower bound passes it. Write it as
-  `POLARS_VERSION_LT_NN = parse("X.Y") > POLARS_VERSION`: the pinned ruff flags `POLARS_VERSION < parse("X.Y")` as a Yoda condition (SIM300),
-  and pre-commit.ci fails on it (older flags in this file predate that rule).
-- Failures that mention a libcudf feature newer than the nightly in your environment (for example a test from a just-merged C++ change) are
-  an environment limit, not a regression. CI builds libcudf from the branch.
-
-### Coverage
-
-- `cudf_polars` must stay at 100%, except the files in `[tool.coverage.report] omit` of `python/cudf_polars/pyproject.toml`.
-- Code that is dead on the newest polars (kept only for older supported versions) gets `# pragma: no cover` with a short reason,
-  placed on the `if` line so the whole block is excluded. Code that is now live loses its pragma.
-- Defensive raises that polars validates first use `# pragma: no cover; polars validates this ahead of time`.
-- New behaviour gets a real test. Fallbacks get `assert_ir_translation_raises`; parity gets `assert_gpu_result_equal`;
-  error parity gets `assert_collect_raises`.
-- Read the `term-missing` output and cover every reported line; do not lower the threshold.
+Then run the unit tests on the **oldest** supported polars too and bring coverage back to 100%; follow
+`references/unit-tests-oldest-and-coverage.md`.
 
 ## Step 5. Run the upstream polars test suite
 
@@ -342,64 +238,8 @@ pass. Install the requirements with the constraints file from Step 4 (`pip insta
 move polars/pandas/pytest. Check whether each `sed` pin in the CI script is still needed (for example `duckdb<2` once polars
 supports duckdb 2). Long runs: use a timeout and the default `-m "not slow"`; run `--run-slow` once at the end.
 
-### GPU test selection in PR CI
-
-PR CI does not run the whole upstream suite. It runs only the tests listed in `ci/cudf_polars/gpu_test_run_list.json`, under the key
-`<exact polars version>|spmd|default` (`CUDF_POLARS_GPU_RUN_LIST` in `.github/workflows/pr.yaml`). A selected test that passes must have
-executed a query on the GPU in its test body. Nightlies run the full suites and audit the list. To run the PR configuration locally:
-
-```bash
-CUDF_POLARS_GPU_RUN_LIST=ci/cudf_polars/gpu_test_run_list.json POLARS_DIR=<dir>/polars \
-    ./ci/run_cudf_polars_polars_tests.sh --engine spmd --inject-gpu-engine-blocksize default
-```
-
-What this means for an upgrade:
-
-- **The new Polars version needs its own entry, including a patch release.** Without one, PR CI stops with
-  `Cannot select GPU tests for 2.2.0|spmd|default`. Generate it with the `update-cudf-polars-polars-tests-selection` skill. Use complete
-  nightly telemetry for the target revision when it exists. Only when none exists, bootstrap the entry with a full default-blocksize SPMD
-  run with `--run-slow` on every shard, all exiting zero. In that case, triage the failures below first and regenerate the list last.
-- **Renamed or removed upstream tests** fail PR CI with `Stale GPU run-list nodes`. Update the list in the same PR.
-- **Turning a GPU execution into a CPU fallback fails the selected test** with `Selected GPU test passed without observed GPU
-  execution`. When a fallback is the right fix (triage step 2 below), also remove that node from the run list.
-- Skipped or xfailed items are not checked for GPU execution, so the xfail and skip dicts keep working as before.
-- When the PR raises the minimum supported Polars version, prune the entries for dropped versions in the same PR (see "Remove run-list
-  entries for dropped versions" in Step 2).
-
-### Triage each failure
-
-1. Real, small bug: fix it in cudf-polars and add a unit test.
-2. Unsupported feature: make the translator fall back to CPU (the test then passes). Preferred over xfail. If the test is in the GPU run
-   list, remove its node from the list as well.
-3. Larger fix needed: add the test to `EXPECTED_FAILURES` (or the streaming variants) in
-   `python/cudf_polars/cudf_polars/testing/inject_gpu_engine.py` with a reason **and an issue link**.
-4. Flaky, non-deterministic, hangs, only checks CPU logs, or would XPASS on one engine and fail on another: `TESTS_TO_SKIP`
-   (or the streaming skip dicts).
-
-Conventions for the dicts (`EXPECTED_FAILURES`, `TESTS_TO_SKIP`, `STREAMING_ENGINE_EXPECTED_FAILURES`,
-`STREAMING_ENGINE_TESTS_TO_SKIP`, and the `*_SMALL_BLOCKSIZE` variants):
-- Key: pytest node id relative to `py-polars` with exact parameter ids, `"tests/unit/io/test_csv.py::test_x[param]": "reason"`.
-  Polars often re-parametrizes tests, so stale ids must be updated.
-- Reason: a cudf issue URL, a polars issue/PR URL, or the established phrases ("Debug output on stderr doesn't match",
-  "Casting that raises not supported on GPU", ...). Streaming engines wrap errors in an `ExceptionGroup`, which has its own phrase.
-- Conditional entries use plain Python guards after the dict (not tuples).
-- **Audit the existing entries.** xfails are strict: remove entries whose test now passes (XPASS fails the run) or no longer exists.
-  The Polars 2.0 audit removed 76 and added about 30.
-- Wrong-result failures should become fallbacks, not xfails. In the 2.1 upgrade several "failures" were real wrong results
-  (integer-to-`Date` casts relabelled an `INT64` buffer as `INT32`; mixed-scale `Decimal` comparisons wrapped in libcudf; non-strict
-  narrowing casts wrapped instead of returning null). Compare the GPU result with the CPU result before assuming a test is flaky.
-- When a fix turns a fallback into correct GPU execution (or the reverse), the matching xfail becomes an XPASS: rerun the whole
-  upstream suite after merging fixes and delete the stale entries.
-- SPMD/streaming failures where the right polars error arrives wrapped in an `ExceptionGroup` go in
-  `STREAMING_ENGINE_EXPECTED_FAILURES` with the established phrase ("Correct polars.exceptions.X raised but it's in an ExceptionGroup").
-
-If the new polars adds an optional dependency that its tests need, install it too: read the `[project.optional-dependencies]` of the cloned
-`py-polars/pyproject.toml` (2.1 needs `polars-iceberg`, without which ~110 Iceberg/catalog tests fail with a `PerformanceWarning`). Add it to
-`ci/test_cudf_polars_polars_tests.sh` unconditionally: CI only runs the upstream tests against the installed Polars version.
-
-If an upstream test requirement breaks (a new dependency release or a warning under `-W error`), patch the requirement with `sed -i`
-in `ci/test_cudf_polars_polars_tests.sh` or add a `-W ignore:` filter in `ci/run_cudf_polars_polars_tests.sh`, with a comment that
-links the upstream fix so it can be removed later. Tests that cannot run in CI go in `ci/cudf_polars/polars_test_deselections*.txt`.
+PR CI runs only the tests in `ci/cudf_polars/gpu_test_run_list.json`, and the new Polars version needs its own entry. For the
+run-list rules, how to triage each failure, and the conventions for the xfail/skip dicts, follow `references/upstream-tests.md`.
 
 ## Step 6. Narwhals
 
@@ -424,38 +264,17 @@ cudf and cudf.pandas variants test cudf and pandas, not polars. If Narwhals itse
   its own polars from `.pre-commit-config.yaml`, so confirm that pin was updated.
 - `git diff --stat` after any merge (an earlier PR accidentally pulled in unrelated Java changes).
 - Run the sync check from "Resuming work on an open PR" before every push.
-- Run the cudf-polars unit tests on the oldest supported polars (Step 4) and confirm the upstream suites ran on the newest.
+- Run the cudf-polars unit tests on the oldest supported polars (`references/unit-tests-oldest-and-coverage.md`) and confirm the upstream suites ran on the newest.
 - Confirm `ci/cudf_polars/gpu_test_run_list.json` has an entry for the new Polars version, has no stale or fallback-only nodes, and that
-  the PR configuration command in Step 5 passes locally.
+  the PR configuration command in `references/upstream-tests.md` passes locally.
 - Grep again for stale version guards and for `TODO`s that mention the old version.
 - Write the PR description: old and new range, the user-visible behaviour changes, every new fallback, every new xfail/skip with its
   issue, the commands you ran and their results, and the follow-up issues drafted.
 
 ## Drafting issues
 
-Every xfail/skip/fallback that stands for a real gap needs an issue the maintainers can act on without asking questions. Draft each as
-a markdown file for the user to review; open an issue only when asked, and open issues in other repositories (for example
-`pola-rs/polars`) only with an explicit go-ahead. Title format `[BUG] ...` or `[FEA] ...`; labels `bug` or
-`feature request` plus `cudf-polars`. Use this structure (modelled on a well-received issue about hanging upstream tests):
-
-1. **Description.** Plain-language symptom first: what happens (wrong result, exception, hang), how it shows up in CI, and what still works
-   (other engine, default blocksize, plain Polars CPU), which narrows the cause to cudf-polars. No jargon the reader must decode.
-2. **Affected tests.** The exact node ids, in a bullet list, with parameters, and say which are `slow` or otherwise need flags.
-3. **How to reproduce.** One copy-pasteable command with every environment variable and flag, run from a stated checkout (for example
-   `pola-rs/polars` at tag `py-X.Y.Z`, in `py-polars`), plus the observed result (exit code, error text, the contrast with the passing
-   configuration). Prefer a minimal Polars snippet when the failure is not about the test harness.
-4. **What I saw in CI** (only if CI has actually run it; for a local pre-merge upgrade write "not yet run in CI" or omit). Workflow run
-   id, job names, commit, how many jobs hit it, and where it stopped. State plainly what you did **not** verify (for example "the other hangs may not share one cause"). Do not speculate beyond the evidence.
-5. **Root cause / suspected location.** File and function when known (for example a stack dump pointing at a specific actor).
-6. **Workaround.** Where the skip/xfail/fallback lives in the repo (file and dict name) and that it should be removed when the issue is fixed.
-7. **Caveats.** Anything the workaround may be hiding (for example a skipped hang hides every test behind it).
-
-Link the issue number in the xfail reason (`.../issues/NNNNN`) once the user has opened it. Until then use `TODO: <draft filename>`.
-
-When the user asks you to open them: `gh issue create -R NVIDIA/cudf --title ... --body-file ... --label bug --label cudf-polars`
-(use `--label libcudf` for libcudf reader/kernel bugs and `--label "feature request"` for `[FEA]`). End each body with a line linking the
-upgrade PR ("Found while upgrading cudf-polars to Polars X.Y in <PR url>"). Verify the labels with `gh issue view <n> --json labels`, then
-replace the `TODO` placeholders in the dicts with the issue URLs and commit. Group tests that share a cause into one issue.
+Every xfail/skip/fallback that stands for a real gap needs an issue. Draft each as a markdown file for the user to review, and open
+issues only when asked. Follow `references/drafting-issues.md` for the structure, labels and `gh` commands.
 
 ## Reference: where things live
 

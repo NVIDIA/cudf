@@ -1141,7 +1141,6 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - cachetools
           - &numba numba>=0.60.0,<0.65.0
           - nvtx>=0.2.1
           - packaging

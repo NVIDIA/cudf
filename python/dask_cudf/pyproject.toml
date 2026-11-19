@@ -104,5 +104,7 @@ filterwarnings = [
     # https://github.com/dask/partd/blob/main/partd/pandas.py#L198
     "ignore:Passing a BlockManager to DataFrame is deprecated and will raise in a future version. Use public APIs instead.:DeprecationWarning",
     "ignore:String support for `aggregate_files` is experimental. Behavior may change in the future.:FutureWarning:dask",
+    # TODO: Remove once https://github.com/NVIDIA/numba-cuda-mlir/issues/477 is resolved
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:numba_cuda_mlir",
 ]
 xfail_strict = true

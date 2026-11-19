@@ -136,6 +136,106 @@ def test_asof_join_empty_or_null(left_values, right_values, expected):
     assert result.to_arrow().to_pylist() == expected
 
 
+@pytest.fixture(
+    params=[plc.types.NullEquality.EQUAL, plc.types.NullEquality.UNEQUAL]
+)
+def compare_nulls(request):
+    return request.param
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(
+            ([0, 1, 2, 100], [-1, -2, 0, 1, -3], [(0, 2), (1, 3)], []),
+            id="no_nulls",
+        ),
+        pytest.param(
+            (
+                [0, None, 2, None],
+                [None, 2, 0, None],
+                [(0, 2), (2, 1)],
+                [(1, 0), (1, 3), (3, 0), (3, 3)],
+            ),
+            id="nulls_both_sides",
+        ),
+        pytest.param(
+            ([None, None], [None], [], [(0, 0), (1, 0)]),
+            id="all_nulls",
+        ),
+        pytest.param(
+            ([0, None], [0, 1], [(0, 0)], []),
+            id="probe_nulls",
+        ),
+        pytest.param(
+            ([0, 1], [0, None], [(0, 0)], []),
+            id="build_nulls",
+        ),
+    ]
+)
+def join_keys(request, compare_nulls):
+    left, right, matches, null_matches = request.param
+    if compare_nulls == plc.types.NullEquality.EQUAL:
+        matches = matches + null_matches
+    return (
+        plc.Table([plc.Column.from_arrow(pa.array(left, type=pa.int32()))]),
+        plc.Table([plc.Column.from_arrow(pa.array(right, type=pa.int32()))]),
+        matches,
+    )
+
+
+@pytest.mark.parametrize("join_type", ["inner", "left", "full"])
+def test_hash_join(join_keys, compare_nulls, join_type):
+    left, right, matches = join_keys
+    joiner = plc.join.HashJoin(right, compare_nulls=compare_nulls)
+    lg, rg = getattr(joiner, f"{join_type}_join")(left)
+
+    expected = matches.copy()
+    if join_type in {"left", "full"}:
+        matched_left = {i for i, _ in matches}
+        expected.extend(
+            (i, sentinel)
+            for i in range(left.num_rows())
+            if i not in matched_left
+        )
+    if join_type == "full":
+        matched_right = {j for _, j in matches}
+        expected.extend(
+            (sentinel, j)
+            for j in range(right.num_rows())
+            if j not in matched_right
+        )
+    assert sorted(zip(lg.to_pylist(), rg.to_pylist(), strict=True)) == sorted(
+        expected
+    )
+
+
+@pytest.mark.parametrize("join_type", ["semi", "anti"])
+def test_filtered_join(join_keys, compare_nulls, join_type):
+    left, right, matches = join_keys
+    joiner = plc.join.FilteredJoin(right, compare_nulls=compare_nulls)
+    result = getattr(joiner, f"{join_type}_join")(left)
+    matched_left = {i for i, _ in matches}
+    expected = (
+        matched_left
+        if join_type == "semi"
+        else set(range(left.num_rows())) - matched_left
+    )
+    assert sorted(result.to_pylist()) == sorted(expected)
+
+
+@pytest.mark.parametrize("join_type", ["inner", "left", "full"])
+def test_hash_join_non_nullable(left, right, join_type):
+    left = plc.Table.from_arrow(left.select(["a"]))
+    right = plc.Table.from_arrow(right.select(["c"]))
+    nullable = plc.join.HashJoin(right, has_nulls=plc.join.NullableJoin.YES)
+    non_nullable = plc.join.HashJoin(right, has_nulls=plc.join.NullableJoin.NO)
+    expected = getattr(nullable, f"{join_type}_join")(left)
+    result = getattr(non_nullable, f"{join_type}_join")(left)
+    assert sorted(
+        zip(*(col.to_pylist() for col in result), strict=True)
+    ) == sorted(zip(*(col.to_pylist() for col in expected), strict=True))
+
+
 @pytest.mark.parametrize(
     "join_type,expect_left,expect_right",
     [

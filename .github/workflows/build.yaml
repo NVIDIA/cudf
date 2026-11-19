@@ -513,7 +513,7 @@ jobs:
           if-no-files-found: error
 
   # Publish the assembled Maven repository. maven-publish.yaml routes on
-  # rapids-is-release-build. Release tags -> Maven Central, then Java docs.
+  # rapids-is-release-build. Release tags -> Maven Central (automatic publication).
   # Other runs -> Sonatype snapshots (immediate, overwrites
   # -SNAPSHOT).
   java-publish:
@@ -529,4 +529,3 @@ jobs:
     with:
       artifact-name: cudf_java_maven_repo
       source-git-sha: ${{ inputs.sha || github.sha }}
-      docs-project: cudf-java

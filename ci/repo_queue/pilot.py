@@ -79,8 +79,20 @@ def recover_receipts(cards, route, journal):
 
 
 def send_notifications(
-    cards, plan, route, member, token, journal, journal_path
+    cards,
+    plan,
+    route,
+    member,
+    token,
+    journal,
+    journal_path,
+    *,
+    clock=None,
+    post_message=None,
+    heading="DM PILOT — preview for the primary contact; no action requested",
 ):
+    clock = clock or timestamp
+    post_message = post_message or post
     sent = []
     for action in plan["actions"]:
         key = action["key"]
@@ -102,20 +114,22 @@ def send_notifications(
         pending = {
             "id": str(uuid.uuid4()),
             "kind": kind,
-            "prepared_at": timestamp(),
+            "prepared_at": clock(),
         }
         record["pending"] = pending
         # Persist intent before sending; an uncertain attempt must never be retried blindly.
         cards.save(key, data, {})
-        text = "*DM PILOT — preview for the primary contact; no action requested*\n"
+        text = f"*{heading}*\n"
         text += action["slack_preview"]
         database_id = card["item"].get("fullDatabaseId")
         if database_id:
             text += f"\n<{cards.config['project']['url']}?pane=issue&itemId={database_id}|Project action card>"
         text += "\nTest delivery history is separate from production reminders and escalations."
         # Always resolve the configured contact's DM, even if stored history is damaged.
-        response = post(token, payload(member, text, record.get("thread_ts")))
-        receipt = {**response, "sent_at": timestamp()}
+        response = post_message(
+            token, payload(member, text, record.get("thread_ts"))
+        )
+        receipt = {**response, "sent_at": clock()}
         journal[pending["id"]] = receipt
         # A local receipt repairs a successful send whose subsequent Project write failed.
         save_json(journal_path, journal)

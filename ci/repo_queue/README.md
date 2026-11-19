@@ -284,26 +284,99 @@ manual reconciliation after inspecting the DM.
 The command saves the refreshed snapshot, DM plan, delivery receipts, and
 result under the output directory. These files contain no bot token.
 
+## Scheduled DM pilot
+
+[scheduled.json](scheduled.json) limits unattended runs to the three agreed
+pilot sources. It is an explicit allowlist, including closed sources so their
+cards can complete. Editing it is the way to expand the pilot. No sampling or
+backlog-wide collection happens in the scheduled job.
+
+The workflow in `.github/workflows/repo-queue-pilot.yml` runs daily at 17:17 UTC
+and can be dispatched manually. It only runs in `NVIDIA/cudf` on its default
+branch. GitHub schedules become available once the workflow reaches that
+branch, and scheduled executions can be delayed. See
+[GitHub's schedule documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+The schedule refreshes GitHub evidence, synchronizes the board, and sends only
+due notices to the primary contact's bot DM. It does not post to the team
+channel. The existing policy thresholds are unchanged.
+
+The same entry point works locally:
+
+```sh
+python3 ci/repo_queue/scheduled.py --mode preview --output-dir /tmp/cudf-queue/daily
+python3 ci/repo_queue/scheduled.py --mode refresh --output-dir /tmp/cudf-queue/daily
+python3 ci/repo_queue/scheduled.py --mode dm --output-dir /tmp/cudf-queue/daily
+```
+
+`preview` is read-only, `refresh` writes the board, and `dm` also delivers due
+DMs. The unattended entry point requires `SLACK_BOT_TOKEN` for delivery and
+never prompts for a credential. For interactive prompting, use `pilot.py`
+directly. Missing Slack credentials stop the scheduler before any board writes.
+
+The workflow supplies `NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN` as
+`SLACK_BOT_TOKEN`, and the existing `ADD_TO_PROJECT_GITHUB_TOKEN` as `GH_TOKEN`.
+The latter must read repository issues, PRs and users and edit the private
+organization Project, including its draft items and assignees. Its access to
+this particular Project must be verified by a manual `refresh` run before
+relying on the schedule. An ordinary `GITHUB_TOKEN` cannot access organization
+Projects; see [GitHub's authentication guidance](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/automating-projects-using-actions).
+No credential belongs in the configuration or command-line arguments.
+
+Workflow concurrency serializes its executions without cancelling an active
+delivery. Do not run another local writer while the workflow is active;
+the file lock does not coordinate different machines. Project metadata keeps
+the authoritative notification history across fresh runners. Repeated runs
+do not resend notices before the next policy deadline.
+
+Every run retains snapshots, plans, results, and receipts as an artifact for
+30 days, including on failure. If Slack succeeds but the Project acknowledgment
+fails, download that run's artifact to a local directory and run `pilot.py`
+with that directory as `--output-dir` to recover from `dm-receipts.json`.
+Restore the entire directory, including the receipts; do not start with a new
+empty directory for recovery. A pending send without a receipt stops further
+DM delivery for inspection. The workflow does not automatically download old
+artifacts or retry uncertain sends. Pause the workflow before local recovery,
+and resume it afterward.
+
+## Accelerated reminder rehearsal
+
+Exercise an initial notice, the three-business-day reminder, and the
+seven-calendar-day escalation immediately, using the same notification policy
+and delivery code as the live pilot:
+
+```sh
+python3 ci/repo_queue/rehearse.py --output-dir /tmp/cudf-queue/rehearsal
+python3 ci/repo_queue/rehearse.py --output-dir /tmp/cudf-queue/rehearsal --send-dm
+```
+
+The first command previews all three payloads offline. The second prompts
+for the bot token or uses `SLACK_BOT_TOKEN`. It sends one parent and two replies
+in the same DM thread, with the owner mention retained and the lead mentioned
+on escalation. All three messages identify the simulated time and say no
+action is required. The closed test PR is only a reference link.
+
+Rehearsal state, clocks, pending sends, and receipts stay in local files;
+there are no GitHub requests or Project writes. Preview and actual delivery
+use separate subdirectories, and neither changes the live DM or production
+notification histories. Rerunning in the same directory does not resend a
+completed sequence. Keep that directory for recovery if a send is uncertain;
+use a new directory only when deliberately starting another rehearsal.
+
+The workflow's manual `rehearsal` mode performs the same sequence using its
+Slack secret, with no Project access required. Each new workflow execution
+starts a new rehearsal; inspect the previous run's artifact and DM before
+retrying a failed rehearsal. A rehearsal never runs on the daily schedule.
+
 ## Remaining implementation and rollout
 
-The Project schema, explicit-source synchronization, and DM delivery form a
-manual pilot. Scheduled execution, production-channel delivery, automated
-reconciliation of ambiguous sends, and broader component classification remain
-to be implemented. Generic prose handoffs still require maintainer judgment;
-the classifier does not infer owners from arbitrary comments.
+Production-channel delivery, automated reconciliation of ambiguous sends, and
+broader component classification remain to be implemented. Generic prose
+handoffs still require maintainer judgment; the classifier does not infer
+owners from arbitrary comments.
 
-No scheduled workflow is included while the report is being tuned privately.
-A future workflow should only provide the trigger, permissions and concurrency,
-runtime/authentication setup, invoke these commands, and retain
-their outputs. Sampling, event interpretation, policy, and rendering belong
-in the scripts. Any publication or reminder step should be a separate script
-that consumes the structured report and records successful deliveries.
-
-Unattended posting needs an approved Slack app credential supplied through
-the execution environment; the connected Slack tools in this chat do not
-provide credentials to a GitHub Action. GitHub Project updates also need a
-suitable workflow credential. No credential belongs in these configuration
-files.
+The workflow only supplies triggers, permissions, concurrency, credentials,
+and artifact retention. Selection, event interpretation, policy, rendering,
+and delivery live in scripts that run from a terminal.
 
 The release-sync pagination issue and existing Project status automation
 remain separate follow-up changes; this prototype does not alter them.

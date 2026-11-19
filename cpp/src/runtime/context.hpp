@@ -8,6 +8,7 @@
 #include <cudf/context.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -23,6 +24,9 @@ class program_cache;
 
 struct jit_bundle_t;
 
+/// Default NVRTC PCH heap size in bytes (512 MiB).
+inline constexpr std::size_t default_jit_pch_heap_size = std::size_t{512} * 1024 * 1024;
+
 struct [[nodiscard]] context_config {
   bool dump_codegen          : 1      = false;
   bool use_jit               : 1      = false;
@@ -33,9 +37,9 @@ struct [[nodiscard]] context_config {
   bool jit_verbose           : 1      = false;
   bool dump_jit_trace        : 1      = false;
   bool dump_jit_time_profile : 1      = false;
+  std::size_t jit_pch_heap_size       = default_jit_pch_heap_size;
   std::string rtcx_cache_dir          = {};
   std::string jit_bundle_dir          = {};
-  std::string jit_pch_dir             = {};
   std::string jit_tmp_dir             = {};
   uint32_t kernel_cache_limit_process = 0;
 };
@@ -83,8 +87,6 @@ class context {
   [[nodiscard]] bool use_jit() const;
 
   [[nodiscard]] context_config const& config() const;
-
-  [[nodiscard]] std::string const& get_jit_pch_dir() const;
 
   [[nodiscard]] device_properties const& get_device_properties() const;
 

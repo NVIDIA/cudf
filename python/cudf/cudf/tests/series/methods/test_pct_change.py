@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 
@@ -20,13 +20,13 @@ import cudf
         np.array([-3]),
     ],
 )
-@pytest.mark.parametrize("periods", [-5, 0, 5])
-def test_series_pct_change(data, periods):
+def test_series_pct_change(data):
     cs = cudf.Series(data)
     ps = cs.to_pandas()
 
-    got = cs.pct_change(periods=periods)
-    expected = ps.pct_change(periods=periods)
-    np.testing.assert_array_almost_equal(
-        got.to_numpy(na_value=np.nan), expected
-    )
+    for periods in [-5, 0, 5]:
+        got = cs.pct_change(periods=periods)
+        expected = ps.pct_change(periods=periods)
+        np.testing.assert_array_almost_equal(
+            got.to_numpy(na_value=np.nan), expected
+        )

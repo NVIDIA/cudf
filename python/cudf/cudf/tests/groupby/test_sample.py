@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import collections
@@ -11,7 +11,10 @@ import cudf
 from cudf.testing import assert_eq
 
 
-@pytest.fixture(params=["default", "rangeindex", "intindex", "strindex"])
+@pytest.fixture(
+    scope="module",
+    params=["default", "rangeindex", "intindex", "strindex"],
+)
 def index(request):
     n = 12
     if request.param == "rangeindex":
@@ -27,6 +30,7 @@ def index(request):
 
 
 @pytest.fixture(
+    scope="module",
     params=[
         ["a", "a", "b", "b", "c", "c", "c", "d", "d", "d", "d", "d"],
         [1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 4, 4],
@@ -34,6 +38,7 @@ def index(request):
     ids=["str-group", "int-group"],
 )
 def df(index, request):
+    # Sampling tests only read this shared source dataframe.
     return cudf.DataFrame(
         {"a": request.param, "b": request.param, "v": request.param},
         index=index,

@@ -33,6 +33,7 @@
 
 ### Device Code Errors
 - Use of relaxed constexpr in device code — `--expt-relaxed-constexpr` is **not** enabled; every `constexpr` function callable from device code must be explicitly annotated `__device__` or `CUDF_HOST_DEVICE`
+- Host code calling `__device__`-only functions or member functions: nvcc does **not** diagnose a templated host function calling a `__device__` function. Any `__device__` function or member function that is also reachable from host code, `constexpr` or not, must be annotated `CUDF_HOST_DEVICE` instead
 - Using `std::` type traits, algorithms, or constexpr functions instead of `cuda::std::` in `__device__` / `CUDF_HOST_DEVICE` code and in templates instantiated in device code (e.g., must use `cuda::std::is_void_v<T>`, `cuda::std::min`, `cuda::std::numeric_limits<T>`)
 - Extended `__device__` lambdas passed to device algorithms should declare their return type, preferably with a trailing `-> T` (fall back to `cuda::proclaim_return_type<T>(...)`). Some host-side APIs (e.g. CUB `DeviceSelect`, transform iterators) query the return type in host code and fail to compile without it; declaring it uniformly avoids surprises as APIs change
 
@@ -41,6 +42,7 @@
 - CUDA stream/event leaks or improper cleanup
 - Missing RAII or proper cleanup, including in exception paths
 - Raw owning pointers instead of `std::unique_ptr`, `std::shared_ptr`, `std::reference_wrapper`
+- Moving from the raw pointer returned by `std::unique_ptr::release()` (e.g. `std::move(*ptr.release())`, `ptr.release()[0]`, `auto p = contents.data.release();`) leaks the host object; use `std::move(*ptr)` instead. (`table::release()` and `device_uvector::release()` return owning values and are fine.)
 
 ### API Breaking Changes
 - C++ API changes without proper deprecation warnings
@@ -78,6 +80,10 @@
 - Owning vectors passed by copy/reference instead of being moved (transferring ownership)
 - Missing `[[nodiscard]]` on side-effect-free functions returning non-void results
 
+### Code Reuse
+- New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a correctness reason or a measured performance, build-time, or binary-size justification stated in the PR
+- New code beyond what the change needs: dead code, unused parameters, template flexibility with a single user, or a second code path for a special case without a measurement
+
 ### Concurrency & Stream Safety
 - Stream and MR parameters not propagated across all internal APIs
 - Implicit CUDA default stream use outside tests, benchmarks, and public API default parameters
@@ -97,6 +103,7 @@
 - Test code not in the global namespace
 - Benchmarks not using NVBench (not Google Benchmark)
 - **Using external datasets** (tests must not depend on external resources)
+- New tests that duplicate existing coverage (same function, same class of input, same assertion) instead of extending an existing test, type list, or `INSTANTIATE_TEST_SUITE_P` list; cite the covering test
 
 ## MEDIUM Issues (Comment Selectively)
 
@@ -113,13 +120,13 @@
 - Prefer `cuda::std` / libcudacxx utilities in device-callable code and C++ standard library algorithms for host-only code
 - Prefer kernel fusion when multiple outputs depend on the same input traversal
 - Treat each kernel launch and memory pass as expensive; minimize redundant global memory reads and writes when operations can be combined without sacrificing clarity or reuse
-- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness or substantial performance cost
+- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness cost or a measured performance, build-time, or binary-size cost
 
 ## Quality Threshold
 
 Before commenting, ask:
 1. Is this actually wrong/risky, or just different?
-2. Would this cause a real problem (crash, wrong results, leak)?
+2. Would this cause a real problem (crash, wrong results, leak), or leave code or tests the repository does not need (dead code, or a copy of an existing helper or test that you can name)?
 3. Does this comment add unique value?
 
 **If no to any: Skip the comment.**
@@ -219,6 +226,7 @@ Suggested fix:
 - Use `host_span`/`device_span`; no owning vectors passed by copy/reference unless explicitly moved
 - Prefer span parameters over pointer + size/length pairs (e.g. `T const* data, size_t size`)
 - Prefer `std::span` over `host_span<T>` whenever no host-device communication is required
+- Flag `host_span` passed as `std::span` anywhere in an API chain where `is_device_accessible()` is useful (e.g. a path to a host-device copy): the implicit conversion silently drops it and the copy takes the pageable path
 
 **Stream Management**:
 - Stream and MR as last two parameters (stream before MR)

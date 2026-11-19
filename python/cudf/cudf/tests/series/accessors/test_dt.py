@@ -452,6 +452,55 @@ def test_is_quarter_end(dtype):
     assert_eq(expect, got)
 
 
+@pytest.mark.parametrize("attr", ["is_quarter_start", "is_quarter_end"])
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+def test_quarter_boundaries_null_propagation(attr, dtype):
+    data = [None, "2024-01-01", "2024-02-01", "2024-03-31", None]
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.dt, attr)
+    actual = getattr(gs.dt, attr)
+
+    assert_eq(expected, actual)
+    expected_mask = (
+        [True, False, False, False, True]
+        if isinstance(dtype, pd.ArrowDtype)
+        else [False] * len(data)
+    )
+    assert actual.to_pandas().isna().tolist() == expected_mask
+
+
+@pytest.mark.parametrize("attr", ["is_quarter_start", "is_quarter_end"])
+@pytest.mark.parametrize("dtype", _DT_DTYPES)
+@pytest.mark.parametrize(
+    "start, stop", [(1, 8), (3, 11), (4, 6), (7, 14), (8, 9), (9, 15)]
+)
+def test_quarter_boundaries_sliced_null_mask(attr, dtype, start, stop):
+    data = [
+        None,
+        "2024-01-01",
+        "2024-01-20",
+        None,
+        "2024-03-31",
+        "2024-04-01",
+        None,
+        "2024-06-30",
+        "2024-07-01",
+        None,
+        "2024-09-30",
+        "2024-10-01",
+        None,
+        "2024-12-31",
+        None,
+    ]
+    ps = pd.Series(data, dtype=dtype).iloc[start:stop]
+    gs = cudf.Series(data, dtype=dtype).iloc[start:stop]
+
+    assert gs._column.offset > 0
+    assert_eq(getattr(ps.dt, attr), getattr(gs.dt, attr))
+
+
 @pytest.mark.parametrize(
     "dtype",
     ["datetime64[s]", pd.ArrowDtype(pa.timestamp("s"))],
@@ -753,10 +802,12 @@ def test_tz_localize(datetime_types_as_str, all_timezones):
     assert str(s.dtype.tz) == all_timezones
 
 
-def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
+def test_localize_ambiguous(
+    request, datetime_types_as_str, ambiguous_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=(all_timezones == "America/Metlakatla"),
+            condition=(ambiguous_timezones == "America/Metlakatla"),
             reason="https://www.timeanddate.com/news/time/metlakatla-quits-dst.html",
         )
     )
@@ -772,16 +823,20 @@ def test_localize_ambiguous(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(ambiguous_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(ambiguous_timezones)
     assert_eq(expect, got)
 
 
-def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
+def test_localize_nonexistent(
+    request, datetime_types_as_str, nonexistent_timezones
+):
     request.applymarker(
         pytest.mark.xfail(
-            condition=all_timezones == "America/Grand_Turk",
+            condition=nonexistent_timezones == "America/Grand_Turk",
             reason="https://www.worldtimezone.com/dst_news/dst_news_turkscaicos03.html",
         )
     )
@@ -797,9 +852,11 @@ def test_localize_nonexistent(request, datetime_types_as_str, all_timezones):
         dtype=datetime_types_as_str,
     )
     expect = s.to_pandas().dt.tz_localize(
-        zoneinfo.ZoneInfo(all_timezones), ambiguous="NaT", nonexistent="NaT"
+        zoneinfo.ZoneInfo(nonexistent_timezones),
+        ambiguous="NaT",
+        nonexistent="NaT",
     )
-    got = s.dt.tz_localize(all_timezones)
+    got = s.dt.tz_localize(nonexistent_timezones)
     assert_eq(expect, got)
 
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -48,8 +48,8 @@ TEST_P(JsonLargeReaderTest, MultiBatch)
     { "a": { "y" : 6}, "b" : [6      ], "c": 13 }
     { "a": { "y" : 6}, "b" : [7      ], "c": 14 })";
 
-  std::size_t const batch_size_upper_bound = std::numeric_limits<int32_t>::max() / 16;
-  // set smaller batch_size to reduce file size and execution time
+  // A small batch limit exercises batch boundaries without requiring large input files.
+  constexpr std::size_t batch_size_upper_bound = 4 * 1024 * 1024;
   this->set_batch_size(batch_size_upper_bound);
 
   constexpr std::size_t expected_file_size = 1.5 * static_cast<double>(batch_size_upper_bound);
@@ -60,6 +60,7 @@ TEST_P(JsonLargeReaderTest, MultiBatch)
   for (std::size_t i = 0; i < log_repetitions; i++) {
     json_string += json_string;
   }
+  ASSERT_GT(json_string.size(), batch_size_upper_bound);
 
   std::vector<std::uint8_t> cdata;
   if (comptype != cudf::io::compression_type::NONE) {
@@ -103,10 +104,8 @@ TEST_P(JsonLargeReaderTest, MultiBatch)
   auto datasources  = cudf::io::datasource::create(json_lines_options.get_source().host_buffers());
   auto cdatasources = cudf::io::datasource::create(cjson_lines_options.get_source().host_buffers());
 
-  // Test for different chunk sizes
+  // Test small byte ranges that require many batches and large ranges that exceed a batch.
   std::vector<std::size_t> chunk_sizes{batch_size_upper_bound / 4,
-                                       batch_size_upper_bound / 2,
-                                       batch_size_upper_bound,
                                        static_cast<std::size_t>(batch_size_upper_bound * 2)};
 
   for (auto chunk_size : chunk_sizes) {
@@ -118,6 +117,7 @@ TEST_P(JsonLargeReaderTest, MultiBatch)
                                              chunk_size,
                                              cudf::get_default_stream(),
                                              cudf::get_current_device_resource_ref());
+    if (chunk_size < batch_size_upper_bound) { ASSERT_GT(tables.size(), 1); }
 
     auto table_views = std::vector<cudf::table_view>(tables.size());
     std::transform(tables.begin(), tables.end(), table_views.begin(), [](auto& table) {

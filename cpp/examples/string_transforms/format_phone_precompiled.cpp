@@ -17,8 +17,6 @@
 #include <cudf/strings/replace_re.hpp>
 #include <cudf/strings/strip.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/stream>
 
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(

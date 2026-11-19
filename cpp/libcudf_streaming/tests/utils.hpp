@@ -14,6 +14,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <rapidsmpf/error.hpp>
@@ -102,7 +103,7 @@ template <typename T>
   return ret.release();
 }
 
-template <std::integral T = std::int64_t>
+template <cuda::std::integral T = std::int64_t>
 [[nodiscard]] inline std::vector<T> random_vector(std::int64_t seed,
                                                   std::size_t nelem,
                                                   T min = std::numeric_limits<T>::min(),
@@ -136,6 +137,20 @@ template <std::integral T = std::int64_t>
   cols.push_back(iota_column<std::int64_t>(nrows));
   cols.push_back(random_column(seed, nrows, min, max));
   return cudf::table(std::move(cols));
+}
+
+[[nodiscard]] inline cudf::table random_table(
+  std::int64_t seed,
+  std::size_t nrows,
+  std::size_t ncols,
+  std::int64_t min = std::numeric_limits<std::int64_t>::min(),
+  std::int64_t max = std::numeric_limits<std::int64_t>::max())
+{
+  std::vector<std::unique_ptr<cudf::column>> cols;
+  for (std::size_t i = 0; i < ncols; ++i) {
+    cols.emplace_back(random_column(seed++, nrows, min, max));
+  }
+  return cudf::table(std::move(cols), nrows);
 }
 
 [[nodiscard]] inline cudf::table sort_table(

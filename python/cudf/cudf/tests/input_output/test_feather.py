@@ -13,8 +13,9 @@ from cudf.testing import assert_eq
 from cudf.testing._utils import NUMERIC_TYPES
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
+    # Feather reader and writer tests only read this source dataframe.
     rng = np.random.default_rng(seed=0)
     types = [*NUMERIC_TYPES, "bool"]
     nrows = request.param

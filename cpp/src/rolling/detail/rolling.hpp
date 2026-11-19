@@ -8,6 +8,7 @@
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/rolling.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -36,18 +37,17 @@ struct rolling_store_output_functor<_T, true> {
   // undefined behaviour. The caller must ensure that the relevant row is
   // marked as invalid with a null.
 
-  // SFINAE for non-bool, non-timestamp types
+  // Non-bool, non-timestamp types
   template <typename T = _T>
   CUDF_HOST_DEVICE inline void operator()(T& out, T& val, size_type count)
-    requires(!(cudf::is_boolean<T>() || cudf::is_timestamp<T>()))
+    requires(not(cudf::concepts::boolean<T> or cudf::concepts::timestamp<T>))
   {
     if (count > 0) { out = val / count; }
   }
 
-  // SFINAE for timestamp types
-  template <typename T = _T>
+  // Timestamp types
+  template <cudf::concepts::timestamp T = _T>
   CUDF_HOST_DEVICE inline void operator()(T& out, T& val, size_type count)
-    requires(cudf::is_timestamp<T>())
   {
     if (count > 0) { out = static_cast<T>(val.time_since_epoch() / count); }
   }
@@ -60,7 +60,7 @@ struct rolling_store_output_functor<_T, true> {
  *                               size_type following_window,
  *                               size_type min_periods,
  *                               rolling_aggregation const& agg,
- *                               rmm::device_async_resource_ref mr)
+ *                               cudf::memory_resources mr)
  *
  * @param stream CUDA stream to use for device memory operations
  */
@@ -71,7 +71,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::rolling_window(column_view const& input,
@@ -79,7 +79,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
  *                               column_view const& following_window,
  *                               size_type min_periods,
  *                               rolling_aggregation const& agg,
- *                               rmm::device_async_resource_ref mr);
+ *                               cudf::memory_resources mr);
  *
  * @param stream CUDA stream to use for device memory operations
  */
@@ -89,7 +89,7 @@ std::unique_ptr<column> rolling_window(column_view const& input,
                                        size_type min_periods,
                                        rolling_aggregation const& agg,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr);
+                                       cudf::memory_resources mr);
 
 bool is_valid_rolling_aggregation(data_type input_type, aggregation::Kind kind);
 
@@ -119,7 +119,7 @@ bool is_valid_rolling_aggregation(data_type input_type, aggregation::Kind kind);
   range_window_type preceding,
   range_window_type following,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace detail
 

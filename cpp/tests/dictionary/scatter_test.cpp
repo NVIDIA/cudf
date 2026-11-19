@@ -11,6 +11,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/encode.hpp>
+#include <cudf/scalar/scalar.hpp>
 
 #include <vector>
 
@@ -52,6 +53,22 @@ TEST_F(DictionaryScatterTest, Scatter)
                    ->release();
   decoded = cudf::dictionary::decode(cudf::dictionary_column_view(table_result.front()->view()));
   EXPECT_EQ(0, decoded->size());
+}
+
+TEST_F(DictionaryScatterTest, EmptyTarget)
+{
+  cudf::test::strings_column_wrapper strings{"xxx", "bbb", "aaa"};
+  auto dictionary = cudf::dictionary::encode(strings);
+  auto empty      = cudf::slice(dictionary->view(), {0, 0}).front();
+
+  cudf::test::fixed_width_column_wrapper<int32_t> empty_map{};
+  auto table_result =
+    cudf::scatter(cudf::table_view{{empty}}, empty_map, cudf::table_view{{empty}})->release();
+  auto result = cudf::dictionary_column_view(table_result.front()->view());
+
+  EXPECT_EQ(result.size(), 0);
+  ASSERT_EQ(result.parent().num_children(), 2);
+  EXPECT_EQ(result.keys().type().id(), cudf::type_id::STRING);
 }
 
 TEST_F(DictionaryScatterTest, ScatterScalar)
@@ -105,7 +122,7 @@ TEST_F(DictionaryScatterTest, ScalarWithNulls)
     {1, 5, 5, 3, 7, 1, 4, 2}, {false, true, false, true, true, true, true, true}};
   auto target = cudf::dictionary::encode(data_target);
   std::vector<std::reference_wrapper<cudf::scalar const>> source;
-  cudf::numeric_scalar<int64_t> const source_slr = cudf::test::make_type_param_scalar<int64_t>(100);
+  cudf::numeric_scalar<int64_t> const source_slr{cudf::test::make_type_param_scalar<int64_t>(100)};
   std::reference_wrapper<cudf::numeric_scalar<int64_t> const> slr_wrapper = std::ref(source_slr);
   source.emplace_back(slr_wrapper);
 

@@ -75,14 +75,8 @@ def test_entropy_single_value_normalize_false(engine):
     assert got.item() == pytest.approx(-5.0 * math.log(5.0))
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        pl.Series(["a", "b"], dtype=pl.String),
-        pl.Series([True, False], dtype=pl.Boolean),
-    ],
-    ids=["string", "boolean"],
-)
-def test_entropy_non_numeric_unsupported(engine, data):
-    q = pl.LazyFrame({"a": data}).select(pl.col("a").entropy())
+def test_entropy_boolean_unsupported(engine):
+    q = pl.LazyFrame({"a": pl.Series([True, False], dtype=pl.Boolean)}).select(
+        pl.col("a").entropy()
+    )
     assert_ir_translation_raises(q, engine, NotImplementedError)

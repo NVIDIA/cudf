@@ -6,7 +6,6 @@
 
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/utilities/alignment.hpp>
 #include <cudf/lists/list_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/struct_view.hpp>
@@ -18,6 +17,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/iterator>
+#include <cuda/memory>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -218,7 +218,7 @@ class alignas(16) column_device_view : public column_device_view_core {
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<column_device_view, T>::value;
+    return has_element_accessor_impl<column_device_view, T>;
   }
 
   /// Counting iterator
@@ -505,8 +505,8 @@ class alignas(16) column_device_view : public column_device_view_core {
    */
   static std::unique_ptr<column_device_view, std::function<void(column_device_view*)>> create(
     column_view source_view,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destroy the `column_device_view` object.
@@ -656,8 +656,8 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   static std::unique_ptr<mutable_column_device_view,
                          std::function<void(mutable_column_device_view*)>>
   create(mutable_column_view source_view,
-         cuda::stream_ref stream           = cudf::get_default_stream(),
-         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+         cuda::stream_ref stream   = cudf::get_default_stream(),
+         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns reference to element at the specified index.
@@ -691,7 +691,7 @@ class alignas(16) mutable_column_device_view : public mutable_column_device_view
   template <typename T>
   CUDF_HOST_DEVICE static constexpr bool has_element_accessor()
   {
-    return has_element_accessor_impl<mutable_column_device_view, T>::value;
+    return has_element_accessor_impl<mutable_column_device_view, T>;
   }
 
   /// Counting iterator
@@ -1097,12 +1097,14 @@ ColumnDeviceView* child_columns_to_device_array(ColumnViewIterator child_begin,
                                                 void* h_ptr,
                                                 void* d_ptr)
 {
-  ColumnDeviceView* d_children = detail::align_ptr_for_type<ColumnDeviceView>(d_ptr);
-  auto num_children            = std::distance(child_begin, child_end);
+  auto d_children =
+    static_cast<ColumnDeviceView*>(cuda::align_up(d_ptr, alignof(ColumnDeviceView)));
+  auto num_children = std::distance(child_begin, child_end);
   if (num_children > 0) {
     // The beginning of the memory must be the fixed-sized ColumnDeviceView
     // struct objects in order for d_children to be used as an array.
-    auto h_column = detail::align_ptr_for_type<ColumnDeviceView>(h_ptr);
+    auto h_column =
+      static_cast<ColumnDeviceView*>(cuda::align_up(h_ptr, alignof(ColumnDeviceView)));
     auto d_column = d_children;
 
     // Any child data is assigned past the end of this array: h_end and d_end.

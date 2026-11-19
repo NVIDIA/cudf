@@ -362,6 +362,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param filename        local output path
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -375,6 +376,7 @@ public final class Table implements AutoCloseable {
                                                int[] precisions,
                                                boolean[] isMapValues,
                                                int stripeSizeRows,
+                                               String writerTimezone,
                                                String filename) throws CudfException;
 
   /**
@@ -389,6 +391,7 @@ public final class Table implements AutoCloseable {
    * @param precisions      precision list containing all the precisions of the decimal types in
    *                        the columns
    * @param isMapValues     true if a column is a map
+   * @param writerTimezone  timezone that the written timestamps are relative to
    * @param consumer        consumer of host buffers produced.
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -402,6 +405,7 @@ public final class Table implements AutoCloseable {
                                                  int[] precisions,
                                                  boolean[] isMapValues,
                                                  int stripeSizeRows,
+                                                 String writerTimezone,
                                                  HostBufferConsumer consumer,
                                                  HostMemoryAllocator hostMemoryAllocator
                                                  ) throws CudfException;
@@ -603,11 +607,26 @@ public final class Table implements AutoCloseable {
   private static native long[] fullHashJoinGatherMapsWithCount(long leftTable, long rightHashJoin,
                                                                long outputRowCount) throws CudfException;
 
+  private static native long[] filterJoinGatherMaps(long leftGatherMapAddress,
+                                                    long leftGatherMapLength,
+                                                    long rightGatherMapAddress,
+                                                    long rightGatherMapLength,
+                                                    long leftTable,
+                                                    long rightTable,
+                                                    long condition,
+                                                    int joinKind) throws CudfException;
+
   private static native long[] leftSemiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] leftSemiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
+
   private static native long[] leftAntiJoinGatherMap(long leftKeys, long rightKeys,
                                                      boolean compareNullsEqual) throws CudfException;
+
+  private static native long[] leftAntiFilteredJoinGatherMap(long leftKeys,
+                                                            long rightFilteredJoin);
 
   private static native long conditionalLeftJoinRowCount(long leftTable, long rightTable,
                                                          long condition) throws CudfException;
@@ -1678,6 +1697,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
     }
@@ -1694,6 +1714,7 @@ public final class Table implements AutoCloseable {
           options.getFlatPrecision(),
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
+          options.getWriterTimezone(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
     }
@@ -2768,6 +2789,63 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Filters a pair of join gather maps by evaluating a conditional expression on the
+   * corresponding rows from the left and right tables.
+   *
+   * <p>The maps must be the paired results of an equality join of the same kind as
+   * {@code joinKind}: INNER maps for {@link JoinKind#INNER}, LEFT maps for {@link JoinKind#LEFT},
+   * and FULL maps for {@link JoinKind#FULL}. For example, maps from
+   * {@link #leftJoinGatherMaps(HashJoin)} can be filtered with {@code JoinKind.LEFT}. Equivalent
+   * equality-join maps from other producers are also supported. Each conditional table must have
+   * the same row count and row numbering as its corresponding equality-join source table; its
+   * columns may differ. The maps must have the same length, and entries at the same position
+   * identify a candidate row pair. The join origin and index validity are not checked, and
+   * converting maps between join kinds is unsupported.
+   *
+   * <p>{@link Integer#MIN_VALUE} denotes an unmatched row in an outer-join map. Such pairs pass
+   * through without evaluating the condition. For pairs with two valid indices, the condition
+   * must produce a Boolean result; false or null means no match. LEFT and FULL retain one
+   * unmatched entry for each retained-side row with no passing candidate. Empty input maps
+   * produce empty output maps; this method does not complete an outer join from empty INNER
+   * maps. In particular, LEFT maps for a nonempty left table and an empty right table must
+   * already contain the unmatched left rows.
+   *
+   * <p>The input gather maps are not modified or closed. Two new {@link GatherMap} instances
+   * with independent storage are returned for the left and right tables, respectively. The
+   * outputs remain valid after closing the inputs, and closing the outputs does not prevent
+   * reusing the inputs. Output row order is unspecified.
+   *
+   * <p>It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftGatherMap input gather map for the left table
+   * @param rightGatherMap input gather map for the right table
+   * @param leftTable left table containing the columns referenced by the condition
+   * @param rightTable right table containing the columns referenced by the condition
+   * @param condition Boolean conditional expression to evaluate for each valid pair
+   * @param joinKind kind of the input equality join and the filtered output join
+   * @return filtered left and right table gather maps
+   * @throws IllegalArgumentException if the input gather maps have different lengths
+   */
+  public static GatherMap[] filterJoinGatherMaps(GatherMap leftGatherMap,
+                                                 GatherMap rightGatherMap,
+                                                 Table leftTable,
+                                                 Table rightTable,
+                                                 CompiledExpression condition,
+                                                 JoinKind joinKind) {
+    long leftLength = leftGatherMap.getBufferLength();
+    long rightLength = rightGatherMap.getBufferLength();
+    if (leftLength != rightLength) {
+      throw new IllegalArgumentException("left and right gather maps must have the same length");
+    }
+    long[] gatherMapData = filterJoinGatherMaps(
+        leftGatherMap.getBufferAddress(), leftLength,
+        rightGatherMap.getBufferAddress(), rightLength,
+        leftTable.getNativeView(), rightTable.getNativeView(),
+        condition.getNativeHandle(), joinKind.nativeId);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the gather maps that can be used to manifest the result of a left equi-join between
    * two tables. It is assumed this table instance holds the key columns from the left table, and
    * the table argument represents the key columns from the right table. Two {@link GatherMap}
@@ -2890,10 +2968,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #leftJoinRowCount(HashJoin)}.
+   * {@link #leftJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #leftJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3179,10 +3258,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #innerJoinRowCount(HashJoin)}.
+   * {@link #innerJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #innerJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
    *
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    *
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
@@ -3382,9 +3462,9 @@ public final class Table implements AutoCloseable {
    * Computes the number of rows resulting from a full equi-join between two tables.
    * It is assumed this table instance holds the key columns from the left table, and the
    * {@link HashJoin} argument has been constructed from the key columns from the right table.
-   * Note that unlike {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin),
-   * this will perform some redundant calculations compared to
-   * {@link #fullJoinGatherMaps(HashJoin, long)}.
+   * Like {@link #leftJoinRowCount(HashJoin)} and {@link #innerJoinRowCount(HashJoin)}, this
+   * repeats work that {@link #fullJoinGatherMaps(HashJoin)} performs anyway, so only call it when
+   * the row count is needed before manifesting the gather maps.
    * @param rightHash hash table built from join key columns from the right table
    * @return row count of the join result
    */
@@ -3427,9 +3507,11 @@ public final class Table implements AutoCloseable {
    * It is the responsibility of the caller to close the resulting gather map instances.
    *
    * This interface allows passing an output row count that was previously computed from
-   * {@link #fullJoinRowCount(HashJoin)}.
-   * WARNING: Passing a row count that is smaller than the actual row count will result
-   * in undefined behavior.
+   * {@link #fullJoinRowCount(HashJoin)}. Doing so no longer avoids any work: the output size is
+   * always computed internally and the supplied count is only validated against it. Prefer
+   * {@link #fullJoinGatherMaps(HashJoin)}; this overload will be deprecated in a future release.
+   *
+   * @throws CudfException if outputRowCount does not equal the actual output row count
    * @param rightHash hash table built from join key columns from the right table
    * @param outputRowCount number of output rows in the join result
    * @return left and right table gather maps
@@ -3519,6 +3601,26 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         leftSemiJoinGatherMap(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
+   * Computes the gather map that can be used to manifest the result of a left semi-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left semi-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftSemiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftSemiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
     return buildSingleJoinGatherMap(gatherMapData);
   }
 
@@ -3627,6 +3729,26 @@ public final class Table implements AutoCloseable {
     }
     long[] gatherMapData =
         leftAntiJoinGatherMap(getNativeView(), rightKeys.getNativeView(), compareNullsEqual);
+    return buildSingleJoinGatherMap(gatherMapData);
+  }
+
+  /**
+   * Computes the gather map that can be used to manifest the result of a left anti-join between
+   * two tables. It is assumed this table instance holds the key columns from the left table, and
+   * the {@link FilteredJoin} argument represents a reusable lookup built from the key columns
+   * from the right table. The {@link GatherMap} instance returned can be used to gather the left
+   * table to produce the result of the left anti-join.
+   * It is the responsibility of the caller to close the resulting gather map instance.
+   * @param rightFilter reusable lookup built from join key columns from the right table
+   * @return left table gather map
+   */
+  public GatherMap leftAntiJoinGatherMap(FilteredJoin rightFilter) {
+    if (getNumberOfColumns() != rightFilter.getNumberOfColumns()) {
+      throw new IllegalArgumentException("Column count mismatch, this: " + getNumberOfColumns() +
+          " rightKeys: " + rightFilter.getNumberOfColumns());
+    }
+    long[] gatherMapData =
+        leftAntiFilteredJoinGatherMap(getNativeView(), rightFilter.getNativeView());
     return buildSingleJoinGatherMap(gatherMapData);
   }
 
@@ -3967,6 +4089,15 @@ public final class Table implements AutoCloseable {
      * Computes row-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy}; this method
+     * does not sort them, and the {@link GroupByOptions} sort settings have no effect here. Groups
+     * are taken to be runs of adjacent rows with equal values in those columns, so rows with equal
+     * values that are not adjacent are aggregated as separate groups. Within a group, the preceding
+     * and following rows are counted in the order the rows appear in the table, so if the window
+     * should follow some other order (the ORDER BY of the SQL example below), the rows must be
+     * sorted by it within each group as well. Unsorted input is not detected and might silently
+     * produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -3997,7 +4128,7 @@ public final class Table implements AutoCloseable {
      *    { "user2",     40      }
      *  ]
      *
-     * Partitioning (grouping) by `user_id` yields the following `sales_amt` vector
+     * The input must first be sorted by `user_id`, which yields the following `sales_amt` vector
      * (with 2 groups, one for each distinct `user_id`):
      *
      *    [ 10,  20,  10,  50,  60,  20,  30,  80,  40 ]
@@ -4094,6 +4225,17 @@ public final class Table implements AutoCloseable {
      * Computes range-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy} and, within
+     * each group, by the order-by columns of the {@link WindowOptions}; this method does not sort
+     * them, and the {@link GroupByOptions} sort settings have no effect here. Groups are taken to be
+     * runs of adjacent rows with equal values in the group-by columns, as in
+     * {@link #aggregateWindows}. Within a group, the window bounds are found by searching the
+     * order-by columns, so they must be sorted in the direction the {@link WindowOptions} gives. For
+     * a single order-by column, the placement of nulls is deduced from the data, so the nulls must be
+     * at the same end, either the start or the end, of every group; for multiple order-by columns,
+     * the nulls must be placed as {@link WindowOptions.Builder#orderByColumns} states. Unsorted input
+     * is not detected and might silently produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4125,8 +4267,8 @@ public final class Table implements AutoCloseable {
      *    { "user2",   40,      20200104    }
      *  ]
      *
-     * Partitioning (grouping) by `user_id`, and ordering by `date` yields the following `sales_amt` vector
-     * (with 2 groups, one for each distinct `user_id`):
+     * The input must first be sorted by `user_id` and then by `date`, which yields the following
+     * `sales_amt` vector (with 2 groups, one for each distinct `user_id`):
      *
      * Date :(202001-)  [ 01,  02,  03,  07,  07,    01,   01,   02,  04 ]
      * Input:           [ 10,  20,  10,  50,  60,    20,   30,   80,  40 ]

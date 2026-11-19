@@ -1,12 +1,17 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2020, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
 
 package ai.rapids.cudf;
 
+/**
+ * A value that can be an operand of a binary operation, such as a column or a scalar.
+ * Implemented by {@link ColumnView} and {@link Scalar}; the operations are built on
+ * {@link #binaryOp(BinaryOp, BinaryOperable, DType)}.
+ */
 public interface BinaryOperable {
   /**
    * Finds the proper DType for an implicit output.  This follows the typical rules of

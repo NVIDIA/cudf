@@ -9,8 +9,10 @@ and runs on the CPU.
 
 ## Install
 
-Follow the [RAPIDS installation guide](https://docs.rapids.ai/install/) and pick the
-`cudf-polars` package for your CUDA and Python versions. For example, with conda:
+Follow the [NVIDIA CUDA-X installation
+guide](https://docs.nvidia.com/datascience/install/#install-rapids)
+and pick the `cudf-polars` package for your CUDA and Python versions. For
+example, with conda:
 
 ```bash
 conda install -c rapidsai -c conda-forge -c nvidia cudf-polars
@@ -98,8 +100,7 @@ For more information on the benchmarks being run, see the PDS queries in the [cu
 
 ## Learn More
 
-The GPU engine for Polars is now available in Open Beta and the engine is undergoing rapid development.
-To learn more, visit the [GPU Support page](https://docs.pola.rs/user-guide/gpu-support/) on the Polars website.
+Visit the [GPU Support page](https://docs.pola.rs/user-guide/gpu-support/) on the Polars website.
 
 ```{toctree}
 :maxdepth: 1
@@ -109,6 +110,7 @@ usage
 engines
 options
 execute
+pytorch
 io_plugins
 profiling
 other_engines

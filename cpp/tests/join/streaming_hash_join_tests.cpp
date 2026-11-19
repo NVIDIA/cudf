@@ -13,22 +13,26 @@
 // across partitions, and constructor argument validation.
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/byte_literals.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
+#include <cudf_test/large_memory.hpp>
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/join/join.hpp>
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/cuda_device.hpp>
-#include <rmm/cuda_stream.hpp>
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>
@@ -47,6 +51,12 @@ template <typename T>
 using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 using join_match = std::tuple<size_type, size_type, size_type>;
+
+// The slot table holds at most 2^32 slots in a prime number of 8-slot buckets, so it has at most
+// 2^29 - 3 buckets, the largest prime below 2^29. At the default load factor of 0.5, half of the 8
+// slots of each bucket can hold a row.
+constexpr size_type max_buckets                     = (size_type{1} << 29) - 3;
+constexpr size_type max_rows_at_default_load_factor = max_buckets * (8 / 2);
 
 std::vector<join_match> to_sorted_host_matches(cudf::device_span<size_type const> left_indices,
                                                cudf::device_span<size_type const> batch_indices,
@@ -87,7 +97,6 @@ TEST_F(StreamingHashJoinTest, MultiplePartitionsReturnBatchLocalIndices)
     right0_view,
     keys,
     right0_view.num_rows() + right1_view.num_rows() + right2_view.num_rows(),
-    // A non-power-of-two maximum requires two batch-ID bits.
     /*max_num_batches=*/3,
     cudf::nullable_join::NO,
     cudf::null_equality::EQUAL};
@@ -120,16 +129,19 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   auto const right_partitions = cudf::slice(right_view, slice_indices);
   column_wrapper<int32_t> left(values.begin(), values.end());
 
-  std::vector<std::unique_ptr<rmm::cuda_stream>> streams;
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  auto const stream_device = cuda::device_ref{device};
+  std::vector<std::unique_ptr<cuda::stream>> streams;
   streams.reserve(num_batches);
   for (size_type i = 0; i < num_batches; ++i) {
-    streams.push_back(std::make_unique<rmm::cuda_stream>());
+    streams.push_back(std::make_unique<cuda::stream>(stream_device));
   }
 
   std::vector<size_type> const keys{0};
   // Construct on a stream of its own so the inserts below run on different streams than the
   // hash table was built on, then synchronize it as the `insert()` docs require.
-  rmm::cuda_stream const build_stream;
+  cuda::stream const build_stream{stream_device};
   cudf::streaming_hash_join joiner{right_view,
                                    keys,
                                    /*total_right_rows=*/num_batches,
@@ -137,10 +149,8 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
                                    cudf::nullable_join::NO,
                                    cudf::null_equality::EQUAL,
                                    /*load_factor=*/0.5,
-                                   build_stream.view()};
-  build_stream.synchronize();
-
-  auto const device = rmm::get_current_cuda_device();
+                                   build_stream};
+  build_stream.sync();
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
   // `ready` lets the main thread wait until every worker is spawned and spinning, and `start`
@@ -151,13 +161,13 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   threads.reserve(num_batches);
   for (size_type i = 0; i < num_batches; ++i) {
     threads.emplace_back([&, i] {
-      rmm::cuda_set_device_raii const device_guard{device};
+      CUDF_CUDA_TRY(cudaSetDevice(device));
       ready.fetch_add(1, std::memory_order_relaxed);
       while (!start.load(std::memory_order_acquire)) {
         std::this_thread::yield();
       }
       try {
-        joiner.insert(right_partitions[i], streams[i]->view());
+        joiner.insert(right_partitions[i], *streams[i]);
       } catch (...) {
         errors[i] = std::current_exception();
       }
@@ -174,7 +184,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
     EXPECT_FALSE(error);
   }
   for (auto const& insert_stream : streams) {
-    insert_stream->synchronize();
+    insert_stream->sync();
   }
 
   auto [left_indices, right_indices] = joiner.inner_join(cudf::table_view{{left}}, {}, stream);
@@ -196,6 +206,128 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   std::iota(expected_indices.begin(), expected_indices.end(), 0);
   EXPECT_EQ(actual_left_indices, expected_indices);
   EXPECT_EQ(actual_batch_indices, expected_indices);
+}
+
+namespace {
+
+// Compares a streaming join over the given partitions of `right` with `cudf::inner_join`.
+void expect_inner_join_matches(cudf::table_view const& right,
+                               std::vector<size_type> const& splits,
+                               cudf::table_view const& left,
+                               cudf::null_equality nulls_equal)
+{
+  auto const stream     = cudf::test::get_default_stream();
+  auto const partitions = cudf::split(right, splits);
+  std::vector<size_type> starts{0};
+  starts.insert(starts.end(), splits.begin(), splits.end());
+
+  std::vector<size_type> const keys{0};
+  // An upper bound above the inserted row count leaves part of the table unused.
+  cudf::streaming_hash_join joiner{right,
+                                   keys,
+                                   /*total_right_rows=*/2 * right.num_rows(),
+                                   static_cast<size_type>(partitions.size()),
+                                   cudf::nullable_join::YES,
+                                   nulls_equal,
+                                   /*load_factor=*/0.5,
+                                   stream};
+  for (auto const& partition : partitions) {
+    joiner.insert(partition, stream);
+  }
+  auto [left_indices, right_indices] = joiner.inner_join(left, {}, stream);
+  auto& [batch_indices, row_indices] = right_indices;
+  auto const actual = to_sorted_host_matches(*left_indices, *batch_indices, *row_indices, stream);
+
+  auto const [expected_left, expected_right] =
+    cudf::inner_join(left, right.select(keys), nulls_equal, stream);
+  auto const h_left  = cudf::detail::make_host_vector(*expected_left, stream);
+  auto const h_right = cudf::detail::make_host_vector(*expected_right, stream);
+  std::vector<join_match> expected;
+  expected.reserve(h_left.size());
+  for (std::size_t i = 0; i < h_left.size(); ++i) {
+    // Empty partitions share their start with the next partition, which owns the row.
+    auto const batch = static_cast<size_type>(
+      std::upper_bound(starts.begin(), starts.end(), h_right[i]) - starts.begin() - 1);
+    expected.emplace_back(h_left[i], batch, h_right[i] - starts[batch]);
+  }
+  std::sort(expected.begin(), expected.end());
+  EXPECT_EQ(actual, expected);
+}
+
+}  // namespace
+
+TEST_F(StreamingHashJoinTest, DuplicateKeysAcrossPartitions)
+{
+  constexpr size_type num_rows = 1000;
+  // Every key repeats within and across partitions, and some rows are null.
+  auto const keys =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 37; });
+  auto const valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 11 != 0; });
+  column_wrapper<int32_t> right_keys(keys, keys + num_rows, valid);
+  column_wrapper<int32_t> payload(keys, keys + num_rows);
+  cudf::table_view const right{{right_keys, payload}};
+  auto const left_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 41; });
+  column_wrapper<int32_t> left_keys(left_values, left_values + 200, valid);
+  cudf::table_view const left{{left_keys}};
+
+  // One empty partition, one partition of a single row, and uneven sizes otherwise.
+  std::vector<size_type> const splits{100, 100, 101, 517, 800};
+  expect_inner_join_matches(right, splits, left, cudf::null_equality::EQUAL);
+  expect_inner_join_matches(right, splits, left, cudf::null_equality::UNEQUAL);
+}
+
+TEST_F(StreamingHashJoinTest, DuplicateStructKeysAcrossPartitions)
+{
+  constexpr size_type num_rows = 500;
+  // Nulls in the struct and in its child make some duplicate keys compare unequal.
+  auto const right_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 19; });
+  auto const right_child_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 0; });
+  column_wrapper<int32_t> right_child(right_values, right_values + num_rows, right_child_valid);
+  std::vector<bool> right_valid(num_rows);
+  for (size_type i = 0; i < num_rows; ++i) {
+    right_valid[i] = i % 17 != 0;
+  }
+  auto right_keys = cudf::test::structs_column_wrapper{{right_child}, right_valid};
+  cudf::table_view const right{{right_keys}};
+
+  constexpr size_type num_left_rows = 150;
+  auto const left_values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 23; });
+  auto const left_child_valid =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 5 != 0; });
+  column_wrapper<int32_t> left_child(left_values, left_values + num_left_rows, left_child_valid);
+  auto left_keys = cudf::test::structs_column_wrapper{{left_child}};
+  cudf::table_view const left{{left_keys}};
+
+  std::vector<size_type> const splits{120, 120, 333};
+  expect_inner_join_matches(right, splits, left, cudf::null_equality::EQUAL);
+  expect_inner_join_matches(right, splits, left, cudf::null_equality::UNEQUAL);
+}
+
+TEST_F(StreamingHashJoinTest, ValidatesOutputSize)
+{
+  auto const stream = cudf::test::get_default_stream();
+  column_wrapper<int32_t> right_keys{1, 2, 2};
+  cudf::table_view const right{{right_keys}};
+  column_wrapper<int32_t> left_keys{2, 3};
+  cudf::table_view const left{{left_keys}};
+  std::vector<size_type> const key_indices{0};
+  cudf::streaming_hash_join joiner{right,
+                                   key_indices,
+                                   right.num_rows(),
+                                   /*max_num_batches=*/1,
+                                   cudf::nullable_join::NO,
+                                   cudf::null_equality::EQUAL};
+  joiner.insert(right, stream);
+
+  auto const [left_indices, right_indices] = joiner.inner_join(left, std::size_t{2}, stream);
+  EXPECT_EQ(left_indices->size(), 2);
+  EXPECT_THROW(static_cast<void>(joiner.inner_join(left, std::size_t{3}, stream)),
+               cudf::logic_error);
 }
 
 TEST_F(StreamingHashJoinTest, MaxNumBatchesCountsEmptyBatches)
@@ -453,17 +585,15 @@ TEST_F(StreamingHashJoinTest, MemoryResources)
 
   auto output_mr  = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
   auto scratch_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
-  // Snapshot the persistent resource so we can tell the output did not come out of it. Probing does
-  // transiently allocate a counter from it, since that comes from the container's own allocator, so
-  // compare outstanding bytes rather than the peak.
-  auto const persistent_bytes_before = persistent_mr.get_bytes_counter().value;
+  // Snapshot the persistent resource so we can tell probing allocates nothing from it.
+  auto const persistent_bytes_before = persistent_mr.get_bytes_counter().total;
   auto [left_indices, right_indices] =
     joiner.inner_join(left, {}, stream, cudf::memory_resources{output_mr, scratch_mr});
   EXPECT_GT(output_mr.get_bytes_counter().peak, 0);
   // Probe scratch goes to the temporary resource and is released before the call returns.
   EXPECT_GT(scratch_mr.get_bytes_counter().peak, 0);
   EXPECT_EQ(scratch_mr.get_bytes_counter().value, 0);
-  EXPECT_EQ(persistent_mr.get_bytes_counter().value, persistent_bytes_before);
+  EXPECT_EQ(persistent_mr.get_bytes_counter().total, persistent_bytes_before);
   EXPECT_EQ(left_indices->size(), 1);
   EXPECT_EQ(right_indices.first->size(), 1);
   EXPECT_EQ(right_indices.second->size(), 1);
@@ -529,4 +659,41 @@ TEST_F(StreamingHashJoinTest, ConstructorValidatesArguments)
                                          cudf::null_equality::EQUAL,
                                          /*load_factor=*/1.5),
                std::invalid_argument);
+
+  EXPECT_THROW(cudf::streaming_hash_join(single_schema,
+                                         single_key,
+                                         max_rows_at_default_load_factor + 1,
+                                         /*max_num_batches=*/1,
+                                         cudf::nullable_join::NO,
+                                         cudf::null_equality::EQUAL),
+               std::overflow_error);
+}
+
+TEST_F(StreamingHashJoinTest, LargestSlotTable)
+{
+  using namespace cudf::test::literals;
+  CUDF_TEST_REQUIRE_DEVICE_MEMORY_OR_SKIP(20_GiB);
+
+  auto const stream = cudf::test::get_default_stream();
+  std::vector<int32_t> keys(1000);
+  std::iota(keys.begin(), keys.end(), 0);
+  column_wrapper<int32_t> right(keys.begin(), keys.end());
+  cudf::table_view const right_view{{right}};
+
+  cudf::streaming_hash_join joiner{right_view,
+                                   std::vector<size_type>{0},
+                                   max_rows_at_default_load_factor,
+                                   /*max_num_batches=*/1,
+                                   cudf::nullable_join::NO,
+                                   cudf::null_equality::EQUAL};
+  joiner.insert(right_view, stream);
+
+  auto [left_indices, right_indices] = joiner.inner_join(right_view, {}, stream);
+  auto& [batch_indices, row_indices] = right_indices;
+  auto const actual = to_sorted_host_matches(*left_indices, *batch_indices, *row_indices, stream);
+  std::vector<join_match> expected;
+  for (size_type row = 0; row < right_view.num_rows(); ++row) {
+    expected.emplace_back(row, 0, row);
+  }
+  EXPECT_EQ(actual, expected);
 }

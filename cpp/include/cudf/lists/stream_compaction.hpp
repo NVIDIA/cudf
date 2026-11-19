@@ -29,7 +29,8 @@ namespace lists {
  *
  * Given an input `LIST` column and a list-of-bools column, the function produces
  * a new `LIST` column of the same type as `input`, where each element is copied
- * from the input row *only* if the corresponding `retention_mask` is non-null and `true`.
+ * from the input row *only* if the corresponding `retention_mask` is valid and
+ * `true`, or null when `null_policy::INCLUDE` is specified.
  *
  * E.g.
  * @code{.pseudo}
@@ -57,8 +58,21 @@ namespace lists {
 std::unique_ptr<column> apply_retention_mask(
   lists_column_view const& input,
   lists_column_view const& retention_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @copydoc apply_retention_mask(lists_column_view const&, lists_column_view const&,
+ * cuda::stream_ref, cudf::memory_resources)
+ *
+ * @param null_handling Whether to keep or drop elements with null mask elements
+ */
+std::unique_ptr<column> apply_retention_mask(
+  lists_column_view const& input,
+  lists_column_view const& retention_mask,
+  null_policy null_handling,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters elements in each row of `input` LIST column using `boolean_mask`
@@ -75,8 +89,8 @@ std::unique_ptr<column> apply_retention_mask(
 [[deprecated("Use apply_retention_mask() instead")]] std::unique_ptr<column> apply_boolean_mask(
   lists_column_view const& input,
   lists_column_view const& boolean_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Filters elements in each row of `input` LIST column using `deletion_mask`
@@ -84,7 +98,8 @@ std::unique_ptr<column> apply_retention_mask(
  *
  * Given an input `LIST` column and a list-of-bools column, the function produces
  * a new `LIST` column of the same type as `input`, where each element is deleted
- * from the input row if the corresponding `deletion_mask` is non-null and `true`.
+ * from the input row if the corresponding `deletion_mask` is `true`, or null
+ * unless `null_policy::INCLUDE` is specified.
  *
  * E.g.
  * @code{.pseudo}
@@ -95,8 +110,7 @@ std::unique_ptr<column> apply_retention_mask(
  *
  * `input` and `deletion_mask` must have the same number of rows.
  * The output column has the same number of rows as the input column.
- * An element is copied to an output row if the corresponding deletion_mask element is
- * non-null and `false`.
+ * An element is copied to an output row if the corresponding deletion_mask element is `false`.
  * An output row is invalid only if the input row is invalid.
  *
  * @throws cudf::logic_error if `deletion_mask` is not a "lists of bools" column
@@ -112,8 +126,21 @@ std::unique_ptr<column> apply_retention_mask(
 std::unique_ptr<column> apply_deletion_mask(
   lists_column_view const& input,
   lists_column_view const& deletion_mask,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @copydoc apply_deletion_mask(lists_column_view const&, lists_column_view const&,
+ * cuda::stream_ref, cudf::memory_resources)
+ *
+ * @param null_handling Whether to keep or drop elements with null mask elements
+ */
+std::unique_ptr<column> apply_deletion_mask(
+  lists_column_view const& input,
+  lists_column_view const& deletion_mask,
+  null_policy null_handling,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Create a new list column without duplicate elements in each list.
@@ -142,7 +169,7 @@ std::unique_ptr<column> distinct(
   nan_equality nans_equal           = nan_equality::ALL_EQUAL,
   duplicate_keep_option keep_option = duplicate_keep_option::KEEP_ANY,
   cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr         = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

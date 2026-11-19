@@ -43,6 +43,8 @@ from pylibcudf.types cimport DataType
 cdef class ParquetReaderOptions:
     cdef parquet_reader_options c_obj
     cdef SourceInfo source
+    # Hold on to the filter expression since the C++ options only reference it
+    cdef Expression _filter
     cpdef void set_row_groups(self, list row_groups)
     cpdef void set_num_rows(self, int64_t nrows)
     cpdef void set_skip_rows(self, int64_t skip_rows)
@@ -57,11 +59,15 @@ cdef class ParquetReaderOptions:
     cpdef void enable_case_sensitive_names(self, bool val)
     cpdef bool is_enabled_prepend_source_index_column(self)
     cpdef void enable_prepend_source_index_column(self, bool val)
+    cpdef bool is_enabled_output_dict_columns(self)
+    cpdef void enable_output_dict_columns(self, bool val)
 
 
 cdef class ParquetReaderOptionsBuilder:
     cdef parquet_reader_options_builder c_obj
     cdef SourceInfo source
+    # Hold on to the filter expression since the C++ options only reference it
+    cdef Expression _filter
     cpdef ParquetReaderOptionsBuilder convert_strings_to_categories(self, bool val)
     cpdef ParquetReaderOptionsBuilder use_pandas_metadata(self, bool val)
     cpdef ParquetReaderOptionsBuilder allow_mismatched_pq_schemas(self, bool val)
@@ -75,6 +81,7 @@ cdef class ParquetReaderOptionsBuilder:
     cpdef ParquetReaderOptionsBuilder use_jit_filter(self, bool use_jit_filter)
     cpdef ParquetReaderOptionsBuilder case_sensitive_names(self, bool val)
     cpdef ParquetReaderOptionsBuilder prepend_source_index_column(self, bool val)
+    cpdef ParquetReaderOptionsBuilder output_dict_columns(self, bool val)
     cpdef ParquetReaderOptionsBuilder decimal_width(self, type_id width)
     cpdef ParquetReaderOptions build(self)
 
@@ -83,6 +90,8 @@ cdef class ChunkedParquetReader:
     cdef Stream _stream
     cdef DeviceMemoryResource mr
     cdef unique_ptr[cpp_chunked_parquet_reader] reader
+    # Hold on to the filter expression since the C++ reader references it across chunks
+    cdef Expression _filter
 
     cpdef bool has_next(self)
     cpdef TableWithMetadata read_chunk(self, DeviceMemoryResource mr=*)

@@ -235,3 +235,57 @@ def test_size_bytes():
     )
     df = DataFrame.from_polars(df, stream=stream)
     assert df._size_bytes == 24
+
+
+@pytest.mark.parametrize("n", [0, 3])
+@pytest.mark.parametrize("name", ["n", ""])
+def test_null_column_roundtrip(n, name):
+    stream = get_cuda_stream()
+    df = pl.DataFrame(
+        {
+            name: pl.Series([None] * n, dtype=pl.Null),
+            "a": pl.Series(range(n), dtype=pl.Int64),
+        }
+    )
+    result = DataFrame.from_polars(df, stream=stream)
+    assert result.column_map[name].obj.type().id() == plc.TypeId.INT8
+    assert_frame_equal(result.to_polars(), df)
+
+
+def test_to_polars_time():
+    stream = get_cuda_stream()
+    values = pl.Series(
+        "t", [0, 3_723_000_000_123, 86_400_000_000_000 - 1, None], dtype=pl.Int64
+    )
+    time_column = plc.unary.bit_cast(
+        plc.Column.from_arrow(values, stream=stream),
+        plc.DataType(plc.TypeId.TIMESTAMP_NANOSECONDS),
+        stream=stream,
+    )
+    other = pl.Series("a", [4, 3, 2, 1], dtype=pl.Int64)
+    df = DataFrame(
+        [
+            Column(
+                time_column,
+                dtype=DataType(pl.Time()),
+                name="t",
+                is_sorted=plc.types.Sorted.YES,
+                order=plc.types.Order.ASCENDING,
+                null_order=plc.types.NullOrder.AFTER,
+            ),
+            Column(
+                plc.Column.from_arrow(other, stream=stream),
+                dtype=DataType(pl.Int64()),
+                name="a",
+            ),
+        ],
+        stream=stream,
+    )
+
+    result = df.to_polars()
+
+    expected = pl.DataFrame([values.cast(pl.Time), other]).with_columns(
+        pl.col("t").set_sorted()
+    )
+    assert_frame_equal(result, expected)
+    assert result.flags == expected.flags

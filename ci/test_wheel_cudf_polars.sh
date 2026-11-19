@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 rapids-logger "Download wheels"
 
@@ -12,35 +13,28 @@ RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 CUDF_POLARS_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_POLARS_QUENT_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-polars-quent cudf --stable)")
 
 # Download libcudf_streaming and cudf_streaming built in the previous step
 LIBCUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf-streaming cudf --cuda "$RAPIDS_CUDA_VERSION")")
 CUDF_STREAMING_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf-streaming cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_cudf_polars "${PIP_CONSTRAINT}"
 
 read -r -a VERSIONS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml test_cudf_polars_compat polars_compat_version)"
-
-if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -ge 2 ]]; then
-    VERSIONS=("${VERSIONS[0]}" "${VERSIONS[-1]}")
-fi
-
 LATEST_VERSION="${VERSIONS[-1]}"
 
-if [[ "${POLARS_VERSIONS:-all}" == "endpoints" ]] && [[ ${#VERSIONS[@]} -eq 2 ]]; then
-    # Split the two endpoint versions across the two CUDA-major matrix entries so each
-    # entry tests one version in parallel, instead of both serially in a single job.
-    # LATEST_VERSION (set above) is left untouched, so coverage is still only enforced
-    # on whichever entry ends up testing it.
-    read -r -a CUDA_MAJORS <<< "$(python ci/utils/get_matrix_values.py dependencies.yaml all cuda | tr ' ' '\n' | cut -d. -f1 | sort -nu | tr '\n' ' ')"
-    THIS_CUDA_MAJOR="${RAPIDS_CUDA_VERSION%%.*}"
-    if [[ "${THIS_CUDA_MAJOR}" == "${CUDA_MAJORS[0]}" ]]; then
-        VERSIONS=("${VERSIONS[0]}")
-    else
-        VERSIONS=("${VERSIONS[-1]}")
-    fi
-fi
+case "${POLARS_VERSIONS:-all}" in
+    all) ;;
+    earliest) VERSIONS=("${VERSIONS[0]}") ;;
+    latest) VERSIONS=("${VERSIONS[-1]}") ;;
+    endpoints) VERSIONS=("${VERSIONS[0]}" "${VERSIONS[-1]}") ;;
+    *)
+        echo "Unsupported POLARS_VERSIONS=${POLARS_VERSIONS}" >&2
+        exit 1
+        ;;
+esac
 
 # shellcheck disable=SC2317
 function set_exitcode()
@@ -67,7 +61,7 @@ for version in "${VERSIONS[@]}"; do
         > "${polars_requirements_txt}"
 
     env_name="venv_polars_${version}"
-    python -m venv --clear "${env_name}"
+    uv venv --python "$(command -v python)" --clear "${env_name}"
     # shellcheck disable=SC1090
     source "${env_name}/bin/activate"
 
@@ -75,19 +69,18 @@ for version in "${VERSIONS[@]}"; do
 
     # notes:
     #
-    #   * echo to expand wildcard before adding `[test]` requires for pip
+    #   * echo to expand wildcard before adding `[test]` requires for the installer
     #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
     #     that environment variable is ignored if any other --constraint are passed via the CLI
     #
-    rapids-pip-retry install \
-        -v \
-        --prefer-binary \
+    rapids-uv-pip install \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_POLARS_WHEELHOUSE}"/cudf_polars_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,dask,ray]" \
         "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
         "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
         "$(echo "${LIBCUDF_STREAMING_WHEELHOUSE}"/libcudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
         "$(echo "${CUDF_STREAMING_WHEELHOUSE}"/cudf_streaming_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
+        "$(echo "${CUDF_POLARS_QUENT_WHEELHOUSE}"/cudf_polars_quent-*-cp312-abi3-*.whl)" \
         -r "polars-compat-${version}-requirements.txt"
 
     rapids-logger "Running tests for polars ${version}.*"
@@ -108,9 +101,8 @@ for version in "${VERSIONS[@]}"; do
         "${COVERAGE_ARGS[@]}" \
         --numprocesses=4 \
         --dist=worksteal \
-        --durations 10 --durations-min 10 \
+        --durations=50 --durations-min=1 \
         -x \
-        -ra \
         --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-${version}.xml"
 
     test_exitcode=$?

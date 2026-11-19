@@ -18,6 +18,7 @@ def partition_and_pack(
     ch_out: Channel[PartitionMapChunk],
     columns_to_hash: Iterable[int],
     num_partitions: int,
+    seed: int = ...,
 ) -> CppActor: ...
 def unpack_and_concat(
     ctx: Context,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,6 +12,8 @@
 
 #include <cudf/aggregation.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <type_traits>
 
 using key_wrapper = cudf::test::fixed_width_column_wrapper<int32_t>;
@@ -19,7 +21,7 @@ using key_wrapper = cudf::test::fixed_width_column_wrapper<int32_t>;
 template <typename T>
 struct groupby_sum_scan_test : public cudf::test::BaseFixture {
   using V              = T;
-  using R              = std::conditional_t<std::is_integral_v<V>, int64_t, V>;
+  using R              = std::conditional_t<cuda::std::is_integral_v<V>, int64_t, V>;
   using value_wrapper  = cudf::test::fixed_width_column_wrapper<V, int32_t>;
   using result_wrapper = cudf::test::fixed_width_column_wrapper<R, int32_t>;
 };
@@ -66,6 +68,17 @@ TYPED_TEST(groupby_sum_scan_test, pre_sorted)
                    expect_keys,
                    expect_vals,
                    std::move(agg),
+                   cudf::null_policy::EXCLUDE,
+                   cudf::sorted::YES);
+
+  // Excluded null keys must also drop their rows from the scanned values.
+  key_wrapper keys_with_nulls({0, 0, 1, 1, 1}, cudf::test::iterators::nulls_at({0, 1}));
+  value_wrapper vals_with_nulls{5, 5, 0, 3, 6};
+  test_single_scan(keys_with_nulls,
+                   vals_with_nulls,
+                   key_wrapper({1, 1, 1}, cudf::test::iterators::no_nulls()),
+                   result_wrapper{0, 3, 9},
+                   cudf::make_sum_aggregation<cudf::groupby_scan_aggregation>(),
                    cudf::null_policy::EXCLUDE,
                    cudf::sorted::YES);
 }

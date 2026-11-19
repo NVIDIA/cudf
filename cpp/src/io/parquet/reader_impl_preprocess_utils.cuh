@@ -8,11 +8,13 @@
 #include "reader_impl_chunking.hpp"
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
-#include <thrust/logical.h>
 
+#include <cstddef>
 #include <future>
 #include <span>
 #include <vector>
@@ -69,33 +71,13 @@ void generate_depth_remappings(
   std::vector<size_t> const& column_chunk_offsets,
   std::vector<size_type> const& chunk_source_map,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
-
-/**
- * @brief Return the number of total pages from the given column chunks.
- *
- * @param chunks Host-device span of column chunk descriptors
- * @param stream CUDA stream used for device memory operations and kernel launches
- *
- * @return The total number of pages
- */
-[[nodiscard]] size_t count_page_headers(cudf::detail::hostdevice_span<ColumnChunkDesc> chunks,
-                                        cuda::stream_ref stream);
+  cudf::memory_resources mr);
 
 /**
  * @brief Count the total number of pages using page index information.
  */
 [[nodiscard]] size_t count_page_headers_with_pgidx(
   cudf::detail::hostdevice_span<ColumnChunkDesc> chunks, cuda::stream_ref stream);
-
-/**
- * @brief Set fields on the pages that can be derived from page indexes.
- *
- * This replaces some preprocessing steps, such as page string size calculation.
- */
-void fill_in_page_info(host_span<ColumnChunkDesc> chunks,
-                       device_span<PageInfo> pages,
-                       cuda::stream_ref stream);
 
 /**
  * @brief Returns a string representation of known encodings
@@ -124,17 +106,27 @@ std::string encoding_to_string(Encoding encoding);
                                                      cuda::stream_ref stream);
 
 /**
- * @brief Decode the page information for a given pass.
+ * @brief Count and decode the page headers of a given pass using the offset index
  *
  * @param pass The struct containing pass information
- * @param unsorted_pages Device span of page information to decode
- * @param has_offset_index Boolean indicating if the offset index is available
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Unsorted decoded pages
  */
-void decode_page_headers(pass_intermediate_data& pass,
-                         device_span<PageInfo> unsorted_pages,
-                         bool has_offset_index,
-                         cuda::stream_ref stream);
+[[nodiscard]] cuda::device_buffer<PageInfo> decode_page_headers_with_pgidx(
+  pass_intermediate_data& pass, cuda::stream_ref stream, cudf::memory_resources mr);
+
+/**
+ * @brief Count and decode the page headers of a given pass by walking its column chunks
+ *
+ * @param pass The struct containing pass information
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
+ * @return Unsorted decoded pages
+ */
+[[nodiscard]] cuda::device_buffer<PageInfo> decode_page_headers(pass_intermediate_data& pass,
+                                                                cuda::stream_ref stream,
+                                                                cudf::memory_resources mr);
 
 /**
  * @brief Decode page information using one exact span per logical indexed page
@@ -145,60 +137,25 @@ void decode_page_headers(pass_intermediate_data& pass,
  * @param unsorted_pages Device span of page information to decode
  * @param page_data Host span of page data device spans, one per logical indexed page
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary and output device memory
  */
-void decode_page_headers(pass_intermediate_data& pass,
-                         device_span<PageInfo> unsorted_pages,
-                         std::span<cudf::device_span<uint8_t const> const> page_data,
-                         cuda::stream_ref stream);
+void decode_sparse_page_headers(pass_intermediate_data& pass,
+                                device_span<PageInfo> unsorted_pages,
+                                std::span<cudf::device_span<uint8_t const> const> page_data,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr);
 
 /**
- * @brief Check if the column chunk has a string (byte array or FLBA) type
+ * @brief Check if the column chunk needs a string dictionary index: any byte array (including
+ * decimals, which are variable width) or a non-decimal FLBA
  */
-__device__ constexpr inline bool is_string_chunk(ColumnChunkDesc const& chunk)
+__device__ constexpr inline bool needs_str_dict_index(ColumnChunkDesc const& chunk)
 {
   auto const is_decimal =
     chunk.logical_type.has_value() and chunk.logical_type->type == LogicalType::DECIMAL;
-  auto const is_binary =
-    chunk.physical_type == Type::BYTE_ARRAY or chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY;
-  return is_binary and not is_decimal;
+  return chunk.physical_type == Type::BYTE_ARRAY or
+         (chunk.physical_type == Type::FIXED_LEN_BYTE_ARRAY and not is_decimal);
 }
-
-/**
- * @brief Struct to carry info from the page indexes to the device
- */
-struct page_index_info {
-  int32_t num_rows;
-  int32_t chunk_row;
-  int32_t num_nulls;
-  int32_t num_valids;
-  int32_t str_bytes;
-  bool has_value_info;
-};
-
-/**
- * @brief Functor to copy page_index_info into the PageInfo struct
- */
-struct copy_page_info {
-  device_span<page_index_info const> page_indexes;
-  device_span<PageInfo> pages;
-
-  __device__ constexpr void operator()(size_type idx)
-  {
-    auto& pg          = pages[idx];
-    auto const& pi    = page_indexes[idx];
-    pg.num_rows       = pi.num_rows;
-    pg.chunk_row      = pi.chunk_row;
-    pg.has_value_info = pi.has_value_info;
-    pg.start_val      = 0;
-    if (pg.has_value_info) {
-      pg.num_nulls            = pi.num_nulls;
-      pg.num_valids           = pi.num_valids;
-      pg.str_bytes_from_index = pi.str_bytes;
-      pg.str_bytes            = pi.str_bytes;
-      pg.end_val              = pg.num_valids;
-    }
-  }
-};
 
 /**
  * @brief Functor to set the string dictionary index counts for a given data page
@@ -211,7 +168,7 @@ struct set_str_dict_index_count {
   {
     auto const& chunk = chunks[page.chunk_idx];
     if ((page.flags & PAGEINFO_FLAGS_DICTIONARY) != 0 and chunk.num_dict_pages > 0 and
-        is_string_chunk(chunk)) {
+        needs_str_dict_index(chunk)) {
       // there is only ever one dictionary page per chunk, so this is safe to do in parallel.
       str_dict_index_count[page.chunk_idx] = page.num_input_values;
     }
@@ -234,7 +191,7 @@ struct set_str_dict_index_ptr {
     if (sparse_page_io and (chunk.dict_page == nullptr or chunk.dict_page->page_data == nullptr)) {
       return;
     }
-    if (chunk.num_dict_pages > 0 and is_string_chunk(chunk)) {
+    if (chunk.num_dict_pages > 0 and needs_str_dict_index(chunk)) {
       chunk.str_dict_index = base + str_dict_index_offsets[i];
     }
   }
@@ -476,7 +433,17 @@ struct page_to_string_size {
  */
 struct set_str_offset_fn {
   PageInfo* p;
-  __device__ constexpr void operator()(size_type i, size_t value) const { p[i].str_offset = value; }
+#if CUDART_VERSION < 13000
+  // Work around a CUDA 12.9 ptxas scan-by-key miscompilation on SM120 by using a pointer-width
+  // tabulate output index.
+  // https://github.com/NVIDIA/cccl/issues/11167
+  __device__ constexpr void operator()(std::ptrdiff_t i, size_t value) const
+#else
+  __device__ constexpr void operator()(size_type i, size_t value) const
+#endif  // CUDART_VERSION < 13000
+  {
+    p[i].str_offset = value;
+  }
 };
 
 /**

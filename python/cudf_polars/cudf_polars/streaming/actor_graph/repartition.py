@@ -17,7 +17,10 @@ from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.dispatch import generate_ir_sub_network
+from cudf_polars.streaming.actor_graph.dispatch import (
+    generate_ir_sub_network,
+    ir_context_for_node,
+)
 from cudf_polars.streaming.actor_graph.nodes import shutdown_on_error
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
@@ -83,8 +86,14 @@ async def concatenate_node(
         Pre-allocated collective ID for this operation.
     """
     async with shutdown_on_error(
-        context, ch_in, ch_out, trace_ir=ir, ir_context=ir_context
-    ) as tracer:
+        context,
+        chs_in=(ch_in,),
+        chs_out=(ch_out,),
+        trace_ir=ir,
+        ir_context=ir_context,
+    ) as actor_scope:
+        tracer = actor_scope.tracer
+        ir_context = actor_scope.require_ir_context()
         # Receive metadata.
         input_metadata = await recv_metadata(ch_in, context)
         nranks = comm.nranks
@@ -143,7 +152,7 @@ async def concatenate_node(
             if tracer is not None and output_duplicated:
                 tracer.set_duplicated()
 
-            stream = context.br().stream_pool.get_stream()
+            stream = ir_context.get_cuda_stream()
             seq_num = 0
             allgather = AllGatherManager(context, comm, collective_id)
             with allgather.inserting() as inserter:
@@ -152,7 +161,6 @@ async def concatenate_node(
                         seq_num, TableChunk.from_message(msg, br=context.br())
                     )
                     seq_num += 1
-                    del msg
 
             # Extract concatenated result
             result_table = await allgather.extract_concatenated(
@@ -167,6 +175,7 @@ async def concatenate_node(
                 output_chunk = TableChunk.from_pylibcudf_table(
                     result_table, stream, exclusive_view=True, br=context.br()
                 )
+            del result_table
 
             await send_chunk(context, ch_out, output_chunk, 0, tracer=tracer)
         else:
@@ -196,39 +205,42 @@ async def concatenate_node(
                     chunks.append(TableChunk.from_message(msg, br=context.br()))
 
                 if chunks:
-                    chunks, extra = await make_table_chunks_available_or_wait(
-                        context,
-                        chunks,
-                        reserve_extra=sum(chunk.data_alloc_size() for chunk in chunks),
-                        net_memory_delta=0,
-                    )
-                    with opaque_memory_usage(extra):
-                        df = _concat(
-                            *(
-                                DataFrame.from_table(
-                                    chunk.table_view(),
-                                    list(ir.schema.keys()),
-                                    list(ir.schema.values()),
-                                    chunk.stream,
-                                )
-                                for chunk in chunks
+                    if len(chunks) == 1:
+                        (output_chunk,) = chunks
+                        del chunks
+                    else:
+                        chunks, extra = await make_table_chunks_available_or_wait(
+                            context,
+                            chunks,
+                            reserve_extra=sum(
+                                chunk.data_alloc_size() for chunk in chunks
                             ),
-                            context=ir_context,
+                            net_memory_delta=0,
                         )
-                        if len(chunks) > 1:
-                            # _concat reuses chunks[0] if len(chunks) == 1
-                            del chunks
-                    output_chunk = TableChunk.from_pylibcudf_table(
-                        df.table,
-                        df.stream,
-                        exclusive_view=True,
-                        br=context.br(),
-                    )
+                        with opaque_memory_usage(extra):
+                            df = _concat(
+                                *(
+                                    DataFrame.from_table(
+                                        chunk.table_view(),
+                                        list(ir.schema.keys()),
+                                        list(ir.schema.values()),
+                                        chunk.stream,
+                                    )
+                                    for chunk in chunks
+                                ),
+                                context=ir_context,
+                            )
+                            output_chunk = TableChunk.from_pylibcudf_table(
+                                df.table,
+                                df.stream,
+                                exclusive_view=True,
+                                br=context.br(),
+                            )
+                            del df, chunks
                     await send_chunk(
                         context, ch_out, output_chunk, seq_num, tracer=tracer
                     )
                     seq_num += 1
-                    del df
 
                 # Break if we reached end of stream
                 if done_receiving:
@@ -258,6 +270,7 @@ def _(
 
     # Look up the reserved shuffle ID for this operation
     collective_id = rec.state["collective_id_map"][ir][0]
+    ir_context = ir_context_for_node(rec, ir)
 
     # Add python node
     nodes[ir] = [
@@ -265,7 +278,7 @@ def _(
             rec.state["context"],
             rec.state["comm"],
             ir,
-            rec.state["ir_context"],
+            ir_context,
             channels[ir].reserve_input_slot(),
             channels[ir.children[0]].reserve_output_slot(),
             output_count=partition_info[ir].count,

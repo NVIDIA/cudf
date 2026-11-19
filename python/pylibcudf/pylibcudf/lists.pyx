@@ -119,7 +119,7 @@ cpdef Table explode_outer(
     cdef unique_ptr[table] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()
@@ -155,7 +155,7 @@ cpdef Column concatenate_rows(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()
@@ -192,7 +192,7 @@ cpdef Column concatenate_list_elements(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -238,7 +238,7 @@ cpdef Column contains(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef lists_column_view c_list_view
     cdef column_view c_search_key_column
 
@@ -289,7 +289,7 @@ cpdef Column contains_nulls(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -336,7 +336,7 @@ cpdef Column index_of(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_search_key_column
 
     mr = _get_memory_resource(mr)
@@ -382,7 +382,7 @@ cpdef Column reverse(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -431,7 +431,7 @@ cpdef Column segmented_gather(
     cdef ListsColumnView list_view2 = gather_map_list.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view1 = list_view1.view()
@@ -473,7 +473,7 @@ cpdef Column extract_list_element(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_index_column
 
     mr = _get_memory_resource(mr)
@@ -518,7 +518,7 @@ cpdef Column count_elements(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -557,7 +557,7 @@ cpdef Column sequences(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_starts
     cdef column_view c_steps
     cdef column_view c_sizes
@@ -619,7 +619,7 @@ cpdef Column sort_lists(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -677,7 +677,7 @@ cpdef Column difference_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -727,7 +727,7 @@ cpdef Column have_overlap(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -777,7 +777,7 @@ cpdef Column intersect_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -828,7 +828,7 @@ cpdef Column union_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -874,7 +874,7 @@ cpdef Column apply_retention_mask(
     cdef ListsColumnView mask_view = retention_mask.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -931,7 +931,7 @@ cpdef Column apply_deletion_mask(
     cdef ListsColumnView mask_view = deletion_mask.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -975,7 +975,7 @@ cpdef Column distinct(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()

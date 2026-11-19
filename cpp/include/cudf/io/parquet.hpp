@@ -496,27 +496,39 @@ class parquet_reader_options {
    * For a parquet with columns ["A", "B", "C", ... "X", "Y", "Z"],
    * Example 1: with/without column projection
    * @code
-   * use_columns({"A", "X", "Z"})
-   * .filter(operation(ast_operator::LESS, column_name_reference{"C"}, literal{100}));
+   * auto const value  = cudf::numeric_scalar<int32_t>{100};
+   * auto const lit    = literal{value};
+   * auto const col_c  = column_name_reference{"C"};
+   * auto const filter = operation(ast_operator::LESS, col_c, lit);
+   * builder.column_names({"A", "X", "Z"}).filter(filter);
    * @endcode
    * Column "C" need not be present in output table.
    * Example 2: without column projection
    * @code
-   * filter(operation(ast_operator::LESS, column_reference{1}, literal{100}));
+   * auto const col_1  = column_reference{1};
+   * auto const filter = operation(ast_operator::LESS, col_1, lit);
+   * builder.filter(filter);
    * @endcode
    * Here, `1` will refer to column "B" because output will contain all columns in
    * order ["A", ..., "Z"].
    * Example 3: with column projection
    * @code
-   * use_columns({"A", "Z", "X"})
-   * .filter(operation(ast_operator::LESS, column_reference{1}, literal{100}));
+   * builder.column_names({"A", "Z", "X"}).filter(filter);
    * @endcode
    * Here, `1` will refer to column "Z" because output will contain 3 columns in
    * order ["A", "Z", "X"].
    *
+   * Only references to `filter` and its operands are stored, so they must outlive these options
+   * and any reader created from them.
+   *
    * @param filter AST expression to use as filter
    */
   void set_filter(ast::expression const& filter) { _filter = filter; }
+
+  /**
+   * @brief Deleted overload to prevent a temporary filter from dangling after the call.
+   */
+  void set_filter(ast::expression const&&) = delete;
 
   /**
    * @brief Sets to enable/disable conversion of strings to categories.
@@ -750,6 +762,13 @@ class parquet_reader_options_builder {
     options.set_filter(filter);
     return *this;
   }
+
+  /**
+   * @brief Deleted overload to prevent a temporary filter from dangling after the call.
+   *
+   * @return this for chaining
+   */
+  parquet_reader_options_builder& filter(ast::expression const&&) = delete;
 
   /**
    * @brief Sets enable/disable conversion of strings to categories.
@@ -1001,15 +1020,14 @@ class parquet_reader_options_builder {
  *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate device memory of the table in the returned
- * table_with_metadata
+ * @param mr Memory resources used to allocate temporary and output table device memory
  *
  * @return The set of columns along with metadata
  */
 table_with_metadata read_parquet(
   parquet_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reads a Parquet dataset into a set of columns using pre-existing Parquet datasources and
@@ -1030,8 +1048,7 @@ table_with_metadata read_parquet(
  * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate device memory of the table in the returned
- * table_with_metadata
+ * @param mr Memory resources used to allocate temporary and output table device memory
  *
  * @return The set of columns along with metadata
  */
@@ -1039,8 +1056,8 @@ table_with_metadata read_parquet(
   std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
   std::vector<parquet::FileMetaData>&& parquet_metadatas,
   parquet_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief The chunked parquet reader class to read Parquet file iteratively in to a series of
@@ -1072,13 +1089,12 @@ class chunked_parquet_reader {
    *        or `0` if there is no limit
    * @param options The options used to read Parquet file
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  chunked_parquet_reader(
-    std::size_t chunk_read_limit,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  chunked_parquet_reader(std::size_t chunk_read_limit,
+                         parquet_reader_options const& options,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader using pre-existing Parquet datasources and
@@ -1094,15 +1110,14 @@ class chunked_parquet_reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options The options used to read Parquet file
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  chunked_parquet_reader(
-    std::size_t chunk_read_limit,
-    std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
-    std::vector<parquet::FileMetaData>&& parquet_metadatas,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  chunked_parquet_reader(std::size_t chunk_read_limit,
+                         std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
+                         std::vector<parquet::FileMetaData>&& parquet_metadatas,
+                         parquet_reader_options const& options,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader.
@@ -1121,14 +1136,13 @@ class chunked_parquet_reader {
    * `0` if there is no limit
    * @param options The options used to read Parquet file
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  chunked_parquet_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  chunked_parquet_reader(std::size_t chunk_read_limit,
+                         std::size_t pass_read_limit,
+                         parquet_reader_options const& options,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructor for chunked reader using pre-existing Parquet datasources and
@@ -1150,16 +1164,15 @@ class chunked_parquet_reader {
    * @param parquet_metadatas Pre-materialized Parquet file metadata(s). Read from sources if empty
    * @param options The options used to read Parquet file
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource to use for device memory allocation
+   * @param mr Memory resources used to allocate temporary and output device memory
    */
-  chunked_parquet_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
-    std::vector<parquet::FileMetaData>&& parquet_metadatas,
-    parquet_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  chunked_parquet_reader(std::size_t chunk_read_limit,
+                         std::size_t pass_read_limit,
+                         std::vector<std::unique_ptr<cudf::io::datasource>>&& sources,
+                         std::vector<parquet::FileMetaData>&& parquet_metadatas,
+                         parquet_reader_options const& options,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance.

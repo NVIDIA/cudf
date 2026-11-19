@@ -140,7 +140,7 @@ inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resourc
  * @brief Parses the cuDF test command line options.
  *
  * Currently only supports 'rmm_mode' string parameter, which set the rmm
- * allocation mode. The default value of the parameter is 'pool'.
+ * allocation mode. The default value of the parameter is 'async'.
  * Environment variable 'CUDF_TEST_RMM_MODE' can also be used to set the rmm
  * allocation mode. If both are set, the value of 'rmm_mode' string parameter
  * takes precedence.
@@ -156,7 +156,7 @@ inline auto parse_cudf_test_opts(int argc, char** argv)
       std::getenv("GTEST_CUDF_STREAM_MODE");  // Overridden by CLI options
     char const* env_stream_error_mode =
       std::getenv("GTEST_CUDF_STREAM_ERROR_MODE");  // Overridden by CLI options
-    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "pool";
+    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "async";
     auto default_stream_mode       = env_stream_mode ? env_stream_mode : "default";
     auto default_stream_error_mode = env_stream_error_mode ? env_stream_error_mode : "error";
     options.allow_unrecognised_options().add_options()(

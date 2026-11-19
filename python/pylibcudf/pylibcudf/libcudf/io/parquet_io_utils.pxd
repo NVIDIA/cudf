@@ -5,6 +5,7 @@ from libc.stdint cimport uint8_t
 from cuda.bindings.cyruntime cimport cudaStream_t
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
 
 from rmm.librmm.device_buffer cimport device_buffer
@@ -13,7 +14,7 @@ from rmm.librmm.memory_resource cimport device_async_resource_ref
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.io.datasource cimport datasource
 from pylibcudf.libcudf.io.text cimport byte_range_info
-from pylibcudf.libcudf.utilities.span cimport device_span, host_span
+from pylibcudf.libcudf.utilities.span cimport device_span
 
 ctypedef const uint8_t const_uint8_t
 ctypedef const byte_range_info const_byte_range_info
@@ -35,7 +36,7 @@ cdef extern from * nogil:
                      std::vector<cudf::device_span<uint8_t const>>>
     cpp_fetch_byte_ranges_to_device(
         cudf::io::datasource& datasource,
-        cudf::host_span<cudf::io::text::byte_range_info const> byte_ranges,
+        std::span<cudf::io::text::byte_range_info const> byte_ranges,
         cudf::io::parquet::io_submission_policy policy,
         cudaStream_t stream,
         rmm::device_async_resource_ref mr)
@@ -56,7 +57,7 @@ cdef extern from * nogil:
     pair[vector[device_buffer], vector[device_span[const_uint8_t]]] \
         cpp_fetch_byte_ranges_to_device(
             datasource& source,
-            host_span[const_byte_range_info] byte_ranges,
+            std_span[const_byte_range_info] byte_ranges,
             io_submission_policy policy,
             cudaStream_t stream,
             device_async_resource_ref mr,

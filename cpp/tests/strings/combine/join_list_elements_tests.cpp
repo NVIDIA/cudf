@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -35,18 +35,16 @@ TEST_F(StringsListsConcatenateTest, InvalidInput)
 
   // Invalid scalar separator
   {
-    auto const string_lists =
-      STR_LISTS{STR_LISTS{""}, STR_LISTS{"", "", ""}, STR_LISTS{"", ""}}.release();
-    auto const string_lv = cudf::lists_column_view(string_lists->view());
+    auto const string_lists = STR_LISTS{{""}, {"", "", ""}, {"", ""}}.release();
+    auto const string_lv    = cudf::lists_column_view(string_lists->view());
     EXPECT_THROW(cudf::strings::join_list_elements(string_lv, cudf::string_scalar("", false)),
                  cudf::logic_error);
   }
 
   // Invalid column separators
   {
-    auto const string_lists =
-      STR_LISTS{STR_LISTS{""}, STR_LISTS{"", "", ""}, STR_LISTS{"", ""}}.release();
-    auto const string_lv  = cudf::lists_column_view(string_lists->view());
+    auto const string_lists = STR_LISTS{{""}, {"", "", ""}, {"", ""}}.release();
+    auto const string_lv    = cudf::lists_column_view(string_lists->view());
     auto const separators = STR_COL{"+++"}.release();  // size doesn't match with lists column size
     EXPECT_THROW(cudf::strings::join_list_elements(string_lv, separators->view()),
                  cudf::logic_error);
@@ -68,9 +66,8 @@ TEST_F(StringsListsConcatenateTest, EmptyInput)
 
 TEST_F(StringsListsConcatenateTest, ZeroSizeStringsInput)
 {
-  auto const string_lists =
-    STR_LISTS{STR_LISTS{""}, STR_LISTS{"", "", ""}, STR_LISTS{"", ""}, STR_LISTS{}}.release();
-  auto const string_lv = cudf::lists_column_view(string_lists->view());
+  auto const string_lists = STR_LISTS{{""}, {"", "", ""}, {"", ""}, {}}.release();
+  auto const string_lv    = cudf::lists_column_view(string_lists->view());
 
   // Empty list results in empty string
   {
@@ -109,9 +106,7 @@ TEST_F(StringsListsConcatenateTest, ZeroSizeStringsInput)
 TEST_F(StringsListsConcatenateTest, ColumnHasEmptyListAndNullListInput)
 {
   auto const string_lists =
-    STR_LISTS{{STR_LISTS{"abc", "def", ""}, STR_LISTS{} /*NULL*/, STR_LISTS{}, STR_LISTS{"gh"}},
-              null_at(1)}
-      .release();
+    STR_LISTS{{{"abc", "def", ""}, {} /*NULL*/, {}, {"gh"}}, null_at(1)}.release();
   auto const string_lv = cudf::lists_column_view(string_lists->view());
 
   // Empty list results in empty string
@@ -150,11 +145,8 @@ TEST_F(StringsListsConcatenateTest, ColumnHasEmptyListAndNullListInput)
 
 TEST_F(StringsListsConcatenateTest, AllNullsStringsInput)
 {
-  auto const string_lists = STR_LISTS{
-    STR_LISTS{{""}, all_nulls()},
-    STR_LISTS{{"", "", ""}, all_nulls()},
-    STR_LISTS{{"", ""},
-              all_nulls()}}.release();
+  auto const string_lists =
+    STR_LISTS{{{""}, all_nulls()}, {{"", "", ""}, all_nulls()}, {{"", ""}, all_nulls()}}.release();
   auto const string_lv = cudf::lists_column_view(string_lists->view());
   auto const expected  = STR_COL{{"", "", ""}, all_nulls()};
 
@@ -168,11 +160,11 @@ TEST_F(StringsListsConcatenateTest, AllNullsStringsInput)
 
 TEST_F(StringsListsConcatenateTest, ScalarSeparator)
 {
-  auto const string_lists = STR_LISTS{{STR_LISTS{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
-                                       STR_LISTS{}, /*NULL*/
-                                       STR_LISTS{{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
-                                       STR_LISTS{"zzz", "xxxxx"},
-                                       STR_LISTS{{"v", "", "", "w"}, nulls_at({1, 2})}},
+  auto const string_lists = STR_LISTS{{{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
+                                       {}, /*NULL*/
+                                       {{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
+                                       {"zzz", "xxxxx"},
+                                       {{"v", "", "", "w"}, nulls_at({1, 2})}},
                                       null_at(1)}
                               .release();
   auto const string_lv = cudf::lists_column_view(string_lists->view());
@@ -213,17 +205,17 @@ TEST_F(StringsListsConcatenateTest, ScalarSeparator)
 TEST_F(StringsListsConcatenateTest, SlicedListsWithScalarSeparator)
 {
   auto const string_lists = STR_LISTS{
-    {STR_LISTS{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
-     STR_LISTS{}, /*NULL*/
-     STR_LISTS{{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
-     STR_LISTS{"zzz", "xxxxx"},
-     STR_LISTS{"11111", "11111", "11111", "11111", "11111"}, /*NULL*/
-     STR_LISTS{{"abcdef", "012345", "" /*NULL*/, "xxx000"}, null_at(2)},
-     STR_LISTS{{"xyz" /*NULL*/, "11111", "00000"}, null_at(0)},
-     STR_LISTS{"0a0b0c", "5x5y5z"},
-     STR_LISTS{"xxx"}, /*NULL*/
-     STR_LISTS{"ééé", "12345abcdef"},
-     STR_LISTS{"aaaééébbbéééccc", "12345"}},
+    {{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
+     {}, /*NULL*/
+     {{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
+     {"zzz", "xxxxx"},
+     {"11111", "11111", "11111", "11111", "11111"}, /*NULL*/
+     {{"abcdef", "012345", "" /*NULL*/, "xxx000"}, null_at(2)},
+     {{"xyz" /*NULL*/, "11111", "00000"}, null_at(0)},
+     {"0a0b0c", "5x5y5z"},
+     {"xxx"}, /*NULL*/
+     {"ééé", "12345abcdef"},
+     {"aaaééébbbéééccc", "12345"}},
     cudf::detail::make_counting_transform_iterator(0, [](auto i) {
       return i != 1 && i != 4 && i != 8;
     })}.release();
@@ -347,12 +339,12 @@ TEST_F(StringsListsConcatenateTest, SlicedListsWithScalarSeparator)
 
 TEST_F(StringsListsConcatenateTest, ColumnSeparators)
 {
-  auto const string_lists = STR_LISTS{{STR_LISTS{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
-                                       STR_LISTS{}, /*NULL*/
-                                       STR_LISTS{"0a0b0c", "xyzééé"},
-                                       STR_LISTS{{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
-                                       STR_LISTS{{"ééé" /*NULL*/, "ááá", "ííí"}, null_at(0)},
-                                       STR_LISTS{"zzz", "xxxxx"}},
+  auto const string_lists = STR_LISTS{{{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
+                                       {}, /*NULL*/
+                                       {"0a0b0c", "xyzééé"},
+                                       {{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
+                                       {{"ééé" /*NULL*/, "ááá", "ííí"}, null_at(0)},
+                                       {"zzz", "xxxxx"}},
                                       null_at(1)}
                               .release();
   auto const string_lv  = cudf::lists_column_view(string_lists->view());
@@ -426,17 +418,17 @@ TEST_F(StringsListsConcatenateTest, ColumnSeparators)
 TEST_F(StringsListsConcatenateTest, SlicedListsWithColumnSeparators)
 {
   auto const string_lists = STR_LISTS{
-    {STR_LISTS{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
-     STR_LISTS{}, /*NULL*/
-     STR_LISTS{{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
-     STR_LISTS{"zzz", "xxxxx"},
-     STR_LISTS{"11111", "11111", "11111", "11111", "11111"}, /*NULL*/
-     STR_LISTS{{"abcdef", "012345", "" /*NULL*/, "xxx000"}, null_at(2)},
-     STR_LISTS{{"xyz" /*NULL*/, "11111", "00000"}, null_at(0)},
-     STR_LISTS{"0a0b0c", "5x5y5z"},
-     STR_LISTS{"xxx"}, /*NULL*/
-     STR_LISTS{"ééé", "12345abcdef"},
-     STR_LISTS{"aaaééébbbéééccc", "12345"}},
+    {{{"a", "bb" /*NULL*/, "ccc"}, null_at(1)},
+     {}, /*NULL*/
+     {{"ddd" /*NULL*/, "efgh", "ijk"}, null_at(0)},
+     {"zzz", "xxxxx"},
+     {"11111", "11111", "11111", "11111", "11111"}, /*NULL*/
+     {{"abcdef", "012345", "" /*NULL*/, "xxx000"}, null_at(2)},
+     {{"xyz" /*NULL*/, "11111", "00000"}, null_at(0)},
+     {"0a0b0c", "5x5y5z"},
+     {"xxx"}, /*NULL*/
+     {"ééé", "12345abcdef"},
+     {"aaaééébbbéééccc", "12345"}},
     cudf::detail::make_counting_transform_iterator(0, [](auto i) {
       return i != 1 && i != 4 && i != 8;
     })}.release();

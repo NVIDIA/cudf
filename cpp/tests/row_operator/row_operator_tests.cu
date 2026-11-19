@@ -8,20 +8,43 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
+#include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/column/column.hpp>
+#include <cudf/column/column_device_view_base.cuh>
+#include <cudf/column/column_factories.hpp>
+#include <cudf/column/column_view.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/row_operator/hashing.cuh>
 #include <cudf/detail/row_operator/lexicographic.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/preprocessed_table.cuh>
+#include <cudf/detail/row_operator/primitive_hashing.cuh>
+#include <cudf/detail/row_operator/spark_hashing.cuh>
+#include <cudf/hashing.hpp>
+#include <cudf/hashing/detail/spark_murmurhash3.cuh>
 #include <cudf/hashing/detail/xxhash_64.cuh>
-#include <cudf/strings/strings_column_view.hpp>
+#include <cudf/null_mask.hpp>
+#include <cudf/table/table_device_view.cuh>
+#include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
+#include <cuda/stream_ref>
 #include <thrust/transform.h>
+
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
 
 template <typename T>
 struct TypedTableViewTest : public cudf::test::BaseFixtureWithHarness {};
@@ -63,8 +86,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)
 {
   using T = TypeParam;
 
-  // TODO: lexicographic row operators still allocate from the current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -75,6 +96,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorTwoTables)
   auto const rhs          = cudf::table_view{{col2}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{1, 1, 0, 1}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got =
     two_table_comparison(lhs,
                          rhs,
@@ -100,8 +122,6 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
 {
   using T = TypeParam;
 
-  // TODO: lexicographic row operators still allocate from the current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -110,6 +130,7 @@ TYPED_TEST(TypedTableViewTest, TestLexicographicalComparatorSameTable)
   auto const input_table  = cudf::table_view{{col1}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 0}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got      = self_comparison(input_table,
                                    column_order,
                                    cudf::detail::row::lexicographic::physical_element_comparator{},
@@ -132,8 +153,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
 {
   using data_col   = cudf::test::fixed_width_column_wrapper<TypeParam>;
   using int32s_col = cudf::test::fixed_width_column_wrapper<int32_t>;
-
-  // TODO: lexicographic row operators still allocate from the current device resource.
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -175,19 +194,21 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTables)
               expected_empty_rhs);
   };
 
+  auto const guard = this->harness().fail_on_current_device_resource_use();
+
   // Generate preprocessed data for both lhs and lhs at the same time.
   // Switching order of lhs and rhs tables then sorting them using their preprocessed data should
   // produce exactly the same result.
   {
     auto const [preprocessed_lhs, preprocessed_empty_rhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
   {
     auto const [preprocessed_empty_rhs, preprocessed_lhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
 }
@@ -199,8 +220,6 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   using strings_col = cudf::test::strings_column_wrapper;
   using structs_col = cudf::test::structs_column_wrapper;
 
-  // TODO: lexicographic row operators still allocate from the current device resource.
-
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
@@ -210,8 +229,11 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
       auto child1 = strings_col{{"a", "c", "a", "b"}, stream, mr};
       return structs_col{{child0, child1}, {}, stream, mr};
     };
-    return cudf::make_lists_column(
-      2, int32s_col{{0, 2, 4}, stream, mr}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(2,
+                                   int32s_col{{0, 2, 4}, stream, mr}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
   auto const col2 = [] {
     auto const get_structs = [] {
@@ -219,7 +241,11 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
       auto child1 = strings_col{};
       return structs_col{{child0, child1}};
     };
-    return cudf::make_lists_column(0, int32s_col{}.release(), get_structs().release(), 0, {});
+    return cudf::make_lists_column(0,
+                                   int32s_col{}.release(),
+                                   get_structs().release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }();
 
   auto const column_order = std::vector{cudf::order::ASCENDING};
@@ -267,13 +293,13 @@ TYPED_TEST(TypedTableViewTest, TestSortSameTableFromTwoTablesWithListsOfStructs)
   {
     auto const [preprocessed_lhs, preprocessed_empty_rhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        lhs, empty_rhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
   {
     auto const [preprocessed_empty_rhs, preprocessed_lhs] =
       cudf::detail::row::lexicographic::preprocessed_table::create(
-        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream);
+        empty_rhs, lhs, std::vector{cudf::order::ASCENDING}, {}, stream, mr);
     test_sort_two_tables(preprocessed_lhs, preprocessed_empty_rhs);
   }
 }
@@ -286,8 +312,6 @@ TYPED_TEST_SUITE(NaNTableViewTest, cudf::test::FloatingPointTypes);
 TYPED_TEST(NaNTableViewTest, TestLexicographicalComparatorTwoTableNaNCase)
 {
   using T = TypeParam;
-
-  // TODO: lexicographic row operators still allocate from the current device resource.
 
   auto const stream = this->stream();
   auto const mr     = this->resources();
@@ -302,6 +326,7 @@ TYPED_TEST(NaNTableViewTest, TestLexicographicalComparatorTwoTableNaNCase)
   auto const rhs = cudf::table_view{{col2}};
 
   auto const expected = cudf::test::fixed_width_column_wrapper<bool>{{0, 0, 0, 0}, stream, mr};
+  auto const guard    = this->harness().fail_on_current_device_resource_use();
   auto const got =
     two_table_comparison(lhs,
                          rhs,
@@ -369,6 +394,55 @@ TYPED_TEST(NaNTableViewTest, TestEqualityComparatorTwoTableNaNCase)
 
 struct RowOperatorTest : public cudf::test::BaseFixtureWithHarness {};
 
+struct RowPreprocessingMemoryResourceTest : public RowOperatorTest,
+                                            public ::testing::WithParamInterface<bool> {};
+
+TEST_P(RowPreprocessingMemoryResourceTest, EqualityPreprocessingMemoryResources)
+{
+  auto const stream             = this->stream();
+  auto const has_nonempty_nulls = GetParam();
+  auto& resources               = this->harness();
+  auto const setup = cudf::memory_resources{resources.setup_mr(), resources.setup_mr()};
+  auto strings =
+    cudf::test::strings_column_wrapper{{"", "a", "b"}, {false, true, true}, stream, setup}
+      .release();
+  if (has_nonempty_nulls) {
+    cudf::set_null_mask(strings->mutable_view().null_mask(), 1, 2, false, stream);
+    strings->set_null_count(2);
+  }
+  auto expected =
+    cudf::test::strings_column_wrapper{{"", "", "b"}, {false, false, true}, stream, setup}
+      .release();
+  // The device table owns its column views; nonempty null rows require an owning sanitized column.
+  auto constexpr alignment     = alignof(cudf::column_device_view);
+  auto const padded_view_bytes = cudf::column_device_view::extent(strings->view()) + alignment - 1;
+  // device_buffer rounds the padded allocation up to its requested alignment.
+  auto const retained_bytes = ((padded_view_bytes + alignment - 1) / alignment) * alignment +
+                              (has_nonempty_nulls ? expected->alloc_size() : 0);
+  cudf::test::expect_api_uses_memory_resources(
+    resources,
+    [&](cudf::memory_resources mr) {
+      return cudf::detail::row::equality::preprocessed_table::create(
+        cudf::table_view{{strings->view()}}, stream, mr);
+    },
+    [&](auto const&) { return retained_bytes; },
+    [](auto const& result) {
+      auto const view = static_cast<cudf::table_device_view>(*result);
+      EXPECT_EQ(view.num_rows(), 3);
+      EXPECT_EQ(view.num_columns(), 1);
+    },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME},
+    stream);
+}
+
+INSTANTIATE_TEST_SUITE_P(NullRowContents,
+                         RowPreprocessingMemoryResourceTest,
+                         ::testing::Bool(),
+                         [](auto const& info) {
+                           return info.param ? "NonEmptyNullRows" : "EmptyNullRows";
+                         });
+
 TEST_F(RowOperatorTest, TestTwoTableComparatorColumnCountCheck)
 {
   auto const stream = this->stream();
@@ -435,8 +509,8 @@ TEST_F(RowOperatorTest, TestRowHasher64BitHash)
   auto const preprocessed =
     cudf::detail::row::hash::preprocessed_table::create(input, stream, mr.get_temporary_mr());
   auto const row_hasher = cudf::detail::row::hash::row_hasher{preprocessed};
-  auto const hasher =
-    row_hasher.device_hasher<cudf::hashing::detail::XXHash_64>(cudf::nullate::DYNAMIC{false});
+  auto const hasher     = row_hasher.device_hasher<cudf::hashing::detail::XXHash_64>(
+    cudf::nullate::DYNAMIC{false}, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
 
   auto results = cudf::test::fixed_width_column_wrapper<std::uint64_t>{{0, 0, 0}, stream, mr};
   thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -453,33 +527,107 @@ TEST_F(RowOperatorTest, TestRowHasher64BitHash)
     results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
 
-TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
+TEST_F(RowOperatorTest, TestSparkMurmurRowHasher)
 {
+  using limits = std::numeric_limits<int32_t>;
+
   auto const stream = this->stream();
   auto const mr     = this->resources();
 
-  auto const col = cudf::test::fixed_width_column_wrapper<int32_t>{{0, 42, 123456789}, stream, mr};
-  auto const input = cudf::table_view{{col}};
+  // The last five rows pair the extremes so that both the first and second column exercise the
+  // minimum and maximum `int32_t`.
+  auto const first = cudf::test::fixed_width_column_wrapper<int32_t>{
+    {0, 1, -1, 42, 123456789, limits::min(), limits::max(), limits::min(), limits::max(), 0},
+    stream,
+    mr};
+  auto const second = cudf::test::fixed_width_column_wrapper<int32_t>{{10,
+                                                                       20,
+                                                                       30,
+                                                                       -40,
+                                                                       -987654321,
+                                                                       limits::min(),
+                                                                       limits::max(),
+                                                                       limits::max(),
+                                                                       limits::min(),
+                                                                       limits::min()},
+                                                                      stream,
+                                                                      mr};
+  auto const input  = cudf::table_view{{first, second}};
 
-  auto const d_input = cudf::table_device_view::create(input, stream, mr.get_temporary_mr());
+  auto const row_hasher = cudf::detail::row::hash::row_hasher{input, stream, mr.get_temporary_mr()};
+  auto const hasher     = row_hasher.device_hasher<cudf::hashing::detail::Spark_MurmurHash3_x86_32,
+                                                   cudf::detail::row::hash::spark_device_row_hasher>(
+    cudf::nullate::DYNAMIC{false}, 42);
 
-  auto const hasher = cudf::detail::row::primitive::row_hasher<cudf::hashing::detail::XXHash_64>(
-    cudf::nullate::DYNAMIC{false}, *d_input, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
-
-  auto results = cudf::test::fixed_width_column_wrapper<std::uint64_t>{{0, 0, 0}, stream, mr};
-
-  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  auto results =
+    cudf::test::fixed_width_column_wrapper<int32_t>{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, stream, mr};
+  thrust::transform(rmm::exec_policy_nosync(stream),
                     cuda::counting_iterator<cudf::size_type>{0},
-                    cuda::counting_iterator<cudf::size_type>{3},
-                    cudf::mutable_column_view{results}.begin<std::uint64_t>(),
+                    cuda::counting_iterator<cudf::size_type>{input.num_rows()},
+                    cudf::mutable_column_view{results}.begin<int32_t>(),
                     hasher);
 
+  // Values produced by Apache Spark for the same input and seed.
+  auto const expected = cudf::test::fixed_width_column_wrapper<int32_t>{{-1721723333,
+                                                                         1151116018,
+                                                                         1549484878,
+                                                                         -1287750896,
+                                                                         -1980733329,
+                                                                         -36760162,
+                                                                         -1141491041,
+                                                                         -1676088145,
+                                                                         -1252530078,
+                                                                         363576572},
+                                                                        stream,
+                                                                        mr};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+}
+
+TEST_F(RowOperatorTest, TestPrimitiveRowHasher64BitHash)
+{
+  auto const stream      = this->stream();
+  auto const mr          = this->resources();
+  auto const hash_column = [&](cudf::column_view col) {
+    auto const d_input =
+      cudf::table_device_view::create(cudf::table_view{{col}}, stream, mr.get_temporary_mr());
+    auto const hasher = cudf::detail::row::primitive::row_hasher<cudf::hashing::detail::XXHash_64>(
+      cudf::nullate::DYNAMIC{false}, *d_input, static_cast<std::uint64_t>(cudf::DEFAULT_HASH_SEED));
+    auto result = cudf::make_numeric_column(cudf::data_type{cudf::type_id::UINT64},
+                                            col.size(),
+                                            cudf::mask_state::UNALLOCATED,
+                                            stream,
+                                            mr.get_output_mr());
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                      cuda::counting_iterator<cudf::size_type>{0},
+                      cuda::counting_iterator<cudf::size_type>{col.size()},
+                      result->mutable_view().begin<std::uint64_t>(),
+                      hasher);
+    return result;
+  };
+
+  auto const col = cudf::test::fixed_width_column_wrapper<int32_t>{{0, 42, 123456789}, stream, mr};
+  auto const results = hash_column(col);
   // Expected values match cuCollections xxhash_64 reference implementation
   // https://github.com/NVIDIA/cuCollections/blob/4f03dcccb3a944594c693aa8cebc89302bbd8e20/tests/utility/hash_test.cu#L134-L137
   auto const expected = cudf::test::fixed_width_column_wrapper<std::uint64_t>{
     {4246796580750024372ul, 15516826743637085169ul, 9462334144942111946ul}, stream, mr};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    results, expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+    results->view(), expected, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
+
+  // Construct noncanonical BOOL8 input to verify hashing normalizes it to the logical bool values.
+  auto const bytes = cudf::test::fixed_width_column_wrapper<uint8_t>{{0, 1, 2, 255}, stream, mr};
+  auto const raw_bools = cudf::column_view{
+    cudf::data_type{cudf::type_id::BOOL8}, 4, cudf::column_view{bytes}.head(), nullptr, 0};
+  auto const canonical =
+    cudf::test::fixed_width_column_wrapper<bool>{{false, true, true, true}, stream, mr};
+  auto const bool_results  = hash_column(raw_bools);
+  auto const bool_expected = hash_column(canonical);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(bool_results->view(),
+                                 bool_expected->view(),
+                                 cudf::test::debug_output_level::FIRST_ERROR,
+                                 stream,
+                                 mr);
 }
 
 TEST_F(RowOperatorTest, TestRowHasherDictionaryColumn)
@@ -563,3 +711,5 @@ TEST_F(RowOperatorTest, TestRowHasherDictionaryColumnWithNulls)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     dict_results, int_results, cudf::test::debug_output_level::FIRST_ERROR, stream, mr);
 }
+
+CUDF_TEST_PROGRAM_MAIN()

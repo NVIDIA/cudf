@@ -11,10 +11,12 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -25,7 +27,7 @@ namespace io {
 /**
  * @brief Create column_device_view pointers from leaf columns
  *
- * A device_uvector is created to store the leaves of parent columns. The
+ * A device_buffer is created to store the leaves of parent columns. The
  * column descriptor array is updated to point to these leaf columns.
  *
  * @tparam ColumnDescriptor Struct describing properties of columns with
@@ -38,13 +40,16 @@ namespace io {
  * @return Device array containing leaf column device views
  */
 template <typename ColumnDescriptor>
-rmm::device_uvector<column_device_view> create_leaf_column_device_views(
+cuda::device_buffer<column_device_view> create_leaf_column_device_views(
   typename cudf::device_span<ColumnDescriptor> col_desc,
   table_device_view const& parent_table_device_view,
   cuda::stream_ref stream)
 {
-  rmm::device_uvector<column_device_view> leaf_column_views(parent_table_device_view.num_columns(),
-                                                            stream);
+  auto leaf_column_views = cuda::device_buffer<column_device_view>{
+    stream,
+    cudf::get_current_device_resource_ref(),
+    static_cast<std::size_t>(parent_table_device_view.num_columns()),
+    cuda::no_init};
   auto leaf_columns = cudf::device_span<column_device_view>{leaf_column_views};
 
   auto iter = cuda::counting_iterator<size_type>{0};

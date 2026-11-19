@@ -12,10 +12,6 @@ from .table cimport Table
 from .types cimport DataType
 
 
-cpdef tuple[gpumemoryview, int] nans_to_nulls(
-    Column input, object stream = *, DeviceMemoryResource mr = *
-)
-
 cpdef Column column_nans_to_nulls(
     Column input, object stream = *, DeviceMemoryResource mr = *
 )

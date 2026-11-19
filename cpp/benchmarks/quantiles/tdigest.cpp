@@ -50,8 +50,11 @@ void bm_tdigest_merge(nvbench::state& state)
       return i * tdigest_size;
     }));
   cudf::test::fixed_width_column_wrapper<int> offsets(offset_iter, offset_iter + num_tdigests + 1);
-  auto list_col =
-    cudf::make_lists_column(num_tdigests, offsets.release(), inner_struct.release(), 0, {});
+  auto list_col = cudf::make_lists_column(num_tdigests,
+                                          offsets.release(),
+                                          inner_struct.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // min and max columns
   auto min_iter = cuda::make_constant_iterator(base_value);

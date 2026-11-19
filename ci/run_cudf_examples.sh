@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 set -uo pipefail
@@ -37,10 +37,10 @@ pushd hybrid_scan_io || exit
 run_example ./hybrid_scan_io example.parquet string_col 0000001 PINNED_BUFFER
 run_example ./hybrid_scan_pipeline example.parquet 2 HOST_BUFFER ROW_GROUPS 2
 run_example ./hybrid_scan_pipeline example.parquet 2 FILEPATH BYTE_RANGES 2
-run_example ./hybrid_scan_multifile_single_step example.parquet 10 2 YES DEVICE_BUFFER 2
-run_example ./hybrid_scan_multifile_single_step example.parquet 10 2 NO FILEPATH 1
-run_example ./hybrid_scan_multifile_two_step example.parquet 10 2 string_col 0000001 PINNED_BUFFER 2
-run_example ./hybrid_scan_multifile_two_step example.parquet 10 2 string_col 0000001 HOST_BUFFER 1
+run_example ./hybrid_scan_multifile_single_step example.parquet 4 2 YES DEVICE_BUFFER 2
+run_example ./hybrid_scan_multifile_single_step example.parquet 4 2 NO FILEPATH 1
+run_example ./hybrid_scan_multifile_two_step example.parquet 4 2 string_col 0000001 PINNED_BUFFER 2
+run_example ./hybrid_scan_multifile_two_step example.parquet 4 2 string_col 0000001 HOST_BUFFER 1
 popd || exit
 
 pushd nested_types || exit
@@ -72,6 +72,10 @@ run_example ./format_phone_jit info.csv output.csv
 run_example ./format_phone_precompiled info.csv output.csv
 run_example ./localize_phone_jit info.csv output.csv
 run_example ./localize_phone_precompiled info.csv output.csv
+run_example ./url_log_transforms logs.csv output.csv regex 100
+run_example ./url_log_transforms logs.csv output.csv precompiled 100
+run_example ./url_log_transforms logs.csv output.csv cuda-jit 100 --cold
+run_example ./url_log_transforms logs.csv output.csv lto-jit 100 --cold
 popd || exit
 
 exit ${EXITCODE}

@@ -117,14 +117,18 @@ class hash_join {
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * an inner join between two tables. @see cudf::inner_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * an inner join between two tables. @see cudf::inner_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -138,18 +142,22 @@ class hash_join {
   inner_join(cudf::table_view const& left,
              std::optional<std::size_t> output_size = {},
              cuda::stream_ref stream                = cudf::get_default_stream(),
-             rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+             cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a left join between two tables. @see cudf::left_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a left join between two tables. @see cudf::left_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -163,18 +171,22 @@ class hash_join {
   left_join(cudf::table_view const& left,
             std::optional<std::size_t> output_size = {},
             cuda::stream_ref stream                = cudf::get_default_stream(),
-            rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref()) const;
+            cudf::memory_resources mr              = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the row indices that can be used to construct the result of performing
-   * a full join between two tables. @see cudf::full_join(). Behavior is undefined if the
-   * provided `output_size` is smaller than the actual output size.
+   * a full join between two tables. @see cudf::full_join().
    *
    * @throw std::invalid_argument If the input left table has nulls while this hash_join object was
    * not constructed with null check.
+   * @throw cudf::logic_error If `output_size` is provided and does not equal the actual output
+   * size.
    *
    * @param left The left table, from which the tuples are probed
-   * @param output_size Optional value which allows users to specify the exact output size
+   * @param output_size Optional value which allows users to specify the exact output size.
+   * Supplying it no longer avoids any work: the output size is always computed internally and
+   * the supplied value is only validated against it.  Prefer omitting it; it will be deprecated
+   * and removed in a future release.
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the returned table and columns' device
    * memory.
@@ -188,7 +200,7 @@ class hash_join {
   full_join(cudf::table_view const& left,
             std::optional<std::size_t> output_size = {},
             cuda::stream_ref stream                = cudf::get_default_stream(),
-            rmm::device_async_resource_ref mr      = cudf::get_current_device_resource_ref()) const;
+            cudf::memory_resources mr              = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the exact number of matches (rows) when performing an inner join with the specified
@@ -239,8 +251,8 @@ class hash_join {
    */
   [[nodiscard]] std::size_t full_join_size(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -260,13 +272,13 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_inner_join() reuses
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -285,13 +297,13 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_left_join() reuses
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -310,13 +322,13 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context object containing the left table view and a device vector
-   *         of match counts for each row in the left table
+   * @return A join_match_context holding the per-row match counts and caching the matching
+   *         groups that partitioned_full_join() reuses
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
     cudf::table_view const& left,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Performs an inner join on a partition of the probe table.
@@ -328,9 +340,9 @@ class hash_join {
    * The returned left_indices are relative to the original complete probe table, not just the
    * partition, so they can be used directly with the original probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -340,10 +352,9 @@ class hash_join {
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
-  partitioned_inner_join(
-    cudf::join_partition_context const& context,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+  partitioned_inner_join(cudf::join_partition_context const& context,
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Performs a left join on a partition of the probe table.
@@ -354,9 +365,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -366,10 +377,9 @@ class hash_join {
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
-  partitioned_left_join(
-    cudf::join_partition_context const& context,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+  partitioned_left_join(cudf::join_partition_context const& context,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Performs a full join probe on a partition of the probe table.
@@ -384,9 +394,9 @@ class hash_join {
    *
    * The returned left_indices are relative to the original complete probe table.
    *
-   * @throw std::invalid_argument If `context.left_table_context` is null, if its
-   * `_match_counts` is null, or if `[left_start_idx, left_end_idx)` is outside the bounds
-   * of the left table.
+   * @throw std::invalid_argument If `context.left_table_context` is null, has no match counts,
+   * or was created by another join object or join kind, or if `[left_start_idx, left_end_idx)`
+   * is outside the bounds of the left table.
    *
    * @param context The partition context containing match information and partition bounds
    * @param stream CUDA stream used for device memory operations and kernel launches
@@ -396,10 +406,9 @@ class hash_join {
    */
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>
-  partitioned_full_join(
-    cudf::join_partition_context const& context,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref()) const;
+  partitioned_full_join(cudf::join_partition_context const& context,
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Finalizes a partitioned full join by concatenating all per-partition results
@@ -427,8 +436,8 @@ class hash_join {
     cudf::host_span<cudf::device_span<size_type const> const> right_partials,
     size_type left_table_num_rows,
     size_type right_table_num_rows,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
  private:
   std::unique_ptr<impl_type const> _impl;

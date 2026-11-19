@@ -55,14 +55,15 @@ constexpr auto common_type_matrix(std::index_sequence<I...>)
 
 struct BinopVerifyInputTest : public cudf::test::BaseFixture {};
 
-TEST_F(BinopVerifyInputTest, FixedPointInputsNeverSelectFloatingCommonType)
+TEST_F(BinopVerifyInputTest, CommonTypeSelectionPreservesPruningInvariants)
 {
-  // The device accessor omits fixed-to-floating conversions based on this host-side
-  // invariant. Include output types because they participate in selection and fallback.
+  // Input-conversion and logical-body pruning rely on these host-selection invariants.
+  // Include output types because they participate in selection and fallback.
   auto const num_types  = static_cast<int>(cudf::type_id::NUM_TYPE_IDS);
   constexpr auto matrix = common_type_matrix(std::make_index_sequence<num_types * num_types>{});
   int resolved_fixed_point_inputs = 0;
   int fallback_fixed_point_inputs = 0;
+  int decimal_common_cases        = 0;
   for (int out = 1; out < num_types; ++out) {
     for (int lhs = 1; lhs < num_types; ++lhs) {
       for (int rhs = 1; rhs < num_types; ++rhs) {
@@ -75,43 +76,28 @@ TEST_F(BinopVerifyInputTest, FixedPointInputsNeverSelectFloatingCommonType)
         }
         bool const used_fallback = common == cudf::type_id::EMPTY;
         if (used_fallback) { common = matrix[lhs * num_types + rhs]; }
-        if (common != cudf::type_id::EMPTY &&
-            (cudf::is_fixed_point(lhs_type) || cudf::is_fixed_point(rhs_type))) {
+        bool const has_fixed_point_input =
+          cudf::is_fixed_point(lhs_type) || cudf::is_fixed_point(rhs_type);
+        if (common != cudf::type_id::EMPTY && has_fixed_point_input) {
           ++resolved_fixed_point_inputs;
           fallback_fixed_point_inputs += used_fallback;
         }
         EXPECT_FALSE(common != cudf::type_id::EMPTY &&
-                     cudf::is_floating_point(cudf::data_type{common}) &&
-                     (cudf::is_fixed_point(lhs_type) || cudf::is_fixed_point(rhs_type)))
+                     cudf::is_floating_point(cudf::data_type{common}) && has_fixed_point_input)
           << "output=" << out << ", lhs=" << lhs << ", rhs=" << rhs;
+        // Logical operators require BOOL8 output; connect their decimal common-type
+        // specializations to the inputs rejected by host fixed-point validation.
+        if (out == static_cast<int>(cudf::type_id::BOOL8) && common != cudf::type_id::EMPTY &&
+            cudf::is_fixed_point(cudf::data_type{common})) {
+          ++decimal_common_cases;
+          EXPECT_TRUE(has_fixed_point_input) << "lhs=" << lhs << ", rhs=" << rhs;
+        }
       }
     }
   }
   // A broken common-type table must not make the invariant pass vacuously.
   EXPECT_GT(resolved_fixed_point_inputs, 0);
   EXPECT_GT(fallback_fixed_point_inputs, 0);
-}
-
-TEST_F(BinopVerifyInputTest, BooleanOutputSelectsDecimalCommonTypeOnlyForDecimalInputs)
-{
-  // Logical operators require BOOL8 output. This links their decimal common-type
-  // specializations to the input types checked by host fixed-point validation.
-  constexpr auto n         = static_cast<int>(cudf::type_id::NUM_TYPE_IDS);
-  constexpr auto matrix    = common_type_matrix(std::make_index_sequence<n * n>{});
-  int decimal_common_cases = 0;
-  for (int lhs = 1; lhs < n; ++lhs) {
-    for (int rhs = 1; rhs < n; ++rhs) {
-      auto common = matrix[static_cast<int>(cudf::type_id::BOOL8) * n + lhs];
-      if (common != cudf::type_id::EMPTY) { common = matrix[static_cast<int>(common) * n + rhs]; }
-      if (common == cudf::type_id::EMPTY) { common = matrix[lhs * n + rhs]; }
-      if (common != cudf::type_id::EMPTY && cudf::is_fixed_point(cudf::data_type{common})) {
-        ++decimal_common_cases;
-        EXPECT_TRUE(cudf::is_fixed_point(cudf::data_type{static_cast<cudf::type_id>(lhs)}) ||
-                    cudf::is_fixed_point(cudf::data_type{static_cast<cudf::type_id>(rhs)}))
-          << "lhs=" << lhs << ", rhs=" << rhs;
-      }
-    }
-  }
   EXPECT_GT(decimal_common_cases, 0);
 }
 

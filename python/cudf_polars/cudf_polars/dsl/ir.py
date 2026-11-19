@@ -24,6 +24,7 @@ import random
 import reprlib
 import sys
 import uuid
+import warnings
 from collections.abc import Sized
 from dataclasses import dataclass, field
 from functools import cache
@@ -3398,6 +3399,12 @@ class AsofJoin(IR):
             target_length=right.num_rows,
             stream=right.stream,
         )[0]
+        if right_by and check_sortedness:
+            warnings.warn(
+                "Sortedness of columns cannot be checked when 'by' groups provided",
+                UserWarning,
+                stacklevel=2,
+            )
         if not has_payload and (right_by or not check_sortedness):
             return left.slice(zlice)
         if check_sortedness and not right_by:

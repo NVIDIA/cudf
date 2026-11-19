@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import threading
+from contextlib import nullcontext
 from decimal import Decimal
 
 import pytest
@@ -51,7 +52,12 @@ def test_asof_join_backward(engine: pl.GPUEngine, by: str | None, coalesce):
         }
     ).sort(["sym", "time"] if by else "time")
     query = left.join_asof(right, on="time", by=by, coalesce=coalesce)
-    assert_gpu_result_equal(query, engine=engine)
+    with (
+        pytest.warns(UserWarning, match="Sortedness of columns cannot be checked")
+        if by
+        else nullcontext()
+    ):
+        assert_gpu_result_equal(query, engine=engine)
 
 
 @pytest.mark.engine_params(["in-memory", "spmd-small"])
@@ -72,6 +78,20 @@ def test_asof_join_no_right_payload(engine: pl.GPUEngine, *, check_sortedness: b
         left.join_asof(right, on="time", check_sortedness=check_sortedness).slice(1, 1),
         engine=engine,
     )
+
+
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_grouped_sortedness_warning(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"group": ["a", "b"], "time": [1, 2]})
+    right = pl.LazyFrame(
+        {
+            "group": ["a", "b"],
+            "time": [1, 2],
+            **({"value": [10, 20]} if payload else {}),
+        }
+    )
+    with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
+        left.join_asof(right, on="time", by="group").collect(engine=in_memory_engine)
 
 
 @pytest.mark.parametrize("invalid_side", ["left", "right"])
@@ -160,7 +180,8 @@ def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
         )
         .slice(1, 1)
     )
-    assert_gpu_result_equal(query, engine=engine)
+    with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
+        assert_gpu_result_equal(query, engine=engine)
 
 
 @pytest.mark.parametrize(

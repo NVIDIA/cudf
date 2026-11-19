@@ -759,7 +759,6 @@ def test_split_scan_hybrid(
 def test_hybrid_scan_bloom_filters(
     tmp_path: Path, streaming_engine_factory: Callable[..., StreamingEngine]
 ) -> None:
-    # https://github.com/NVIDIA/cudf/issues/24851
     streaming_engine = streaming_engine_factory(
         StreamingOptions(parquet_options={"use_hybrid_scan": True})
     )

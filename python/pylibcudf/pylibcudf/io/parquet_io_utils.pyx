@@ -4,7 +4,7 @@
 
 from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uintptr_t
-from libcpp.memory cimport make_unique, shared_ptr, unique_ptr
+from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
@@ -16,12 +16,11 @@ from rmm.pylibrmm.device_buffer cimport DeviceBuffer
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
-from pylibcudf.gpumemoryview cimport gpumemoryview
+from pylibcudf.gpumemoryview cimport _from_cuda_byte_buffer, gpumemoryview
 from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.parquet_io_utils cimport (
-    bloom_filter_fetch,
     const_byte_range_info,
     const_uint8_t,
     cpp_fetch_bloom_filters_to_device,
@@ -31,6 +30,9 @@ from pylibcudf.libcudf.io.parquet_io_utils cimport (
 )
 
 from pylibcudf.libcudf.io.text cimport byte_range_info
+from pylibcudf.libcudf.utilities.device_buffer cimport (
+    device_buffer as cuda_device_buffer,
+)
 from pylibcudf.libcudf.utilities.span cimport device_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
@@ -48,33 +50,6 @@ __all__ = [
     "fetch_byte_ranges_to_device",
     "fetch_page_index_to_host",
 ]
-
-
-cdef class _BloomFilterBuffers:
-    cdef shared_ptr[void] c_obj
-    cdef Stream stream
-    cdef DeviceMemoryResource mr
-
-    def __dealloc__(self):
-        with nogil:
-            self.c_obj.reset()
-
-
-cdef class _BloomFilterBitset:
-    """Device memory of one bloom filter bitset, owned by a fetch result."""
-
-    cdef _BloomFilterBuffers owner
-    cdef uintptr_t ptr
-    cdef size_t size
-
-    @property
-    def __cuda_array_interface__(self):
-        return {
-            "data": (self.ptr, False),
-            "shape": (self.size,),
-            "typestr": "|u1",
-            "version": 3,
-        }
 
 
 cpdef list fetch_bloom_filters_to_device(
@@ -130,7 +105,9 @@ cpdef list fetch_bloom_filters_to_device(
     for bri in byte_ranges:
         ranges_vec.push_back(bri.c_obj)
 
-    cdef bloom_filter_fetch fetched
+    cdef pair[
+        unique_ptr[cuda_device_buffer[uint8_t]], vector[device_span[const_uint8_t]]
+    ] fetched
     with nogil:
         fetched = cpp_fetch_bloom_filters_to_device(
             dereference(sources[0]),
@@ -140,18 +117,18 @@ cpdef list fetch_bloom_filters_to_device(
             _mr.get_mr(),
         )
 
-    cdef _BloomFilterBuffers buffers = _BloomFilterBuffers.__new__(_BloomFilterBuffers)
-    buffers.c_obj = fetched.buffers
-    buffers.stream = _stream
-    buffers.mr = _mr
-    cdef _BloomFilterBitset bitset
+    cdef gpumemoryview owner_gv = _from_cuda_byte_buffer(
+        move(fetched.first), _stream, _mr
+    )
+    cdef uintptr_t base = owner_gv.ptr
+    cdef uintptr_t start
+    cdef size_t n
     result = []
-    for i in range(fetched.spans.size()):
-        bitset = _BloomFilterBitset.__new__(_BloomFilterBitset)
-        bitset.owner = buffers
-        bitset.ptr = <uintptr_t>fetched.spans[i].data()
-        bitset.size = fetched.spans[i].size()
-        result.append(gpumemoryview(bitset))
+    for i in range(fetched.second.size()):
+        n = fetched.second[i].size()
+        # Absent or invalid bloom filters come back as empty spans with no data
+        start = <uintptr_t>fetched.second[i].data() - base if n else 0
+        result.append(owner_gv.byte_slice(slice(start, start + n)))
     return result
 
 

@@ -1642,7 +1642,13 @@ def _translate_function(
             out_type = dtype.polars_type
             right_type = right.dtype.polars_type
             assert isinstance(out_type, pl.Decimal)
-            assert isinstance(right_type, pl.Decimal)
+            if right_type.is_integer():
+                right_type = pl.Decimal(38, 0)
+                right = expr.Cast(DataType(right_type), True, right)  # noqa: FBT003
+            elif not isinstance(right_type, pl.Decimal):
+                raise NotImplementedError(
+                    f"decimal_div with divisor dtype {right_type}"
+                )
             out_scale = out_type.scale
             return expr.UnaryFunction(
                 dtype,

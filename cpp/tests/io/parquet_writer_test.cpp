@@ -13,6 +13,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
@@ -941,7 +942,8 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
 
   auto const filepath = temp_env->get_temp_filepath("FloatingPointWithNaNStats.parquet");
   cudf::io::parquet_writer_options const out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected);
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN);
   cudf::io::write_parquet(out_opts);
 
   auto const source = cudf::io::datasource::create(filepath);
@@ -969,6 +971,37 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmitted)
   // a null alongside the NaN does not interfere with NaN detection
   EXPECT_FALSE(stats_f_nan_null.min_value.has_value());
   EXPECT_FALSE(stats_f_nan_null.max_value.has_value());
+
+  // NaNs are counted, and chunks with NaNs have no column index
+  std::array<int64_t, 5> const expected_nan_counts{1, 1, 4, 0, 1};
+  for (std::size_t c = 0; c < expected_nan_counts.size(); ++c) {
+    auto const& chunk = fmd.row_groups[0].columns[c];
+    EXPECT_EQ(get_statistics(chunk).nan_count, expected_nan_counts[c]);
+    if (expected_nan_counts[c] == 0) {
+      EXPECT_EQ(read_column_index(source, chunk).nan_counts, std::vector<int64_t>{0});
+    } else {
+      EXPECT_EQ(chunk.column_index_length, 0);
+    }
+  }
+
+  // Round trip: `col != 1` prunes the NaN-free constant row group, keeping only the one with a NaN
+  column_wrapper<float> col_rt{{1.0f, 1.0f, 1.0f, 1.0f, 1.0f, nanf, 3.0f, 2.0f}};
+  auto const rt_filepath =
+    temp_env->get_temp_filepath("FloatingPointWithNaNStatsRoundTrip.parquet");
+  cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
+                            cudf::io::sink_info{rt_filepath}, table_view{{col_rt}})
+                            .row_group_size_rows(4)
+                            .max_page_size_rows(4)
+                            .max_page_fragment_size(4));
+  auto one_value     = cudf::numeric_scalar<float>(1.0f);
+  auto const one     = cudf::ast::literal(one_value);
+  auto const col_ref = cudf::ast::column_reference(0);
+  auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, one);
+  auto const result  = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{rt_filepath}).filter(filter));
+  EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), 1);
+  column_wrapper<float> expected_rt{{nanf, 3.0f, 2.0f}};
+  CUDF_TEST_EXPECT_TABLES_EQUAL(table_view{{expected_rt}}, result.tbl->view());
 }
 
 TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedAcrossFragments)

@@ -14,6 +14,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/copy_if_else.cuh>
 #include <cudf/strings/string_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
@@ -23,6 +24,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 
@@ -32,7 +34,7 @@ namespace cudf {
 namespace detail {
 namespace {
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct copy_if_else_functor_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -45,23 +47,21 @@ struct copy_if_else_functor_impl {
  * @brief Functor to fetch a device-view for the specified scalar/column_view.
  */
 struct get_iterable_device_view {
-  template <typename T>
+  template <cuda::std::same_as<cudf::column_view> T>
   auto operator()(T const& input, cuda::stream_ref stream)
-    requires(std::is_same_v<T, cudf::column_view>)
   {
     return cudf::column_device_view::create(input, stream);
   }
 
-  template <typename T>
+  template <cuda::std::same_as<cudf::scalar> T>
   auto operator()(T const& input, cuda::stream_ref)
-    requires(std::is_same_v<T, cudf::scalar>)
   {
     return &input;
   }
 };
 
-template <typename T>
-struct copy_if_else_functor_impl<T, std::enable_if_t<is_rep_layout_compatible<T>()>> {
+template <cudf::concepts::rep_layout_compatible T>
+struct copy_if_else_functor_impl<T> {
   template <typename Left, typename Right, typename Filter>
   std::unique_ptr<column> operator()(Left const& lhs_h,
                                      Right const& rhs_h,

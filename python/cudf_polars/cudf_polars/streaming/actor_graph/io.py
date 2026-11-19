@@ -434,6 +434,7 @@ async def _process_and_send_chunk(
     chunk_out = TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
+    del df
     await send_chunk(context, ch_out, chunk_out, seq_num, tracer=tracer)
 
 
@@ -609,12 +610,13 @@ async def read_chunk(
             ),
         )
 
-    reservation = await reserve_memory(
-        context,
-        size=reservation_bytes,
-        net_memory_delta=estimated_chunk_bytes,
-    )
-    with opaque_memory_usage(reservation):
+    with opaque_memory_usage(
+        await reserve_memory(
+            context,
+            size=reservation_bytes,
+            net_memory_delta=estimated_chunk_bytes,
+        )
+    ):
         df = await ir_context.to_thread(
             task.do_evaluate,
             *task._non_child_args,
@@ -626,6 +628,7 @@ async def read_chunk(
             exclusive_view=True,
             br=context.br(),
         )
+        del df
 
     await send_chunk(context, ch_out, chunk, seq_num, tracer=tracer)
 
@@ -926,9 +929,10 @@ async def callback_sink_actor(
 
         try:
             while (msg := await ch_in.recv(context)) is not None:
-                if metadata.duplicated and comm.rank != 0:
-                    continue
-                if consumer is not None and consumer.stopped:
+                if (metadata.duplicated and comm.rank != 0) or (
+                    consumer is not None and consumer.stopped
+                ):
+                    del msg
                     continue
                 chunk = TableChunk.from_message(msg, br=context.br())
                 if consumer is not None:
@@ -1085,6 +1089,7 @@ async def sink_node(
                         df,
                         context=ir_context,
                     )
+                    del chunk, df
                     i += 1
             else:
                 # Write chunks to a single file
@@ -1109,6 +1114,7 @@ async def sink_node(
                         writer_state=writer_state,
                         df=df,
                     )
+                    del chunk, df
 
                 # Finalize the writer after all chunks are processed
                 if writer_state and ir.sink.kind == "Parquet":

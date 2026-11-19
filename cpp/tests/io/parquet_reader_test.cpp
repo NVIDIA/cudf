@@ -20,6 +20,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/null_mask.hpp>
@@ -44,6 +45,7 @@
 #include <locale>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -166,6 +168,10 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
+  // This is a regression test for a ptxas codegen bug (not a race) and for the page-header
+  // overflow path that is mostly host logic. It takes hours when racecheck is used.
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
   // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
   // counting page headers without an offset index (1M).
@@ -424,6 +430,43 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
       CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {1500, 1500 + 4321}),
                                     read_rows(1500, 4321).tbl->view());
     }
+  }
+}
+
+TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
+{
+  // Reads only nulls, which follow the page's first string. With 50 rows the page holds that one
+  // string; with 150 it also holds 50 short strings after the nulls.
+  constexpr int first_null    = 1;
+  constexpr int num_nulls     = 99;
+  constexpr int num_read_rows = 40;
+  for (auto const num_rows : {50, 150}) {
+    SCOPED_TRACE(std::to_string(num_rows) + " rows");
+    std::vector<std::string> strings(num_rows, "a");
+    strings[0]        = std::string(1000, 'x');
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return i < first_null or i >= first_null + num_nulls; });
+    auto const col = cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+    auto const result = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                                 .skip_rows(first_null)
+                                                 .num_rows(num_read_rows)
+                                                 .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(
+      cudf::slice(expected, {first_null, first_null + num_read_rows})[0], result.tbl->view());
   }
 }
 
@@ -1786,6 +1829,81 @@ TEST_F(ParquetReaderTest, DecimalRead)
   }
 }
 
+template <typename T>
+struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
+
+TYPED_TEST_SUITE(ParquetReaderByteArrayDecimalTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
+{
+  using T                  = TypeParam;
+  auto constexpr num_rows  = 1000;
+  auto constexpr scale     = 2;
+  auto constexpr precision = cuda::std::is_same_v<T, numeric::decimal32>   ? 9
+                             : cuda::std::is_same_v<T, numeric::decimal64> ? 18
+                                                                           : 38;
+
+  // Few distinct values so the dictionary is used, each as 8 big-endian bytes
+  auto const values = cudf::detail::make_counting_transform_iterator(
+    0, [](int64_t i) { return (i % 10 - 5) * int64_t{70'001}; });
+  auto const bytes = cudf::detail::make_counting_transform_iterator(0, [&](int i) {
+    std::string out(8, '\0');
+    for (auto b = 0; b < 8; ++b) {
+      out[7 - b] = static_cast<char>(values[i] >> (8 * b));
+    }
+    return out;
+  });
+  auto const col   = cudf::test::strings_column_wrapper(bytes, bytes + num_rows);
+  auto const table = cudf::table_view{{col}};
+
+  // No writer produces BYTE_ARRAY decimals, so write a binary column and annotate it as decimal
+  std::vector<char> buffer;
+  auto metadata = cudf::io::table_input_metadata{table};
+  metadata.column_metadata[0].set_output_as_binary(true);
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .metadata(std::move(metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .build());
+
+  auto footer =
+    cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
+                                     cudf::host_span<char const>{buffer.data(), buffer.size()}}))
+      .front();
+  auto const& encodings = footer.row_groups[0].columns[0].meta_data.encodings;
+  ASSERT_TRUE(std::ranges::any_of(encodings, [](auto enc) {
+    return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+           enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+  }));
+
+  auto& schema             = footer.schema[1];
+  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+  schema.decimal_scale     = scale;
+  schema.decimal_precision = precision;
+  schema.logical_type      = cudf::io::parquet::LogicalType{
+    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+
+  // Swap the trailing footer for the annotated one, keeping the data pages
+  uint32_t footer_len{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const new_footer = parquet_delta_test::serialize_footer(footer);
+  buffer.resize(buffer.size() - 8 - footer_len);
+  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
+  footer_len = new_footer.size();
+  buffer.insert(buffer.end(),
+                reinterpret_cast<char const*>(&footer_len),
+                reinterpret_cast<char const*>(&footer_len + 1));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+      .build());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0),
+                                 cudf::test::fixed_point_column_wrapper<typename T::rep>(
+                                   values, values + num_rows, numeric::scale_type{-scale}));
+}
+
 // Reading Parquet DELTA-encoded pages whose mini-blocks hold more than 64 values. No stock
 // writer emits over 64 values/mini-block (cudf and parquet-mr write 32, pyarrow and arrow-rs at
 // most 64), so the files are built in-memory by the parquet_delta_test_utils.hpp helpers.
@@ -2690,6 +2808,84 @@ TEST_F(ParquetReaderTest, StructByteArray)
   auto result = cudf::io::read_parquet(in_opts);
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+}
+
+// cudf cannot write FILE groups yet, so retag a written struct group as FILE in the footer
+TEST_F(ParquetReaderTest, FileLogicalType)
+{
+  using cudf::io::parquet::LogicalType;
+
+  column_wrapper<int64_t> offset_col{0};
+  cudf::test::strings_column_wrapper inline_col{"a"};
+  auto file_col = cudf::test::structs_column_wrapper{{offset_col, inline_col}};
+
+  auto const input = table_view{{file_col}};
+  cudf::io::table_input_metadata input_metadata(input);
+  auto& file_metadata = input_metadata.column_metadata[0].set_name("file");
+  file_metadata.child(0).set_name("offset").set_nullability(true);
+  file_metadata.child(1).set_name("inline").set_nullability(true).set_output_as_binary(true);
+
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input)
+      .metadata(std::move(input_metadata))
+      .build());
+
+  auto const source = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
+  auto fmd          = cudf::io::read_parquet_footers({&source, 1}).front();
+  ASSERT_EQ(fmd.schema[1].name, "file");
+  ASSERT_EQ(fmd.schema[2].name, "offset");
+  ASSERT_EQ(fmd.schema[3].name, "inline");
+  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+  // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
+  fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
+
+  // Appends `fmd` as the new footer, leaving the original one unreferenced
+  auto const rewrite_file_footer = [&] {
+    auto const footer      = cudf::io::parquet::experimental::write_parquet_footer_bytes(fmd);
+    auto const footer_size = static_cast<uint32_t>(footer.size());
+    auto const size_bytes  = reinterpret_cast<char const*>(&footer_size);
+    auto file              = buffer;
+    file.insert(file.end(), footer.begin(), footer.end());
+    file.insert(file.end(), size_bytes, size_bytes + sizeof(footer_size));
+    file.insert(file.end(), {'P', 'A', 'R', '1'});
+    return file;
+  };
+  auto const read_metadata = [](std::span<std::vector<char> const> files,
+                                bool allow_mismatched = true) {
+    std::vector<cudf::host_span<std::byte const>> sources;
+    for (auto const& file : files) {
+      sources.emplace_back(reinterpret_cast<std::byte const*>(file.data()), file.size());
+    }
+    return cudf::io::read_parquet(
+             cudf::io::parquet_reader_options::builder(
+               cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
+               .allow_mismatched_pq_schemas(allow_mismatched)
+               .column_names({"file"})
+               .num_rows(0))
+      .metadata;
+  };
+
+  auto const file_group = rewrite_file_footer();
+  auto const metadata   = read_metadata(std::array{file_group});
+  EXPECT_EQ(metadata.schema_info[0].is_file, true);
+  EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
+
+  // A FILE group and a plain struct across sources throw, with or without mismatched schemas
+  fmd.schema[1].logical_type.reset();
+  auto const plain_struct    = rewrite_file_footer();
+  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+  for (auto const allow_mismatched : {true, false}) {
+    EXPECT_THROW(read_metadata(std::array{file_group, plain_struct}, allow_mismatched),
+                 std::logic_error);
+    EXPECT_THROW(read_metadata(std::array{plain_struct, file_group}, allow_mismatched),
+                 std::logic_error);
+  }
+
+  // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
+  fmd.schema[3].logical_type = LogicalType{LogicalType::STRING};
+  EXPECT_FALSE(read_metadata(std::array{rewrite_file_footer()}).schema_info[0].is_file.has_value());
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)
@@ -6585,6 +6781,10 @@ TEST_F(ParquetReaderTest, ByteBoundsAndFilters)
 
 TEST_F(ParquetReaderTest, TableTooLargeOverflows)
 {
+  // This test checks the host-side size_type overflow handling using over 2 billion rows.
+  // It takes over an hour when racecheck is used.
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+
   using T                             = bool;
   constexpr int64_t per_file_num_rows = std::numeric_limits<cudf::size_type>::max() / 2 + 1000;
   static_assert(per_file_num_rows <= std::numeric_limits<cudf::size_type>::max(),

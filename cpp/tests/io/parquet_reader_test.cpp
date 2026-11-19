@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -4200,31 +4201,44 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
   }
   writer.close();
 
-  auto const null_rows      = fixed_width_column_wrapper<std::size_t>{0, 2};
-  auto const valid_rows     = fixed_width_column_wrapper<std::size_t>{1, 3};
-  auto const null_ids       = fixed_width_column_wrapper<int32_t>{10, 30};
-  auto const valid_ids      = fixed_width_column_wrapper<int32_t>{20, 40};
-  auto const expected_null  = cudf::table_view{{null_rows, null_ids}};
-  auto const expected_valid = cudf::table_view{{valid_rows, valid_ids}};
+  auto const id_ref         = column_name_reference{"id"};
+  auto cutoff               = cudf::numeric_scalar<int32_t>{25};
+  auto const cutoff_literal = cudf::ast::literal{cutoff};
+  auto const first_group    = operation{ast_operator::LESS, id_ref, cutoff_literal};
 
-  for (auto const* name : {"structure", "list"}) {
-    SCOPED_TRACE(name);
-    auto const ref      = column_name_reference{name};
-    auto const is_null  = operation{ast_operator::IS_NULL, ref};
-    auto const is_valid = operation{ast_operator::NOT, is_null};
-    auto const check    = [&](operation const& filter, cudf::table_view expected) {
-      auto const result =
-        cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
-                                 cudf::io::source_info{cudf::host_span<char const>{buffer}})
-                                 .column_names({"id"})
-                                 .prepend_row_index_column(true)
-                                 .filter(filter));
-      EXPECT_EQ(result.metadata.num_input_row_groups, 2);
-      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter, 2);
-      CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, *result.tbl);
-    };
-    check(is_null, expected_null);
-    check(is_valid, expected_valid);
+  for (auto const use_jit : {false, true}) {
+    SCOPED_TRACE(use_jit);
+    for (auto const* name : {"structure", "list"}) {
+      SCOPED_TRACE(name);
+      auto const ref      = column_name_reference{name};
+      auto const is_null  = operation{ast_operator::IS_NULL, ref};
+      auto const is_valid = operation{ast_operator::NOT, is_null};
+      auto const check    = [&](operation const& filter,
+                             std::initializer_list<std::size_t> rows,
+                             std::initializer_list<int32_t> ids,
+                             cudf::size_type surviving_groups) {
+        auto const expected_rows =
+          fixed_width_column_wrapper<std::size_t>(rows.begin(), rows.end());
+        auto const expected_ids = fixed_width_column_wrapper<int32_t>(ids.begin(), ids.end());
+        auto const result =
+          cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(
+                                   cudf::io::source_info{cudf::host_span<char const>{buffer}})
+                                   .column_names({"id"})
+                                   .prepend_row_index_column(true)
+                                   .use_jit_filter(use_jit)
+                                   .filter(filter));
+        EXPECT_EQ(result.metadata.num_input_row_groups, 2);
+        EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter, surviving_groups);
+        CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view({expected_rows, expected_ids}),
+                                           *result.tbl);
+      };
+      check(is_null, {0, 2}, {10, 30}, 2);
+      check(is_valid, {1, 3}, {20, 40}, 2);
+      check(operation{ast_operator::LOGICAL_AND, is_null, first_group}, {0}, {10}, 1);
+      check(operation{ast_operator::LOGICAL_AND, is_valid, first_group}, {1}, {20}, 1);
+      check(operation{ast_operator::LOGICAL_OR, is_null, first_group}, {0, 1, 2}, {10, 20, 30}, 2);
+      check(operation{ast_operator::LOGICAL_OR, is_valid, first_group}, {0, 1, 3}, {10, 20, 40}, 2);
+    }
   }
 }
 

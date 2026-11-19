@@ -286,65 +286,6 @@ def test_read_parquet_filters(
     )
 
 
-@pytest.mark.parametrize(
-    "values",
-    [
-        [None, {"a": None, "b": 1}, None, {"a": 2, "b": 3}],
-        [None, [], None, [None, 1]],
-    ],
-    ids=["struct", "list"],
-)
-@pytest.mark.parametrize(
-    "negate", [False, True], ids=["is_null", "is_not_null"]
-)
-@pytest.mark.parametrize(
-    "combine",
-    [None, ASTOperator.LOGICAL_AND, ASTOperator.LOGICAL_OR],
-    ids=["standalone", "and", "or"],
-)
-@pytest.mark.parametrize("use_jit_filter", [False, True])
-def test_read_parquet_nested_null_filter(
-    tmp_path, values, negate, combine, use_jit_filter
-):
-    tbl = pa.table({"nested": values, "id": range(len(values))})
-    path = tmp_path / "nested.parquet"
-    write_table(tbl, path, row_group_size=2)
-
-    predicate = Operation(ASTOperator.IS_NULL, ColumnNameReference("nested"))
-    expected = pc.field("nested").is_null()
-    if negate:
-        predicate = Operation(ASTOperator.NOT, predicate)
-        expected = ~expected
-
-    if combine is not None:
-        scalar_predicate = Operation(
-            ASTOperator.LESS,
-            ColumnNameReference("id"),
-            Literal(plc.Scalar.from_arrow(pa.scalar(2))),
-        )
-        predicate = Operation(combine, predicate, scalar_predicate)
-        below_two = pc.field("id") < 2
-        expected = (
-            expected & below_two
-            if combine == ASTOperator.LOGICAL_AND
-            else expected | below_two
-        )
-
-    options = (
-        plc.io.parquet.ParquetReaderOptions.builder(plc.io.SourceInfo([path]))
-        .use_jit_filter(use_jit_filter)
-        .build()
-    )
-    options.set_filter(predicate)
-    result = plc.io.parquet.read_parquet(options)
-    assert result.num_row_groups_after_stats_filter == (
-        1 if combine == ASTOperator.LOGICAL_AND else 2
-    )
-    assert_table_and_meta_eq(
-        tbl.filter(expected), result, check_field_nullability=False
-    )
-
-
 def _read_parquet_equal_to(path, column, value, and_expr=None):
     options = plc.io.parquet.ParquetReaderOptions.builder(
         plc.io.SourceInfo([path])

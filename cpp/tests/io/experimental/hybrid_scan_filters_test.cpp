@@ -11,6 +11,7 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
@@ -29,6 +30,7 @@
 #include <src/io/parquet/parquet_gpu.hpp>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
@@ -967,6 +969,94 @@ TEST_F(HybridScanFiltersTest, IncompletePageStats)
 
   auto const expected_payload = cudf::test::fixed_width_column_wrapper<int32_t>{60};
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expected_payload}}, payload_result.tbl->view());
+}
+
+TEST_F(HybridScanFiltersTest, FilterNestedNulls)
+{
+  using cudf::ast::ast_operator;
+  using cudf::ast::column_name_reference;
+  using cudf::ast::operation;
+  using cudf::test::fixed_width_column_wrapper;
+
+  auto child = fixed_width_column_wrapper<int32_t>{{1, 2, 3, 4}, {true, false, true, true}};
+  auto const validity  = std::array{false, true, false, true};
+  auto const structure = cudf::test::structs_column_wrapper{{child}, validity.begin()};
+  auto const list  = cudf::test::lists_column_wrapper<int32_t>{{{}, {}, {}, {4}}, validity.begin()};
+  auto const input = cudf::table_view{{structure, list}};
+  auto metadata    = cudf::io::table_input_metadata{input};
+  metadata.column_metadata[0].set_name("structure");
+  metadata.column_metadata[1].set_name("list");
+
+  std::vector<char> buffer;
+  auto const writer_options =
+    cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{&buffer})
+      .metadata(std::move(metadata))
+      .stats_level(cudf::io::statistics_freq::STATISTICS_PAGE)
+      .build();
+  cudf::io::chunked_parquet_writer writer(writer_options);
+  for (auto const& row_group : cudf::slice(input, {0, 2, 2, 4})) {
+    writer.write(row_group);
+  }
+  writer.close();
+  auto const datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
+  auto const footer     = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const stream     = cudf::get_default_stream();
+  auto const mr         = cudf::get_current_device_resource_ref();
+
+  auto const all_rows       = fixed_width_column_wrapper<bool>{true, true, true, true};
+  auto const expected_null  = fixed_width_column_wrapper<bool>{true, false, true, false};
+  auto const expected_valid = fixed_width_column_wrapper<bool>{false, true, false, true};
+  for (auto const use_jit : {false, true}) {
+    SCOPED_TRACE(use_jit);
+    for (auto const* name : {"structure", "list"}) {
+      SCOPED_TRACE(name);
+      auto const ref      = column_name_reference{name};
+      auto const is_null  = operation{ast_operator::IS_NULL, ref};
+      auto const is_valid = operation{ast_operator::NOT, is_null};
+      auto const check    = [&](operation const& filter, cudf::column_view expected) {
+        auto const options = cudf::io::parquet_reader_options::builder()
+                               .filter(filter)
+                               .use_jit_filter(use_jit)
+                               .build();
+        auto reader = cudf::io::parquet::experimental::hybrid_scan_reader{*footer, options};
+        auto const all_groups = reader.all_row_groups(options);
+        ASSERT_EQ(all_groups.size(), 2);
+        auto const row_groups = reader.filter_row_groups_with_stats(all_groups, options, stream);
+        ASSERT_EQ(row_groups, all_groups);
+
+        auto const page_index =
+          cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
+        reader.setup_page_index(*page_index);
+        auto row_mask =
+          reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_rows, row_mask->view());
+
+        auto const byte_ranges = reader.filter_column_chunks_byte_ranges(row_groups, options);
+        auto [buffers, column_data, read_tasks] =
+          cudf::io::parquet::fetch_byte_ranges_to_device_async(
+            *datasource,
+            byte_ranges,
+            cudf::io::parquet::io_submission_policy::SERIALIZE,
+            stream,
+            mr);
+        read_tasks.get();
+        auto row_mask_view = row_mask->mutable_view();
+        auto const result  = reader.materialize_filter_columns(
+          row_groups,
+          column_data,
+          row_mask_view,
+          cudf::io::parquet::experimental::use_data_page_mask::YES,
+          options,
+          stream,
+          mr);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, row_mask_view);
+        EXPECT_EQ(result.tbl->num_rows(), 2);
+      };
+      check(is_null, expected_null);
+      check(is_valid, expected_valid);
+    }
+  }
 }
 
 TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)

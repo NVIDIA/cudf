@@ -600,8 +600,6 @@ static_assert(prefetch_window % (cache_line_bytes * warp_lanes) == 0,
 // Null gaps of at most this many rows are zero-filled by the lane that owns the value after them;
 // longer ones are filled by the whole warp
 constexpr int32_t short_gap_rows = 8;
-// Pages zero-fill their null rows only when at least 1 / `fill_nulls_min_density` of them are valid
-constexpr int64_t fill_nulls_min_density = 4;
 
 using exchange_type = cub::WarpExchange<uint64_t, items_per_lane, warp_lanes>;
 
@@ -949,39 +947,34 @@ __device__ __forceinline__ uint64_t unpack(tile_input const& in)
   return extract64(lo, hi, bit % word_bits) & mask;
 }
 
+template <uint32_t Width>
+struct rank_map_output;
+
 /**
  * @brief Decodes the values of one DELTA_BINARY_PACKED page.
  *
- * Called by every lane of one warp. The values go to `consumer`, whose members are also called by
- * every lane together, so they may use warp collectives. `value_limit` below is the header's value
- * count capped at `nz_count`; ordinal 0 is the page's first value, and the remaining ordinals
- * arrive in tiles of `tile_size` starting at ordinal 1.
+ * Called by every lane of one warp. `value_limit` below is the header's value count capped at
+ * `nz_count`; ordinal 0 is the page's first value, and the remaining ordinals arrive in tiles of
+ * `tile_size` starting at ordinal 1. `output` places them in the output column.
  *
- * - `place_first(uint64_t value, uint32_t value_limit)`: ordinal 0, when `value_limit > 0`
- * - `prefetch(uint32_t tile_start, uint32_t value_limit)`: the tile after the one about to be
- *   placed, called while that tile's packed input is loaded
- * - `next_tile()`: the most recently prefetched tile becomes the one to place
- * - `place(uint32_t tile_start, uint64_t const (&values)[items_per_lane], uint32_t value_limit)`:
- *   `values[item]` holds ordinal `tile_start + item * 32 + lane`, valid below `value_limit`
- *
- * @tparam Consumer Type of `consumer`
+ * @tparam Width Output width in bytes, or 0 to switch on `dtype_len` at run time
  *
  * @param warp The decoding warp
  * @param data Start of the DELTA_BINARY_PACKED stream
  * @param end End of the page data
  * @param nz_count Number of values to decode
  * @param storage Shared memory for this warp
- * @param consumer Receives the decoded values
+ * @param output Places the decoded values
  * @return 0, `DELTA_PARAMS_UNSUPPORTED` if the page header or a mini-block bit width is invalid,
  * or `DATA_STREAM_OVERRUN` if the page holds fewer than `nz_count` values
  */
-template <typename Consumer>
+template <uint32_t Width>
 __device__ kernel_error::value_type decode_page(warp_tile const& warp,
                                                 uint8_t const* data,
                                                 uint8_t const* end,
                                                 uint32_t nz_count,
                                                 shared_storage& storage,
-                                                Consumer& consumer)
+                                                rank_map_output<Width>& output)
 {
   uint32_t const lane = warp.thread_rank();
 
@@ -1002,7 +995,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
             static_cast<uint32_t>(mini_block_count),
             static_cast<uint32_t>((block_size / mini_block_count) / warp_lanes)};
   uint32_t const value_limit = cuda::std::min(nz_count, static_cast<uint32_t>(value_count));
-  consumer.place_first(static_cast<uint64_t>(first_value), value_limit);
+  output.place_first(static_cast<uint64_t>(first_value), value_limit);
   uint32_t position = cuda::std::min(value_limit, uint32_t{1});
   uint64_t carry    = static_cast<uint64_t>(first_value);
 
@@ -1029,7 +1022,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     wk.stage_header(p, warp);
     wk.enter_block(p, warp);
     current = load_tile(wk, value_limit - position, warp);
-    consumer.prefetch(position, value_limit);
+    output.prefetch(position, value_limit);
   }
   while (position < value_limit) {
     if (reinterpret_cast<uintptr_t>(wk.mb_start) + prefetch_window / 2 > prefetched &&
@@ -1038,11 +1031,11 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     }
     uint32_t const remaining     = value_limit - position;
     uint32_t const next_position = position + cuda::std::min(uint32_t{tile_size}, remaining);
-    consumer.next_tile();
+    output.next_tile();
     tile_input next{};
     if (next_position < value_limit) {
       next = load_tile(wk, value_limit - next_position, warp);
-      consumer.prefetch(next_position, value_limit);
+      output.prefetch(next_position, value_limit);
     }
 
     uint64_t values[items_per_lane];
@@ -1072,7 +1065,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     }
     // The values are blocked; transpose them once for coalesced output stores.
     exchange_type(storage.exchange).BlockedToStriped(values, values);
-    consumer.place(position, values, value_limit);
+    output.place(position, values, value_limit);
     // The next tile's exchange reuses the storage.
     warp.sync();
     position = next_position;
@@ -1088,37 +1081,6 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
   }
   return 0;
 }
-
-/**
- * @brief `decode_page` consumer that writes ordinal `i` to `output[i - skip]`.
- */
-struct direct_output {
-  int64_t* output;  ///< Output of ordinal `skip`
-  uint32_t skip;    ///< Leading ordinals to drop
-  uint32_t lane;
-
-  __device__ __forceinline__ void place_first(uint64_t value, uint32_t value_limit) const
-  {
-    if (lane == 0 && value_limit > 0 && skip == 0) { output[0] = static_cast<int64_t>(value); }
-  }
-
-  __device__ __forceinline__ void prefetch(uint32_t, uint32_t) const {}
-
-  __device__ __forceinline__ void next_tile() const {}
-
-  __device__ __forceinline__ void place(uint32_t tile_start,
-                                        uint64_t const (&values)[items_per_lane],
-                                        uint32_t value_limit) const
-  {
-#pragma unroll
-    for (uint32_t item = 0; item < items_per_lane; ++item) {
-      uint32_t const ordinal = tile_start + item * warp_lanes + lane;
-      if (ordinal < value_limit && ordinal >= skip) {
-        output[ordinal - skip] = static_cast<int64_t>(values[item]);
-      }
-    }
-  }
-};
 
 /**
  * @brief Stores the low `Width` bytes of `value` at `dst`; a `Width` of 0 takes the width from
@@ -1137,12 +1099,17 @@ __device__ __forceinline__ void store_value(uint8_t* dst, uint32_t dtype_len, ui
 }
 
 /**
- * @brief `decode_page` consumer that places ordinals through the nz map's rank map and, when
+ * @brief Places the ordinals `decode_page` decodes through the nz map's rank map and, when
  * `fill_nulls` is set, zero-fills the null rows between them.
  *
  * The rank map entries of a tile are loaded one tile ahead, while the decoder loads that tile's
  * packed input, so the stores do not wait on them. The first row of the null gap before an
  * ordinal follows the previous ordinal's row, which a neighboring lane already holds.
+ *
+ * Every lane of the warp calls each member together, so they may use warp collectives.
+ * `decode_page` calls `place_first` for ordinal 0, then for each tile `prefetch` while that tile's
+ * packed input is loaded, `next_tile` to make it the tile to place, and `place`, whose
+ * `values[item]` holds ordinal `tile_start + item * 32 + lane`, valid below `value_limit`.
  *
  * @tparam Width Output width in bytes, or 0 to switch on `dtype_len` at run time
  */
@@ -1287,65 +1254,6 @@ CUDF_HOST_DEVICE inline bool has_delta_binary_nz_map(PageInfo const& page)
 }
 
 /**
- * @brief Returns whether pages in a chunk are decoded by the no-null path: required INT64 columns,
- * no definition or repetition levels, no nesting.
- *
- * @param chunk The chunk to check
- * @return True if the pages in the chunk are decoded by the no-null path, false otherwise
- */
-CUDF_HOST_DEVICE inline bool takes_no_null_path(ColumnChunkDesc const& chunk)
-{
-  return chunk.physical_type == Type::INT64 && chunk.max_level[level_type::DEFINITION] == 0;
-}
-
-/**
- * @brief Decodes a page which has no nulls, writing its values straight to the output.
- *
- * @param warp The warp to decode the page
- * @param page The page to decode
- * @param chunk The chunk to decode
- * @param min_row The minimum row to decode
- * @param num_rows The number of rows to decode
- * @param storage Buffer in shared memory
- * @return 0 or the decode error
- */
-__device__ __forceinline__ kernel_error::value_type decode_required_page(
-  nz_register_delta::warp_tile const& warp,
-  PageInfo& page,
-  ColumnChunkDesc const& chunk,
-  size_t min_row,
-  size_t num_rows,
-  nz_register_delta::shared_storage& storage)
-{
-  cg::invoke_one(warp, [&] {
-    page.nesting_decode[0].null_count  = 0;
-    page.nesting_decode[0].valid_count = 0;
-    page.nesting_decode[0].value_count = 0;
-  });
-  if (!page_has_rows_to_process(page, chunk.start_row, min_row, num_rows, false)) { return 0; }
-  size_t const page_start = chunk.start_row + page.chunk_row;
-  auto const skip         = static_cast<uint32_t>(page_start < min_row ? min_row - page_start : 0);
-  auto* const output      = static_cast<int64_t*>(chunk.column_data_base[0]) +
-                       (page_start >= min_row ? page_start - min_row : 0);
-  auto const nz_count       = page.nz_map->nz_count;
-  int64_t const level_bytes = (page.flags & PAGEINFO_FLAGS_V2)
-                                ? static_cast<int64_t>(page.lvl_bytes[level_type::DEFINITION]) +
-                                    page.lvl_bytes[level_type::REPETITION]
-                                : 0;
-  if (nz_count < 0 || nz_count > page.num_input_values || level_bytes < 0 ||
-      level_bytes > page.uncompressed_page_size) {
-    return static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
-  }
-  nz_register_delta::direct_output consumer{output, skip, warp.thread_rank()};
-  return nz_register_delta::decode_page(warp,
-                                        page.page_data + level_bytes,
-                                        page.page_data + page.uncompressed_page_size,
-                                        static_cast<uint32_t>(nz_count),
-                                        storage,
-                                        consumer);
-}
-
-/**
  * @brief Decodes a mapped page through its rank map.
  *
  * @return 0 or the decode error
@@ -1388,28 +1296,24 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
 
   auto const dtype_len = static_cast<uint32_t>(s->output_cvt.dtype_len);
   auto const first_row = s->setup.first_row;
-  // Zero the null slots as the values are placed. Writing every row of the range turns the
-  // partial-sector stores of a sparse rank map into full-sector ones. On mostly-null pages the
-  // extra zero stores cost more than they save, so those leave the null slots untouched.
-  bool const fill_nulls =
-    process_nulls &&
-    nz_register_delta::fill_nulls_min_density * static_cast<int64_t>(nz_count) >= page.num_rows;
+  // Pages with nulls zero the null slots as the values are placed. Writing every row of the range
+  // turns the partial-sector stores of a sparse rank map into full-sector ones.
   // Resolve the common output widths at compile time.
   auto decode = [&]<uint32_t Width>() {
-    nz_register_delta::rank_map_output<Width> consumer{warp,
-                                                       ni.data_out,
-                                                       process_nulls ? nz_idx : nullptr,
-                                                       dtype_len,
-                                                       first_row,
-                                                       first_row + s->setup.num_rows,
-                                                       fill_nulls};
+    nz_register_delta::rank_map_output<Width> output{warp,
+                                                     ni.data_out,
+                                                     process_nulls ? nz_idx : nullptr,
+                                                     dtype_len,
+                                                     first_row,
+                                                     first_row + s->setup.num_rows,
+                                                     process_nulls};
     auto const error = nz_register_delta::decode_page(warp,
                                                       s->stream.data_start,
                                                       s->stream.data_end,
                                                       static_cast<uint32_t>(nz_count),
                                                       storage,
-                                                      consumer);
-    if (error == 0) { consumer.fill_tail(static_cast<uint32_t>(nz_count)); }
+                                                      output);
+    if (error == 0) { output.fill_tail(static_cast<uint32_t>(nz_count)); }
     return error;
   };
   switch (dtype_len) {
@@ -1426,8 +1330,6 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
  * One warp decodes each page with `nz_register_delta::decode_page`. The launch bounds ask for
  * only one resident block per SM, so the compiler does not limit registers to raise occupancy.
  *
- * @tparam NoNulls Whether to decode the pages `takes_no_null_path` accepts, or the remaining mapped
- * pages
  * @param pages The pages to decode
  * @param chunks Chunk descriptors
  * @param min_row The minimum row to decode
@@ -1435,7 +1337,6 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
  * @param page_mask The mask of pages to decode
  * @param error_code The error code to set
  */
-template <bool NoNulls>
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1)
   decode_delta_binary_kernel_with_nz_map(PageInfo* pages,
                                          device_span<ColumnChunkDesc const> chunks,
@@ -1453,15 +1354,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1
   auto& page = pages[page_idx];
   // Pages without a map are decoded by the level-decoding kernel.
   if (!has_delta_binary_nz_map(page)) { return; }
-  auto const& chunk = chunks[page.chunk_idx];
-  if (takes_no_null_path(chunk) != NoNulls) { return; }
-
-  kernel_error::value_type error = 0;
-  if constexpr (NoNulls) {
-    error = decode_required_page(warp, page, chunk, min_row, num_rows, decode_storage);
-  } else {
-    error = decode_mapped_page(warp, page, chunks, min_row, num_rows, decode_storage);
-  }
+  auto const error = decode_mapped_page(warp, page, chunks, min_row, num_rows, decode_storage);
   if (error != 0) {
     cg::invoke_one(warp, [&] { set_error(error, error_code); });
   }
@@ -2146,23 +2039,12 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   // `consumer_stream` is ordered after the producer by the caller. The level-decoding kernel below
   // needs no such ordering because it reads only fields set on the host.
   if (has_flat_nz_map) {
-    // Launch each kernel only if some page takes its path.
-    bool has_no_null_page = false;
-    bool has_general_page = false;
-    for (auto const& page : host_span<PageInfo const>{pages}) {
-      if (!has_delta_binary_nz_map(page)) { continue; }
-      bool const no_null_path = takes_no_null_path(chunks[page.chunk_idx]);
-      has_no_null_page |= no_null_path;
-      has_general_page |= !no_null_path;
-    }
-    auto launch = [&]<bool NoNulls>() {
-      decode_delta_binary_kernel_with_nz_map<NoNulls>
-        <<<dim_grid, dim_block_nz_map, 0, consumer_stream.get()>>>(
-          pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
-      CUDF_CUDA_TRY(cudaGetLastError());
-    };
-    if (has_no_null_page) { launch.template operator()<true>(); }
-    if (has_general_page) { launch.template operator()<false>(); }
+    decode_delta_binary_kernel_with_nz_map<<<dim_grid,
+                                             dim_block_nz_map,
+                                             0,
+                                             consumer_stream.get()>>>(
+      pages.device_ptr(), chunks, min_row, num_rows, page_mask, error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
   }
 
   // Skip the launch when every DELTA_BINARY page has a map, they have already been decoded.

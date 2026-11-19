@@ -472,11 +472,11 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
 
 TEST_F(ParquetReaderTest, NzMapDeltaMixedColumns)
 {
-  // Exercises the mapped DELTA_BINARY_PACKED decoder on both of its paths: the required-INT64
-  // fast path and the general rank-map path. The general path also zero-fills null slots on pages
-  // with at least a quarter of their rows valid, in short gaps per lane and in long gaps across the
-  // warp, so the null patterns below cover short gaps, long gaps, mostly-null and all-null pages.
-  // Checks both page versions, slices that start and end mid-page, and chunked reads.
+  // Exercises the mapped DELTA_BINARY_PACKED decoder on required and nullable columns of both
+  // output widths. On pages with nulls it zero-fills the null slots, in short gaps per lane and in
+  // long gaps across the warp, so the null patterns below cover short gaps, long gaps, mostly-null
+  // and all-null pages. Checks both page versions, slices that start and end mid-page, and chunked
+  // reads.
 
   constexpr cudf::size_type num_rows = 6'003;
   auto const values =
@@ -512,7 +512,7 @@ TEST_F(ParquetReaderTest, NzMapDeltaMixedColumns)
     values, values + num_rows, cudf::test::iterators::all_nulls());
   cudf::test::fixed_width_column_wrapper<int64_t> const optional_col(
     values, values + num_rows, cudf::test::iterators::no_nulls());
-  // A required column the fast path does not take: its output is four bytes wide.
+  // Required and nullable columns with four-byte output.
   cudf::test::fixed_width_column_wrapper<int32_t> const required_int32(small_values,
                                                                        small_values + num_rows);
   cudf::test::fixed_width_column_wrapper<int32_t> const short_gaps_int32(

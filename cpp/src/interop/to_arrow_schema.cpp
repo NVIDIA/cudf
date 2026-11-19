@@ -13,7 +13,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <nanoarrow/nanoarrow.h>
@@ -28,13 +28,13 @@ namespace detail {
 namespace {
 
 struct dispatch_to_arrow_type {
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
+  template <typename T>
   int operator()(arrow_schema_column const&, column_metadata const&, ArrowSchema*)
   {
     CUDF_FAIL("Unsupported type for to_arrow_schema", cudf::data_type_error);
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   int operator()(arrow_schema_column const& input,
                  column_metadata const& metadata,
                  ArrowSchema* out)

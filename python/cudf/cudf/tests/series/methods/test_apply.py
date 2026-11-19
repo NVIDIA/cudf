@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import cudf
-from cudf.core.udf.utils import precompiled
+from cudf.core.udf.mlir_backend.udf_kernel_base import _compile_kernel_cached
 from cudf.testing import assert_eq
 
 
@@ -103,27 +103,27 @@ def test_masked_udf_caching():
     def f(x):
         return x + 1
 
-    precompiled.clear()
-    assert precompiled.currsize == 0
+    _compile_kernel_cached.cache_clear()
+    assert _compile_kernel_cached.cache_info().currsize == 0
     data.apply(f)
 
-    assert precompiled.currsize == 1
+    assert _compile_kernel_cached.cache_info().currsize == 1
     data.apply(f)
 
-    assert precompiled.currsize == 1
+    assert _compile_kernel_cached.cache_info().currsize == 1
 
     # validate that changing the type of a scalar arg
     # results in a miss
-    precompiled.clear()
+    _compile_kernel_cached.cache_clear()
 
     def f(x, c):
         return x + c
 
     data.apply(f, args=(1,))
-    assert precompiled.currsize == 1
+    assert _compile_kernel_cached.cache_info().currsize == 1
 
     data.apply(f, args=(1.5,))
-    assert precompiled.currsize == 2
+    assert _compile_kernel_cached.cache_info().currsize == 2
 
 
 @pytest.mark.parametrize(

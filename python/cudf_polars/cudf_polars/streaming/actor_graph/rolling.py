@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
-from cudf_streaming.partition_utils import split_and_pack_cost
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
@@ -190,11 +189,10 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             [cursor.row_start - start, cursor.row_stop - start],
             stream=result.stream,
         )
-        # The copy holds only the owned rows. A slice reports the size of
-        # its parent's buffers, so size the copy from its packed size.
-        copy_bytes = split_and_pack_cost(table, result.stream, self.context.br())
         with opaque_memory_usage(
-            await reserve_memory(self.context, size=copy_bytes, net_memory_delta=0)
+            await reserve_memory(
+                self.context, size=result.data_alloc_size(), net_memory_delta=0
+            )
         ):
             table = table.copy(result.stream, self.context.br().device_mr)
         return TableChunk.from_pylibcudf_table(

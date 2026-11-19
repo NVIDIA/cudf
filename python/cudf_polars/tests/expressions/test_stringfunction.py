@@ -1203,15 +1203,27 @@ def test_extract_all_non_literal_pattern_unsupported(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-@pytest.mark.parametrize("pattern", ["[", "x{", "a{1", r"\0", "[a[b]"])
+INVALID_EXTRACT_ALL_PATTERNS = ["[", "x{", "a{1", r"\0", "[a[b]"]
+
+
+@pytest.mark.parametrize("pattern", INVALID_EXTRACT_ALL_PATTERNS)
 def test_extract_all_invalid_pattern(
     in_memory_engine: pl.GPUEngine, pattern: str
 ) -> None:
     lf = pl.LazyFrame({"a": ["a1b22", None]})
     q = lf.select(pl.col("a").str.extract_all(pattern))
-    with pytest.raises(pl.exceptions.ComputeError):
-        q.collect()
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("pattern", INVALID_EXTRACT_ALL_PATTERNS)
+def test_extract_all_invalid_pattern_fallback_raises_cpu_error(pattern: str) -> None:
+    lf = pl.LazyFrame({"a": ["a1b22", None]})
+    q = lf.select(pl.col("a").str.extract_all(pattern))
+    with pytest.raises(pl.exceptions.ComputeError) as cpu_error:
+        q.collect()
+    with pytest.raises(pl.exceptions.ComputeError) as gpu_error:
+        q.collect(engine=pl.GPUEngine(executor="in-memory", raise_on_fail=False))
+    assert str(gpu_error.value) == str(cpu_error.value)
 
 
 def test_len_bytes(engine: pl.GPUEngine, ldf):

@@ -85,7 +85,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
   // Check malformed BYTE_STREAM_SPLIT pages. Pages without non-null values have no value data, so
-  // an empty data stream is checked below once there are values to decode.
+  // the data stream size is checked below against each value read.
   if (s->output_cvt.dtype_len_in <= 0) {
     cg::invoke_one(block, [&]() {
       set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE),
@@ -156,7 +156,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       // target_pos will always be properly bounded by num_rows, but dst_pos may be negative (values
       // before first_row) in the flat hierarchy case.
       if (src_pos < target_pos) {
-        if (data_len <= 0) {
+        if (src_pos + skipped_leaf_values >= num_values) {
           s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE);
         } else if (dst_pos >= 0) {
           // src_pos represents the logical row position we want to read from. But in the case of

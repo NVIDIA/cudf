@@ -954,6 +954,23 @@ struct compute_page_level_decode_size {
 };
 
 /**
+ * @brief Functor to compute the nz map scratch size needed for a page.
+ */
+struct compute_page_nz_map_size {
+  cudf::device_span<ColumnChunkDesc const> chunks;
+  size_t skip_rows;
+  size_t num_rows;
+
+  __device__ size_t operator()(PageInfo const& page) const
+  {
+    if (page.flags & PAGEINFO_FLAGS_DICTIONARY) { return 0; }
+    auto const& chunk = chunks[page.chunk_idx];
+    if (classify_nz_map_kind(page, chunk) == nz_map_kind::NONE) { return 0; }
+    return sizeof(page_nz_map) + compute_page_rank_map_size(page, chunk, skip_rows, num_rows);
+  }
+};
+
+/**
  * @brief Computes a running sum of `cost_fn(page)` over each column's pages.
  *
  * The sums match the page sizes in `c_info` that `include_scratch_size` adds them to: a subpass
@@ -1003,6 +1020,17 @@ cuda::device_buffer<size_t> compute_level_decode_sizes(device_span<ColumnChunkDe
     compute_page_level_decode_size{chunks, level_type_size, skip_rows, num_rows},
     stream,
     mr);
+}
+
+cuda::device_buffer<size_t> compute_nz_map_sizes(device_span<ColumnChunkDesc const> chunks,
+                                                 device_span<PageInfo const> pages,
+                                                 size_t skip_rows,
+                                                 size_t num_rows,
+                                                 cuda::stream_ref stream,
+                                                 cudf::memory_resources mr)
+{
+  return scan_page_costs_by_column(
+    pages, compute_page_nz_map_size{chunks, skip_rows, num_rows}, stream, mr);
 }
 
 row_group_pass_data compute_row_group_passes(std::span<row_group_size_info const> row_group_sizes,

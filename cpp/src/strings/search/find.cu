@@ -265,13 +265,18 @@ std::unique_ptr<column> find(strings_column_view const& input,
                                      0,
                                      stream,
                                      mr);
-  // AND the bitmasks from input and target; set before the all-null early return
+  // if input is empty or all-null then we are done
+  if (input.size() == input.null_count()) {
+    results->set_null_mask(
+      cudf::detail::create_null_mask(input.size(), cudf::mask_state::ALL_NULL, stream, mr),
+      input.size());
+    return results;
+  }
+
+  // AND the bitmasks from input and target
   auto [null_mask, null_count] =
     cudf::detail::bitmask_and(table_view({input.parent(), target.parent()}), stream, mr);
   results->set_null_mask(std::move(null_mask), null_count);
-
-  // if input is empty or all-null then we are done
-  if (input.size() == input.null_count()) { return results; }
 
   // call find utility with target iterator
   auto d_targets  = column_device_view::create(target.parent(), stream);

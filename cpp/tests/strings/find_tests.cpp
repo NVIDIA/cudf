@@ -440,6 +440,8 @@ TEST_F(StringsFindTest, ZeroSizeStringsColumn)
   EXPECT_EQ(results->size(), 0);
   results = cudf::strings::ends_with(strings_view, strings_view);
   EXPECT_EQ(results->size(), 0);
+  results = cudf::strings::find(strings_view, strings_view);
+  EXPECT_EQ(results->size(), 0);
   results = cudf::strings::count(strings_view, cudf::string_scalar("é"));
   EXPECT_EQ(results->size(), 0);
 }
@@ -542,6 +544,16 @@ TEST_F(StringsFindTest, AllNull)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_bool);
   results = cudf::strings::find(strings_view, targets_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
+  {
+    // valid input with all-null targets
+    cudf::test::strings_column_wrapper input({"a", "b"});
+    cudf::test::strings_column_wrapper null_targets({"", ""}, cudf::test::iterators::all_nulls());
+    cudf::test::fixed_width_column_wrapper<cudf::size_type> expected(
+      {0, 0}, cudf::test::iterators::all_nulls());
+    auto const found = cudf::strings::find(cudf::strings_column_view(input),
+                                           cudf::strings_column_view(null_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*found, expected);
+  }
   results = cudf::strings::find_instance(strings_view, cudf::string_scalar("e"), 0);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_st);
   results = cudf::strings::count(strings_view, cudf::string_scalar(""));

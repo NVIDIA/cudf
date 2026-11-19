@@ -1280,11 +1280,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # Upper bound on aiobotocore to avoid build issues in CI
-          # https://github.com/NVIDIA/cudf/issues/20843
-          - aiobotocore>=2.2.0,<3
           - boto3>=1.21.21
-          - botocore>=1.24.21
           - s3fs>=2022.3.0
       - output_types: conda
         packages:

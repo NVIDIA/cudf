@@ -5,10 +5,8 @@ channels:
 - rapidsai
 - conda-forge
 dependencies:
-- aiobotocore>=2.2.0,<3
 - binutils
 - boto3>=1.21.21
-- botocore>=1.24.21
 - breathe>=4.35.0
 - c-compiler
 - clang-tools==20.1.8

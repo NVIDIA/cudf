@@ -90,6 +90,8 @@ def patch_testing_functions():
     pytest.raises = replace_kwargs({"match": None})(pytest.raises)
 
 
+# TODO: Remove this fixture once we test with pandas 3.1 or later.
+# https://github.com/pandas-dev/pandas/pull/68071
 @pytest.fixture(autouse=True)
 def restore_plotting_options(request):
     """Restore pandas plotting options after tests that use ``mpl_cleanup``."""

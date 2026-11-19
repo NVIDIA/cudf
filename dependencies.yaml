@@ -1846,6 +1846,7 @@ dependencies:
           - jupyter_client
           - nbconvert
           - nbformat
+          - numba
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0

@@ -330,6 +330,80 @@ write is never treated as a successful acknowledgment.
 The command saves the refreshed snapshot, DM plan, delivery receipts, and
 result under the output directory. These files contain no bot token.
 
+## Recovering an uncertain DM delivery
+
+Use [recover.py](recover.py) for Project-backed test-DM intent left pending
+without a local receipt. It never posts to Slack and needs GitHub Project
+access, not a Slack token. Rehearsals use separate local state and are not
+reconciled through this command.
+
+1. Disable the **cuDF work tracking** workflow in GitHub Actions, wait for any
+   active run to finish, and stop local writers. Preserve any existing private
+   output directory and receipt journal. Restore an archived action card before
+   applying recovery; inspection can still show its archived state.
+2. From the repository root, inspect each action key listed by the failed run
+   (or the card's **Action key** field). Replace `ACTION_KEY` below with the full
+   value, including `cudf-action:v1:`:
+
+   ```sh
+   python3 ci/repo_queue/recover.py --key ACTION_KEY --inspect \
+     --output-dir /tmp/cudf-work-tracking/recovery
+   ```
+
+   Read the private `recovery.json` output. Match its source, description,
+   pending kind, and preparation time against the bot DM. Copy `pending.id` as
+   `PENDING_ID` for the commands below. If the evidence is still uncertain,
+   leave the intent pending and keep DM delivery disabled.
+3. Choose exactly one confirmed outcome. Both commands below are previews;
+   review the output, then repeat the same command with `--apply` to write it.
+
+   **The message was delivered:** copy the permalink of that exact delivered
+   message using Slack's **Copy link** action. For a reminder, copy the reminder
+   itself, not its parent. Confirm that its text and time match this pending
+   attempt. Replace `MESSAGE_URL` with that permalink:
+
+   ```sh
+   python3 ci/repo_queue/recover.py --key ACTION_KEY --pending-id PENDING_ID \
+     --sent-message-url 'MESSAGE_URL' \
+     --output-dir /tmp/cudf-work-tracking/recovery
+   ```
+
+   Applying this saves a receipt to `dm-receipts.json` before acknowledging the
+   send. The message permalink supplies the DM, message timestamp, and actual
+   send time. Existing first-notified time and parent thread are preserved;
+   last-notified time, escalation history when applicable, and the Project's
+   Slack thread link are updated through the normal acknowledgment path.
+
+   **No message was delivered:** only after confirming non-delivery, run:
+
+   ```sh
+   python3 ci/repo_queue/recover.py --key ACTION_KEY --pending-id PENDING_ID \
+     --not-sent --output-dir /tmp/cudf-work-tracking/recovery
+   ```
+
+   Applying this removes only this pending intent. Earlier successful delivery
+   history, thread links, ownership, and handoff clocks remain intact. The next
+   eligible DM run can retry the notification. An existing local receipt for
+   this attempt prevents a contradictory non-send declaration.
+4. The apply command re-reads the Project and verifies pending intent is gone;
+   confirmed sends also require a saved Slack thread link. If it fails, preserve
+   the recovery directory and inspect again before retrying. A changed pending
+   ID stops recovery rather than clearing another attempt. If pending intent
+   is already absent, verify the saved Project history instead of declaring a
+   new outcome. Never delete a card or erase prior history to unblock delivery.
+5. After resolving every reported pending action, run a refresh without Slack
+   delivery using the same private directory:
+
+   ```sh
+   python3 ci/repo_queue/scheduled.py --mode refresh \
+     --output-dir /tmp/cudf-work-tracking/recovery
+   ```
+
+   Once recovery and refresh verification succeed, re-enable the workflow and
+   resume its normal DM mode. Keep the receipt journal until all recovered sends
+   are acknowledged. Recovery files and private diagnostics must stay out of
+   public comments, artifacts, and logs.
+
 ## Scheduled DM delivery
 
 [scheduled.json](scheduled.json) limits unattended runs to the three agreed

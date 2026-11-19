@@ -30,8 +30,8 @@ is set and that path differs from `target/`.
 The generated JavaScript module exports Quent's standardized `BrowserServer`
 interface, so no cudf-polars-specific Web Worker is required. Host the generated
 JavaScript and WASM files on the same origin as the Quent UI, then select them
-with the static viewer URL:
+with the static viewer URL using a querystring like:
 
 ```text
-https://quent.example/simulator/?module=/analyzers/cudf-polars/cudf_polars_quent_browser.js&data=https://traces.example/run.quent-browser#/
+?module=/analyzers/cudf-polars/cudf_polars_quent_browser.js&data=https://traces.example/run.quent-browser#/
 ```

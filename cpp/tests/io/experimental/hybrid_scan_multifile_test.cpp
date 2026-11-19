@@ -15,6 +15,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
@@ -28,11 +29,14 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <cstddef>
 #include <iterator>
 #include <memory>
 #include <numeric>
 #include <random>
+#include <ranges>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -712,6 +716,51 @@ TEST_F(HybridScanMultifileTest, ReadColumnsFromMismatchedSchemas)
     CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected_filtered.tbl->select({1, 2}),
                                        payload_result.tbl->view());
   }
+}
+
+TEST_F(HybridScanMultifileTest, SharedMetadataHandle)
+{
+  // Readers built from the same handle share the metadata, so page indexes set up through one
+  // reader are visible to the handle and to every other reader sharing it
+  auto constexpr num_sources         = std::size_t{2};
+  auto const [table, parquet_buffer] = create_parquet_with_stats<uint32_t, 1>();
+  auto const parquet_buffers         = std::vector<std::vector<char>>(num_sources, parquet_buffer);
+  auto const source_info             = build_source_info(parquet_buffers);
+  auto inputs                        = multifile_inputs(source_info);
+  auto const options                 = cudf::io::parquet_reader_options::builder().build();
+  auto const metadata =
+    cudf::io::parquet::experimental::hybrid_scan_metadata{inputs.footer_byte_spans, options};
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  auto const reader_a = cudf::io::parquet::experimental::hybrid_scan_multifile{metadata};
+  auto reader_b       = cudf::io::parquet::experimental::hybrid_scan_multifile{metadata};
+  setup_page_indexes(reader_a, inputs);
+
+  EXPECT_EQ(metadata.num_sources(), num_sources);
+  EXPECT_TRUE(std::ranges::all_of(reader_b.page_index_byte_ranges(),
+                                  &cudf::io::text::byte_range_info::is_empty));
+  EXPECT_TRUE(
+    std::ranges::all_of(std::views::iota(std::size_t{0}, num_sources), [&](auto source_idx) {
+      return metadata.parquet_metadata(source_idx)
+        .row_groups.front()
+        .columns.front()
+        .offset_index.has_value();
+    }));
+
+  auto const row_groups = reader_b.all_row_groups(options);
+  auto column_data      = fetch_multisource_device_data(
+    inputs, reader_b.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
+  auto const result =
+    reader_b.materialize_all_columns(row_groups, column_data.flat_spans, options, stream, mr);
+  auto const expected =
+    cudf::concatenate(std::vector<cudf::table_view>(num_sources, table->view()), stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), result.tbl->view());
+
+  // A multi-file handle can't back a single-file reader
+  EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_reader{metadata},
+               std::invalid_argument);
+  EXPECT_THROW(std::ignore = metadata.parquet_metadata(num_sources), std::out_of_range);
 }
 
 TEST_F(HybridScanMultifileTest, EmptySources)

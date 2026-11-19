@@ -18,21 +18,25 @@ namespace cudf::io::parquet::experimental {
 hybrid_scan_multifile::hybrid_scan_multifile(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
   parquet_reader_options const& options)
-  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
-      std::vector<std::span<uint8_t const>>(footer_bytes.begin(), footer_bytes.end()), options)}
+  : hybrid_scan_multifile{hybrid_scan_metadata{footer_bytes, options}}
 {
 }
 
 hybrid_scan_multifile::hybrid_scan_multifile(cudf::host_span<FileMetaData const> parquet_metadata,
                                              parquet_reader_options const& options)
-  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(parquet_metadata, options)}
+  : hybrid_scan_multifile{hybrid_scan_metadata{parquet_metadata, options}}
 {
 }
 
 hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet_metadata,
                                              parquet_reader_options const& options)
-  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
-      std::move(parquet_metadata), options)}
+  : hybrid_scan_multifile{hybrid_scan_metadata{std::move(parquet_metadata), options}}
+{
+}
+
+hybrid_scan_multifile::hybrid_scan_multifile(hybrid_scan_metadata metadata)
+  : _impl{
+      std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
 {
 }
 

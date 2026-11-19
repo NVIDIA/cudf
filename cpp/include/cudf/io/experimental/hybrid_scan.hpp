@@ -12,9 +12,11 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -92,10 +94,11 @@ struct dictionary_byte_range {
 /**
  * @brief Shareable, pre-parsed Parquet file metadata for the Hybrid Scan reader.
  *
- * Parses the Parquet file metadata once so that multiple `hybrid_scan_reader` instances reading
- * the same file can share it rather than each re-parsing and copying the row group metadata.
- * The intended use is to read disjoint row-group ranges of a single file: construct one
- * `hybrid_scan_metadata` per file and pass it to as many readers as there are ranges.
+ * Parses the Parquet file metadata once so that multiple readers of the same file(s) can share it
+ * rather than each re-parsing and copying the row group metadata. The intended use is to read
+ * disjoint row-group ranges: construct one `hybrid_scan_metadata` per file (for
+ * `hybrid_scan_reader`) or per set of files (for `hybrid_scan_multifile`) and pass it to as many
+ * readers as there are ranges.
  *
  * @code{.cpp}
  * // Parse the metadata once
@@ -105,9 +108,9 @@ struct dictionary_byte_range {
  * auto reader_b = std::make_unique<parquet::experimental::hybrid_scan_reader>(metadata);
  * @endcode
  *
- * @note The metadata is immutable after `setup_page_index()` has been called (or immediately after
- * construction if page index setup is skipped). Concurrent usage by multiple readers is thread
- * safe. This handle does not support multi-source (multi-file) metadata.
+ * @note The metadata is immutable after `setup_page_index()` (or `setup_page_indexes()`) has been
+ * called (or immediately after construction if page index setup is skipped). Concurrent usage by
+ * multiple readers is thread safe.
  */
 class hybrid_scan_metadata {
  public:
@@ -137,6 +140,40 @@ class hybrid_scan_metadata {
   hybrid_scan_metadata(FileMetaData&& parquet_metadata, parquet_reader_options const& options);
 
   /**
+   * @brief Parse and own Parquet file metadata of multiple files for `hybrid_scan_multifile`
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param footer_bytes Host span of Parquet file footer byte spans, one per source
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
+                       parquet_reader_options const& options);
+
+  /**
+   * @brief Own pre-populated Parquet file metadata of multiple files for `hybrid_scan_multifile`
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Host span of pre-populated Parquet file metadata, one per source
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(cudf::host_span<FileMetaData const> parquet_metadatas,
+                       parquet_reader_options const& options);
+
+  /**
+   * @brief Take ownership of pre-populated Parquet file metadata of multiple files for
+   *        `hybrid_scan_multifile`
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Pre-populated Parquet file metadata, one per source
+   * @param options Parquet reader options
+   */
+  hybrid_scan_metadata(std::vector<FileMetaData>&& parquet_metadatas,
+                       parquet_reader_options const& options);
+
+  /**
    * @brief Destructor for the shared Parquet metadata
    */
   ~hybrid_scan_metadata();
@@ -157,19 +194,31 @@ class hybrid_scan_metadata {
   hybrid_scan_metadata& operator=(hybrid_scan_metadata&&) = default;
 
   /**
-   * @brief Get the parsed Parquet file metadata without copying it
+   * @brief Get the number of sources (files) in this metadata
    *
-   * The metadata contains the materialized page index once `setup_page_index()` has been called
-   * on a reader sharing this handle, which updates it in place.
+   * @return Number of sources
+   */
+  [[nodiscard]] std::size_t num_sources() const;
+
+  /**
+   * @brief Get the parsed Parquet file metadata of a source without copying it
    *
+   * The metadata contains the materialized page index once `setup_page_index()` (or
+   * `setup_page_indexes()`) has been called on a reader sharing this handle, which updates it in
+   * place.
+   *
+   * @throws std::out_of_range if `source_index` is out of range
+   *
+   * @param source_index Index of the source
    * @return Reference to the Parquet file metadata, valid while this handle or any reader
    *         constructed from it is alive
    */
-  [[nodiscard]] FileMetaData const& parquet_metadata() const;
+  [[nodiscard]] FileMetaData const& parquet_metadata(std::size_t source_index = 0) const;
 
  private:
   std::shared_ptr<hybrid_scan::detail::aggregate_reader_metadata> _metadata;
   friend class hybrid_scan_reader;
+  friend class hybrid_scan_multifile;
 };
 
 /**
@@ -456,6 +505,8 @@ class hybrid_scan_reader {
    * @brief Constructor that takes shared ownership of pre-parsed Parquet file metadata
    *
    * Constructs a reader that shares the pre-parsed metadata object.
+   *
+   * @throws std::invalid_argument if `metadata` holds more than one source
    *
    * @param metadata Shared, pre-parsed Parquet file metadata
    */

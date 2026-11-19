@@ -207,16 +207,6 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
 
-hybrid_scan_reader_impl::hybrid_scan_reader_impl(std::span<FileMetaData const> parquet_metadatas,
-                                                 parquet_reader_options const& options)
-{
-  _metadata =
-    std::make_shared<aggregate_reader_metadata>(parquet_metadatas,
-                                                options.is_enabled_use_arrow_schema(),
-                                                options.is_enabled_allow_mismatched_pq_schemas());
-  _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
-}
-
 hybrid_scan_reader_impl::hybrid_scan_reader_impl(std::vector<FileMetaData>&& parquet_metadatas,
                                                  parquet_reader_options const& options)
 {

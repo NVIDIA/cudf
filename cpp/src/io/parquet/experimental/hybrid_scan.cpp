@@ -77,11 +77,41 @@ hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata,
 {
 }
 
+hybrid_scan_metadata::hybrid_scan_metadata(
+  cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
+  parquet_reader_options const& options)
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+      std::vector<std::span<uint8_t const>>(footer_bytes.begin(), footer_bytes.end()),
+      options.is_enabled_use_arrow_schema(),
+      options.is_enabled_allow_mismatched_pq_schemas())}
+{
+}
+
+hybrid_scan_metadata::hybrid_scan_metadata(cudf::host_span<FileMetaData const> parquet_metadatas,
+                                           parquet_reader_options const& options)
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+      parquet_metadatas,
+      options.is_enabled_use_arrow_schema(),
+      options.is_enabled_allow_mismatched_pq_schemas())}
+{
+}
+
+hybrid_scan_metadata::hybrid_scan_metadata(std::vector<FileMetaData>&& parquet_metadatas,
+                                           parquet_reader_options const& options)
+  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+      std::move(parquet_metadatas),
+      options.is_enabled_use_arrow_schema(),
+      options.is_enabled_allow_mismatched_pq_schemas())}
+{
+}
+
 hybrid_scan_metadata::~hybrid_scan_metadata() = default;
 
-FileMetaData const& hybrid_scan_metadata::parquet_metadata() const
+std::size_t hybrid_scan_metadata::num_sources() const { return _metadata->get_num_sources(); }
+
+FileMetaData const& hybrid_scan_metadata::parquet_metadata(std::size_t source_index) const
 {
-  return _metadata->parquet_metadata(0);
+  return _metadata->parquet_metadata(source_index);
 }
 
 hybrid_scan_reader::hybrid_scan_reader(std::span<uint8_t const> footer_bytes,
@@ -109,8 +139,13 @@ hybrid_scan_reader::hybrid_scan_reader(FileMetaData&& parquet_metadata,
 }
 
 hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
-  : _impl{
-      std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
+  : _impl{[&] {
+      CUDF_EXPECTS(metadata.num_sources() == 1,
+                   "Use `hybrid_scan_multifile` for multi-file metadata",
+                   std::invalid_argument);
+      return std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+        std::move(metadata._metadata));
+    }()}
 {
 }
 

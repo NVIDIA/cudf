@@ -66,15 +66,6 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                                    parquet_reader_options const& options);
 
   /**
-   * @brief Constructor for the experimental parquet reader implementation
-   *
-   * @param parquet_metadatas Span of pre-populated Parquet file metadata, one per source
-   * @param options Parquet reader options
-   */
-  explicit hybrid_scan_reader_impl(std::span<FileMetaData const> parquet_metadatas,
-                                   parquet_reader_options const& options);
-
-  /**
    * @brief Constructor that takes ownership of pre-populated Parquet file metadata
    *
    * @param parquet_metadatas Pre-populated Parquet file metadata, one per source

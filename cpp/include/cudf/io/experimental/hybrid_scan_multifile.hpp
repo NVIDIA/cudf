@@ -91,6 +91,15 @@ class hybrid_scan_multifile {
                                  parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that takes shared ownership of pre-parsed Parquet file metadata
+   *
+   * Constructs a reader that shares the pre-parsed metadata object, see `hybrid_scan_metadata`.
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata of all sources
+   */
+  explicit hybrid_scan_multifile(hybrid_scan_metadata metadata);
+
+  /**
    * @brief Destructor for the multi-file experimental Parquet reader
    */
   ~hybrid_scan_multifile();

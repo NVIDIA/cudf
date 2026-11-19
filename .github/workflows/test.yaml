@@ -367,7 +367,7 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
       matrix_type: nightly
-  cudf-polars-coverage-comparison:
+  cudf-polars-coverage-collection-and-comparison:
     if: ${{ inputs.build_type == 'nightly' }}
     permissions:
       actions: read
@@ -396,7 +396,7 @@ jobs:
           branch: ${{ inputs.branch }}
           date: ${{ inputs.date }}
           sha: ${{ inputs.sha }}
-      - name: Compare local and upstream coverage
+      - name: Collect and compare local and upstream coverage
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

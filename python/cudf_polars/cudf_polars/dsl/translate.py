@@ -226,6 +226,7 @@ class Translator:
         self._expr_context: ExecutionContext = ExecutionContext.FRAME
         self._internal_name_gen: Generator[str, None, None] | None = None
         self._list_literals_as_elements: bool = False
+        self._num_unwrapped_implodes: int = 0
 
     def translate_ir(self, *, n: int | None = None) -> ir.IR:
         """
@@ -1485,17 +1486,14 @@ def _translate_function(
             *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )
     elif isinstance(name, plrs._expr_nodes.ListFunction):
-        # TODO: Handle implode wrapped in other expressions in group_by or rolling
-        if translator._expr_context in (
-            ExecutionContext.GROUPBY,
-            ExecutionContext.ROLLING,
-        ) and any(
-            isinstance(
-                child := translator.visitor.view_expression(n), plrs._expr_nodes.Agg
-            )
-            and child.name == "implode"
-            for n in node.input
-        ):
+        # Unwrapping an implode in group_by or rolling turns its list input
+        # into the element-wise column, so list functions above it would
+        # operate on the wrong values.
+        num_unwrapped_implodes = translator._num_unwrapped_implodes
+        list_inputs = [
+            translator.translate_expr(n=n, schema=schema) for n in node.input
+        ]
+        if translator._num_unwrapped_implodes != num_unwrapped_implodes:
             raise NotImplementedError(
                 f"{name} is not supported for implode in group_by or rolling"
             )
@@ -1503,7 +1501,7 @@ def _translate_function(
             dtype,
             expr.ListFunction.Name.from_polars(name),
             options,
-            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
+            *list_inputs,
         )
     elif isinstance(name, plrs._expr_nodes.RollingFunction):
         window_size, min_periods, weights, center, fn_params = options
@@ -2035,6 +2033,7 @@ def _(
         # wrapped in an explicit ``implode`` node. Unwrap it so the existing
         # pointwise-collect path handles it.
         (child,) = args
+        translator._num_unwrapped_implodes += 1
         return child
 
     # libcudf does not support std/var on decimal types; cast to float first.

@@ -69,6 +69,14 @@ def test_list_len_implode_in_agg_not_supported(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+def test_list_len_wrapped_implode_in_agg_not_supported(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    lf = pl.LazyFrame({"k": [1, 1, 2], "a": [1, 2, 3]})
+    q = lf.group_by("k").agg(pl.col("a").implode().fill_null([0]).list.len())
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_list_len_literal(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": [1, 2, 3]})
     q = lf.select(pl.col("a"), pl.lit([1, 2]).list.len())

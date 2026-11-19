@@ -219,6 +219,12 @@ def test_rolling_series_literal_raises(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+def test_rolling_aggregation_is_in_list(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(pl.col("values").sum().is_in([13, 24]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize(
     "value",
     [[7, 8], pl.Series("s", [7, 8]), pl.Series("s", [], dtype=pl.Int64)],

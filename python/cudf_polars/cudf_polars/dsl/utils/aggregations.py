@@ -667,10 +667,6 @@ def decompose_single_agg(
                 raise NotImplementedError(
                     "Broadcasting aggregated expressions in groupby/rolling"
                 )
-            if any(isinstance(child, expr.LiteralColumn) for child in agg.children):
-                raise NotImplementedError(
-                    "Combining aggregations with a list or Series literal in groupby/rolling"
-                )
             # Any pointwise expression can be handled either by
             # post-evaluation (if outside an aggregation).
             return (
@@ -798,6 +794,19 @@ def apply_pre_evaluation(
     NotImplementedError
         If the aggregations are somehow unsupported.
     """
+    for named_agg in original_aggs:
+        nodes = tuple(traversal([named_agg.value]))
+        # Polars collects an aggregation combined with a Series literal into
+        # a list per group, which the aggregation does not produce.
+        if (
+            output_schema[named_agg.name].id() == plc.TypeId.LIST
+            and named_agg.value.dtype.id() != plc.TypeId.LIST
+            and any(not node.is_pointwise for node in nodes)
+            and any(isinstance(node, expr.LiteralColumn) for node in nodes)
+        ):
+            raise NotImplementedError(
+                "Combining aggregations with a list or Series literal in groupby/rolling"
+            )
     aggs, post = decompose_aggs(original_aggs, name_generator, context=context)
     assert len(post) == len(original_aggs), (
         f"Unexpected number of post-aggs {len(post)=} {len(original_aggs)=}"

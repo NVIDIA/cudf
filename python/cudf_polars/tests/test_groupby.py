@@ -1076,6 +1076,7 @@ def test_groupby_list_or_series_literal_raises(
     "expr",
     [
         pl.col("j").is_in([1, 3]).sum(),
+        pl.col("j").sum().is_in([3, 7]),
         (pl.col("j") + pl.lit(pl.Series([7]))).sum(),
         (pl.lit(pl.Series([7])) + 1 + pl.col("j")).sum(),
     ],

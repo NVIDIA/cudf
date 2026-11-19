@@ -61,6 +61,14 @@ rapids-uv-pip install \
     -r polars/py-polars/requirements-ci.txt \
     "polars-iceberg>=0.1.0,<1.0.0"
 
+if [[ "${1:-}" == --coverage-comparison ]]; then
+    # Every suite must measure this checkout, not an installed copy of the wheel.
+    rapids-uv-pip install --constraint "${PIP_CONSTRAINT}" \
+        --editable "./python/cudf_polars[test,dask,ray]"
+
+    exec ./ci/run_cudf_polars_coverage_comparison.sh
+fi
+
 # shellcheck disable=SC2317
 function set_exitcode()
 {

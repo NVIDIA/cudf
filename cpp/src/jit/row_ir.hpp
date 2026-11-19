@@ -18,6 +18,7 @@
 
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/stream>
 
 #include <ast/jit/expressions.hpp>
@@ -315,8 +316,7 @@ struct [[nodiscard]] node {
   /**
    * @brief Create a set of argument IR nodes
    */
-  template <typename... T>
-    requires(std::is_same_v<node, T> && ...)
+  template <cuda::std::same_as<node>... T>
   static std::vector<std::unique_ptr<node>> arguments(T... args)
   {
     std::vector<std::unique_ptr<node>> result;
@@ -327,8 +327,7 @@ struct [[nodiscard]] node {
   /**
    * @brief Create a set of argument IR nodes
    */
-  template <typename... T>
-    requires(std::is_same_v<std::unique_ptr<node>, T> && ...)
+  template <cuda::std::same_as<std::unique_ptr<node>>... T>
   static std::vector<std::unique_ptr<node>> arguments(T... args)
   {
     std::vector<std::unique_ptr<node>> result;
@@ -356,8 +355,7 @@ struct [[nodiscard]] node {
    * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
    */
-  template <typename... T>
-    requires(std::is_same_v<node, T> && ...)
+  template <cuda::std::same_as<node>... T>
   node(opcode op, std::optional<int32_t> target_scale, error_policy error_policy, T... args)
     : node(op, target_scale, error_policy, arguments(std::move(args)...))
   {
@@ -370,8 +368,7 @@ struct [[nodiscard]] node {
    * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
    */
-  template <typename... T>
-    requires(std::is_same_v<node, T> && ...)
+  template <cuda::std::same_as<node>... T>
   node(opcode op,
        std::optional<int32_t> target_scale,
        error_policy error_policy,

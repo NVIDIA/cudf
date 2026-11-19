@@ -15,6 +15,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/lists/lists_column_view.hpp>
+#include <cudf/lists/sorting.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
@@ -28,6 +29,8 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <source_location>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -40,6 +43,38 @@ namespace {
 std::unique_ptr<cudf::column> sorted(std::unique_ptr<cudf::column> col)
 {
   return std::move(cudf::sort(cudf::table_view({col->view()}))->release().front());
+}
+
+// segmented_top_k and segmented_top_k_order return each segment's rows in no particular order, so
+// tests sort each list of both the expected and the result columns before comparing them. This
+// checks which rows are selected, not their order. Which rows are selected among values tied at
+// the k-th position is also unspecified, so the tests avoid such ties.
+void expect_lists_equal_unordered(
+  cudf::column_view const& expected,
+  cudf::column_view const& result,
+  std::source_location const& location = std::source_location::current())
+{
+  SCOPED_TRACE("Original failure location: " + std::string{location.file_name()} + ":" +
+               std::to_string(location.line()));
+  auto constexpr asc   = cudf::order::ASCENDING;
+  auto constexpr after = cudf::null_order::AFTER;
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    cudf::lists::sort_lists(cudf::lists_column_view(expected), asc, after)->view(),
+    cudf::lists::sort_lists(cudf::lists_column_view(result), asc, after)->view());
+}
+
+void expect_lists_equivalent_unordered(
+  cudf::column_view const& expected,
+  cudf::column_view const& result,
+  std::source_location const& location = std::source_location::current())
+{
+  SCOPED_TRACE("Original failure location: " + std::string{location.file_name()} + ":" +
+               std::to_string(location.line()));
+  auto constexpr asc   = cudf::order::ASCENDING;
+  auto constexpr after = cudf::null_order::AFTER;
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    cudf::lists::sort_lists(cudf::lists_column_view(expected), asc, after)->view(),
+    cudf::lists::sort_lists(cudf::lists_column_view(result), asc, after)->view());
 }
 }  // namespace
 
@@ -321,6 +356,143 @@ TYPED_TEST(TopKFloatingPoint, MultiBlock)
   }
 }
 
+TYPED_TEST(TopKFloatingPoint, Segmented)
+{
+  using T    = TypeParam;
+  using LCW  = cudf::test::lists_column_wrapper<T>;
+  using LCWO = cudf::test::lists_column_wrapper<cudf::size_type>;
+
+  auto const nan     = std::numeric_limits<T>::quiet_NaN();
+  auto const neg_nan = std::copysign(nan, T{-1});
+  auto const inf     = std::numeric_limits<T>::infinity();
+
+  // NaNs compare equal to each other and greater than every other value, whatever their sign;
+  // -0.0 compares equal to +0.0; nulls are ordered last in either direction. k = 3 never splits a
+  // group of equal values, so each expected set is unique. Segment 4 has fewer than k rows.
+  // clang-format off
+  auto input = cudf::test::fixed_width_column_wrapper<T>(
+    {T{2}, nan, T{1}, neg_nan, T{3},      // [0, 5):   NaNs of both signs
+     inf, -inf, T{0}, nan,                // [5, 9):   infinities
+     T{-0.0}, T{1}, T{0.0}, T{-1},        // [9, 13):  signed zeros
+     nan, T{0}, T{5}, nan, T{0},          // [13, 18): rows 14 and 17 are null
+     neg_nan, nan},                       // [18, 20): only NaNs
+    {1, 1, 1, 1, 1,
+     1, 1, 1, 1,
+     1, 1, 1, 1,
+     1, 0, 1, 1, 0,
+     1, 1});
+  // clang-format on
+  auto offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 5, 9, 13, 18, 20});
+
+  {
+    auto const expected = LCW{
+      {T{3}, nan, nan}, {T{0}, inf, nan}, {T{-0.0}, T{0.0}, T{1}}, {T{5}, nan, nan}, {nan, nan}};
+    auto const expected_order = LCWO{{1, 3, 4}, {5, 7, 8}, {9, 10, 11}, {13, 15, 16}, {18, 19}};
+    expect_lists_equivalent_unordered(expected, cudf::segmented_top_k(input, offsets, 3)->view());
+    expect_lists_equivalent_unordered(expected_order,
+                                      cudf::segmented_top_k_order(input, offsets, 3)->view());
+  }
+  {
+    auto const expected       = LCW{{T{1}, T{2}, T{3}},
+                                    {-inf, T{0}, inf},
+                                    {T{-1}, T{-0.0}, T{0.0}},
+                                    {T{5}, nan, nan},
+                                    {nan, nan}};
+    auto const expected_order = LCWO{{0, 2, 4}, {5, 6, 7}, {9, 11, 12}, {13, 15, 16}, {18, 19}};
+    expect_lists_equivalent_unordered(
+      expected, cudf::segmented_top_k(input, offsets, 3, cudf::order::ASCENDING)->view());
+    expect_lists_equivalent_unordered(
+      expected_order,
+      cudf::segmented_top_k_order(input, offsets, 3, cudf::order::ASCENDING)->view());
+  }
+}
+
+TYPED_TEST(TopKFloatingPoint, SegmentedMultiBlock)
+{
+  using T = TypeParam;
+
+  // Distinct finite values mixed with NaNs of both signs, infinities, a -0.0, and nulls, in
+  // segments of 1, 3000, 0, 10000, and 257 rows. In each segment with more than k rows, the NaNs
+  // and +infinities (descending) or the -infinities (ascending) number fewer than k, and every
+  // other valid value is distinct, so each expected set is unique.
+  auto constexpr num_rows = cudf::size_type{13'258};
+  auto constexpr k        = cudf::size_type{100};
+  auto const nan          = std::numeric_limits<T>::quiet_NaN();
+  auto const inf          = std::numeric_limits<T>::infinity();
+  auto values             = std::vector<T>(num_rows);
+  for (cudf::size_type row = 0; row < num_rows; ++row) {
+    switch (row % 1000) {
+      case 0: values[row] = nan; break;
+      case 500: values[row] = std::copysign(nan, T{-1}); break;
+      case 250: values[row] = inf; break;
+      case 750: values[row] = -inf; break;
+      default: values[row] = static_cast<T>(row) - T{6001}; break;
+    }
+  }
+  values[6001]            = T{-0.0};
+  auto const is_valid     = [](cudf::size_type row) { return row % 13 != 5; };
+  auto const offsets_host = std::vector<cudf::size_type>{0, 1, 3001, 3001, 13'001, num_rows};
+
+  auto const rows  = cuda::counting_iterator<cudf::size_type>{0};
+  auto const input = cudf::test::fixed_width_column_wrapper<T>(
+    values.begin(), values.end(), cuda::transform_iterator(rows, is_valid));
+  auto const offsets = cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets_host.begin(),
+                                                                               offsets_host.end());
+
+  // NaNs compare equal to each other and greater than every other value.
+  auto const less = [](T lhs, T rhs) {
+    return std::isnan(rhs) ? !std::isnan(lhs) : (!std::isnan(lhs) && lhs < rhs);
+  };
+  auto const check = [&](cudf::order topk_order) {
+    auto expected_values  = std::vector<T>{};
+    auto expected_rows    = std::vector<cudf::size_type>{};
+    auto expected_offsets = std::vector<cudf::size_type>{0};
+    for (std::size_t seg = 0; seg + 1 < offsets_host.size(); ++seg) {
+      auto seg_rows = std::vector<cudf::size_type>{};
+      for (auto row = offsets_host[seg]; row < offsets_host[seg + 1]; ++row) {
+        if (is_valid(row)) { seg_rows.push_back(row); }
+      }
+      // Each segment has at least min(k, segment size) valid rows, so no nulls are selected
+      auto const seg_size = offsets_host[seg + 1] - offsets_host[seg];
+      ASSERT_GE(static_cast<cudf::size_type>(seg_rows.size()), std::min(k, seg_size));
+      std::stable_sort(seg_rows.begin(), seg_rows.end(), [&](auto lhs, auto rhs) {
+        return topk_order == cudf::order::ASCENDING ? less(values[lhs], values[rhs])
+                                                    : less(values[rhs], values[lhs]);
+      });
+      seg_rows.resize(std::min(k, static_cast<cudf::size_type>(seg_rows.size())));
+      auto seg_values = std::vector<T>{};
+      for (auto row : seg_rows) {
+        seg_values.push_back(values[row]);
+      }
+      std::sort(seg_rows.begin(), seg_rows.end());
+      std::sort(seg_values.begin(), seg_values.end(), less);
+      expected_rows.insert(expected_rows.end(), seg_rows.begin(), seg_rows.end());
+      expected_values.insert(expected_values.end(), seg_values.begin(), seg_values.end());
+      expected_offsets.push_back(static_cast<cudf::size_type>(expected_rows.size()));
+    }
+    auto const make_lists = [&](auto&& child) {
+      auto offsets_col = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+        expected_offsets.begin(), expected_offsets.end());
+      return cudf::make_lists_column(static_cast<cudf::size_type>(expected_offsets.size() - 1),
+                                     offsets_col.release(),
+                                     child.release(),
+                                     0,
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    };
+    auto const expected = make_lists(
+      cudf::test::fixed_width_column_wrapper<T>(expected_values.begin(), expected_values.end()));
+    auto const expected_order = make_lists(cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+      expected_rows.begin(), expected_rows.end()));
+
+    expect_lists_equivalent_unordered(expected->view(),
+                                      cudf::segmented_top_k(input, offsets, k, topk_order)->view());
+    expect_lists_equivalent_unordered(
+      expected_order->view(), cudf::segmented_top_k_order(input, offsets, k, topk_order)->view());
+  };
+  check(cudf::order::DESCENDING);
+  check(cudf::order::ASCENDING);
+}
+
 template <typename T>
 struct TopKFixedPoint : public cudf::test::BaseFixture {};
 
@@ -369,9 +541,9 @@ TYPED_TEST(TopKTypes, TopKSegmented)
       {59, 58, 57}, {69, 68, 67}, {79, 78, 77}, {89, 88, 87}, {99, 98, 97}});
     // clang-format on
     auto result = cudf::segmented_top_k(input, offsets, 3);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    expect_lists_equivalent_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 3);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order, result->view());
+    expect_lists_equivalent_unordered(expected_order, result->view());
   }
 
   {
@@ -384,9 +556,9 @@ TYPED_TEST(TopKTypes, TopKSegmented)
       {42, 43, 44}, {60, 61, 62}, {70, 71, 72}, {80, 81, 82}, {90, 91, 92}});
     // clang-format on
     auto result = cudf::segmented_top_k(input, offsets, 3, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+    expect_lists_equivalent_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 3, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_order, result->view());
+    expect_lists_equivalent_unordered(expected_order, result->view());
   }
 }
 
@@ -405,9 +577,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{30, 20}, {}, {50, 45}});
     LCWO expected_order({{1, 2}, {}, {3, 5}});
     auto result = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 
   {
@@ -418,9 +590,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{}, {40, 30}});
     LCWO expected_order({{}, {0, 2}});
     auto result = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 
   {
@@ -430,9 +602,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{40, 30}, {}});
     LCWO expected_order({{0, 2}, {}});
     auto result = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 
   {
@@ -442,9 +614,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{30, 20}, {}, {}, {50, 45}});
     LCWO expected_order({{1, 2}, {}, {}, {3, 5}});
     auto result = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 
   {
@@ -455,9 +627,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{7}, {}, {9, 3}});
     LCWO expected_order({{0}, {}, {2, 1}});
     auto result = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 
   {
@@ -468,9 +640,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmpty)
     LCW expected({{10, 20}, {}, {15, 25}});
     LCWO expected_order({{0, 2}, {}, {4, 6}});
     auto result = cudf::segmented_top_k(input, offsets, 2, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
     result = cudf::segmented_top_k_order(input, offsets, 2, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 }
 
@@ -490,9 +662,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmptyWithNulls)
   LCW expected({{30, 10}, {}, {50, 45}});
   LCWO expected_order({{1, 0}, {}, {3, 5}});
   auto result = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+  expect_lists_equivalent_unordered(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 // Sliced input and offsets with a trailing empty segment: both views begin at a non-zero offset.
@@ -512,9 +684,9 @@ TYPED_TEST(TopKTypes, TopKSegmentedEmptySliced)
   LCW expected({{40, 30}, {}});
   LCWO expected_order({{0, 2}, {}});
   auto result = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  expect_lists_equal_unordered(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 struct TopK : public cudf::test::BaseFixture {};
@@ -543,11 +715,11 @@ TEST_F(TopK, SegmentedUncoveredTail)
   // Segment [0,5)={40,10,20,30,50} -> top-2 {50,40}; segment [5,8)={15,25,5} -> top-2 {25,15}.
   auto expected = cudf::test::lists_column_wrapper<int32_t>({{50, 40}, {25, 15}});
   auto result   = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  expect_lists_equal_unordered(expected, result->view());
 
   auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{4, 0}, {6, 5}});
   result              = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 TEST_F(TopK, SegmentedUncoveredHead)
@@ -559,11 +731,11 @@ TEST_F(TopK, SegmentedUncoveredHead)
   // Single segment [2,5)={7,9,8} -> top-2 {9,8} at rows {3,4}.
   auto expected = cudf::test::lists_column_wrapper<int32_t>({{9, 8}});
   auto result   = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  expect_lists_equal_unordered(expected, result->view());
 
   auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{3, 4}});
   result              = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 
   {
     // Head-uncovered layout with multiple real segments: offsets {2,5,8} over 8 rows leave
@@ -575,11 +747,11 @@ TEST_F(TopK, SegmentedUncoveredHead)
     // segment [5,8)={30,10,20} -> top-2 {30,20} at rows {5,7}.
     auto expected = cudf::test::lists_column_wrapper<int32_t>({{9, 8}, {30, 20}});
     auto result   = cudf::segmented_top_k(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
 
     auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{3, 4}, {5, 7}});
     result              = cudf::segmented_top_k_order(input, offsets, 2);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 }
 
@@ -594,21 +766,21 @@ TEST_F(TopK, SegmentedUncoveredBoth)
     // Segment [3,7)={6,5,4,3} -> top-3 {6,5,4} at rows {3,4,5}.
     auto expected = cudf::test::lists_column_wrapper<int32_t>({{6, 5, 4}});
     auto result   = cudf::segmented_top_k(input, offsets, 3);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
 
     auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{3, 4, 5}});
     result              = cudf::segmented_top_k_order(input, offsets, 3);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
   {
     // ASCENDING: smallest-3 of segment [3,7)={6,5,4,3} -> {3,4,5} at rows {6,5,4}.
     auto expected = cudf::test::lists_column_wrapper<int32_t>({{3, 4, 5}});
     auto result   = cudf::segmented_top_k(input, offsets, 3, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    expect_lists_equal_unordered(expected, result->view());
 
     auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{6, 5, 4}});
     result              = cudf::segmented_top_k_order(input, offsets, 3, cudf::order::ASCENDING);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+    expect_lists_equal_unordered(expected_order, result->view());
   }
 }
 
@@ -657,11 +829,11 @@ TEST_F(TopK, SegmentedUncoveredNull)
                                           0,
                                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   auto result           = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
+  expect_lists_equal_unordered(expected->view(), result->view());
 
   auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{4, 0}, {6, 5}});
   result              = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 TEST_F(TopK, SegmentedUncoveredSmallSegment)
@@ -675,11 +847,11 @@ TEST_F(TopK, SegmentedUncoveredSmallSegment)
   // segment [3,7)={9,1,6,7} -> top-3 {9,7,6} at rows {3,6,5}; rows 0 and 7 excluded.
   auto expected = cudf::test::lists_column_wrapper<int32_t>({{8, 4}, {9, 7, 6}});
   auto result   = cudf::segmented_top_k(input, offsets, 3);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  expect_lists_equal_unordered(expected, result->view());
 
   auto expected_order = cudf::test::lists_column_wrapper<cudf::size_type>({{1, 2}, {3, 6, 5}});
   result              = cudf::segmented_top_k_order(input, offsets, 3);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 TEST_F(TopK, Errors)
@@ -717,7 +889,7 @@ TEST_F(TopK, TopKSegmentedEmptyOrderInitcheck)
   auto offsets = cudf::test::fixed_width_column_wrapper<int32_t>({0, 3, 3, 7});
   LCWO expected_order({{1, 2}, {}, {3, 5}});
   auto result = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 // Multi-block: 300 rows span more than one thread block (256 threads/block), so the
@@ -736,9 +908,9 @@ TEST_F(TopK, TopKSegmentedEmptyMultiBlock)
   LCW expected({{149, 148}, {}, {299, 298}});
   LCWO expected_order({{149, 148}, {}, {299, 298}});
   auto result = cudf::segmented_top_k(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  expect_lists_equal_unordered(expected, result->view());
   result = cudf::segmented_top_k_order(input, offsets, 2);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_order, result->view());
+  expect_lists_equal_unordered(expected_order, result->view());
 }
 
 // Every tenth of 100'000 rows is null, and values equal their row index, so every expected set is

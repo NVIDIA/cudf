@@ -474,9 +474,9 @@ TEST_F(StringsFindTest, EmptyTarget)
     cudf::test::strings_column_wrapper long_strings({long_str, long_str});
     cudf::test::strings_column_wrapper long_targets({"", ""});
     auto const long_view = cudf::strings_column_view(long_strings);
-    results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets));
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-      *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0}));
+    results              = cudf::strings::find(long_view, cudf::strings_column_view(long_targets));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results,
+                                   cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 0}));
     results = cudf::strings::find(long_view, cudf::strings_column_view(long_targets), 100);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(
       *results, cudf::test::fixed_width_column_wrapper<cudf::size_type>({100, 100}));

@@ -15,7 +15,8 @@ from cudf.core.udf._ops import arith_ops, comparison_ops, unary_ops
 from cudf.core.udf.mlir_backend.groupby_typing import (
     SUPPORTED_GROUPBY_NUMPY_TYPES,
 )
-from cudf.core.udf.utils import UDFError, precompiled
+from cudf.core.udf.mlir_backend.udf_kernel_base import _compile_kernel_cached
+from cudf.core.udf.utils import UDFError
 from cudf.testing import assert_eq, assert_groupby_results_equal
 from cudf.testing._utils import expect_warning_if
 
@@ -574,8 +575,8 @@ def test_groupby_apply_caching():
     # recompile
 
     # begin with a clear cache
-    precompiled.clear()
-    assert precompiled.currsize == 0
+    _compile_kernel_cached.cache_clear()
+    assert _compile_kernel_cached.cache_info().currsize == 0
 
     data = cudf.DataFrame({"a": [1, 1, 1, 2, 2, 2], "b": [1, 2, 3, 4, 5, 6]})
 
@@ -584,24 +585,24 @@ def test_groupby_apply_caching():
 
     # a single run should result in a cache size of 1
     run_groupby_apply_jit_test(data, f, ["a"])
-    assert precompiled.currsize == 1
+    assert _compile_kernel_cached.cache_info().currsize == 1
 
     # a second run with f should not increase the count
     run_groupby_apply_jit_test(data, f, ["a"])
-    assert precompiled.currsize == 1
+    assert _compile_kernel_cached.cache_info().currsize == 1
 
     # changing a constant value inside the UDF should miss
     def f(group):
         return group["b"].mean() * 3
 
     run_groupby_apply_jit_test(data, f, ["a"])
-    assert precompiled.currsize == 2
+    assert _compile_kernel_cached.cache_info().currsize == 2
 
     # changing the dtypes of the columns should miss
     data["b"] = data["b"].astype("float64")
     run_groupby_apply_jit_test(data, f, ["a"])
 
-    assert precompiled.currsize == 3
+    assert _compile_kernel_cached.cache_info().currsize == 3
 
 
 def test_groupby_apply_no_bytecode_fallback():

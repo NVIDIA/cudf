@@ -30,6 +30,8 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
+  # Let tag runs finish Maven Central publication; canceling this workflow
+  # would also interrupt the shared publisher during upload or promotion.
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions: {}

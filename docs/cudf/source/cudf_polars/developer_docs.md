@@ -534,6 +534,33 @@ on multiple streams. It's the caller's responsibility to provide a stream that
 all the `Column`s are valid on, likely by joining together the streams that each
 individual stream is valid on.
 
+# Memory reservations
+
+Streaming actors reserve device memory through the rapidsmpf reservation
+system before they allocate. Allocations that rapidsmpf does not track, such
+as libcudf calls, run inside `opaque_memory_usage`, which associates them with
+a reservation obtained from `reserve_memory`:
+
+```python
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
+
+with opaque_memory_usage(
+    await reserve_memory(context, size=input_bytes, net_memory_delta=0)
+):
+    df = await ir_context.to_thread(
+        ir.do_evaluate, *args, *dfs, context=ir_context
+    )
+```
+
+The size of an opaque reservation is a best-effort estimate. Base it on
+quantities that cudf-polars knows, such as the size of the inputs, the
+expected output, or `split_and_pack_cost` for a pack or copy of a slice. Do
+not model libcudf internals, such as sort workspace or temporary buffers, so
+that cudf-polars does not depend on how libcudf allocates. The rapidsmpf
+reservation system tolerates an inexact estimate, because allocations inside
+`opaque_memory_usage` are not capped by the reservation.
+
 # Writing tests
 
 We use `pytest`, tests live in the `tests/` subdirectory,

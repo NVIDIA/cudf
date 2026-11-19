@@ -753,6 +753,7 @@ def test_send_remote_partition_spilled_single_piece(
         MemoryType.HOST, chunk.data_alloc_size(), allow_overbooking=True
     )
     spilled = chunk.copy(reservation)
+    del df, chunk
     assert not spilled.is_available()
     store = ChunkStore(context)
     store.insert(Message(0, spilled))

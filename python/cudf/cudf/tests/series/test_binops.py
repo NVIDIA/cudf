@@ -249,7 +249,7 @@ _TIMEDELTA_SCALARS = [
     np.timedelta64(4, "s"),
     np.timedelta64(456, "D"),
     np.timedelta64(46, "h"),
-    np.timedelta64("nat"),
+    np.timedelta64("nat", "ns"),
     np.timedelta64(1, "s"),
     np.timedelta64(1, "ms"),
     np.timedelta64(1, "us"),
@@ -666,7 +666,7 @@ _DATETIME_SUBTRACT_OTHERS = [
     np.datetime64("2005-02"),
     np.datetime64("2005-02-25"),
     np.datetime64("2005-02-25T03:30"),
-    np.datetime64("nat"),
+    np.datetime64("nat", "ns"),
     # TODO: https://github.com/pandas-dev/pandas/issues/52295
 ]
 
@@ -2936,7 +2936,9 @@ def test_binops_decimal_scalar_compare(
     assert_eq(expected, actual)
 
 
-@pytest.mark.parametrize("null_scalar", [None, cudf.NA, np.datetime64("NaT")])
+@pytest.mark.parametrize(
+    "null_scalar", [None, cudf.NA, np.datetime64("NaT", "ns")]
+)
 def test_column_null_scalar_comparison(
     request, all_supported_types_as_str, null_scalar, comparison_op
 ):
@@ -3250,7 +3252,7 @@ def test_binops_float_scalar_decimal():
     "scalars",
     [
         pd.NaT,
-        np.datetime64("NaT"),
+        np.datetime64("NaT", "ns"),
         None,
         pd.NA,
         np.nan,

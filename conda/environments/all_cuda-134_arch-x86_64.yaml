@@ -11,7 +11,6 @@ dependencies:
 - botocore>=1.24.21
 - breathe>=4.35.0
 - c-compiler
-- cachetools
 - clang-tools==20.1.8
 - clang==20.1.8
 - cmake>=4.0,<4.5

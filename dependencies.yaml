@@ -1141,7 +1141,6 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - cachetools
           - nvtx>=0.2.1
           - packaging
           - rich

@@ -1228,13 +1228,15 @@ def test_extract_all_invalid_pattern(
 
 
 @pytest.mark.parametrize("pattern", INVALID_EXTRACT_ALL_PATTERNS)
-def test_extract_all_invalid_pattern_fallback_raises_cpu_error(pattern: str) -> None:
+def test_extract_all_invalid_pattern_fallback_raises_cpu_error(
+    in_memory_fallback_engine: pl.GPUEngine, pattern: str
+) -> None:
     lf = pl.LazyFrame({"a": ["a1b22", None]})
     q = lf.select(pl.col("a").str.extract_all(pattern))
     with pytest.raises(pl.exceptions.ComputeError) as cpu_error:
         q.collect()
     with pytest.raises(pl.exceptions.ComputeError) as gpu_error:
-        q.collect(engine=pl.GPUEngine(executor="in-memory", raise_on_fail=False))
+        q.collect(engine=in_memory_fallback_engine)
     assert str(gpu_error.value) == str(cpu_error.value)
 
 

@@ -155,9 +155,11 @@ def test_map_field_names_then_field(engine: pl.GPUEngine, ldf) -> None:
     ],
     ids=["map_fields", "rename_fields", "prefix_fields", "suffix_fields"],
 )
-def test_rename_fields_preserves_sortedness(expr: pl.Expr) -> None:
+def test_rename_fields_preserves_sortedness(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
     ldf = pl.LazyFrame({"a": [{"b": 1}, {"b": 2}]}).set_sorted("a")
-    node = Translator(ldf.select(expr)._ldf.visit(), pl.GPUEngine()).translate_ir()
+    node = Translator(ldf.select(expr)._ldf.visit(), in_memory_engine).translate_ir()
     result = node.evaluate(cache={}, context=IRExecutionContext())
     assert result.columns[0].is_sorted == plc.types.Sorted.YES
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 import uuid
 from typing import Any
 from unittest.mock import Mock
@@ -68,13 +69,35 @@ def test_cancelled_close_blocks_communicator_until_complete(
     cancel_inside(collective, comm, 7, timeout_seconds)
     assert collective.close_started.is_set()
     assert not collective.closed.is_set()
-    with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
-        wait_for_pending_closes(comm, timeout=0)
+    assert [close.op_id for close in pending_closes[comm]] == [7]
 
     collective.released.set()
     wait_for_pending_closes(comm, timeout=timeout_seconds)
     assert collective.closed.is_set()
     assert pending_closes == {}
+
+
+def test_gate_timeout_marks_communicator_unusable(
+    pending_closes, fake_collective, cancel_when
+) -> None:
+    comm = Mock()
+
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, comm, 7):
+            await fake_collective.extract_all(ordered=True)
+
+    cancel_when(body, fake_collective.waiting)
+    close_calls = fake_collective.close_calls
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match=r"operation IDs \[7\].*every rank"):
+        wait_for_pending_closes(comm, timeout=0.2)
+    assert time.monotonic() - start >= 0.2
+    assert fake_collective.close_calls == close_calls + 1
+
+    fake_collective.release()
+    with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
+        wait_for_pending_closes(comm, timeout=30)
+    assert fake_collective.close_calls == close_calls + 1
 
 
 def test_cancelled_close_only_blocks_its_communicator(
@@ -107,8 +130,7 @@ def test_cancellation_while_closing_does_not_wait(
             await asyncio.wait_for(task, timeout=timeout_seconds)
 
     asyncio.run(run())
-    with pytest.raises(RuntimeError, match=r"operation IDs \[3\]"):
-        wait_for_pending_closes(comm, timeout=0)
+    assert [close.op_id for close in pending_closes[comm]] == [3]
 
 
 def test_close_is_awaited_on_success(pending_closes, collective) -> None:

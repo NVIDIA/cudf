@@ -112,8 +112,7 @@ def test_overlap_allgather_cancellation_does_not_wait_for_peers(
             await asyncio.wait_for(task, timeout=timeout_seconds)
 
     asyncio.run(run())
-    with pytest.raises(RuntimeError, match=r"operation IDs \[6\]"):
-        wait_for_pending_closes(comm, timeout=0)
+    assert [close.op_id for close in pending_closes[comm]] == [6]
     peers_finished.set()
     wait_for_pending_closes(comm, timeout=timeout_seconds)
     assert pending_closes == {}

@@ -436,8 +436,7 @@ def test_callback_sink_cancellation_does_not_wait_for_peers(
 
     asyncio.run(run())
     assert shutdown_errors == [asyncio.CancelledError]
-    with pytest.raises(RuntimeError, match=r"operation IDs \[8\]"):
-        wait_for_pending_closes(comm, timeout=0)
+    assert [close.op_id for close in pending_closes[comm]] == [8]
     peers_finished.set()
     wait_for_pending_closes(comm, timeout=timeout_seconds)
     assert pending_closes == {}

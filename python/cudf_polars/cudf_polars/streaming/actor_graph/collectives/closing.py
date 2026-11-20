@@ -212,8 +212,7 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     The check is local to this rank. When it raises on one rank, the peer
     ranks do not know, and they can hang in their next collective while they
     wait for this rank. Every rank must shut down its engine and create a new
-    one with a new communicator. A communicator that the caller owns stays
-    unusable.
+    one.
 
     Parameters
     ----------
@@ -262,8 +261,7 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
                 f"The close of the collectives with operation IDs {op_ids} was "
                 f"cancelled and {outcome}, so this communicator cannot run new "
                 "collectives. Peer ranks may hang in their next collective. "
-                "Shut down the engine on every rank and create a new one with "
-                "a new communicator."
+                "Shut down the engine on every rank and create a new one."
             )
     raise RuntimeError(message) from failure
 

@@ -1133,6 +1133,8 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
+          # 'nvidia-ml-py' provides the 'pynvml' module
+          - &nvidia_ml_py nvidia-ml-py>=12
           - nvtx>=0.2.1
           - packaging
           - polars>=2.0,<2.2
@@ -1140,8 +1142,6 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # 'nvidia-ml-py' provides the 'pynvml' module
-          - &nvidia_ml_py nvidia-ml-py>=12
           - rapids-dask-dependency==27.2.*,>=0.0.0a0
   run_dask_cudf:
     common:

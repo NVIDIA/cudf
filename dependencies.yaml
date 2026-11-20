@@ -1839,6 +1839,7 @@ dependencies:
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0
+          - scipy
   depends_on_dask_cuda:
     common:
       - output_types: conda

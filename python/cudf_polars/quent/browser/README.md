@@ -11,21 +11,18 @@ the relocatable static-viewer payload and contains exactly one engine with all
 of its controller and worker contexts. Python callers generate that payload
 with `cudf_polars.quent._export.write_quent_browser_bundle`.
 
-Build the analyzer:
+Build the analyzer from this directory:
 
 ```bash
 cargo build --release --target wasm32-unknown-unknown
 wasm-bindgen \
-  target/wasm32-unknown-unknown/release/cudf_polars_quent_browser.wasm \
+  ../target/wasm32-unknown-unknown/release/cudf_polars_quent_browser.wasm \
   --target web \
   --out-dir generated
 ```
 
 The `wasm-bindgen` CLI must match the `wasm-bindgen` crate version selected by
-`Cargo.lock`.
-
-`cargo metadata --no-deps` prints `target_directory` when `CARGO_TARGET_DIR`
-is set and that path differs from `target/`.
+the workspace [`Cargo.lock`](../Cargo.lock).
 
 The generated JavaScript module exports Quent's standardized `BrowserServer`
 interface, so no cudf-polars-specific Web Worker is required. Host the generated

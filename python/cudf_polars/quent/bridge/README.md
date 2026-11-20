@@ -41,7 +41,7 @@ Quent is pinned by full Git commit SHA in the workspace
    cargo update
    ```
 
-   Review and then commit the changes (including the lockfiles).
+   Review and then commit the changes, including the workspace lockfile.
 3. Activate the cudf development environment and rebuild from the repository
    root:
 

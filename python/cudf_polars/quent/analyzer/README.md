@@ -12,10 +12,11 @@ cargo check
 cargo test
 ```
 
-Quent upgrades must update every `rev` in `store`, `analyzer`, `browser`, and
-`bridge` to the same full commit SHA, then refresh and commit each Cargo
-lockfile. See the bridge's [Updating Quent](../bridge/README.md#updating-quent)
-section for the complete update and verification checklist.
+Quent upgrades must update every Quent dependency's `rev` in the workspace
+[`Cargo.toml`](../Cargo.toml) to the same full commit SHA, then refresh and
+commit the workspace `Cargo.lock`. See the bridge's
+[Updating Quent](../bridge/README.md#updating-quent) section for the complete
+update and verification checklist.
 
 ## Project structure
 

@@ -1088,7 +1088,6 @@ def test_extract_groups(engine: pl.GPUEngine, ldf_extract):
         r"[\x61]",
         "[0-9]{001}",
         "[0-9]{01,2}",
-        "a(?:(?:b+)?){2,3}",
     ],
 )
 def test_extract_all(engine: pl.GPUEngine, pattern: str) -> None:
@@ -1107,6 +1106,15 @@ def test_extract_all(engine: pl.GPUEngine, pattern: str) -> None:
             ]
         }
     )
+    q = lf.select(pl.col("a").str.extract_all(pattern))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("pattern", ["a(?:(?:b+)?){2,3}", "a(?:(?:b+)?){0,5}"])
+def test_extract_all_bounded_repetition_of_empty_matching_group(
+    engine: pl.GPUEngine, pattern: str
+) -> None:
+    lf = pl.LazyFrame({"a": ["abbb", "a", "ab ab", "ba", "abab", None]})
     q = lf.select(pl.col("a").str.extract_all(pattern))
     assert_gpu_result_equal(q, engine=engine)
 

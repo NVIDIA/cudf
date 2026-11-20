@@ -2135,8 +2135,13 @@ def _apply_predicate(op, val, col_stats):
             and val == col_max
         ):
             return False
-        if _apply_filter_bool_eq(val, col_stats):
-            return False
+        if "true_count" in col_stats and "false_count" in col_stats:
+            true_count = col_stats["true_count"]
+            false_count = col_stats["false_count"]
+            if (val is True and false_count == 0 and true_count > 0) or (
+                val is False and true_count == 0 and false_count > 0
+            ):
+                return False
     elif col_min is not None and (
         (op == "<" and val <= col_min) or (op == "<=" and val < col_min)
     ):

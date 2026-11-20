@@ -167,7 +167,7 @@ void validate_requests(host_span<streaming_aggregation_request const> requests)
     CUDF_EXPECTS(detail::is_hash_aggregation(req.aggregation->kind) &&
                    req.aggregation->kind != aggregation::ARGMIN &&
                    req.aggregation->kind != aggregation::ARGMAX,
-                 "Unsupported aggregation kind for streaming groupby. "
+                 "Unsupported aggregation kind. "
                  "ARGMIN/ARGMAX are not supported because row indices are batch-local.",
                  std::invalid_argument);
   }
@@ -229,6 +229,14 @@ aggregate_state::aggregate_state(host_span<streaming_aggregation_request const> 
   }
 }
 
+direct_groupby::impl::impl(size_type num_groups,
+                           host_span<streaming_aggregation_request const> requests,
+                           cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : aggregate_state{requests, std::move(mr)}, _num_groups{num_groups}
+{
+  CUDF_EXPECTS(num_groups > 0, "num_groups must be positive.", std::invalid_argument);
+}
+
 void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_ref stream)
 {
   auto const mr = cudf::memory_resources{_mr, cudf::get_current_device_resource_ref()};
@@ -275,28 +283,28 @@ void aggregate_state::initialize_aggregates(table_view const& data,
   // Reject aggregation kinds that are unsupported in streaming after decomposition.
   for (auto k : _agg_kinds) {
     CUDF_EXPECTS(k != aggregation::ARGMIN && k != aggregation::ARGMAX,
-                 "Streaming groupby does not support MIN/MAX on variable-width types "
+                 "MIN/MAX on variable-width types is not supported "
                  "(internally decomposed to ARGMIN/ARGMAX).",
                  std::invalid_argument);
     CUDF_EXPECTS(k != aggregation::SUM_OVERFLOW,
-                 "Streaming groupby does not support SUM_OVERFLOW "
+                 "SUM_OVERFLOW is not supported "
                  "(struct intermediate cannot be merged across batches).",
                  std::invalid_argument);
   }
 
-  CUDF_EXPECTS(
-    std::all_of(cuda::counting_iterator<size_type>{0},
-                cuda::counting_iterator<size_type>{values_view.num_columns()},
-                [&](auto i) {
-                  auto const& values     = values_view.column(i);
-                  auto const values_type = cudf::is_dictionary(values.type())
-                                             ? cudf::dictionary_column_view(values).keys().type()
-                                             : values.type();
-                  return cudf::detail::dispatch_type_and_aggregation(
-                    values_type, _agg_kinds[i], is_atomic_aggregation_supported{});
-                }),
-    "streaming_groupby does not support this combination of value type and aggregation kind.",
-    std::invalid_argument);
+  CUDF_EXPECTS(std::all_of(cuda::counting_iterator<size_type>{0},
+                           cuda::counting_iterator<size_type>{values_view.num_columns()},
+                           [&](auto i) {
+                             auto const& values = values_view.column(i);
+                             auto const values_type =
+                               cudf::is_dictionary(values.type())
+                                 ? cudf::dictionary_column_view(values).keys().type()
+                                 : values.type();
+                             return cudf::detail::dispatch_type_and_aggregation(
+                               values_type, _agg_kinds[i], is_atomic_aggregation_supported{});
+                           }),
+               "Unsupported combination of value type and aggregation kind.",
+               std::invalid_argument);
 
   // Keep only type metadata, never a view or owner of the caller's value buffers.
   _aggregate_input_types.reserve(values_view.num_columns());
@@ -620,6 +628,23 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
   }
 }
 
+std::vector<aggregation_result> direct_groupby::impl::do_finalize(cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr) const
+{
+  std::lock_guard const lock{_insert_mutex};
+  CUDF_EXPECTS(_initialized, "Cannot finalize direct_groupby with no accumulated data.");
+  _aggregate_done.wait(stream);
+  try {
+    auto results = finalize_gathered(gather_agg_results(_num_groups, stream, mr), stream, mr);
+    record_result_read(stream);
+    return results;
+  } catch (...) {
+    // A failed read must not leave untracked accesses before a subsequent resize.
+    synchronize_on_error(stream);
+    throw;
+  }
+}
+
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
 streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
 {
@@ -658,6 +683,34 @@ streaming_groupby::~streaming_groupby() = default;
 streaming_groupby::streaming_groupby(streaming_groupby&&) noexcept = default;
 
 streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = default;
+
+direct_groupby::direct_groupby(size_type num_groups,
+                               host_span<streaming_aggregation_request const> requests,
+                               cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _impl{std::make_unique<impl>(num_groups, requests, std::move(mr))}
+{
+}
+
+direct_groupby::~direct_groupby() = default;
+
+direct_groupby::direct_groupby(direct_groupby&&) noexcept = default;
+
+direct_groupby& direct_groupby::operator=(direct_groupby&&) noexcept = default;
+
+void direct_groupby::aggregate(device_span<size_type const> group_ids,
+                               table_view const& values,
+                               cuda::stream_ref stream)
+{
+  CUDF_FUNC_RANGE();
+  _impl->do_aggregate(group_ids, values, stream);
+}
+
+std::vector<aggregation_result> direct_groupby::finalize(cuda::stream_ref stream,
+                                                         cudf::memory_resources mr) const
+{
+  CUDF_FUNC_RANGE();
+  return _impl->do_finalize(stream, mr);
+}
 
 // Private member functions defined here (requires full impl definition).
 // The public API wrappers in streaming_groupby.cpp call these.

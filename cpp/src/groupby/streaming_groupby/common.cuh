@@ -229,7 +229,7 @@ struct aggregate_state {
    * result kernels on different streams may still overlap when no growth/read requires a wait.
    */
   mutable std::mutex _insert_mutex;
-  /// Orders the insertion phase across calls that supply different streams.
+  /// Orders key insertion and result-capacity changes across calls that supply different streams.
   insert_order_event _insert_done;
   // Fan-in of every queued result use. Bookkeeping is serialized by _insert_mutex.
   mutable insert_order_event _aggregate_done;
@@ -238,7 +238,7 @@ struct aggregate_state {
 
   bool _initialized{false};
   /// Set true once an `aggregate()` / `merge()` call has thrown after touching the
-  /// hash set.  Subsequent `aggregate()` / `merge()` calls fail fast; only
+  /// hash set or the aggregate storage.  Subsequent `aggregate()` / `merge()` calls fail fast; only
   /// `finalize()` may still be called to recover partial results.  Atomic so the
   /// fail-fast check in `do_aggregate` can run ahead of `_insert_mutex`.
   std::atomic<bool> _invalidated{false};
@@ -267,7 +267,7 @@ struct aggregate_state {
   void ensure_not_invalidated() const
   {
     CUDF_EXPECTS(!_invalidated.load(std::memory_order_relaxed),
-                 "streaming_groupby is in an invalidated state from a prior failure; "
+                 "The object is in an invalidated state from a prior failure; "
                  "no further aggregate()/merge() is allowed.  finalize() may still be called.");
   }
 
@@ -383,6 +383,21 @@ struct streaming_groupby::impl : aggregate_state {
   do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr);
 
   void do_merge(impl const& other, cuda::stream_ref stream);
+};
+
+/// The impl struct for direct_groupby. Defined in impl.cu.
+struct direct_groupby::impl : aggregate_state {
+  size_type _num_groups;
+
+  impl(size_type num_groups,
+       host_span<streaming_aggregation_request const> requests,
+       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+
+  void do_aggregate(device_span<size_type const> group_ids,
+                    table_view const& values,
+                    cuda::stream_ref stream);
+  [[nodiscard]] std::vector<aggregation_result> do_finalize(cuda::stream_ref stream,
+                                                            cudf::memory_resources mr) const;
 };
 
 }  // namespace cudf::groupby

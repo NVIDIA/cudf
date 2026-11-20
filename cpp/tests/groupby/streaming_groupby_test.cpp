@@ -31,6 +31,7 @@
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -691,6 +692,8 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
 
   auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
   cudf::groupby::streaming_groupby streaming_agg(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  // Keys 0 to num_batches + 1 double as group IDs.
+  cudf::groupby::direct_groupby direct_agg(num_batches + 2, reqs);
 
   std::vector<std::thread> threads;
   std::vector<std::exception_ptr> errors(num_batches);
@@ -708,6 +711,7 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
       }
       try {
         streaming_agg.aggregate(batches[i], *streams[i]);
+        direct_agg.aggregate(batches[i].column(0), batches[i], *streams[i]);
       } catch (...) {
         errors[i] = std::current_exception();
       }
@@ -729,6 +733,64 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
 
   auto [out_keys, results] = streaming_agg.finalize();
   verify_against_groupby(out_keys, results, batches, KEY_COL, reqs);
+
+  auto direct_keys    = cudf::sort(out_keys->view());
+  auto direct_results = direct_agg.finalize();
+  verify_against_groupby(direct_keys, direct_results, batches, KEY_COL, reqs);
+}
+
+TEST_F(StreamingGroupbyTest, DirectGroupby)
+{
+  constexpr cudf::size_type num_groups = 4;
+  constexpr cudf::size_type num_rows   = 2048;
+
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back(make_req(
+    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  requests.push_back(make_req(
+    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+  requests.push_back(make_req(0, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+
+  EXPECT_THROW(cudf::groupby::direct_groupby(0, requests), std::invalid_argument);
+  cudf::groupby::direct_groupby direct(num_groups, requests);
+
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> no_ids{};
+  cudf::test::fixed_width_column_wrapper<int32_t> no_values{};
+  direct.aggregate(cudf::column_view{no_ids}, cudf::table_view{{no_values}});
+  EXPECT_THROW(static_cast<void>(direct.finalize()), cudf::logic_error);
+
+  // Groups 1 and 3 never receive a row.
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> small_ids{0, 2, -1};
+  cudf::test::fixed_width_column_wrapper<int32_t> small_values{1, 1, 1};
+  direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{small_values}});
+
+  // 2,048 rows over four groups raise the state to two partials per group. Unless skipped, the
+  // -2 rows in a block of the second partial land in group 2 of the first partial.
+  constexpr std::array<cudf::size_type, 4> id_cycle{
+    0, 2, -2, std::numeric_limits<cudf::size_type>::min()};
+  std::vector<cudf::size_type> id_data(num_rows);
+  std::vector<int32_t> value_data(num_rows, 3);
+  std::vector<bool> validity(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    id_data[i]  = id_cycle[i % 4];
+    validity[i] = i % 8 != 0;
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ids(id_data.begin(), id_data.end());
+  cudf::test::fixed_width_column_wrapper<int32_t> values(
+    value_data.begin(), value_data.end(), validity.begin());
+
+  EXPECT_THROW(direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{values}}),
+               std::invalid_argument);
+  direct.aggregate(cudf::column_view{ids}, cudf::table_view{{values}});
+
+  auto const results = direct.finalize();
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_all{513, 0, 513, 0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_valid{257, 0, 513, 0};
+  cudf::test::fixed_width_column_wrapper<int64_t> sum{{769, 0, 1537, 0},
+                                                      {true, false, true, false}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_all, *results[0].results[0]);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_valid, *results[1].results[0]);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sum, *results[2].results[0]);
 }
 
 TEST_F(StreamingGroupbyTest, EmptyBatch)

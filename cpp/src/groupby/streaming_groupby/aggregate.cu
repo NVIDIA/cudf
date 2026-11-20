@@ -8,6 +8,7 @@
 
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
@@ -17,6 +18,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace cudf::groupby {
 
@@ -81,6 +83,40 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     aggregate_values(data, {group_ids.data(), group_ids.size()}, stream);
   } catch (...) {
     if (insertion_started) { _invalidated = true; }
+    // Do not let partially enqueued writes escape tracking before a subsequent resize/read.
+    synchronize_on_error(stream);
+    throw;
+  }
+}
+
+void direct_groupby::impl::do_aggregate(device_span<size_type const> group_ids,
+                                        table_view const& values,
+                                        cuda::stream_ref stream)
+{
+  ensure_not_invalidated();
+
+  CUDF_EXPECTS(std::cmp_equal(group_ids.size(), values.num_rows()),
+               "group_ids and values must have the same number of rows.",
+               std::invalid_argument);
+  if (group_ids.empty()) { return; }
+
+  // Keep host bookkeeping locked until every result use is enqueued and registered.
+  std::lock_guard const lock{_insert_mutex};
+  ensure_not_invalidated();
+  bool reshape_started = false;
+  try {
+    auto const mr = cudf::memory_resources{_mr, cudf::get_current_device_resource_ref()};
+    if (!_initialized) { initialize_aggregates(values, stream, mr); }
+    update_partial_budget(values.num_rows());
+    _insert_done.wait(stream);
+    reshape_started = true;
+    reshape_aggregate_results(_num_groups, _num_groups, stream, mr);
+    _insert_done.record(stream);
+    // Only now does finalize() have storage to read.
+    _initialized = true;
+    aggregate_values(values, group_ids, stream);
+  } catch (...) {
+    if (reshape_started) { _invalidated = true; }
     // Do not let partially enqueued writes escape tracking before a subsequent resize/read.
     synchronize_on_error(stream);
     throw;

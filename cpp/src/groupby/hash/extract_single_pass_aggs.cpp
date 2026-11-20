@@ -70,7 +70,8 @@ simple_aggregation_collector::operator()<aggregation::MEAN>(data_type col_type,
 {
   CUDF_EXPECTS(is_fixed_width(col_type), "MEAN aggregation expects fixed width type");
   std::vector<std::unique_ptr<aggregation>> aggs;
-  aggs.push_back(make_sum_aggregation());
+  // Sums the values in the MEAN result type, e.g. integers in double so their sum cannot wrap.
+  aggs.push_back(make_mean_aggregation());
   // COUNT_VALID
   aggs.push_back(make_count_aggregation());
   return aggs;

@@ -18,6 +18,7 @@
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/error.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -26,6 +27,8 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
+#include <string>
 #include <vector>
 
 using cudf::device_span;
@@ -419,6 +422,89 @@ TEST_F(NvcompConfigTest, Decompression)
   EXPECT_FALSE(decomp_disabled(compression_type::SNAPPY, {false, true}));
   // stable integrations enabled required
   EXPECT_TRUE(decomp_disabled(compression_type::SNAPPY, {false, false}));
+}
+
+struct DecompressionScratchSizesTest : public cudf::test::BaseFixture {};
+
+TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
+{
+  using cudf::io::compression_type;
+  using cudf::io::detail::decompression_info;
+  auto const stream = cudf::get_default_stream();
+
+  // Mixed and repeated codecs with different dimensions, plus elements with no pages
+  std::vector<decompression_info> const infos{
+    {compression_type::SNAPPY, 10, 1 << 16, 10 << 16},
+    {compression_type::NONE, 5, 1 << 10, 5 << 10},
+    {compression_type::ZSTD, 3, 1 << 20, 3 << 20},
+    {compression_type::SNAPPY, 0, 0, 0},
+    {compression_type::GZIP, 7, 1 << 12, 7 << 12},
+    {compression_type::BROTLI, 4, 1 << 14, 4 << 14},
+    {compression_type::SNAPPY, 1000, 1 << 20, 1000ul << 20},
+    {compression_type::ZLIB, 2, 1 << 8, 2 << 8},
+    {compression_type::BROTLI, 0, 0, 0},
+    {compression_type::BROTLI, 100, 1 << 10, 100 << 10},
+    {compression_type::ZSTD, 50, 1 << 16, 50 << 16},
+  };
+
+  auto const check = [&] {
+    std::vector<size_t> sizes(infos.size(), std::numeric_limits<size_t>::max());
+    cudf::io::detail::get_decompression_scratch_sizes(infos, sizes, stream);
+    for (size_t i = 0; i < infos.size(); ++i) {
+      auto const expected = infos[i].num_pages == 0
+                              ? 0
+                              : cudf::io::detail::get_decompression_scratch_size(infos[i], stream);
+      EXPECT_EQ(sizes[i], expected) << "element " << i;
+    }
+    // Elements without pages or compression never need scratch space
+    for (size_t i = 0; i < infos.size(); ++i) {
+      if (infos[i].num_pages == 0 or infos[i].type == compression_type::NONE) {
+        EXPECT_EQ(sizes[i], 0) << "element " << i;
+      }
+    }
+    return sizes;
+  };
+
+  {
+    // Device decompression with nvCOMP enabled (independent of the inherited environment)
+    tmp_env_var const host_decomp{host_decomp_env_var, "OFF"};
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, "STABLE"};
+    auto const sizes = check();
+    // ZSTD is only decompressed on the device through nvCOMP, which needs scratch space
+    if (not nvcomp::is_decompression_disabled(nvcomp::compression_type::ZSTD)) {
+      for (size_t i = 0; i < infos.size(); ++i) {
+        if (infos[i].type == compression_type::ZSTD and infos[i].num_pages > 0) {
+          EXPECT_GT(sizes[i], 0) << "element " << i;
+        }
+      }
+    }
+  }
+  for (auto const [host, policy] : {std::pair{"ON", "STABLE"}, std::pair{"OFF", "OFF"}}) {
+    // Host decompression forced on, or nvCOMP disabled: only the Brotli kernel needs scratch space
+    tmp_env_var const host_decomp{host_decomp_env_var, host};
+    tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, policy};
+    auto const sizes = check();
+    for (size_t i = 0; i < infos.size(); ++i) {
+      auto const expected = infos[i].type == compression_type::BROTLI and infos[i].num_pages > 0
+                              ? cudf::io::detail::get_gpu_debrotli_scratch_size(infos[i].num_pages)
+                              : 0;
+      EXPECT_EQ(sizes[i], expected) << "element " << i;
+    }
+  }
+}
+
+TEST_F(DecompressionScratchSizesTest, EmptyAndMismatched)
+{
+  using cudf::io::detail::decompression_info;
+  auto const stream = cudf::get_default_stream();
+
+  std::vector<decompression_info> infos;
+  std::vector<size_t> sizes;
+  EXPECT_NO_THROW(cudf::io::detail::get_decompression_scratch_sizes(infos, sizes, stream));
+
+  infos.push_back({cudf::io::compression_type::SNAPPY, 1, 1 << 10, 1 << 10});
+  EXPECT_THROW(cudf::io::detail::get_decompression_scratch_sizes(infos, sizes, stream),
+               cudf::logic_error);
 }
 
 std::vector<uint8_t> const& roundtrip_input()

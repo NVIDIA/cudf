@@ -433,6 +433,43 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 }
 
+TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
+{
+  // Reads only nulls, which follow the page's first string. With 50 rows the page holds that one
+  // string; with 150 it also holds 50 short strings after the nulls.
+  constexpr int first_null    = 1;
+  constexpr int num_nulls     = 99;
+  constexpr int num_read_rows = 40;
+  for (auto const num_rows : {50, 150}) {
+    SCOPED_TRACE(std::to_string(num_rows) + " rows");
+    std::vector<std::string> strings(num_rows, "a");
+    strings[0]        = std::string(1000, 'x');
+    auto const valids = cudf::detail::make_counting_transform_iterator(
+      0, [](auto i) { return i < first_null or i >= first_null + num_nulls; });
+    auto const col = cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+    auto const result = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                                 .skip_rows(first_null)
+                                                 .num_rows(num_read_rows)
+                                                 .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(
+      cudf::slice(expected, {first_null, first_null + num_read_rows})[0], result.tbl->view());
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBounds)
 {
   // trying to read more rows than there are should result in
@@ -1790,6 +1827,81 @@ TEST_F(ParquetReaderTest, DecimalRead)
       col2_data.begin(), col2_data.end(), validity_c2, numeric::scale_type{-1});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(2), col2);
   }
+}
+
+template <typename T>
+struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
+
+TYPED_TEST_SUITE(ParquetReaderByteArrayDecimalTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
+{
+  using T                  = TypeParam;
+  auto constexpr num_rows  = 1000;
+  auto constexpr scale     = 2;
+  auto constexpr precision = cuda::std::is_same_v<T, numeric::decimal32>   ? 9
+                             : cuda::std::is_same_v<T, numeric::decimal64> ? 18
+                                                                           : 38;
+
+  // Few distinct values so the dictionary is used, each as 8 big-endian bytes
+  auto const values = cudf::detail::make_counting_transform_iterator(
+    0, [](int64_t i) { return (i % 10 - 5) * int64_t{70'001}; });
+  auto const bytes = cudf::detail::make_counting_transform_iterator(0, [&](int i) {
+    std::string out(8, '\0');
+    for (auto b = 0; b < 8; ++b) {
+      out[7 - b] = static_cast<char>(values[i] >> (8 * b));
+    }
+    return out;
+  });
+  auto const col   = cudf::test::strings_column_wrapper(bytes, bytes + num_rows);
+  auto const table = cudf::table_view{{col}};
+
+  // No writer produces BYTE_ARRAY decimals, so write a binary column and annotate it as decimal
+  std::vector<char> buffer;
+  auto metadata = cudf::io::table_input_metadata{table};
+  metadata.column_metadata[0].set_output_as_binary(true);
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .metadata(std::move(metadata))
+      .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+      .build());
+
+  auto footer =
+    cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
+                                     cudf::host_span<char const>{buffer.data(), buffer.size()}}))
+      .front();
+  auto const& encodings = footer.row_groups[0].columns[0].meta_data.encodings;
+  ASSERT_TRUE(std::ranges::any_of(encodings, [](auto enc) {
+    return enc == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+           enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+  }));
+
+  auto& schema             = footer.schema[1];
+  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+  schema.decimal_scale     = scale;
+  schema.decimal_precision = precision;
+  schema.logical_type      = cudf::io::parquet::LogicalType{
+    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+
+  // Swap the trailing footer for the annotated one, keeping the data pages
+  uint32_t footer_len{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const new_footer = parquet_delta_test::serialize_footer(footer);
+  buffer.resize(buffer.size() - 8 - footer_len);
+  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
+  footer_len = new_footer.size();
+  buffer.insert(buffer.end(),
+                reinterpret_cast<char const*>(&footer_len),
+                reinterpret_cast<char const*>(&footer_len + 1));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+
+  auto const result = cudf::io::read_parquet(
+    cudf::io::parquet_reader_options::builder(
+      cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+      .build());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0),
+                                 cudf::test::fixed_point_column_wrapper<typename T::rep>(
+                                   values, values + num_rows, numeric::scale_type{-scale}));
 }
 
 // Reading Parquet DELTA-encoded pages whose mini-blocks hold more than 64 values. No stock
@@ -5730,10 +5842,9 @@ void filter_unary_operation_typed_test()
     filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, not_expr1, expr2);
     ref_filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_OR, ref_not_expr1, ref_expr2);
-    // Signed integral types pass RGs 1,2,3, others pass RGs 2,3. Floats keep all 4 as they may
-    // hold NaNs, making every ordered comparison false, and get relaxed instead.
+    // Signed types pass RGs 1,2,3, others pass RGs 2,3
     auto constexpr expected_filtered_row_groups_with_unary_or =
-      cudf::is_floating_point<T>() ? 4 : ((cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2);
+      (cudf::is_numeric<T>() and cudf::is_signed<T>()) ? 3 : 2;
     test_predicate_pushdown(filter_expression,
                             ref_filter,
                             expected_total_row_groups,

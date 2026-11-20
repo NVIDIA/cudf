@@ -16,6 +16,8 @@
 
 #include <cuda/stream>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <utility>
@@ -34,6 +36,13 @@ namespace cudf::io::parquet::hybrid_scan::detail {
 class hybrid_scan_reader_impl;
 }  // namespace cudf::io::parquet::hybrid_scan::detail
 
+namespace cudf::io::parquet::detail {
+/**
+ * @brief Internal parsed Parquet file metadata
+ */
+struct metadata;
+}  // namespace cudf::io::parquet::detail
+
 //! Using `byte_range_info` from cudf::io::text
 using cudf::io::text::byte_range_info;
 
@@ -43,6 +52,131 @@ namespace io::parquet::experimental {
  * @addtogroup io_readers
  * @{
  */
+
+/**
+ * @brief Parsed Parquet file metadata of one or more files, shareable by multi-file readers
+ *
+ * Parses each file's footer once and keeps the parsed metadata only: no reader options, no
+ * validation across files and no per-reader state. Copies, slices, selections and combinations of
+ * handles share the per-file metadata rather than copying it, and every `hybrid_scan_multifile`
+ * constructed from them validates and interprets its own files with its own options.
+ *
+ * @code{.cpp}
+ * // Parse all footers of a scan once
+ * auto const metadata = parquet::experimental::hybrid_scan_multifile_metadata{footer_spans};
+ *
+ * // Readers over any files share the parsed metadata
+ * auto reader_a = parquet::experimental::hybrid_scan_multifile{metadata.slice(0, 4), options};
+ * auto reader_b = parquet::experimental::hybrid_scan_multifile{
+ *   metadata.select(std::vector<std::size_t>{7, 2, 9}), options};
+ * @endcode
+ *
+ * @note Thread safety: the per-file metadata is written only when its page index is set up
+ * (`setup_page_indexes()` on any handle or reader sharing it), which updates it in place and is
+ * visible to every handle and reader sharing the same file. Page index setup is not thread safe:
+ * set up a file's page index before that file is used concurrently. Otherwise the metadata is
+ * read-only, and concurrent use by any number of handles and readers is thread safe.
+ */
+class hybrid_scan_multifile_metadata {
+ public:
+  /**
+   * @brief Parse the Parquet file metadata of one or more files from their footer bytes
+   *
+   * @param footer_bytes Span of Parquet file footer byte spans, one per source
+   */
+  explicit hybrid_scan_multifile_metadata(std::span<std::span<uint8_t const> const> footer_bytes);
+
+  /**
+   * @brief Take ownership of pre-populated Parquet file metadata of one or more files
+   *
+   * @param parquet_metadatas Pre-populated Parquet file metadata, one per source, as returned by
+   *        `read_parquet_footers()` or a reader (i.e. already parsed and sanitized)
+   */
+  explicit hybrid_scan_multifile_metadata(std::vector<FileMetaData>&& parquet_metadatas);
+
+  /**
+   * @brief Combine the sources of several handles, in order, sharing their per-file metadata
+   *
+   * @param metadatas Handles to combine
+   */
+  explicit hybrid_scan_multifile_metadata(
+    std::span<hybrid_scan_multifile_metadata const> metadatas);
+
+  /**
+   * @brief Get the number of sources (files)
+   *
+   * @return Number of sources
+   */
+  [[nodiscard]] std::size_t num_sources() const;
+
+  /**
+   * @brief Get the Parquet file metadata of a source without copying it
+   *
+   * @throws std::out_of_range if `source_index` is not less than `num_sources()`
+   *
+   * @param source_index Index of the source
+   * @return Shared Parquet file metadata
+   */
+  [[nodiscard]] std::shared_ptr<FileMetaData const> parquet_metadata(
+    std::size_t source_index) const;
+
+  /**
+   * @brief Get the Parquet file metadata of all sources without copying it
+   *
+   * @return Shared Parquet file metadata, one per source
+   */
+  [[nodiscard]] std::vector<std::shared_ptr<FileMetaData const>> parquet_metadatas() const;
+
+  /**
+   * @brief Get byte ranges of the page index for all sources
+   *
+   * @throws std::overflow_error if the page index byte ranges in any metadata overflow int64_t
+   *
+   * @return Byte range of the page index per source; empty once a source's page index is set up
+   */
+  [[nodiscard]] std::vector<byte_range_info> page_index_byte_ranges() const;
+
+  /**
+   * @brief Set up the page index of the given sources in place
+   *
+   * Sources with empty page index bytes are skipped. Not thread safe, see the class note.
+   *
+   * @throws std::invalid_argument if the number of byte spans differs from `num_sources()` or any
+   * page index buffer is invalid
+   *
+   * @param page_index_bytes Span of page index byte spans, one per source
+   */
+  void setup_page_indexes(std::span<std::span<uint8_t const> const> page_index_bytes) const;
+
+  /**
+   * @brief Share a contiguous range of sources [begin, end)
+   *
+   * @throws std::out_of_range if `begin > end` or `end > num_sources()`
+   *
+   * @param begin Index of the first source
+   * @param end Index past the last source
+   * @return Handle sharing the selected sources
+   */
+  [[nodiscard]] hybrid_scan_multifile_metadata slice(std::size_t begin, std::size_t end) const;
+
+  /**
+   * @brief Share the given sources, in the given order
+   *
+   * @throws std::out_of_range if any index is not less than `num_sources()`
+   *
+   * @param source_indices Indices of the sources to share
+   * @return Handle sharing the selected sources
+   */
+  [[nodiscard]] hybrid_scan_multifile_metadata select(
+    std::span<std::size_t const> source_indices) const;
+
+ private:
+  explicit hybrid_scan_multifile_metadata(
+    std::vector<std::shared_ptr<parquet::detail::metadata>>&& sources);
+
+  std::vector<std::shared_ptr<parquet::detail::metadata>> _sources;
+  friend class hybrid_scan_multifile;
+};
 
 /**
  * @brief Multi-file variant of the experimental Hybrid Scan Parquet reader
@@ -91,16 +225,33 @@ class hybrid_scan_multifile {
                                  parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that shares pre-parsed Parquet file metadata
+   *
+   * The reader shares the per-file metadata of `metadata`, and validates and interprets it with
+   * `options`. See `hybrid_scan_multifile_metadata` for thread safety.
+   *
+   * @throws std::invalid_argument if `metadata` has no sources
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata of all sources to read
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_multifile(hybrid_scan_multifile_metadata const& metadata,
+                                 parquet_reader_options const& options);
+
+  /**
    * @brief Destructor for the multi-file experimental Parquet reader
    */
   ~hybrid_scan_multifile();
 
   /**
-   * @brief Get parquet metadatas for all sources
+   * @brief Get the Parquet file metadata of all sources without copying it
    *
-   * @return Vector of parquet metadata, one per source
+   * The metadata contains the materialized page indexes once `setup_page_indexes()` has been
+   * called.
+   *
+   * @return Shared Parquet file metadata, one per source
    */
-  [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
+  [[nodiscard]] std::vector<std::shared_ptr<FileMetaData const>> parquet_metadatas() const;
 
   /**
    * @brief Get byte ranges of the page index for all sources

@@ -455,7 +455,7 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
 
 std::pair<cudf::detail::host_vector<size_type>, cudf::detail::host_vector<size_type>>
 compute_page_row_offsets_and_colchunk_page_offsets(
-  std::span<metadata_base const> per_file_metadata,
+  std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<size_type const> schema_indices_per_source,
   cuda::stream_ref stream)
@@ -487,7 +487,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
       auto const& rg_indices = row_group_indices[src_idx];
       std::optional<size_type> colchunk_iter_offset{};
       std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
-        auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+        auto const& row_group = per_file_metadata[src_idx]->row_groups[rg_idx];
         colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
           row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
         auto const& colchunk_iter = row_group.columns.begin() + colchunk_iter_offset.value();
@@ -523,7 +523,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 }
 
 std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
-  std::span<metadata_base const> per_file_metadata,
+  std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<size_type const> schema_indices_per_source)
 {
@@ -545,7 +545,7 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
                   auto const& rg_indices = row_group_indices[src_idx];
                   std::optional<size_type> colchunk_iter_offset{};
                   std::for_each(rg_indices.begin(), rg_indices.end(), [&](auto const& rg_idx) {
-                    auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+                    auto const& row_group = per_file_metadata[src_idx]->row_groups[rg_idx];
                     colchunk_iter_offset  = parquet::detail::find_colchunk_iter_offset(
                       row_group, schema_indices_per_source[src_idx], colchunk_iter_offset);
                     auto const& colchunk_iter =

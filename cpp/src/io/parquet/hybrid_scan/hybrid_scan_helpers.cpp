@@ -131,13 +131,22 @@ aggregate_reader_metadata::aggregate_reader_metadata(std::vector<FileMetaData>&&
 {
 }
 
+aggregate_reader_metadata::aggregate_reader_metadata(
+  std::vector<std::shared_ptr<metadata_base>>&& parquet_metadatas,
+  bool use_arrow_schema,
+  bool has_cols_from_mismatched_srcs)
+  : aggregate_reader_metadata_base(
+      std::move(parquet_metadatas), use_arrow_schema, has_cols_from_mismatched_srcs)
+{
+}
+
 std::vector<text::byte_range_info> aggregate_reader_metadata::page_index_byte_ranges() const
 {
   std::vector<text::byte_range_info> page_index_byte_ranges;
   std::ranges::transform(per_file_metadata,
                          std::back_inserter(page_index_byte_ranges),
                          [](auto const& file_metadata) -> text::byte_range_info {
-                           return file_metadata.page_index_byte_range();
+                           return file_metadata->page_index_byte_range();
                          });
 
   return page_index_byte_ranges;
@@ -153,7 +162,7 @@ std::pair<bool, bool> aggregate_reader_metadata::page_index_presence(
   auto has_offset = true;
 
   for (size_type src_idx = 0; std::cmp_less(src_idx, row_group_indices.size()); ++src_idx) {
-    auto const& file_metadata = per_file_metadata[src_idx];
+    auto const& file_metadata = *per_file_metadata[src_idx];
     for (auto const schema_idx : schema_indices) {
       auto const mapped_schema_idx = map_schema_index(schema_idx, src_idx);
       std::optional<size_type> colchunk_offset;
@@ -181,19 +190,14 @@ std::pair<bool, bool> aggregate_reader_metadata::page_index_presence(
   return {has_column, has_offset};
 }
 
-std::vector<FileMetaData> aggregate_reader_metadata::parquet_metadatas() const
-{
-  return {per_file_metadata.begin(), per_file_metadata.end()};
-}
-
 FileMetaData const& aggregate_reader_metadata::parquet_metadata(std::size_t source_index) const
 {
   CUDF_EXPECTS(source_index < per_file_metadata.size(), "Invalid source index", std::out_of_range);
-  return per_file_metadata[source_index];
+  return *per_file_metadata[source_index];
 }
 
-void aggregate_reader_metadata::setup_page_indexes(
-  std::span<std::span<uint8_t const> const> page_index_bytes)
+void setup_page_indexes(std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
+                        std::span<std::span<uint8_t const> const> page_index_bytes)
 {
   CUDF_EXPECTS(page_index_bytes.size() == per_file_metadata.size(),
                "Page index byte span count must equal the number of sources");
@@ -202,7 +206,7 @@ void aggregate_reader_metadata::setup_page_indexes(
   std::for_each(iter, iter + page_index_bytes.size(), [&](auto const& pair) {
     // Get the page index bytes and file metadata
     auto const& [pgidx_bytes, file_metadata] = pair;
-    auto const& row_groups                   = file_metadata.row_groups;
+    auto const& row_groups                   = file_metadata->row_groups;
 
     // Return early if empty page index buffer span
     if (pgidx_bytes.empty()) { return; }
@@ -214,7 +218,7 @@ void aggregate_reader_metadata::setup_page_indexes(
     // Treat an exception as an invalid byte range
     auto const expected_byte_range = [&]() -> text::byte_range_info {
       try {
-        return file_metadata.page_index_byte_range();
+        return file_metadata->page_index_byte_range();
       } catch (std::overflow_error const&) {
         return {};
       }
@@ -225,8 +229,14 @@ void aggregate_reader_metadata::setup_page_indexes(
                  "Encountered an invalid page index buffer",
                  std::invalid_argument);
 
-    file_metadata.setup_page_index(pgidx_bytes, expected_byte_range.offset());
+    file_metadata->setup_page_index(pgidx_bytes, expected_byte_range.offset());
   });
+}
+
+void aggregate_reader_metadata::setup_page_indexes(
+  std::span<std::span<uint8_t const> const> page_index_bytes)
+{
+  hybrid_scan::detail::setup_page_indexes(per_file_metadata, page_index_bytes);
 }
 
 std::vector<std::vector<size_type>> aggregate_reader_metadata::all_row_groups(
@@ -239,7 +249,7 @@ std::vector<std::vector<size_type>> aggregate_reader_metadata::all_row_groups(
     auto iter = cuda::zip_iterator(opts_row_groups.begin(), per_file_metadata.begin());
     std::for_each(iter, iter + opts_row_groups.size(), [&](auto const& pair) {
       auto const& [file_row_groups, file_metadata] = pair;
-      auto const& row_groups                       = file_metadata.row_groups;
+      auto const& row_groups                       = file_metadata->row_groups;
       for (auto const rg_idx : file_row_groups) {
         CUDF_EXPECTS(rg_idx >= 0 and std::cmp_less(rg_idx, row_groups.size()),
                      "Encountered out-of-bounds row group index for data source",
@@ -252,7 +262,7 @@ std::vector<std::vector<size_type>> aggregate_reader_metadata::all_row_groups(
   std::vector<std::vector<size_type>> row_groups;
   row_groups.reserve(per_file_metadata.size());
   std::ranges::transform(per_file_metadata, std::back_inserter(row_groups), [](auto const& pfm) {
-    std::vector<size_type> indices(pfm.row_groups.size());
+    std::vector<size_type> indices(pfm->row_groups.size());
     std::iota(indices.begin(), indices.end(), size_type{0});
     return indices;
   });
@@ -271,7 +281,7 @@ std::size_t aggregate_reader_metadata::total_rows_in_row_groups(
     cuda::counting_iterator{row_group_indices.size()},
     std::size_t{0},
     [&](auto sum, auto const src_idx) {
-      auto const& file_metadata = per_file_metadata[src_idx];
+      auto const& file_metadata = *per_file_metadata[src_idx];
       return std::accumulate(
         row_group_indices[src_idx].begin(),
         row_group_indices[src_idx].end(),
@@ -526,7 +536,7 @@ aggregate_reader_metadata::dictionary_pages_byte_ranges(
       auto const& rg_indices = row_group_indices[src_index];
       // For all row groups
       std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto const rg_index) {
-        auto const& row_group = per_file_metadata[src_index].row_groups[rg_index];
+        auto const& row_group = per_file_metadata[src_index]->row_groups[rg_index];
         // For all dictionary column chunks
         std::for_each(
           cuda::counting_iterator<std::size_t>{0},

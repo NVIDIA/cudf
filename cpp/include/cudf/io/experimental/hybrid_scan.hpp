@@ -216,11 +216,11 @@ class hybrid_scan_metadata {
  * set up the page index to materialize page level stats used for data page pruning.
  * @code{.cpp}
  * // Get Parquet file metadata from the reader
- * auto metadata = reader->parquet_metadata();
+ * auto const metadata = reader->parquet_metadata();
  *
  * // Example metadata use: Calculate the number of rows in the file
- * auto nrows = std::accumulate(metadata.row_groups.begin(),
- *                              metadata.row_groups.end(),
+ * auto nrows = std::accumulate(metadata->row_groups.begin(),
+ *                              metadata->row_groups.end(),
  *                              size_type{0},
  *                              [](auto sum, auto const& rg) { return sum + rg.num_rows; });
  *
@@ -234,9 +234,9 @@ class hybrid_scan_metadata {
  * // Set up the page index
  * reader->setup_page_index(*page_index_buffer);
  *
- * // A new `FileMetaData` struct with populated page index structs may be obtained
- * // using `parquet_metadata()` at this point. Page index may be set up at any time.
- * auto metadata_with_page_index = reader->parquet_metadata();
+ * // The `FileMetaData` struct shared by `parquet_metadata()` now has populated page index
+ * // structs. Page index may be set up at any time.
+ * auto const metadata_with_page_index = reader->parquet_metadata();
  * @endcode
  *
  * Row group pruning (OPTIONAL): Start with either a list of custom or all row group indices in the
@@ -467,14 +467,14 @@ class hybrid_scan_reader {
   ~hybrid_scan_reader();
 
   /**
-   * @brief Get the Parquet file footer metadata
+   * @brief Get the Parquet file footer metadata without copying it
    *
    * Returns the materialized Parquet file footer metadata struct. The footer will contain the
    * materialized page index if called after `setup_page_index()`.
    *
-   * @return Parquet file footer metadata
+   * @return Shared Parquet file footer metadata
    */
-  [[nodiscard]] FileMetaData parquet_metadata() const;
+  [[nodiscard]] std::shared_ptr<FileMetaData const> parquet_metadata() const;
 
   /**
    * @brief Get the byte range of the page index in the Parquet file

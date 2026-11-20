@@ -1041,7 +1041,7 @@ cdef class FileMetaData:
                 options,
             )
             metadata = make_unique[cpp_FileMetaData](
-                reader.get()[0].parquet_metadata()
+                dereference(reader.get()[0].parquet_metadata())
             )
 
         return FileMetaData.from_libcudf(move(metadata))

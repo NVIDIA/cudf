@@ -47,7 +47,7 @@ struct page_statistics_input {
  */
 [[nodiscard]] std::pair<cudf::detail::host_vector<size_type>, cudf::detail::host_vector<size_type>>
 compute_page_row_offsets_and_colchunk_page_offsets(
-  std::span<metadata_base const> per_file_metadata,
+  std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<size_type const> schema_indices_per_source,
   cuda::stream_ref stream);
@@ -62,7 +62,7 @@ compute_page_row_offsets_and_colchunk_page_offsets(
  * @return A pair of page row offsets and the size of the largest page in this column
  */
 [[nodiscard]] std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
-  std::span<metadata_base const> per_file_metadata,
+  std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<size_type const> schema_indices_per_source);
 

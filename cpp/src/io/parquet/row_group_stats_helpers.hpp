@@ -49,7 +49,7 @@ struct row_group_stats_caster : public stats_caster_base {
   }
 
   size_type total_row_groups;
-  std::vector<metadata> const& per_file_metadata;
+  std::span<std::shared_ptr<metadata> const> per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
   bool with_null_and_nan_stats;
 
@@ -91,7 +91,7 @@ struct row_group_stats_caster : public stats_caster_base {
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
         auto const mapped_schema_idx = schema_indices_per_source[src_idx];
-        auto const& source_metadata  = per_file_metadata[src_idx];
+        auto const& source_metadata  = *per_file_metadata[src_idx];
         CUDF_EXPECTS(mapped_schema_idx >= 0 and
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
                      "Mapped schema index is out of bounds",

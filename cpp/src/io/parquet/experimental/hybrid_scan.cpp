@@ -121,7 +121,7 @@ hybrid_scan_reader::~hybrid_scan_reader() = default;
   return _impl->page_index_byte_ranges().front();
 }
 
-[[nodiscard]] FileMetaData hybrid_scan_reader::parquet_metadata() const
+[[nodiscard]] std::shared_ptr<FileMetaData const> hybrid_scan_reader::parquet_metadata() const
 {
   return _impl->parquet_metadatas().front();
 }

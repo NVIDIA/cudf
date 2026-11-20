@@ -401,8 +401,12 @@ def test_select_matches_gpu(
 
 def test_strict_cast_overflow_raises(left, engine, cpu_calls):
     q = left.select((pl.col("a") * 100).cast(pl.Int8))
-    with pytest.raises((pl.exceptions.InvalidOperationError, ExceptionGroup)):
+    with pytest.raises(
+        (pl.exceptions.InvalidOperationError, ExceptionGroup)
+    ) as excinfo:
         q.collect(engine=engine)
+    if isinstance(excinfo.value, ExceptionGroup):
+        assert excinfo.value.subgroup(pl.exceptions.InvalidOperationError) is not None
     assert cpu_calls["Select"] > 0
 
 

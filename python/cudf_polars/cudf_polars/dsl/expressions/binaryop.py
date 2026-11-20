@@ -16,8 +16,9 @@ from polars.exceptions import ComputeError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
-from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
+from cudf_polars.dsl.expressions.base import ColRef, ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
+from cudf_polars.dsl.expressions.unary import Cast, _integer_range
 
 pl_expr = polars._expr_nodes
 
@@ -31,13 +32,27 @@ __all__ = ["BinOp"]
 _DECIMAL128_MAX_PRECISION = 38
 
 
+def _integer_cast_decimal_precision(node: Expr) -> int | None:
+    """Bound the precision of an integer widened to Decimal(38, 0)."""
+    dtype = node.dtype.polars_type
+    if not (
+        isinstance(node, Cast)
+        and isinstance(dtype, pl.Decimal)
+        and dtype.precision == _DECIMAL128_MAX_PRECISION
+        and dtype.scale == 0
+        and node.children[0].dtype.polars_type.is_integer()
+    ):
+        return None
+    lower, upper = _integer_range(node.children[0].dtype.plc_type)
+    return len(str(max(-lower, upper)))
+
+
 def _decimal_precision(node: Expr) -> int:
     """
     The number of digits needed for the values of a Decimal expression.
 
-    A literal only needs as many digits as its value, which can be far fewer
-    than its type declares: polars gives the literal ``24`` the type
-    ``Decimal(38, 0)``.
+    Polars may declare a wider precision than needed for literals and casts
+    from integers.
     """
     dtype = node.dtype.polars_type
     assert isinstance(dtype, pl.Decimal)
@@ -47,7 +62,13 @@ def _decimal_precision(node: Expr) -> int:
         # digits, which would change the count near the 38 digit limit.
         with localcontext(prec=2 * _DECIMAL128_MAX_PRECISION):
             return max(len(str(abs(int(node.value.scaleb(dtype.scale))))), 1)
-    return dtype.precision or _DECIMAL128_MAX_PRECISION
+    if isinstance(node, ColRef) and node.decimal_precision is not None:
+        return node.decimal_precision
+    return (
+        _integer_cast_decimal_precision(node)
+        or dtype.precision
+        or _DECIMAL128_MAX_PRECISION
+    )
 
 
 def _decimal_rescale_may_overflow(left: Expr, right: Expr) -> bool:

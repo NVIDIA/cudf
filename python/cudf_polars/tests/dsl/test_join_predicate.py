@@ -136,8 +136,8 @@ def test_operands_of_different_types_are_not_supported() -> None:
     node = expr.BinOp(
         BOOL,
         plc.binaryop.BinaryOperator.LESS,
-        expr.ColRef(I32, 1, LEFT, expr.Col(I32, "a")),
-        expr.ColRef(I64, 1, RIGHT, expr.Col(I64, "b")),
+        expr.ColRef(I32, 1, LEFT, None, expr.Col(I32, "a")),
+        expr.ColRef(I64, 1, RIGHT, None, expr.Col(I64, "b")),
     )
     with pytest.raises(NotImplementedError, match="different types"):
         make_join("Inner", JoinPredicate(node, (), ()))
@@ -155,8 +155,8 @@ def test_decimal_and_float_columns_are_cast_to_match(
     node = expr.BinOp(
         BOOL,
         plc.binaryop.BinaryOperator.LESS,
-        expr.ColRef(left_dtype, 1, LEFT, expr.Col(left_dtype, "a")),
-        expr.ColRef(right_dtype, 1, RIGHT, expr.Col(right_dtype, "b")),
+        expr.ColRef(left_dtype, 1, LEFT, None, expr.Col(left_dtype, "a")),
+        expr.ColRef(right_dtype, 1, RIGHT, None, expr.Col(right_dtype, "b")),
     )
     join = make_join("Inner", JoinPredicate(node, (), ()))
     assert join.predicate is not None

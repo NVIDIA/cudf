@@ -9,7 +9,6 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
-#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -543,12 +542,23 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
                            nullptr,
                            nullptr});
   }
-  auto device_columns = cudf::detail::make_device_buffer_async(descriptors, stream, temp_mr);
+  cuda::device_buffer<gather_string_column> device_columns(stream, temp_mr, columns, cuda::no_init);
   cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
-  gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
-    device_columns.data(), columns, rows, device_sizes.data());
-  CUDF_CUDA_TRY(cudaPeekAtLastError());
-  auto const char_sizes = cudf::detail::make_pinned_vector(device_sizes, stream);
+  auto char_sizes = cudf::detail::make_pinned_vector_async<size_type>(columns, stream);
+  try {
+    cudf::detail::cuda_memcpy_async<gather_string_column>(
+      device_columns, host_span<gather_string_column const>{descriptors}, stream);
+    gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
+      device_columns.data(), columns, rows, device_sizes.data());
+    CUDF_CUDA_TRY(cudaPeekAtLastError());
+    cudf::detail::cuda_memcpy<size_type>(char_sizes, device_sizes, stream);
+  } catch (...) {
+    // CUDA 13 can defer reading descriptors until the stream reaches its upload. If a later
+    // operation throws, wait before unwinding so descriptors and the pinned readback buffer
+    // remain alive until all queued copies complete.
+    cudf::detail::sync_stream(stream);
+    throw;
+  }
 
   // Let the offsets utility construct the scan iterator to avoid nested index arithmetic.
   auto const sizes = [&](size_type const* input_offsets) {

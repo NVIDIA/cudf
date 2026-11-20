@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/null_mask.hpp>
@@ -195,6 +196,28 @@ TYPED_TEST(TypedListsContainsTestScalarNeedle, SlicedInputHavingNulls)
   EXPECT_TRUE(cudf::contains(haystack, needle1));
   EXPECT_FALSE(cudf::contains(haystack, needle2));
   EXPECT_FALSE(cudf::contains(haystack, needle3));
+}
+
+struct ListsContainsTestScalarNeedle : public cudf::test::BaseFixture {};
+
+TEST_F(ListsContainsTestScalarNeedle, ExplicitMemoryResources)
+{
+  using lists_col     = cudf::test::lists_column_wrapper<int32_t>;
+  auto const haystack = lists_col{{{1, 2}, {} /*NULL*/, {3}}, null_at(1)};
+  auto const needle   = [] {
+    auto child = int32s_col{3};
+    return cudf::list_scalar(child);
+  }();
+  auto harness = cudf::test::memory_resource_test_harness{};
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) {
+      return cudf::contains(haystack, needle, cudf::test::get_default_stream(), mr);
+    },
+    [](auto) { return 0; },
+    [](auto result) { EXPECT_EQ(result, true); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME});
 }
 
 template <typename T>

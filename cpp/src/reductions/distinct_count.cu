@@ -135,7 +135,7 @@ cudf::size_type distinct_count(table_view const& keys,
   auto const temp_mr   = mr.get_temporary_mr();
 
   auto const preprocessed_input =
-    cudf::detail::row::hash::preprocessed_table::create(keys, stream, temp_mr);
+    cudf::detail::row::hash::preprocessed_table::create(keys, stream, mr.as_temporary());
   auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);
   auto const hash_key   = row_hasher.device_hasher(has_nulls);
   auto const row_comp   = cudf::detail::row::equality::self_comparator(preprocessed_input);

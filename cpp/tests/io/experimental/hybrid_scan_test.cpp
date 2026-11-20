@@ -689,6 +689,60 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   EXPECT_EQ(prune(ordered, lt_zero, unnormalized_min), all);
 }
 
+TEST_F(HybridScanTest, FilterWrittenNaNCounts)
+{
+  // Row groups of three 4-row pages
+  auto constexpr nan = std::numeric_limits<float>::quiet_NaN();
+  auto const col     = cudf::test::fixed_width_column_wrapper<float>{
+    {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
+         1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 4.f, 5.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
+         1.f, 1.f, 1.f, 1.f, nan, 1.f, 1.f, 1.f, nan, nan, nan, nan}};  // no, partial, and all NaN
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, cudf::table_view{{col}})
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .row_group_size_rows(12)
+      .max_page_size_rows(4)
+      .max_page_fragment_size(4));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  // `col0 != 1`, which a NaN satisfies
+  auto one_value     = cudf::numeric_scalar<float>(1, true, stream, mr);
+  auto one           = cudf::ast::literal(one_value);
+  auto col_ref_0     = cudf::ast::column_reference(0);
+  auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, one);
+  auto const options = cudf::io::parquet_reader_options::builder().filter(filter).build();
+
+  auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto reader     = cudf::io::parquet::experimental::hybrid_scan_reader(
+    *cudf::io::parquet::fetch_footer_to_host(*datasource), options);
+  reader.setup_page_index(
+    *cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range()));
+  auto const row_groups = reader.all_row_groups(options);
+  ASSERT_EQ(row_groups.size(), 3ul);
+  // cudf writes no column index for the chunk with NaN pages, so its pages are all kept
+  EXPECT_EQ(reader.parquet_metadata().row_groups[2].columns[0].column_index_length, 0);
+
+  // The NaN-free constant row group and pages are pruned, and the NaN pages are kept
+  EXPECT_EQ(reader.filter_row_groups_with_stats(row_groups, options, stream),
+            (std::vector<cudf::size_type>{1, 2}));
+  auto const row_mask = cudf::replace_nulls(
+    *reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr),
+    cudf::numeric_scalar<bool>(true, true, stream, mr),
+    stream,
+    mr);
+  EXPECT_EQ(std::ranges::count(cudf::test::to_host<bool>(*row_mask).first, true), 16);
+
+  // The NaN rows come back
+  auto const expected =
+    cudf::test::fixed_width_column_wrapper<float>{{2.f, 3.f, 4.f, 5.f, nan, nan, nan, nan, nan}};
+  auto const result = hybrid_scan_single_step(*datasource, filter, {}, false, false, stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected}}, result->view());
+}
+
 TEST_F(HybridScanTest, MaterializeStrings)
 {
   std::mt19937 gen(0xbee);

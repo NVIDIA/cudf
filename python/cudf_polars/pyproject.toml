@@ -43,7 +43,6 @@ classifiers = [
 
 [project.optional-dependencies]
 test = [
-    "dask-cuda==27.2.*,>=0.0.0a0",
     "deltalake>=1.6.0",
     "pandas>=3.0.0,<3.1.0",
     "polars[iceberg]",

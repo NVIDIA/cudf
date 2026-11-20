@@ -321,3 +321,20 @@ def test_to_numpy_nullable_float_keeps_nan_with_na_value_none():
 
     assert [v is None for v in result] == [v is None for v in expected]
     assert np.isnan(result[0])
+
+
+@pytest.mark.parametrize("ncols", [1, 2])
+def test_to_numpy_nullable_float_dataframe_nan_with_na_value_none(ncols):
+    arr = pd.arrays.FloatingArray(
+        np.array([np.nan, 0.0]), np.array([False, True])
+    )
+    data = {f"c{i}": arr for i in range(ncols)}
+    with pd.option_context("future.distinguish_nan_and_na", True):
+        expected = pd.DataFrame(data).to_numpy(na_value=None)
+        result = cudf.DataFrame(data, nan_as_null=False).to_numpy(
+            na_value=None
+        )
+
+    assert [v is None for v in result.ravel()] == [
+        v is None for v in expected.ravel()
+    ]

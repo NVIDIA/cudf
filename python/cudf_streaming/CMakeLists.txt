@@ -28,7 +28,6 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE)
 
 find_package(cudf_streaming "${RAPIDS_VERSION}" REQUIRED)
-find_package(CUDAToolkit REQUIRED)
 
 include(rapids-cython-core)
 rapids_cython_init()

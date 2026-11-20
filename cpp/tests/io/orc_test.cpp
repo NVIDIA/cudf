@@ -36,9 +36,10 @@
 #include <cuda/iterator>
 #include <cuda/std/limits>
 
+#include <src/io/orc/orc.hpp>
+
 #include <algorithm>
 #include <array>
-#include <cstring>
 #include <numeric>
 #include <ranges>
 #include <type_traits>
@@ -2680,96 +2681,58 @@ TEST_F(OrcStatisticsTest, AllNulls)
 }
 
 namespace {
-// A protobuf field: either a varint value or a byte payload
-struct pb_field {
-  uint64_t number;
-  uint64_t value;
-  cudf::host_span<uint8_t const> bytes;
-};
-
-std::vector<pb_field> parse_protobuf(cudf::host_span<uint8_t const> buf)
-{
-  std::vector<pb_field> fields;
-  size_t pos       = 0;
-  auto read_varint = [&] {
-    uint64_t v = 0;
-    for (int shift = 0;; shift += 7) {
-      auto const b = buf[pos++];
-      v |= static_cast<uint64_t>(b & 0x7f) << shift;
-      if ((b & 0x80) == 0) { return v; }
-    }
-  };
-  while (pos < buf.size()) {
-    auto const key = read_varint();
-    pb_field f{key >> 3, 0, {}};
-    auto const wire_type = key & 7;
-    if (wire_type == 0) {
-      f.value = read_varint();
-    } else {
-      auto const len = wire_type == 1 ? 8 : wire_type == 5 ? 4 : read_varint();
-      f.bytes        = buf.subspan(pos, len);
-      pos += len;
-    }
-    fields.push_back(f);
-  }
-  return fields;
-}
-
-std::optional<pb_field> find_field(std::vector<pb_field> const& fields, uint64_t number)
-{
-  auto const it = std::ranges::find(fields, number, &pb_field::number);
-  return it == fields.end() ? std::nullopt : std::optional{*it};
-}
-
 // Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
 std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   std::vector<char> const& file)
 {
-  auto const data =
-    cudf::host_span<uint8_t const>{reinterpret_cast<uint8_t const*>(file.data()), file.size()};
-  auto const ps_len     = data.back();
-  auto const ps         = parse_protobuf(data.subspan(data.size() - 1 - ps_len, ps_len));
-  auto const footer_len = find_field(ps, 1)->value;
-  auto const footer =
-    parse_protobuf(data.subspan(data.size() - 1 - ps_len - footer_len, footer_len));
-  auto const stripe = parse_protobuf(find_field(footer, 3)->bytes);
-
-  auto const stripe_offset = find_field(stripe, 1)->value;
-  auto const stripe_footer = parse_protobuf(
-    data.subspan(stripe_offset + find_field(stripe, 2)->value + find_field(stripe, 3)->value,
-                 find_field(stripe, 4)->value));
+  using namespace cudf::io::orc::detail;
+  auto const data    = reinterpret_cast<uint8_t const*>(file.data());
+  auto const ps_len  = data[file.size() - 1];
+  auto const ps_data = data + file.size() - 1 - ps_len;
+  PostScript ps;
+  protobuf_reader(ps_data, ps_len).read(ps);
+  Footer footer;
+  protobuf_reader(ps_data - ps.footerLength, ps.footerLength).read(footer);
+  auto const& stripe = footer.stripes.at(0);
+  StripeFooter stripe_footer;
+  protobuf_reader(data + stripe.offset + stripe.indexLength + stripe.dataLength,
+                  stripe.footerLength)
+    .read(stripe_footer);
 
   // Streams are laid out in the order the stripe footer lists them
-  auto stream_offset = stripe_offset;
-  for (auto const& stream_field : stripe_footer) {
-    if (stream_field.number != 1) { continue; }
-    auto const stream = parse_protobuf(stream_field.bytes);
-    auto const length = find_field(stream, 3)->value;
-    auto const column = find_field(stream, 2);
-    if (find_field(stream, 1)->value == cudf::io::orc::ROW_INDEX and column and
-        column->value == 1) {
-      std::vector<cudf::io::minmax_statistics<double>> result;
-      for (auto const& entry : parse_protobuf(data.subspan(stream_offset, length))) {
-        auto& minmax         = result.emplace_back();
-        auto const col_stats = parse_protobuf(find_field(parse_protobuf(entry.bytes), 2)->bytes);
-        auto const dbl_stats = find_field(col_stats, 3);
-        if (not dbl_stats) { continue; }
-        auto const fields      = parse_protobuf(dbl_stats->bytes);
-        auto const read_double = [&](uint64_t number) -> std::optional<double> {
-          auto const f = find_field(fields, number);
-          if (not f) { return std::nullopt; }
-          double v;
-          std::memcpy(&v, f->bytes.data(), sizeof(v));
-          return v;
-        };
-        minmax.minimum = read_double(1);
-        minmax.maximum = read_double(2);
-      }
-      return result;
-    }
-    stream_offset += length;
+  auto stream_data    = data + stripe.offset;
+  auto const& streams = stripe_footer.streams;
+  size_t s            = 0;
+  for (; streams.at(s).kind != cudf::io::orc::ROW_INDEX or streams[s].column_id != 1; ++s) {
+    stream_data += streams[s].length;
   }
-  return {};
+  // RowIndex { repeated RowIndexEntry entry = 1; }
+  // RowIndexEntry { repeated uint64 positions = 1 [packed]; ColumnStatistics statistics = 2; }
+  // All are length-delimited fields with one-byte keys
+  auto const next_field = [](uint8_t const*& cur) {
+    uint64_t len = 0;
+    ++cur;
+    for (int shift = 0;; shift += 7) {
+      len |= static_cast<uint64_t>(*cur & 0x7f) << shift;
+      if ((*cur++ & 0x80) == 0) { break; }
+    }
+    cur += len;
+    return std::pair{cur - len, static_cast<size_t>(len)};
+  };
+  std::vector<cudf::io::minmax_statistics<double>> result;
+  for (auto cur = stream_data; cur < stream_data + streams[s].length;) {
+    auto entry = next_field(cur).first;
+    next_field(entry);  // positions
+    auto const [stats, stats_len] = next_field(entry);
+    column_statistics col_stats;
+    protobuf_reader(stats, stats_len).read(col_stats);
+    auto& minmax = result.emplace_back();
+    if (col_stats.double_stats) {
+      minmax.minimum = col_stats.double_stats->minimum;
+      minmax.maximum = col_stats.double_stats->maximum;
+    }
+  }
+  return result;
 }
 }  // namespace
 

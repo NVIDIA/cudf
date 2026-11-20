@@ -719,12 +719,12 @@ TEST_F(HybridScanTest, FilterInt96Stats)
 
 TEST_F(HybridScanTest, FilterWrittenNaNCounts)
 {
-  // Row groups of three 4-row pages. cudf writes no column index for the chunk with NaN pages
+  // Row groups of three 4-row pages
   auto constexpr nan = std::numeric_limits<float>::quiet_NaN();
   auto const col     = cudf::test::fixed_width_column_wrapper<float>{
     {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
          1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 4.f, 5.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
-         1.f, 1.f, 1.f, 1.f, nan, 6.f, 7.f, 8.f, nan, nan, nan, nan}};  // no, partial, and all NaN
+         1.f, 1.f, 1.f, 1.f, nan, 1.f, 1.f, 1.f, nan, nan, nan, nan}};  // no, partial, and all NaN
   std::vector<char> buffer;
   cudf::io::write_parquet(
     cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, cudf::table_view{{col}})
@@ -751,6 +751,8 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
     *cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range()));
   auto const row_groups = reader.all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 3ul);
+  // cudf writes no column index for the chunk with NaN pages, so its pages are all kept
+  EXPECT_EQ(reader.parquet_metadata().row_groups[2].columns[0].column_index_length, 0);
 
   // The NaN-free constant row group and pages are pruned, and the NaN pages are kept
   EXPECT_EQ(reader.filter_row_groups_with_stats(row_groups, options, stream),
@@ -763,8 +765,8 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
   EXPECT_EQ(std::ranges::count(cudf::test::to_host<bool>(*row_mask).first, true), 16);
 
   // The NaN rows come back
-  auto const expected = cudf::test::fixed_width_column_wrapper<float>{
-    {2.f, 3.f, 4.f, 5.f, nan, 6.f, 7.f, 8.f, nan, nan, nan, nan}};
+  auto const expected =
+    cudf::test::fixed_width_column_wrapper<float>{{2.f, 3.f, 4.f, 5.f, nan, nan, nan, nan, nan}};
   auto const result = hybrid_scan_single_step(*datasource, filter, {}, false, false, stream, mr);
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected}}, result->view());
 }

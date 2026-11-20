@@ -134,7 +134,12 @@ struct row_group_stats_caster : public stats_caster_base {
                                  colchunk.meta_data.type,
                                  std::distance(row_group.columns.begin(), col)) or
               int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
-            if (ignore_int96_min_max) {
+            // Inexact (truncated) min == max does not mean the column chunk is constant, and
+            // compliant writers never produce it, so ignore it
+            auto const ignore_inexact_min_max =
+              (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
+              stats.min_value.has_value() and stats.min_value == stats.max_value;
+            if (ignore_int96_min_max or ignore_inexact_min_max) {
               min.set_index(stats_idx, std::nullopt, {});
               max.set_index(stats_idx, std::nullopt, {});
             } else {

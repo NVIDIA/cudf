@@ -1829,6 +1829,23 @@ TEST_F(ParquetReaderTest, DecimalRead)
   }
 }
 
+namespace {
+// Swap the trailing footer of the in-memory Parquet file for `footer`, keeping the data pages
+void replace_footer(std::vector<char>& buffer, cudf::io::parquet::FileMetaData const& footer)
+{
+  uint32_t footer_len{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const new_footer = parquet_delta_test::serialize_footer(footer);
+  buffer.resize(buffer.size() - 8 - footer_len);
+  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
+  footer_len = new_footer.size();
+  buffer.insert(buffer.end(),
+                reinterpret_cast<char const*>(&footer_len),
+                reinterpret_cast<char const*>(&footer_len + 1));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+}
+}  // namespace
+
 template <typename T>
 struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
 
@@ -1883,17 +1900,7 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
   schema.logical_type      = cudf::io::parquet::LogicalType{
     cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
 
-  // Swap the trailing footer for the annotated one, keeping the data pages
-  uint32_t footer_len{};
-  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
-  auto const new_footer = parquet_delta_test::serialize_footer(footer);
-  buffer.resize(buffer.size() - 8 - footer_len);
-  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
-  footer_len = new_footer.size();
-  buffer.insert(buffer.end(),
-                reinterpret_cast<char const*>(&footer_len),
-                reinterpret_cast<char const*>(&footer_len + 1));
-  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+  replace_footer(buffer, footer);
 
   auto const result = cudf::io::read_parquet(
     cudf::io::parquet_reader_options::builder(
@@ -4083,6 +4090,57 @@ TEST_F(ParquetReaderTest, FilterNoStats)
   auto result              = table_with_metadata.tbl->view();
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result);
+}
+
+TEST_F(ParquetReaderTest, FilterInexactStats)
+{
+  // Row groups: {"abcX", "abcY"}, {"abc", "abc"}, {"x", "y"}
+  auto const col   = cudf::test::strings_column_wrapper{"abcX", "abcY", "abc", "abc", "x", "y"};
+  auto const table = table_view{{col}};
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .row_group_size_rows(2)
+      .max_page_size_rows(2)
+      .max_page_fragment_size(2)
+      .build());
+
+  // Mimic a non-compliant writer that truncates both bounds of row group 0 to the same prefix,
+  // and mark row group 2 inexact without changing its (still valid) bounds
+  auto footer =
+    cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
+                                     cudf::host_span<char const>{buffer.data(), buffer.size()}}))
+      .front();
+  ASSERT_EQ(footer.row_groups.size(), 3);
+  auto& rg0_stats     = footer.row_groups[0].columns[0].meta_data.statistics;
+  rg0_stats.min_value = rg0_stats.max_value = std::vector<uint8_t>{'a', 'b', 'c'};
+  for (auto const rg : {0, 2}) {
+    auto& stats              = footer.row_groups[rg].columns[0].meta_data.statistics;
+    stats.is_min_value_exact = false;
+    stats.is_max_value_exact = false;
+  }
+  replace_footer(buffer, footer);
+
+  auto const test_filter =
+    [&](cudf::ast::ast_operator op, std::string const& value, cudf::size_type expected_row_groups) {
+      auto scalar       = cudf::string_scalar(value);
+      auto const lit    = cudf::ast::literal(scalar);
+      auto const ref    = cudf::ast::column_reference(0);
+      auto const expr   = cudf::ast::operation(op, ref, lit);
+      auto const result = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+          .filter(expr)
+          .build());
+      auto const expected = cudf::apply_retention_mask(table, *cudf::compute_column(table, expr));
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), expected_row_groups);
+    };
+
+  // Inexact min == max is not a constant, so row group 0 is kept. Exact min == max of row group 1
+  // still prunes for `!=`, and the valid inexact bounds of row group 2 still prune for `==`
+  test_filter(cudf::ast::ast_operator::NOT_EQUAL, "abc", 2);
+  test_filter(cudf::ast::ast_operator::EQUAL, "abcX", 1);
 }
 
 TEST_F(ParquetReaderTest, FilterNullableStats)

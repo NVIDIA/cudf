@@ -1,10 +1,26 @@
 # AI Code Review Guidelines - cuDF C++/CUDA
 
-**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Focus ONLY on CRITICAL and HIGH issues.
+**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Prioritize concrete correctness, compatibility, performance, and test coverage risks; assign severity by impact.
 
-**Target**: Sub-3% false positive rate. Be direct, concise, minimal.
+Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including their severity definitions and evidence requirements.
 
 **Context**: cuDF C++ layer (libcudf) provides GPU-accelerated DataFrame operations using CUDA, with dependencies on RMM, libcudacxx, thrust, and CUB. The authoritative reference for libcudf conventions is `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`.
+
+## Regression evidence
+
+- Check the dispatch and boundary conditions affected by the change, including
+  relevant input sizes, types, nullability, and configuration. Identify a concrete
+  coverage gap rather than requesting every combination for every change.
+- For numerical changes, inspect NaN, infinity, overflow, cancellation, and
+  reduction-order behavior against the intended reference semantics.
+- Check asynchronous buffer ownership through completion, including exception
+  paths and repeated use on different streams.
+- For optimization claims, identify the affected small and large workloads,
+  initialization cost, peak memory, and cache state.
+  Do not infer a measured regression from a source-level concern.
+- Before proposing a replacement for custom code, name the existing helper or
+  library primitive and check its semantic constraints; measurements can justify
+  keeping the custom implementation.
 
 ## IGNORE These Issues
 
@@ -14,7 +30,7 @@
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues (Always Comment)
+## CRITICAL Issues (Report confirmed issues)
 
 ### GPU/CUDA Errors
 - Unchecked CUDA errors (kernel launches, memory operations, synchronization)
@@ -91,7 +107,8 @@
 - Operations incorrectly ordered on different streams without events or explicit dependencies
 
 ### Type Dispatch Patterns
-- New dispatch functors using `CUDF_ENABLE_IF` instead of C++20 `requires` clauses
+- New code using `CUDF_ENABLE_IF` or `std::enable_if_t` instead of C++20 concepts and `requires` clauses
+- Constraints written with `is_*<T>()` trait functions where a concept from `cudf/utilities/concepts.hpp` or `cuda::std` exists
 - Unsupported type overloads not calling `CUDF_FAIL` or `CUDF_UNREACHABLE`
 - Missing `static constexpr bool is_supported()` helper where useful
 
@@ -250,7 +267,7 @@ Suggested fix:
 - Use `[[nodiscard]]` on side-effect-free functions with non-void return
 
 **C++ Style**:
-- Prefer C++20 `requires` clauses over `CUDF_ENABLE_IF` for type-gating dispatch functors
+- Constrain templates with concepts (`cudf::concepts`, `cuda::std`), as constrained template parameters or `requires` clauses; never `CUDF_ENABLE_IF`
 - Use CUB (most preferred)/Thrust/STL algorithms over raw loops and raw kernels
 - Use modern C++20: `concepts`, `std::ranges`, `std::transform` over manual implementations
 - Use `static_assert` with clear messages to prevent template misuse

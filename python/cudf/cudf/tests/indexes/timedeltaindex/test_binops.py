@@ -131,7 +131,7 @@ def test_timedelta_datetime_index_ops_misc(
         np.timedelta64(4, "s"),
         np.timedelta64(456, "D"),
         np.timedelta64(46, "h"),
-        np.timedelta64("nat"),
+        np.timedelta64("nat", "ns"),
         np.timedelta64(1, "s"),
         np.timedelta64(1, "ms"),
         np.timedelta64(1, "us"),

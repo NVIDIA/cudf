@@ -71,13 +71,6 @@ TEST_F(JITExpressionTest, Coalesce)
 
 namespace {
 
-// Device functions compiled ahead of time to LTO-IR (transform/fragments/ast_udf_callees.cu).
-std::span<uint8_t const> ast_udf_callees()
-{
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::ast_udf_callees];
-  return cudf_test_fragments::files.subspan(range[0], range[1]);
-}
-
 auto const int32_type = cudf::data_type{cudf::type_id::INT32};
 
 cudf::ast::jit::udf callee(char const* symbol,
@@ -90,8 +83,8 @@ cudf::ast::jit::udf callee(char const* symbol,
 
 cudf::lto_fragments modules()
 {
-  static auto const fragments =
-    std::array{cudf::lto_fragment{cudf::lto_binary_type::FATBIN, ast_udf_callees()}};
+  static auto const fragments = std::array{cudf::lto_fragment{
+    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udf_callees)}};
   return fragments;
 }
 

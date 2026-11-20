@@ -12,6 +12,7 @@ files:
       - build_base
       - build_all
       - build_cpp
+      - build_cpp_kafka
       - build_python_common
       - clang
       - cuda
@@ -770,6 +771,10 @@ dependencies:
         packages:
           - croaring==4.4.2
           - flatbuffers==24.3.25
+  build_cpp_kafka:
+    common:
+      - output_types: conda
+        packages:
           - librdkafka<2.15.0a0
   build_java:
     common:

@@ -28,14 +28,16 @@ on:
         type: string
         default: nightly
 
-# Maven release concurrency: branch and nightly runs can cancel an earlier run
-# in the same workflow group. Each tag run gets its own workflow group so a
-# competing run cannot cancel it as a whole. Selected build and gather jobs can
-# still cancel matching jobs for the same tag, with separate groups for matrix
-# variants where applicable.
-# The shared Maven publisher runs one job at a time per repository and artifact
-# and lets an active job finish. Canceling it during upload or promotion could
-# leave an incomplete release or prevent us from saving the recovery receipt.
+# Maven release concurrency
+# Use cancel-in-progress to stop redundant CI work. Branch and nightly runs
+# cancel the earlier workflow in the same group. Tag runs get separate workflow
+# groups, so only the build and gather jobs that opt in can cancel matching jobs
+# for the same tag. Matrix jobs use a separate group for each variant.
+#
+# The shared Maven publisher queues competing jobs for the same repository and
+# artifact with cancel-in-progress disabled. Interrupting upload or promotion
+# can leave a release incomplete or lose the recovery receipt. Artifacts already
+# published to Maven Central cannot be replaced.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}

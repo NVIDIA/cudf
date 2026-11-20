@@ -19,6 +19,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.ir import IR, Empty, HConcat
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -252,10 +253,7 @@ async def default_node_multi(
             ]
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
-                    ir.do_evaluate,
-                    *ir._non_child_args,
-                    *dfs,
-                    context=ir_context,
+                    evaluate_ir, ir, *dfs, context=ir_context
                 )
                 del dfs
             output_chunk = TableChunk.from_pylibcudf_table(

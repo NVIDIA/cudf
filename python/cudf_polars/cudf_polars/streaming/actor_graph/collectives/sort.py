@@ -26,6 +26,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
@@ -181,13 +182,12 @@ async def _sample_chunks_for_size_estimate(
 
     size_estimate_id = collective_ids.pop()
     target_partition_size = executor.target_partition_size
-    sample_chunk_count = executor.dynamic_planning.sample_chunk_count
+    sample_byte_count = executor.dynamic_planning.sample_byte_count
 
     sample = await _sample_chunks(
         context,
         ch_in,
-        sample_chunk_count,
-        target_partition_size,
+        sample_byte_count,
         metadata_in.local_count,
     )
 
@@ -378,8 +378,9 @@ async def _extract_partitions_and_send(
         stream = ir_context.get_cuda_stream()
         table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
-            table = post_sort_ir.do_evaluate(
-                *post_sort_ir._non_child_args,
+            df = await ir_context.to_thread(
+                evaluate_ir,
+                post_sort_ir,
                 DataFrame.from_table(
                     table,
                     list(post_sort_ir.schema.keys()),
@@ -387,13 +388,14 @@ async def _extract_partitions_and_send(
                     stream,
                 ),
                 context=ir_context,
-            ).table
+            )
+            table = df.table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
             chunk = TableChunk.from_pylibcudf_table(
-                table, stream, exclusive_view=True, br=context.br()
+                table, df.stream, exclusive_view=True, br=context.br()
             )
-            del table
+            del df, table
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)

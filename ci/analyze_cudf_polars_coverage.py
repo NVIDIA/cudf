@@ -1,0 +1,144 @@
+#!/usr/bin/env python
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Export local-only, upstream-only, and shared cudf-polars coverage."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from coverage import CoverageData
+
+MAX_CONTEXTS_PER_LINE = 20
+
+
+def _read_data(path: Path) -> tuple[CoverageData, Path]:
+    if not path.is_file() or not path.stat().st_size:
+        raise ValueError(f"Missing or empty coverage data: {path}")
+    data = CoverageData(basename=str(path))
+    data.read()
+    if not any(
+        context.endswith("|run") for context in data.measured_contexts()
+    ):
+        raise ValueError(
+            f"No test-body coverage contexts in {path}; collect with "
+            "--cov-context=test using pytest-xdist."
+        )
+    return data, _source_root(data)
+
+
+def _source_root(data: CoverageData) -> Path:
+    roots = set()
+    for filename in data.measured_files():
+        for parent in Path(filename).parents:
+            if parent.name == "cudf_polars":
+                roots.add(parent.parent)
+                break
+    if len(roots) != 1:
+        raise ValueError(
+            f"Expected one cudf-polars source root in each database; found {sorted(roots)}"
+        )
+    return roots.pop()
+
+
+def build_report(
+    local: CoverageData, upstream: CoverageData
+) -> dict[str, Any]:
+    """Compare source lines without inferring equivalent test assertions."""
+    files = {}
+    totals = {"local_only": 0, "upstream_only": 0, "both": 0}
+    filenames = local.measured_files() | upstream.measured_files()
+    for filename in sorted(filenames):
+        if "cudf_polars" not in Path(filename).parts[:-1]:
+            continue
+        local_lines = set(local.lines(filename) or ())
+        upstream_lines = set(upstream.lines(filename) or ())
+        local_contexts = local.contexts_by_lineno(filename)
+        upstream_contexts = upstream.contexts_by_lineno(filename)
+        categories = {}
+        for category, lines in {
+            "local_only": local_lines - upstream_lines,
+            "upstream_only": upstream_lines - local_lines,
+            "both": local_lines & upstream_lines,
+        }.items():
+            entries = []
+            for line in sorted(lines):
+                entry: dict[str, Any] = {"line": line}
+                for suite, contexts in (
+                    ("local", local_contexts),
+                    ("upstream", upstream_contexts),
+                ):
+                    values = sorted(contexts.get(line, ()))
+                    # Common paths have thousands of contexts; the raw databases
+                    # remain the complete export without duplicating them in JSON.
+                    entry[f"{suite}_contexts"] = values[:MAX_CONTEXTS_PER_LINE]
+                    entry[f"{suite}_context_count"] = len(values)
+                    entry[f"{suite}_contexts_truncated"] = (
+                        len(values) > MAX_CONTEXTS_PER_LINE
+                    )
+                entries.append(entry)
+            categories[category] = entries
+            totals[category] += len(lines)
+        if any(categories.values()):
+            files[filename] = categories
+    return {"files": files, "summary": {**totals, "files": len(files)}}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--local-data", type=Path, required=True)
+    parser.add_argument(
+        "--upstream-data", type=Path, action="append", required=True
+    )
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--cudf-sha", required=True)
+    parser.add_argument("--polars-sha", required=True)
+    parser.add_argument("--polars-version", required=True)
+    parser.add_argument("--local-exit-status", type=int)
+    parser.add_argument("--upstream-in-memory-exit-status", type=int)
+    parser.add_argument("--upstream-spmd-exit-status", type=int)
+    args = parser.parse_args()
+    try:
+        local, local_root = _read_data(args.local_data)
+        upstream = CoverageData(no_disk=True)
+        for path in args.upstream_data:
+            data, upstream_root = _read_data(path)
+            if local_root != upstream_root:
+                raise ValueError(
+                    f"Coverage source roots differ: local={local_root}, upstream={upstream_root} ({path}). "
+                    "Collect all suites using the same editable cudf-polars checkout."
+                )
+            upstream.update(data)
+    except ValueError as error:
+        parser.error(str(error))
+    report = build_report(local, upstream)
+    report["provenance"] = {
+        "cudf_sha": args.cudf_sha,
+        "polars_sha": args.polars_sha,
+        "polars_version": args.polars_version,
+    }
+    report["context_data"] = {
+        "local": os.path.relpath(args.local_data.resolve(), args.output_dir),
+        "upstream": [
+            os.path.relpath(path.resolve(), args.output_dir)
+            for path in args.upstream_data
+        ],
+    }
+    report["suite_exit_statuses"] = {
+        "local": args.local_exit_status,
+        "upstream_in_memory": args.upstream_in_memory_exit_status,
+        "upstream_spmd": args.upstream_spmd_exit_status,
+    }
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    (args.output_dir / "coverage-comparison.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+
+
+if __name__ == "__main__":
+    main()

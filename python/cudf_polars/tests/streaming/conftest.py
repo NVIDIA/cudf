@@ -10,6 +10,7 @@ import pytest
 
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
+from cudf_polars.streaming.actor_graph.collectives import closing
 from cudf_polars.streaming.benchmarks.pdsds import PDSDSPolarsQueries
 from cudf_polars.streaming.benchmarks.pdsh import PDSHQueries
 from cudf_polars.streaming.benchmarks.utils import (
@@ -75,6 +76,14 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         range(1, num_queries + 1),
         ids=[f"q{i:02d}" for i in range(1, num_queries + 1)],
     )
+
+
+@pytest.fixture
+def pending_closes(monkeypatch: pytest.MonkeyPatch) -> dict[Any, Any]:
+    """Isolate the registry of cancelled collective closes."""
+    pending: dict[Any, Any] = {}
+    monkeypatch.setattr(closing, "_pending", pending)
+    return pending
 
 
 @pytest.fixture(scope="session")

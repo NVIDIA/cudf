@@ -41,6 +41,9 @@ from cudf_polars.streaming.actor_graph.collectives import (
     ReserveOpIDs,
     collective_id_scope,
 )
+from cudf_polars.streaming.actor_graph.collectives.closing import (
+    wait_for_pending_closes,
+)
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.core import generate_network
 from cudf_polars.streaming.actor_graph.utils import empty_table_chunk
@@ -815,6 +818,7 @@ def all_gather_host_data(
     -------
     List of bytes, one element per rank, ordered by rank index.
     """
+    wait_for_pending_closes(comm)
     allgather = AllGather(comm=comm, op_id=op_id, br=br)
     # TODO: Make AllGather (bulk) a context manager so this becomes
     # with AllGather(...) as ag:
@@ -924,7 +928,13 @@ def evaluate_on_rank(
         This rank's output fragment as a GPU-resident :class:`~cudf_polars.containers.DataFrame`.
     metadata
         Collected channel metadata.
+
+    Raises
+    ------
+    RuntimeError
+        If a cancelled collective close on ``comm`` has not completed.
     """
+    wait_for_pending_closes(comm)
     # Each query reserves its collective IDs from its own pool, so that the
     # IDs agree across ranks even if this process concurrently takes part in
     # other queries (possibly on other communicators).

@@ -40,6 +40,25 @@ def bench_series_values(benchmark, series):
     benchmark(lambda: series.values)
 
 
+@pytest.mark.parametrize("num_rows", NUM_ROWS)
+@pytest.mark.parametrize(
+    "container", [cudf.Series, cudf.Index], ids=["series", "index"]
+)
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"([A-Z]+)-(\d+)", id="unnamed"),
+        pytest.param(r"(?P<letters>[A-Z]+)-(?P<number>\d+)", id="named"),
+        pytest.param(r"(?P<letters>[A-Z]+)-(\d+)", id="mixed"),
+    ],
+)
+def bench_str_extract(benchmark, num_rows, container, pattern):
+    values = ["AB-123", "CD-456", None, "unmatched"] * (num_rows // 4)
+    strings = container(values, dtype="str")
+
+    benchmark(strings.str.extract, pattern, expand=True)
+
+
 @pytest.mark.parametrize("N", NUM_ROWS)
 @pytest.mark.parametrize(
     "start, stop",

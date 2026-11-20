@@ -557,10 +557,11 @@ public final class Table implements AutoCloseable {
       boolean ignoreNullKeys) throws CudfException;
 
   private static native long sortOrder(long inputTable, long[] sortKeys, boolean[] isDescending,
-      boolean[] areNullsSmallest) throws CudfException;
+      boolean[] areNullsSmallest, long stream, long outputMr, long temporaryMr) throws CudfException;
 
   private static native long[] orderBy(long inputTable, long[] sortKeys, boolean[] isDescending,
-                                       boolean[] areNullsSmallest) throws CudfException;
+                                       boolean[] areNullsSmallest, long stream, long outputMr,
+                                       long temporaryMr) throws CudfException;
 
   private static native long[] merge(long[] tableHandles, int[] sortKeyIndexes,
                                      boolean[] isDescending, boolean[] areNullsSmallest) throws CudfException;
@@ -711,22 +712,27 @@ public final class Table implements AutoCloseable {
 
   private static native long[] crossJoin(long leftTable, long rightTable) throws CudfException;
 
-  private static native long[] concatenate(long[] cudfTablePointers) throws CudfException;
+  private static native long[] concatenate(long[] cudfTablePointers,
+      long stream, long outputMr, long temporaryMr) throws CudfException;
 
   private static native long interleaveColumns(long input);
 
-  private static native long[] filter(long input, long mask);
+  private static native long[] filter(long input, long mask,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long[] dropDuplicates(long nativeHandle, int[] keyColumns,
                                               int keepValue, boolean nullsEqual) throws CudfException;
 
-  private static native long[] gather(long tableHandle, long gatherView, boolean checkBounds);
+  private static native long[] gather(long tableHandle, long gatherView, boolean checkBounds,
+      long stream, long outputMr, long temporaryMr);
 
   private static native long[] scatterTable(long srcTableHandle, long scatterView,
-                                            long targetTableHandle)
+                                            long targetTableHandle,
+                                                  long stream, long outputMr, long temporaryMr)
                                             throws CudfException;
   private static native long[] scatterScalars(long[] srcScalarHandles, long scatterView,
-                                             long targetTableHandle)
+                                             long targetTableHandle,
+                                                   long stream, long outputMr, long temporaryMr)
                                              throws CudfException;
 
   private static native long[] repeatStaticCount(long tableHandle, int count);
@@ -1989,8 +1995,21 @@ public final class Table implements AutoCloseable {
    * Concatenate multiple tables together to form a single table.
    * The schema of each table (i.e.: number of columns and types of each column) must be equal
    * across all tables and will determine the schema of the resulting table.
+   * @deprecated Use {@link #concatenate(Table[], Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public static Table concatenate(Table... tables) {
+    return concatenate(tables, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Concatenate multiple tables together to form a single table.
+   * The schema of each table (i.e.: number of columns and types of each column) must be equal
+   * across all tables and will determine the schema of the resulting table.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   */
+  public static Table concatenate(Table[] tables, Cuda.Stream stream, MemoryResources mr) {
     if (tables.length < 2) {
       throw new IllegalArgumentException("concatenate requires 2 or more tables");
     }
@@ -2000,7 +2019,8 @@ public final class Table implements AutoCloseable {
       tableHandles[i] = tables[i].nativeHandle;
       assert tables[i].getNumberOfColumns() == numColumns : "all tables must have the same schema";
     }
-    return new Table(concatenate(tableHandles));
+    return new Table(concatenate(tableHandles,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2207,8 +2227,23 @@ public final class Table implements AutoCloseable {
    * is only needed for sorting.
    * @param args what order to sort the data by
    * @return a gather map
+   * @deprecated Use {@link #sortOrder(OrderByArg[], Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public ColumnVector sortOrder(OrderByArg... args) {
+    return sortOrder(args, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Get back a gather map that can be used to sort the data. This allows you to sort by data
+   * that does not appear in the final result and not pay the cost of gathering the data that
+   * is only needed for sorting.
+   * @param args what order to sort the data by
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned column and for temporary allocations
+   * @return a gather map
+   */
+  public ColumnVector sortOrder(OrderByArg[] args, Cuda.Stream stream, MemoryResources mr) {
     long[] sortKeys = new long[args.length];
     boolean[] isDescending = new boolean[args.length];
     boolean[] areNullsSmallest = new boolean[args.length];
@@ -2221,7 +2256,8 @@ public final class Table implements AutoCloseable {
       sortKeys[i] = columns[index].getNativeView();
     }
 
-    return new ColumnVector(sortOrder(nativeHandle, sortKeys, isDescending, areNullsSmallest));
+    return new ColumnVector(sortOrder(nativeHandle, sortKeys, isDescending, areNullsSmallest,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2232,8 +2268,25 @@ public final class Table implements AutoCloseable {
    * Example usage: orderBy(true, OrderByArg.asc(0), OrderByArg.desc(3)...);
    * @param args Suppliers to initialize sortKeys.
    * @return Sorted Table
+   * @deprecated Use {@link #orderBy(OrderByArg[], Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public Table orderBy(OrderByArg... args) {
+    return orderBy(args, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Orders the table using the sortkeys returning a new allocated table. The caller is
+   * responsible for cleaning up
+   * the {@link ColumnVector} returned as part of the output {@link Table}
+   * <p>
+   * Example usage: orderBy(true, OrderByArg.asc(0), OrderByArg.desc(3)...);
+   * @param args Suppliers to initialize sortKeys.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return Sorted Table
+   */
+  public Table orderBy(OrderByArg[] args, Cuda.Stream stream, MemoryResources mr) {
     long[] sortKeys = new long[args.length];
     boolean[] isDescending = new boolean[args.length];
     boolean[] areNullsSmallest = new boolean[args.length];
@@ -2246,7 +2299,8 @@ public final class Table implements AutoCloseable {
       sortKeys[i] = columns[index].getNativeView();
     }
 
-    return new Table(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest));
+    return new Table(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2375,11 +2429,38 @@ public final class Table implements AutoCloseable {
    *             the input column
    * @return table containing copy of all elements of this table passing
    * the filter defined by the boolean mask
+   * @deprecated Use {@link #filter(ColumnView, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public Table filter(ColumnView mask) {
+    return filter(mask, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Filters this table using a column of boolean values as a mask, returning a new one.
+   * <p>
+   * Given a mask column, each element `i` from the input columns
+   * is copied to the output columns if the corresponding element `i` in the mask is
+   * non-null and `true`. This operation is stable: the input order is preserved.
+   * <p>
+   * This table and mask columns must have the same number of rows.
+   * <p>
+   * The output table has size equal to the number of elements in boolean_mask
+   * that are both non-null and `true`.
+   * <p>
+   * If the original table row count is zero, there is no error, and an empty table is returned.
+   * @param mask column of type {@link DType#BOOL8} used as a mask to filter
+   *             the input column
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return table containing copy of all elements of this table passing
+   * the filter defined by the boolean mask
+   */
+  public Table filter(ColumnView mask, Cuda.Stream stream, MemoryResources mr) {
     assert mask.getType().equals(DType.BOOL8) : "Mask column must be of type BOOL8";
     assert getRowCount() == 0 || getRowCount() == mask.getRowCount() : "Mask column has incorrect size";
-    return new Table(filter(nativeHandle, mask.getNativeView()));
+    return new Table(filter(nativeHandle, mask.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2700,9 +2781,29 @@ public final class Table implements AutoCloseable {
 
    * @param gatherMap the map of indexes.  Must be non-nullable and integral type.
    * @return the resulting Table.
+   * @deprecated Use {@link #gather(ColumnView, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public Table gather(ColumnView gatherMap) {
-    return gather(gatherMap, OutOfBoundsPolicy.NULLIFY);
+    return gather(gatherMap, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Gathers the rows of this table according to `gatherMap` such that row "i"
+   * in the resulting table's columns will contain row "gatherMap[i]" from this table.
+   * The number of rows in the result table will be equal to the number of elements in
+   * `gatherMap`.
+   *
+   * A negative value `i` in the `gatherMap` is interpreted as `i+n`, where
+   * `n` is the number of rows in this table.
+
+   * @param gatherMap the map of indexes.  Must be non-nullable and integral type.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return the resulting Table.
+   */
+  public Table gather(ColumnView gatherMap, Cuda.Stream stream, MemoryResources mr) {
+    return gather(gatherMap, OutOfBoundsPolicy.NULLIFY, stream, mr);
   }
 
   /**
@@ -2717,10 +2818,33 @@ public final class Table implements AutoCloseable {
    * @param gatherMap the map of indexes.  Must be non-nullable and integral type.
    * @param outOfBoundsPolicy policy to use when an out-of-range value is in `gatherMap`.
    * @return the resulting Table.
+   * @deprecated Use {@link #gather(ColumnView, OutOfBoundsPolicy, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public Table gather(ColumnView gatherMap, OutOfBoundsPolicy outOfBoundsPolicy) {
+    return gather(gatherMap, outOfBoundsPolicy, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Gathers the rows of this table according to `gatherMap` such that row "i"
+   * in the resulting table's columns will contain row "gatherMap[i]" from this table.
+   * The number of rows in the result table will be equal to the number of elements in
+   * `gatherMap`.
+   *
+   * A negative value `i` in the `gatherMap` is interpreted as `i+n`, where
+   * `n` is the number of rows in this table.
+   *
+   * @param gatherMap the map of indexes.  Must be non-nullable and integral type.
+   * @param outOfBoundsPolicy policy to use when an out-of-range value is in `gatherMap`.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return the resulting Table.
+   */
+  public Table gather(ColumnView gatherMap, OutOfBoundsPolicy outOfBoundsPolicy,
+      Cuda.Stream stream, MemoryResources mr) {
     boolean checkBounds = outOfBoundsPolicy == OutOfBoundsPolicy.NULLIFY;
-    return new Table(gather(nativeHandle, gatherMap.getNativeView(), checkBounds));
+    return new Table(gather(nativeHandle, gatherMap.getNativeView(), checkBounds,
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2741,9 +2865,38 @@ public final class Table implements AutoCloseable {
    * @param target The table into which rows from the current table are to be scattered out-of-place.
    * @return A new table which is the result of out-of-place scattering the source table into the
    *         target table.
+   * @deprecated Use {@link #scatter(ColumnView, Table, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public Table scatter(ColumnView scatterMap, Table target) {
-    return new Table(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView()));
+    return scatter(scatterMap, target, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Scatters values from the source table into the target table out-of-place, returning a new
+   * result table. The scatter is performed according to a scatter map such that row `scatterMap[i]`
+   * of the destination table gets row `i` of the source table. All other rows of the destination
+   * table equal corresponding rows of the target table.
+   *
+   * The number of columns in source must match the number of columns in target and their
+   * corresponding data types must be the same.
+   *
+   * If the same index appears more than once in the scatter map, the result is undefined.
+   *
+   * A negative value `i` in the `scatterMap` is interpreted as `i + n`, where `n` is the number of
+   * rows in the `target` table.
+   *
+   * @param scatterMap The map of indexes. Must be non-nullable and integral type.
+   * @param target The table into which rows from the current table are to be scattered out-of-place.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return A new table which is the result of out-of-place scattering the source table into the
+   *         target table.
+   */
+  public Table scatter(ColumnView scatterMap, Table target,
+      Cuda.Stream stream, MemoryResources mr) {
+    return new Table(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   /**
@@ -2765,15 +2918,45 @@ public final class Table implements AutoCloseable {
    * @param target The table into which the values from source are to be scattered out-of-place.
    * @return A new table which is the result of out-of-place scattering the source values into the
    *         target table.
+   * @deprecated Use {@link #scatter(Scalar[], ColumnView, Table, Cuda.Stream, MemoryResources)}.
    */
+  @Deprecated
   public static Table scatter(Scalar[] source, ColumnView scatterMap, Table target) {
+    return scatter(source, scatterMap, target, Cuda.DEFAULT_STREAM, MemoryResources.CURRENT);
+  }
+
+  /**
+   * Scatters values from the source rows into the target table out-of-place, returning a new result
+   * table. The scatter is performed according to a scatter map such that row `scatterMap[i]` of the
+   * destination table is replaced by the source row `i`. All other rows of the destination table
+   * equal corresponding rows of the target table.
+   *
+   * The number of elements in source must match the number of columns in target and their
+   * corresponding data types must be the same.
+   *
+   * If the same index appears more than once in the scatter map, the result is undefined.
+   *
+   * A negative value `i` in the `scatterMap` is interpreted as `i + n`, where `n` is the number of
+   * rows in the `target` table.
+   *
+   * @param source The input scalars containing values to be scattered into the target table.
+   * @param scatterMap The map of indexes. Must be non-nullable and integral type.
+   * @param target The table into which the values from source are to be scattered out-of-place.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr device memory resources for the returned table and for temporary allocations
+   * @return A new table which is the result of out-of-place scattering the source values into the
+   *         target table.
+   */
+  public static Table scatter(Scalar[] source, ColumnView scatterMap, Table target,
+      Cuda.Stream stream, MemoryResources mr) {
     long[] srcScalarHandles = new long[source.length];
     for(int i = 0; i < source.length; ++i) {
       assert source[i] != null : "Scalar vectors passed in should not contain null";
       srcScalarHandles[i] = source[i].getScalarHandle();
     }
     return new Table(scatterScalars(srcScalarHandles, scatterMap.getNativeView(),
-        target.getNativeView()));
+        target.getNativeView(),
+        stream.getStream(), mr.getOutputHandle(), mr.getTemporaryHandle()));
   }
 
   private static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {

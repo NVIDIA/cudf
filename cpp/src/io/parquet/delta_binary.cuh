@@ -75,6 +75,18 @@ inline __device__ uleb128_t get_uleb128(uint8_t const*& cur, uint8_t const* end)
 }
 
 /**
+ * @brief Decode a zig-zag encoded integer
+ *
+ * @param u The zig-zag encoded value
+ *
+ * @return The decoded value
+ */
+inline __device__ zigzag128_t zigzag_decode(uleb128_t u)
+{
+  return static_cast<zigzag128_t>((u >> 1u) ^ -static_cast<zigzag128_t>(u & 1));
+}
+
+/**
  * @brief Read a ULEB128 zig-zag encoded varint integer
  *
  * @param[in,out] cur The current data position, updated after the read
@@ -84,8 +96,33 @@ inline __device__ uleb128_t get_uleb128(uint8_t const*& cur, uint8_t const* end)
  */
 inline __device__ zigzag128_t get_zz128(uint8_t const*& cur, uint8_t const* end)
 {
-  uleb128_t u = get_uleb128(cur, end);
-  return static_cast<zigzag128_t>((u >> 1u) ^ -static_cast<zigzag128_t>(u & 1));
+  return zigzag_decode(get_uleb128(cur, end));
+}
+
+/**
+ * @brief Checks a DELTA_BINARY_PACKED header against the spec: the mini-block count must evenly
+ * divide the block size, and each mini-block must hold a multiple of 32 values. The decoders rely
+ * on the latter to advance from one mini-block to the next.
+ *
+ * `block_size` and `value_count` are checked against `max_count` because the decoder steps
+ * `current_value_idx` (32 bits) by `values_per_mb` until it reaches `value_count`. With both at
+ * most INT32_MAX that sum cannot wrap, so `find_end_of_block` always finishes. Parquet stores a
+ * page's value count as int32, so a valid page never exceeds it.
+ *
+ * @param block_size Number of values in a block
+ * @param mini_block_count Number of mini-blocks in a block
+ * @param value_count Number of values in the page
+ *
+ * @return Whether the header is valid
+ */
+inline __device__ bool is_valid_delta_header(uleb128_t block_size,
+                                             uleb128_t mini_block_count,
+                                             uleb128_t value_count)
+{
+  constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
+  return not(mini_block_count == 0 or block_size == 0 or block_size > max_count or
+             value_count > max_count or (block_size % mini_block_count) != 0 or
+             ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0);
 }
 
 struct delta_binary_decoder {
@@ -206,18 +243,7 @@ struct delta_binary_decoder {
     cur_pass          = 0;
     error             = false;
 
-    // Validate the header against the DELTA_BINARY_PACKED spec: the mini-block count must evenly
-    // divide the block size, and each mini-block must hold a multiple of 32 values. The decoders
-    // rely on the latter to advance from one mini-block to the next.
-    //
-    // `block_size` and `value_count` are checked against `max_count` because the decoder steps
-    // `current_value_idx` (32 bits) by `values_per_mb` until it reaches `value_count`. With both at
-    // most INT32_MAX that sum cannot wrap, so `find_end_of_block` always finishes. Parquet stores a
-    // page's value count as int32, so a valid page never exceeds it.
-    constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
-    if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
-        value_count > max_count or (block_size % mini_block_count) != 0 or
-        ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
+    if (not is_valid_delta_header(block_size, mini_block_count, value_count)) {
       set_error_state();
       return;
     }

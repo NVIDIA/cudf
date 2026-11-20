@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -9,7 +9,7 @@
 function(find_and_configure_dlpack VERSION EXCLUDE_FROM_ALL)
 
   include(${rapids-cmake-dir}/find/generate_module.cmake)
-  rapids_find_generate_module(DLPACK HEADER_NAMES dlpack.h)
+  rapids_find_generate_module(dlpack HEADER_NAMES dlpack/dlpack.h)
 
   rapids_cpm_find(
     dlpack ${VERSION}
@@ -21,13 +21,15 @@ function(find_and_configure_dlpack VERSION EXCLUDE_FROM_ALL)
     OPTIONS "BUILD_MOCK OFF"
   )
 
-  if(DEFINED dlpack_SOURCE_DIR)
-    # otherwise find_package(DLPACK) will set this variable
-    set(DLPACK_INCLUDE_DIR
-        "${dlpack_SOURCE_DIR}/include"
-        PARENT_SCOPE
-    )
+  if(dlpack_SOURCE_DIR)
+    set(dlpack_INCLUDE_DIR "${dlpack_SOURCE_DIR}/include")
+  else()
+    get_target_property(dlpack_INCLUDE_DIR dlpack::dlpack INTERFACE_INCLUDE_DIRECTORIES)
   endif()
+  set(DLPACK_INCLUDE_DIR
+      "${dlpack_INCLUDE_DIR}"
+      PARENT_SCOPE
+  )
 endfunction()
 
 set(CUDF_MIN_VERSION_dlpack 0.8)

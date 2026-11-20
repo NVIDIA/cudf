@@ -27,8 +27,7 @@ set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE)
 
 find_package(cudf "${RAPIDS_VERSION}" REQUIRED)
 
-# an installed version of libcudf doesn't provide the dlpack headers so we need to download dlpack
-# for the interop.pyx
+# DLPack headers are needed by interop.pyx but are not installed with libcudf.
 include(rapids-cpm)
 rapids_cpm_init()
 include(../../cpp/cmake/thirdparty/get_dlpack.cmake)

@@ -64,7 +64,10 @@ rapids-uv-pip install \
 if [[ "${1:-}" == --coverage-comparison ]]; then
     # Every suite must measure this checkout, not an installed copy of the wheel.
     rapids-uv-pip install --constraint "${PIP_CONSTRAINT}" \
-        --editable "./python/cudf_polars[test,dask,ray]"
+        --editable \
+        --config-settings="rapidsai.disable-cuda=true" \
+        --config-settings="rapidsai.matrix-entry=cuda=${RAPIDS_CUDA_VERSION};cuda_suffixed=true;use_cuda_wheels=true" \
+        "./python/cudf_polars[test,dask,ray]"
 
     exec ./ci/run_cudf_polars_coverage_comparison.sh
 fi

@@ -48,6 +48,8 @@ build_wheel() (
   # retries must start with an empty directory, as required by `--env-dir`.
   rm -rf "${build_env_dir}"
 
+  echo 'rapids-dependency-file-generator @ git+https://github.com/KyleFromNVIDIA/rapids-dependency-file-generator.git@4a42c76999ef986c884c2f57bdc2e48d4b3b7f1a' >> "${PIP_CONSTRAINT}"
+
   local -a rapids_build_args=(
     --wheel
     --installer uv

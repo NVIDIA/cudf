@@ -258,6 +258,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "filterwarnings",
         "ignore:.*Query execution with GPU not possible",
     )
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore:Sortedness of columns cannot be checked when 'by' groups provided:UserWarning",
+    )
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)

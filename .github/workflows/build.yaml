@@ -29,15 +29,13 @@ on:
         default: nightly
 
 # Maven release concurrency
-# Use cancel-in-progress to stop redundant CI work. Branch and nightly runs
-# cancel the earlier workflow in the same group. Tag runs get separate workflow
-# groups, so only the build and gather jobs that opt in can cancel matching jobs
-# for the same tag. Matrix jobs use a separate group for each variant.
 #
-# The shared Maven publisher queues competing jobs for the same repository and
-# artifact with cancel-in-progress disabled. Interrupting upload or promotion
-# can leave a release incomplete or lose the recovery receipt. Artifacts already
-# published to Maven Central cannot be replaced.
+# We have to be careful when deploying Maven artifacts. `cancel-in-progress` is a
+# common configuration that limits CI to one build at a time. New commits being
+# pushed will cancel an in-progress run. We do want `cancel-in-progress`
+# behavior for most runs/steps, but not for the maven deploy step. The
+# interruption of `cancel-in-progress` during publishing could lead to a
+# corrupt or incorrect release that we cannot undo.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}

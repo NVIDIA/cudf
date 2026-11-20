@@ -174,8 +174,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
     NANOARROW_THROW_NOT_OK(ArrowArrayViewInitFromSchema(&view, schema->schema, nullptr));
     NANOARROW_THROW_NOT_OK(ArrowArrayViewSetArray(&view, input, nullptr));
 
-    constexpr int binary_view_vector_idx = 1;
-    auto const d_items = view.buffer_views[binary_view_vector_idx].data.as_binary_view;
+    auto const d_items = view.buffer_views[stringview_vector_idx].data.as_binary_view;
     auto variadic_ptrs = std::vector<char const*>();
     for (auto i = 0L; i < view.n_variadic_buffers; ++i) {
       variadic_ptrs.push_back(reinterpret_cast<char const*>(view.variadic_buffers[i]));
@@ -210,7 +209,7 @@ dispatch_tuple_t dispatch_from_arrow_device::operator()<cudf::string_view>(
                                   0};
 
   return std::make_tuple<column_view, owned_columns_t>(
-    {type, size, input->buffers[2], null_mask, null_count, offset, {offsets_view}},
+    {type, size, input->buffers[chars_buffer_idx], null_mask, null_count, offset, {offsets_view}},
     std::move(owned));
 }
 

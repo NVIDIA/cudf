@@ -1509,8 +1509,7 @@ async def collect_samples(
     comm: Communicator,
     join_state: JoinPlanningState,
     inputs: tuple[JoinInput, ...],
-    sample_chunk_count: int,
-    target_partition_size: int,
+    sample_byte_count: int,
     collective_id: int,
 ) -> None:
     """Sample inputs and attach aggregate estimates to their planning state."""
@@ -1548,8 +1547,7 @@ async def collect_samples(
             ChunkSampler(
                 context=context,
                 ch_in=input_.channel,
-                max_chunks=sample_chunk_count,
-                max_bytes=target_partition_size,
+                max_bytes=sample_byte_count,
                 ch_in_chunk_count=input_.metadata.local_count,
                 cardinality_estimator=cardinality_estimator,
                 cardinality_columns=cardinality_columns,
@@ -1618,8 +1616,7 @@ async def resolve_prefilters(
             if isinstance(candidate.spec.domain, ExternalDomain)
             and candidate.decision is None
         ),
-        executor.dynamic_planning.sample_chunk_count,
-        executor.target_partition_size,
+        executor.dynamic_planning.sample_byte_count,
         collective_id,
     )
     choose_prefilters(
@@ -1802,8 +1799,7 @@ async def choose_strategy(
             comm,
             join_state,
             (join_state.left, join_state.right),
-            executor.dynamic_planning.sample_chunk_count,
-            executor.target_partition_size,
+            executor.dynamic_planning.sample_byte_count,
             collective_ids.size_estimate,
         )
 

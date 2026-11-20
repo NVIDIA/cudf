@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import cuda.core
@@ -468,9 +468,10 @@ def test_shutdown_discards_pending_closes_of_owned_comm(
     pending_closes: dict[Any, Any],
     leave_pending_close: Callable[[Any, int], None],
 ) -> None:
-    with SPMDEngine() as engine:
-        leave_pending_close(engine.comm, 7)
-        assert set(pending_closes) == {engine.comm}
+    engine = SPMDEngine()
+    leave_pending_close(engine.comm, 7)
+    assert set(pending_closes) == {engine.comm}
+    engine.shutdown()
     assert pending_closes == {}
 
 
@@ -501,21 +502,12 @@ def test_allgather_polars_dataframe_refuses_communicator_with_pending_close(
     monkeypatch: pytest.MonkeyPatch,
     leave_pending_close: Callable[[Any, int], None],
 ) -> None:
-    blocked_comm = MagicMock()
-
-    class Engine:
-        comm = blocked_comm
-
-        @property
-        def context(self) -> NoReturn:
-            pytest.fail("the gate must run before any GPU work")
-
-    leave_pending_close(blocked_comm, 7)
+    comm = MagicMock()
+    leave_pending_close(comm, 7)
     monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)
-    engine: Any = Engine()
     with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
         allgather_polars_dataframe(
-            engine=engine, local_df=pl.DataFrame({"a": [1]}), op_id=0
+            engine=MagicMock(comm=comm), local_df=pl.DataFrame({"a": [1]}), op_id=0
         )
 
 

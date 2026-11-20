@@ -50,6 +50,7 @@ files:
       - test_cpp
       - test_python_common
       - test_python_cudf
+      - test_python_cudf_benchmarks
       - depends_on_pytorch
       - test_python_cudf_common
       - test_python_pylibcudf
@@ -89,6 +90,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - test_python_cudf_benchmarks
       - depends_on_pytorch
       - test_python_s3
       - numpy_run
@@ -1282,8 +1284,6 @@ dependencies:
         packages:
           - cramjam
           - *fastavro
-          - pytest-benchmark
-          - pytest-cases>=3.8.2
           - rapids-cli
           - scipy
           - zstandard
@@ -1305,6 +1305,12 @@ dependencies:
               - pyarrow==19.*
           - matrix:
             packages:
+  test_python_cudf_benchmarks:
+    common:
+      - output_types: [conda, requirements]
+        packages:
+          - pytest-benchmark
+          - pytest-cases>=3.8.2
   test_python_cudf_polars:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

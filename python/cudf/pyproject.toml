@@ -51,8 +51,6 @@ test = [
     "cuda-core[cu13]>=1.0,<2",
     "fastavro>=0.22.9",
     "msgpack",
-    "pytest-benchmark",
-    "pytest-cases>=3.8.2",
     "pytest-cov",
     "pytest-xdist",
     "pytest<9.1.0",

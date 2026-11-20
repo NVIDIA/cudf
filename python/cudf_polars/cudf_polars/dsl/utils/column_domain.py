@@ -14,6 +14,7 @@ from cudf_polars.dsl.ir import (
     Distinct,
     Filter,
     GroupBy,
+    HConcat,
     HStack,
     Join,
     Projection,
@@ -23,6 +24,7 @@ from cudf_polars.dsl.ir import (
     Sort,
 )
 from cudf_polars.streaming.filter_hint import PushdownFilterHint
+from cudf_polars.streaming.over import Over
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -39,7 +41,7 @@ __all__ = [
 
 @dataclass(frozen=True)
 class ColumnBinding:
-    """A direct binding to a named column on a specific child edge."""
+    """An output column copied directly from one child column."""
 
     child_index: int
     name: str
@@ -66,12 +68,12 @@ class ColumnLineage:
 @singledispatch
 def column_domain_bindings(node: IR) -> Mapping[str, ColumnBinding]:
     """
-    Map output columns to child columns containing their value domains.
+    Map output columns to child columns supplying their values unchanged.
 
     For every ``output_name -> ColumnBinding(child_index, input_name)`` binding,
-    every value appearing in ``node[output_name]`` is guaranteed to appear in
-    ``node.children[child_index][input_name]``. Row order, multiplicity, and
-    cardinality are not preserved.
+    the output contains values selected directly from the bound input column.
+    The binding does not imply that row order, multiplicity, or cardinality is
+    preserved.
 
     If a name in ``node.schema`` does not appear in the mapping it means
     that it was not possible to derive a relationship between the domain of
@@ -81,7 +83,8 @@ def column_domain_bindings(node: IR) -> Mapping[str, ColumnBinding]:
 
 
 @column_domain_bindings.register(Select)
-def _(node: Select) -> Mapping[str, ColumnBinding]:
+@column_domain_bindings.register(Over)
+def _(node: Select | Over) -> Mapping[str, ColumnBinding]:
     return {
         item.name: ColumnBinding(0, item.value.name)
         for item in node.exprs
@@ -119,22 +122,57 @@ def _(node: Rolling) -> Mapping[str, ColumnBinding]:
 
 @column_domain_bindings.register(Join)
 def _(node: Join) -> Mapping[str, ColumnBinding]:
-    left, right = node.children
+    # JoinWithPrefilter appends domain children after the two join inputs.
+    left, right = node.children[:2]
     how = node.options[0]
     if how in ("Semi", "Anti"):
         return {
             name: ColumnBinding(0, name) for name in node.schema if name in left.schema
         }
-    if how != "Inner":
+    if how == "Left":
+        return {
+            name: ColumnBinding(0, name) for name in left.schema if name in node.schema
+        }
+    if how not in ("Cross", "Inner", "Right"):
         return {}
 
-    bindings = {name: ColumnBinding(0, name) for name in left.schema}
     suffix = node.options[3]
+    bindings = (
+        {name: ColumnBinding(0, name) for name in left.schema}
+        if how in ("Cross", "Inner")
+        else {}
+    )
+    if how == "Inner" and node.options[4] and node.options[5].startswith("right"):
+        for left_key, right_key in zip(node.left_on, node.right_on, strict=True):
+            if (
+                isinstance(left_key.value, expr.Col)
+                and isinstance(right_key.value, expr.Col)
+                and left_key.name in node.schema
+            ):
+                bindings[left_key.name] = ColumnBinding(1, right_key.value.name)
+    left_names = set(left.schema)
+    if how == "Right" and node.options[4]:
+        left_names.difference_update(key.name for key in node.left_on)
     for name in right.schema:
-        output_name = f"{name}{suffix}" if name in left.schema else name
+        output_name = f"{name}{suffix}" if name in left_names else name
         if output_name in node.schema:
             bindings[output_name] = ColumnBinding(1, name)
     return bindings
+
+
+@column_domain_bindings.register(HConcat)
+def _(node: HConcat) -> Mapping[str, ColumnBinding]:
+    if not node.streaming_safe:
+        return {}
+    sources: dict[str, list[int]] = {}
+    for child_index, child in enumerate(node.children):
+        for name in child.schema.keys() & node.schema.keys():
+            sources.setdefault(name, []).append(child_index)
+    return {
+        name: ColumnBinding(child_indices[0], name)
+        for name, child_indices in sources.items()
+        if len(child_indices) == 1
+    }
 
 
 @column_domain_bindings.register(Distinct)

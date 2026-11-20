@@ -1,10 +1,22 @@
 # AI Code Review Guidelines - cuDF Python
 
-**Role**: Act as a principal engineer with 10+ years experience in Python systems programming and GPU-accelerated data processing. Focus ONLY on CRITICAL and HIGH issues.
+**Role**: Act as a principal engineer with 10+ years experience in Python systems programming and GPU-accelerated data processing. Prioritize concrete correctness, compatibility, performance, and test coverage risks; assign severity by impact.
 
-**Target**: Sub-3% false positive rate. Be direct, concise, minimal.
+Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including their severity definitions and evidence requirements.
 
 **Context**: cuDF Python layer provides GPU-accelerated DataFrame operations with a pandas-compatible API. The Python codebase includes multiple packages: cudf (high-level API), pylibcudf (Cython bindings to libcudf), cudf_polars (Polars GPU executor), dask_cudf (Dask integration), cudf_kafka, and custreamz.
+
+## Regression evidence
+
+- Check that compatibility tests use the intended GPU implementation and cannot
+  pass solely through CPU fallback, skipped collection, or another xfail marker.
+- For changed execution paths, check the relevant partition, dtype, null/NaN,
+  slicing, and supported-version boundaries; identify concrete missing behavior
+  rather than requesting a blanket test matrix.
+- For changed algorithms, compare input-shape, type, missing-value, and numerical
+  behavior against the intended reference semantics.
+- For asynchronous transfers and interoperability, follow the owning objects
+  until GPU work completes, including failure and repeated-use paths.
 
 ## IGNORE These Issues
 
@@ -14,13 +26,12 @@
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues (Always Comment)
+## CRITICAL Issues (Report confirmed issues)
 
 ### Memory Safety
 - Memory leaks from improper resource management
 - Use-after-free scenarios in device memory handling
 - Incorrect lifetime management of memory resources
-- Cython memory management errors in pylibcudf (missing `del`, incorrect reference counting)
 - Incorrect ownership semantics between Python and C++ layers
 
 ### API Breaking Changes
@@ -33,7 +44,6 @@
 - Logic errors producing wrong results
 - Silent data corruption from type coercion
 - Incorrect null/NA handling (cuDF uses nullable dtypes throughout)
-- cudf_polars: Incorrect Polars IR translation producing wrong results on GPU
 
 ### Integration Errors
 - Incorrect handling of `__cuda_array_interface__` (CuPy, PyTorch interop)
@@ -56,21 +66,9 @@
 - Missing size/type checks
 - Not handling edge cases (empty DataFrames, all-null columns)
 
-### pylibcudf (Cython Bindings)
-- Incorrect Cython object lifetime management
-- Exceptions not handled correctly across Python/C++ boundary (missing `+libcudf_exception_handler` if not `noexcept`)
-- Cython binding of a C++ function declaring `noexcept` when the C++ function can raise exceptions
-- Incorrect GIL handling for CUDA operations
-- Cython bindings not matching the C++ API
-- Using pylibcudf or Polars APIs that require pyarrow (like `to_arrow`) when cudf_polars containers should be used instead
-
-### cudf_polars (Polars GPU Executor)
-- Missing coverage of Polars expression types (silent fallback to CPU without warning)
-- Incorrect GPU executor fallback logic
-- IR nodes not properly translated
-- Stream argument not explicitly passed to a pylibcudf API
-- `asyncio.Task`s not explicitly canceled in a finally block upon failure
-- rapidsmpf `Channel`s not eventually entering the `shutdown_on_error` context manager
+### Code Reuse
+- New helpers that reimplement functionality already available in cudf, pylibcudf, cudf_polars utilities, or the underlying libcudf API without a correctness reason or a measured performance justification
+- New code beyond what the change needs: dead code, unused parameters, speculative generality
 
 ### dask_cudf
 - Dask DataFrame API compatibility issues
@@ -82,6 +80,7 @@
 - Using external datasets (tests must not depend on external resources)
 - Missing tests for different array types (CuPy, Numba)
 - New pytest files not conforming to standards and patterns of existing test files in that directory
+- New tests that duplicate existing coverage instead of extending an existing test or `@pytest.mark.parametrize` list; cite the covering test
 
 ### Documentation
 - Missing or incorrect docstrings for public methods
@@ -109,7 +108,7 @@
 
 Before commenting, ask:
 1. Is this actually wrong/risky, or just different?
-2. Would this cause a real problem (crash, leak, wrong results, API break)?
+2. Would this cause a real problem (crash, leak, wrong results, API break), or leave code or tests the repository does not need (dead code, or a copy of an existing helper or test that you can name)?
 3. Does this comment add unique value?
 
 **If no to any: Skip the comment.**
@@ -185,23 +184,8 @@ Why: Can cause cryptic CUDA errors or silent data corruption
 
 ## Package-Specific Considerations
 
-### pylibcudf (Cython Bindings)
-
-**Memory Management**:
-- Handle exceptions correctly across Python/C++ boundary
-- Cython bindings must match the C++ API signatures and semantics
-
-**GIL and CUDA Locks**:
-- Long-running libcudf calls should run inside `with nogil:` after all Python object conversion and validation is complete
-- Do not access Python objects, call Python callbacks, or allocate Python-owned objects inside `with nogil:` blocks
-- Do not hold Python-level locks while entering `with nogil:` libcudf calls that may allocate device memory or synchronize CUDA work
-- Watch for lock-order inversions where one path holds the GIL while waiting for CUDA/RMM state and another path holds CUDA/RMM state while trying to reacquire the GIL
-- If a binding must reacquire the GIL after launching CUDA work, verify the CUDA work is ordered on the provided stream and no Python-visible object can observe partially completed device state
-
-**Array Interfaces**:
-- Support `__cuda_array_interface__` for interoperability with CuPy and PyTorch
-- Handle different array types (CuPy, Numba DeviceNDArray)
-- Preserve array attributes where appropriate
+Guidelines for pylibcudf and cudf_polars are in `python/pylibcudf/REVIEW_GUIDELINES.md`
+and `python/cudf_polars/REVIEW_GUIDELINES.md`.
 
 ### cudf (High-Level API)
 
@@ -214,18 +198,6 @@ Why: Can cause cryptic CUDA errors or silent data corruption
 - Proper handling of cuDF-specific types (decimal, struct, list)
 - Type promotion rules match expected behavior
 - Categorical handling consistent with pandas
-
-### cudf_polars (Polars GPU Executor)
-
-**IR Translation**:
-- All Polars IR nodes must be correctly translated to GPU operations
-- Unsupported operations must fall back to CPU cleanly (not silently produce wrong results)
-- No Cython in this package (pure Python)
-
-**Testing**:
-- Tests should verify GPU results match Polars CPU results
-- Cover all supported expression types
-- Test fallback behavior for unsupported operations
 
 ### dask_cudf (Dask Integration)
 

@@ -25,6 +25,11 @@ EXITCODE=0
 trap "EXITCODE=1" ERR
 set +e
 
+# Run the large-memory tests (skipped by default) in nightlies; they skip themselves on small GPUs
+if [[ "${RAPIDS_BUILD_TYPE:-}" == "nightly" ]]; then
+    export GTEST_CUDF_LARGE_MEMORY_TESTS=1
+fi
+
 # Run gtests from the libcudf-tests and libcudf-streaming-tests packages
 export GTEST_OUTPUT=xml:${RAPIDS_TESTS_DIR}/
 

@@ -119,7 +119,7 @@ TEST_F(TransformTest, ComputeColumnJIT)
   auto col_ref_0  = cudf::ast::column_reference(0);
   auto col_ref_1  = cudf::ast::column_reference(1);
   auto expression = cudf::ast::operation(cudf::ast::ast_operator::ADD, col_ref_0, col_ref_1);
-  cudf::compute_column_jit(table, expression, cudf::test::get_default_stream());
+  cudf::compute_column_jit(table, expression, {}, cudf::test::get_default_stream());
 }
 
 TEST_F(TransformTest, BoolsToMask)

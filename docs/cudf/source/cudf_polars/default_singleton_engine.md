@@ -18,7 +18,7 @@ For any non-trivial workflow, construct an engine explicitly. To tune
 options, use
 {meth}`RayEngine.from_options(...) <cudf_polars.engine.ray.RayEngine.from_options>`.
 `engine="gpu"` accepts no options, so settings such as
-`spill_to_pinned_memory=True` for spill-heavy workloads require an
+`spill_device_limit` for spill-heavy workloads require an
 explicit engine. See {doc}`usage` and {doc}`options`.
 ```
 
@@ -31,9 +31,9 @@ import polars as pl
 
 result = (
     pl.scan_parquet("/data/*.parquet")
-      .group_by("customer_id")
-      .agg(pl.col("amount").sum())
-      .collect(engine="gpu")
+    .group_by("customer_id")
+    .agg(pl.col("amount").sum())
+    .collect(engine="gpu")
 )
 ```
 
@@ -102,7 +102,7 @@ explicit_engine = SPMDEngine.from_options(opts)
 ## No options
 
 `DefaultSingletonEngine.get_or_create()` takes no arguments. To tune `StreamingOptions` such
-as `spill_to_pinned_memory`, `fallback_mode`, `max_rows_per_partition`, or any rapidsmpf
+as `spill_device_limit`, `fallback_mode`, `max_rows_per_partition`, or any rapidsmpf
 runtime knob, construct an explicit
 {class}`~cudf_polars.engine.ray.RayEngine` via
 {meth}`RayEngine.from_options(...) <cudf_polars.engine.ray.RayEngine.from_options>`.

@@ -3,22 +3,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "stream_compaction/apply_mask.cuh"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
-#include <cudf/detail/unary.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
-#include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
+#include <cuda/functional>
+#include <cuda/iterator>
+#include <cuda/std/functional>
 #include <thrust/scan.h>
+#include <thrust/transform.h>
+
+#include <cstddef>
 
 namespace cudf::lists {
 namespace detail {
@@ -26,8 +33,9 @@ namespace detail {
 std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,
                                    cudf::detail::mask_type mask_kind,
+                                   null_policy null_handling,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(boolean_mask.child().type().id() == type_id::BOOL8, "Mask must be of type BOOL8.");
   CUDF_EXPECTS(input.size() == boolean_mask.size(),
@@ -44,6 +52,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
     auto filtered = cudf::detail::apply_mask(cudf::table_view{{input.get_sliced_child(stream)}},
                                              mask_sliced_child,
                                              mask_kind,
+                                             null_handling,
                                              stream,
                                              mr)
                       ->release();
@@ -51,47 +60,51 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
   };
 
   auto const make_output_offsets = [&] {
-    auto mask_sliced_offsets =
-      cudf::detail::slice(
-        boolean_mask.offsets(), {boolean_mask.offset(), boolean_mask.size() + 1}, stream)
-        .front();
+    auto const num_elements = mask_sliced_child.size();
+    auto const d_mask_child = column_device_view::create(mask_sliced_child, stream);
 
-    auto const sizes = [&] {
-      // For DELETION, invert the `mask_sliced_child` so segmented_sum only counts `non-null` and
-      // `false` elements in the original mask.
-      auto const inverted_mask_child =
-        (mask_kind == cudf::detail::mask_type::RETENTION)
-          ? std::unique_ptr<column>{}
-          : cudf::detail::unary_operation(mask_sliced_child,
-                                          cudf::unary_operator::NOT,
-                                          stream,
-                                          cudf::get_current_device_resource_ref());
-      auto const effective_mask_sliced_child = (mask_kind == cudf::detail::mask_type::RETENTION)
-                                                 ? mask_sliced_child
-                                                 : inverted_mask_child->view();
-      return cudf::reduction::detail::segmented_sum(effective_mask_sliced_child,
-                                                    mask_sliced_offsets,
-                                                    offset_data_type,
-                                                    null_policy::EXCLUDE,
-                                                    std::nullopt,
-                                                    stream,
-                                                    cudf::get_current_device_resource_ref());
-    }();
-    auto const d_sizes     = column_device_view::create(*sizes, stream);
-    auto const sizes_begin = cudf::detail::make_null_replacement_iterator(*d_sizes, size_type{0});
-    auto const sizes_end   = sizes_begin + sizes->size();
-    auto output_offsets    = cudf::make_numeric_column(
+    // kept_counts[i] = number of kept elements among the first `i` elements of the sliced child
+    auto kept_counts = cuda::device_buffer<size_type>(
+      stream, mr.get_temporary_mr(), static_cast<std::size_t>(num_elements) + 1, cuda::no_init);
+    CUDF_CUDA_TRY(cudaMemsetAsync(kept_counts.data(), 0, sizeof(size_type), stream.get()));
+
+    auto const is_retention = (mask_kind == cudf::detail::mask_type::RETENTION);
+    auto const keep_nulls   = (null_handling == null_policy::INCLUDE);
+
+    // Lambda to scan the kept counts using the mask iterator
+    auto const scan_kept_counts = [&](auto mask_iter) {
+      auto const keep_begin = cuda::make_transform_iterator(
+        cuda::counting_iterator<size_type>{0},
+        cudf::detail::mask_filter<decltype(mask_iter)>{mask_iter, is_retention});
+      // Pass a size_type init so the scan does not accumulate in bool
+      thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                             keep_begin,
+                             keep_begin + num_elements,
+                             kept_counts.data() + 1,
+                             size_type{0},
+                             cuda::std::plus<size_type>{});
+    };
+
+    if (mask_sliced_child.has_nulls()) {
+      // Replace nulls with the value that keeps (INCLUDE) or drops (EXCLUDE) the element
+      scan_kept_counts(cudf::detail::make_null_replacement_iterator<bool>(
+        *d_mask_child, keep_nulls == is_retention));
+    } else {
+      // No nulls, apply the mask directly
+      scan_kept_counts(d_mask_child->data<bool>());
+    }
+
+    // Each output offset is the kept count at the corresponding mask offset
+    auto output_offsets = cudf::make_numeric_column(
       offset_data_type, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
-    auto output_offsets_view = output_offsets->mutable_view();
-
-    // Could have attempted an exclusive_scan(), but it would not compute the last entry.
-    // Instead, inclusive_scan(), followed by writing `0` to the head of the offsets column.
-    thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                           sizes_begin,
-                           sizes_end,
-                           output_offsets_view.begin<int32_t>() + 1);
-    CUDF_CUDA_TRY(
-      cudaMemsetAsync(output_offsets_view.begin<int32_t>(), 0, sizeof(int32_t), stream.get()));
+    thrust::transform(
+      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      boolean_mask.offsets_begin(),
+      boolean_mask.offsets_end(),
+      output_offsets->mutable_view().begin<size_type>(),
+      cuda::proclaim_return_type<size_type>(
+        [kept_counts = kept_counts.data(), mask_offsets = boolean_mask.offsets_begin()] __device__(
+          size_type offset) { return kept_counts[offset - mask_offsets[0]]; }));
     return output_offsets;
   };
 
@@ -106,28 +119,47 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
 std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
                                              lists_column_view const& retention_mask,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
+{
+  return apply_retention_mask(input, retention_mask, null_policy::EXCLUDE, stream, mr);
+}
+
+std::unique_ptr<column> apply_retention_mask(lists_column_view const& input,
+                                             lists_column_view const& retention_mask,
+                                             null_policy null_handling,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, retention_mask, cudf::detail::mask_type::RETENTION, stream, mr);
+  return detail::apply_mask(
+    input, retention_mask, cudf::detail::mask_type::RETENTION, null_handling, stream, mr);
 }
 
 std::unique_ptr<column> apply_boolean_mask(lists_column_view const& input,
                                            lists_column_view const& boolean_mask,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
-  CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, boolean_mask, cudf::detail::mask_type::RETENTION, stream, mr);
+  return apply_retention_mask(input, boolean_mask, null_policy::EXCLUDE, stream, mr);
 }
 
 std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
                                             lists_column_view const& deletion_mask,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
+{
+  return apply_deletion_mask(input, deletion_mask, null_policy::EXCLUDE, stream, mr);
+}
+
+std::unique_ptr<column> apply_deletion_mask(lists_column_view const& input,
+                                            lists_column_view const& deletion_mask,
+                                            null_policy null_handling,
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::apply_mask(input, deletion_mask, cudf::detail::mask_type::DELETION, stream, mr);
+  return detail::apply_mask(
+    input, deletion_mask, cudf::detail::mask_type::DELETION, null_handling, stream, mr);
 }
 
 }  // namespace cudf::lists

@@ -10,8 +10,8 @@
 #include <cudf/strings/detail/copy_if_else.cuh>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -43,7 +43,7 @@ struct segmented_shift_filter {
   };
 };
 
-template <typename T, typename Enable = void>
+template <typename T>
 struct segmented_shift_functor {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -55,14 +55,14 @@ struct segmented_shift_functor {
 /**
  * @brief Segmented shift specialization for representation layout compatible types.
  */
-template <typename T>
-struct segmented_shift_functor<T, std::enable_if_t<is_rep_layout_compatible<T>()>> {
+template <cudf::concepts::rep_layout_compatible T>
+struct segmented_shift_functor<T> {
   std::unique_ptr<column> operator()(column_view const& segmented_values,
                                      device_span<size_type const> segment_offsets,
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     bool nullable           = not fill_value.is_valid(stream) or segmented_values.nullable();
@@ -91,7 +91,7 @@ struct segmented_shift_functor<string_view> {
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     auto values_device_view = column_device_view::create(segmented_values, stream);
     auto input_iterator     = make_optional_iterator<cudf::string_view>(
@@ -118,7 +118,7 @@ struct segmented_shift_functor_forwarder {
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
   {
     segmented_shift_functor<T> shifter;
     return shifter(segmented_values, segment_offsets, offset, fill_value, stream, mr);
@@ -132,7 +132,7 @@ std::unique_ptr<column> segmented_shift(column_view const& segmented_values,
                                         size_type offset,
                                         scalar const& fill_value,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   if (segmented_values.is_empty()) { return empty_like(segmented_values); }
   if (offset == 0) { return std::make_unique<column>(segmented_values, stream, mr); };

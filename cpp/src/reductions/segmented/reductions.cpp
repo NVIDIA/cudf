@@ -11,6 +11,7 @@
 #include <cudf/reduction/detail/segmented_reduction_functions.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
 #include <cuda/stream>
@@ -27,7 +28,7 @@ struct segmented_reduce_dispatch_functor {
   null_policy null_handling;
   std::optional<std::reference_wrapper<scalar const>> init;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   segmented_reduce_dispatch_functor(column_view const& segmented_values,
                                     device_span<size_type const> offsets,
@@ -35,7 +36,7 @@ struct segmented_reduce_dispatch_functor {
                                     null_policy null_handling,
                                     std::optional<std::reference_wrapper<scalar const>> init,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
     : col(segmented_values),
       offsets(offsets),
       output_dtype(output_dtype),
@@ -51,7 +52,7 @@ struct segmented_reduce_dispatch_functor {
                                     data_type output_dtype,
                                     null_policy null_handling,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
     : segmented_reduce_dispatch_functor(
         segmented_values, offsets, output_dtype, null_handling, std::nullopt, stream, mr)
   {
@@ -94,7 +95,8 @@ struct segmented_reduce_dispatch_functor {
           dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;
         auto const udf_ptr = dynamic_cast<segmented_reduce_host_udf const*>(udf_base_ptr.get());
         CUDF_EXPECTS(udf_ptr != nullptr, "Invalid HOST_UDF instance for segmented reduction.");
-        return (*udf_ptr)(col, offsets, output_dtype, null_handling, init, stream, mr);
+        return (*udf_ptr)(
+          col, offsets, output_dtype, null_handling, init, stream, mr.get_output_mr());
       }  // case aggregation::HOST_UDF
       default: CUDF_FAIL("Unsupported aggregation type.");
     }
@@ -108,7 +110,7 @@ std::unique_ptr<column> segmented_reduce(column_view const& segmented_values,
                                          null_policy null_handling,
                                          std::optional<std::reference_wrapper<scalar const>> init,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!init.has_value() || cudf::have_same_types(segmented_values, init.value().get()),
                "column and initial value must be the same type",
@@ -144,7 +146,7 @@ std::unique_ptr<column> segmented_reduce(column_view const& segmented_values,
                                          data_type output_dtype,
                                          null_policy null_handling,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return reduction::detail::segmented_reduce(
@@ -158,7 +160,7 @@ std::unique_ptr<column> segmented_reduce(column_view const& segmented_values,
                                          null_policy null_handling,
                                          std::optional<std::reference_wrapper<scalar const>> init,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return reduction::detail::segmented_reduce(

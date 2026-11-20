@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,6 +10,9 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
 
 class NullMaskTest : public cudf::test::BaseFixture {};
 
@@ -80,8 +83,9 @@ TEST_F(NullMaskTest, NullCount)
 
 TEST_F(NullMaskTest, SegmentedCount)
 {
-  auto stream        = cudf::test::get_default_stream();
-  auto mask          = rmm::device_uvector<cudf::bitmask_type>(10, stream);
+  auto stream = cudf::test::get_default_stream();
+  auto mask   = cuda::device_buffer<cudf::bitmask_type>(
+    stream, cudf::get_current_device_resource_ref(), 10, cuda::no_init);
   auto const indices = std::vector<cudf::size_type>{0, 320, 0, 320};
 
   cudf::segmented_null_count(mask.data(), indices, stream);

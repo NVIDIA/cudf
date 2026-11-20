@@ -91,10 +91,11 @@ struct comparator_adapter {
  *
  * @param input The input table
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned bitmask's device memory
  * @return A pair of pointer to the output bitmask and the buffer containing the bitmask
  */
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_row_bitmask(
-  table_view const& input, cuda::stream_ref stream);
+  table_view const& input, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Helper function to perform the contains operation using a hash set
@@ -144,8 +145,9 @@ void perform_contains(table_view const& haystack,
                               stream.get()};
 
   if (haystack_has_nulls && compare_nulls == null_equality::UNEQUAL) {
-    auto const bitmask_buffer_and_ptr = build_row_bitmask(haystack, stream);
-    auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
+    auto const bitmask_buffer_and_ptr =
+      build_row_bitmask(haystack, stream, cudf::get_current_device_resource_ref());
+    auto const row_bitmask_ptr = bitmask_buffer_and_ptr.second;
 
     // If the haystack table has nulls but they are compared unequal, don't insert them.
     // Otherwise, it was known to cause performance issue:
@@ -161,8 +163,9 @@ void perform_contains(table_view const& haystack,
   }
 
   if (needles_has_nulls && compare_nulls == null_equality::UNEQUAL) {
-    auto const bitmask_buffer_and_ptr = build_row_bitmask(needles, stream);
-    auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
+    auto const bitmask_buffer_and_ptr =
+      build_row_bitmask(needles, stream, cudf::get_current_device_resource_ref());
+    auto const row_bitmask_ptr = bitmask_buffer_and_ptr.second;
     set.contains_if_async(needles_iter,
                           needles_iter + needles.num_rows(),
                           cuda::counting_iterator<size_type>{0},  // stencil

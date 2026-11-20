@@ -15,8 +15,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
@@ -168,9 +167,11 @@ approx_distinct_count<Hasher>::approx_distinct_count(
   nan_policy nan_handling,
   cuda::stream_ref stream,
   cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _mr{std::move(mr)},
-    _storage{rmm::device_uvector<register_type>{
-      sketch_bytes(check_precision(precision)) / sizeof(register_type), stream, _mr}},
+  : _storage{cuda::device_buffer<register_type>{
+      stream,
+      std::move(mr),
+      sketch_bytes(check_precision(precision)) / sizeof(register_type),
+      cuda::no_init}},
     _precision{precision},
     _null_handling{null_handling},
     _nan_handling{nan_handling}
@@ -199,14 +200,11 @@ approx_distinct_count<Hasher>::approx_distinct_count(
 }
 
 template <template <typename> class Hasher>
-approx_distinct_count<Hasher>::approx_distinct_count(
-  cuda::std::span<cuda::std::byte> sketch_span,
-  std::int32_t precision,
-  null_policy null_handling,
-  nan_policy nan_handling,
-  cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _mr{std::move(mr)},
-    _storage{check_sketch_span(sketch_span, check_precision(precision))},
+approx_distinct_count<Hasher>::approx_distinct_count(cuda::std::span<cuda::std::byte> sketch_span,
+                                                     std::int32_t precision,
+                                                     null_policy null_handling,
+                                                     nan_policy nan_handling)
+  : _storage{check_sketch_span(sketch_span, check_precision(precision))},
     _precision{precision},
     _null_handling{null_handling},
     _nan_handling{nan_handling}
@@ -312,7 +310,7 @@ cuda::std::span<cuda::std::byte> approx_distinct_count<Hasher>::sketch() noexcep
   return std::visit(
     [](auto& storage) -> cuda::std::span<cuda::std::byte> {
       using T = std::decay_t<decltype(storage)>;
-      if constexpr (std::is_same_v<T, rmm::device_uvector<register_type>>) {
+      if constexpr (std::is_same_v<T, cuda::device_buffer<register_type>>) {
         return {reinterpret_cast<cuda::std::byte*>(storage.data()),
                 storage.size() * sizeof(register_type)};
       } else {
@@ -328,7 +326,7 @@ cuda::std::span<cuda::std::byte const> approx_distinct_count<Hasher>::sketch() c
   return std::visit(
     [](auto const& storage) -> cuda::std::span<cuda::std::byte const> {
       using T = std::decay_t<decltype(storage)>;
-      if constexpr (std::is_same_v<T, rmm::device_uvector<register_type>>) {
+      if constexpr (std::is_same_v<T, cuda::device_buffer<register_type>>) {
         return {reinterpret_cast<cuda::std::byte const*>(storage.data()),
                 storage.size() * sizeof(register_type)};
       } else {
@@ -395,8 +393,7 @@ approx_distinct_count::approx_distinct_count(cuda::std::span<cuda::std::byte> sk
                                              std::int32_t precision,
                                              null_policy null_handling,
                                              nan_policy nan_handling)
-  : _impl(std::make_unique<impl_type>(
-      sketch_span, precision, null_handling, nan_handling, cudf::get_current_device_resource_ref()))
+  : _impl(std::make_unique<impl_type>(sketch_span, precision, null_handling, nan_handling))
 {
 }
 

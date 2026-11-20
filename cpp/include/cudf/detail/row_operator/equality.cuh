@@ -15,11 +15,13 @@
 #include <cudf/lists/lists_column_device_view.cuh>
 #include <cudf/structs/structs_column_device_view.cuh>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <thrust/equal.h>
 #include <thrust/execution_policy.h>
@@ -66,7 +68,6 @@ struct nan_equal_physical_equality_comparator {
    */
   template <typename Element>
   __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
-    requires(not cuda::std::is_floating_point_v<Element>)
   {
     return lhs == rhs;
   }
@@ -80,9 +81,8 @@ struct nan_equal_physical_equality_comparator {
    * @param rhs Second element
    * @return `true` if `lhs` == `rhs` else `false`
    */
-  template <typename Element>
+  template <cuda::std::floating_point Element>
   __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
-    requires(cuda::std::is_floating_point_v<Element>)
   {
     return isnan(lhs) and isnan(rhs) ? true : lhs == rhs;
   }
@@ -175,10 +175,9 @@ class device_row_comparator {
     {
     }
 
-    template <typename KeyType>
+    template <cuda::std::equality_comparable KeyType>
     __device__ bool operator()(size_type lhs_element_index,
                                size_type rhs_element_index) const noexcept
-      requires(cudf::is_equality_comparable<KeyType, KeyType>())
     {
       auto const lidx = lhs.element<cudf::dictionary32>(lhs_element_index).value();
       auto const ridx = rhs.element<cudf::dictionary32>(rhs_element_index).value();
@@ -191,7 +190,7 @@ class device_row_comparator {
 
     template <typename KeyType, typename... Args>
     __device__ bool operator()(Args...) const noexcept
-      requires(not cudf::is_equality_comparable<KeyType, KeyType>())
+      requires(not cuda::std::equality_comparable<KeyType>)
     {
       CUDF_UNREACHABLE("Key types are not comparable");
     }
@@ -240,11 +239,10 @@ class device_row_comparator {
      * @return True if lhs and rhs are equal or if both lhs and rhs are null and nulls are
      * considered equal (`nulls_are_equal` == `null_equality::EQUAL`)
      */
-    template <typename Element>
+    template <cuda::std::equality_comparable Element>
     __device__ bool operator()(size_type const lhs_element_index,
                                size_type const rhs_element_index) const noexcept
-      requires(cudf::is_equality_comparable<Element, Element>() and
-               not cudf::is_dictionary<Element>())
+      requires(not cudf::concepts::dictionary<Element>)
     {
       if (check_nulls) {
         bool const lhs_is_null{lhs.is_null(lhs_element_index)};
@@ -260,13 +258,12 @@ class device_row_comparator {
                         rhs.element<Element>(rhs_element_index));
     }
 
-    template <typename Element>
+    template <cudf::concepts::dictionary Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ bool
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(cudf::is_dictionary<Element>())
     {
       if (check_nulls) {
         bool const lhs_is_null{lhs.is_null(lhs_element_index)};
@@ -287,19 +284,19 @@ class device_row_comparator {
 
     template <typename Element, typename... Args>
     __device__ bool operator()(Args...) const noexcept
-      requires(not cudf::is_equality_comparable<Element, Element>() and
-               (not has_nested_columns or not cudf::is_nested<Element>()))
+      requires(not cuda::std::equality_comparable<Element> and
+               (not has_nested_columns or not cudf::concepts::nested<Element>))
     {
       CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
     }
 
-    template <typename Element>
+    template <cudf::concepts::nested Element>
 #ifndef NDEBUG
     __attribute__((noinline))
 #endif
     __device__ bool
     operator()(size_type const lhs_element_index, size_type const rhs_element_index) const noexcept
-      requires(has_nested_columns and cudf::is_nested<Element>())
+      requires(has_nested_columns)
     {
       column_device_view lcol = lhs.slice(lhs_element_index, 1);
       column_device_view rcol = rhs.slice(rhs_element_index, 1);
@@ -362,9 +359,8 @@ class device_row_comparator {
        *
        * @return True if ALL elements compare equal, false otherwise
        */
-      template <typename Element>
+      template <cuda::std::equality_comparable Element>
       __device__ bool operator()() const noexcept
-        requires(cudf::is_equality_comparable<Element, Element>())
       {
         return thrust::all_of(thrust::seq,
                               cuda::counting_iterator<cudf::size_type>{0},
@@ -374,7 +370,7 @@ class device_row_comparator {
 
       template <typename Element, typename... Args>
       __device__ bool operator()(Args...) const noexcept
-        requires(not cudf::is_equality_comparable<Element, Element>())
+        requires(not cuda::std::equality_comparable<Element>)
       {
         CUDF_UNREACHABLE("Attempted to compare elements of uncomparable types.");
       }

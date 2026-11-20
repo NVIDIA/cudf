@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,11 +14,16 @@ import polars as pl
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import (
+    ChannelMetadata,
     OrderKey,
     OrderScheme,
     Ordering,
+    Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
 from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataFrame
@@ -26,11 +32,13 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.streaming.actor_graph.join import (
+    _forward_join_partitioning,
     _make_ordered_strategy,
     _ordered_join_decision,
     _use_pwise_join,
 )
-from cudf_polars.streaming.actor_graph.utils import NormalizedPartitioning
+from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
+from cudf_polars.streaming.actor_graph.utils import ChunkSampler, gather_in_task_group
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.shuffle import Shuffle
@@ -41,8 +49,6 @@ from cudf_polars.utils.config import ConfigOptions, StreamingExecutor
 
 if TYPE_CHECKING:
     import concurrent.futures
-
-    from cudf_streaming.channel_metadata import ChannelMetadata
 
 
 @pytest.fixture
@@ -129,7 +135,7 @@ def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_fac
             broadcast_limit=1_024,
             target_partition_size=1 << 20,
             max_rows_per_partition=2 * right_row_count,
-            dynamic_planning={"sample_chunk_count": 1},
+            dynamic_planning={"sample_byte_count": 1},
         )
     )
     left = pl.scan_parquet(left_path / "*.parquet")
@@ -144,6 +150,38 @@ def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_fac
         engine=engine,
         check_row_order=False,
     )
+
+
+def test_chunk_sampler_exceeds_chunk_estimate(spmd_engine):
+    context = spmd_engine.context
+    stream = context.br().stream_pool.get_stream()
+    chunks = [
+        TableChunk.from_pylibcudf_table(
+            DataFrame.from_polars(pl.DataFrame({"x": list(range(n))}), stream).table,
+            stream,
+            exclusive_view=True,
+            br=context.br(),
+        )
+        for n in (1, 1, 1, 100)
+    ]
+    ch_in = context.create_channel()
+    sampler = ChunkSampler(
+        context,
+        ch_in,
+        max_bytes=sum(chunk.data_alloc_size() for chunk in chunks[:3]) + 1,
+        ch_in_chunk_count=2,
+    )
+
+    async def produce():
+        for i, chunk in enumerate(chunks):
+            await ch_in.send(context, Message(i, chunk))
+        await ch_in.drain(context)
+
+    _, sample = asyncio.run(gather_in_task_group(produce(), sampler.sample()))
+    assert len(sample.local_sample.chunks) == sample.total_chunks == 4
+    assert sample.total_size == sample.local_sample.size
+    assert sample.total_rows == sample.local_sample.rows == 103
+    sample.local_sample.chunks.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +302,61 @@ def test_ordered_join_after_set_sorted_inputs(spmd_engine_factory):
     (ordering,) = metadata.partitioning.inter_rank.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is False
+    assert metadata.partitioning.row_orderings == ()
+
+
+@pytest.mark.parametrize(
+    "how,maintain_order,expected_column",
+    [
+        ("inner", "left", "left_value"),
+        ("inner", "right", "right_value"),
+        ("cross", "left", "left_value"),
+        ("cross", "right", None),
+        ("semi", "left", None),
+        ("anti", "left", None),
+    ],
+)
+def test_partitionwise_join_preserves_maintained_side_ordering(
+    spmd_engine, how, maintain_order, expected_column
+) -> None:
+    left = pl.LazyFrame({"k": [1], "left_value": [2]})
+    right = pl.LazyFrame({"k": [1], "right_value": [3]})
+    q = (
+        left.join(right, how=how, maintain_order=maintain_order)
+        if how == "cross"
+        else left.join(right, on="k", how=how, maintain_order=maintain_order)
+    )
+    join = _join_ir(q)
+    child_metadatas = []
+    for child, column in zip(join.children, ("left_value", "right_value"), strict=True):
+        ordering_column = column if column in child.schema else "k"
+        key = OrderKey(
+            tuple(child.schema).index(ordering_column),
+            plc.types.Order.ASCENDING,
+            plc.types.NullOrder.BEFORE,
+        )
+        child_metadatas.append(
+            ChannelMetadata(
+                local_count=1,
+                partitioning=Partitioning(
+                    row_orderings=(RowOrdering((key,), RowOrderingScope.GLOBAL),)
+                ),
+            )
+        )
+
+    result = _forward_join_partitioning(
+        join,
+        child_metadatas,
+        spmd_engine.context,
+    )
+
+    if expected_column is None:
+        assert result is None or result.row_orderings == ()
+        return
+    assert result is not None
+    (row_ordering,) = result.row_orderings
+    (key,) = row_ordering.order_keys
+    assert tuple(join.schema)[key.column_index] == expected_column
 
 
 def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
@@ -274,6 +366,17 @@ def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
     partitioning = _order_partitioning(spmd_engine, (0, 1))
 
     assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
+
+
+def test_ordered_join_requires_flat_input_partitioning(spmd_engine):
+    left = pl.LazyFrame({"k": [1], "x": [2]})
+    right = pl.LazyFrame({"k": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k", how="inner"))
+    flat = _order_partitioning(spmd_engine, (0,))
+    rank_only = NormalizedPartitioning(flat.inter_rank_scheme, None)
+
+    assert _make_ordered_strategy(join_ir, rank_only, flat) is None
+    assert _make_ordered_strategy(join_ir, flat, rank_only) is None
 
 
 def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):

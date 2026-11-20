@@ -529,7 +529,7 @@ CUDF_KERNEL void parse_fn_string_parallel(str_tuple_it str_tuples,
     // 0-31, 32-63, ... i*32-n.
     // entire warp executes but with mask.
     for (thread_index_type char_index = lane;
-         char_index < cudf::util::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
+         char_index < cudf::detail::round_up_safe(in_end - in_begin, static_cast<long>(BLOCK_SIZE));
          char_index += BLOCK_SIZE) {
       bool const is_within_bounds = char_index < (in_end - in_begin);
       auto const c                = is_within_bounds ? in_begin[char_index] : '\0';
@@ -798,7 +798,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
                                             cudf::detail::device_scalar<size_type>& d_null_count,
                                             cudf::io::parse_options_view const& options,
                                             cuda::stream_ref stream,
-                                            rmm::device_async_resource_ref mr)
+                                            cudf::memory_resources mr)
 {
   //  CUDF_FUNC_RANGE();
 
@@ -824,7 +824,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
 
   constexpr auto warps_per_block  = 8;
   constexpr int threads_per_block = cudf::detail::warp_size * warps_per_block;
-  auto num_blocks                 = cudf::util::div_rounding_up_safe(col_size, warps_per_block);
+  auto num_blocks                 = cudf::detail::div_rounding_up_safe(col_size, warps_per_block);
   auto str_counter =
     cudf::numeric_scalar(size_type{0}, true, stream, cudf::get_current_device_resource_ref());
 
@@ -863,7 +863,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
-  rmm::device_uvector<char> chars(bytes, stream, mr);
+  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   single_thread_fn.d_chars   = d_chars;
@@ -921,7 +921,7 @@ std::unique_ptr<column> parse_data(
   size_type null_count,
   cudf::io::parse_options_view const& options,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

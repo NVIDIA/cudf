@@ -152,14 +152,17 @@ def test_tpcds_query(
         )
 
     if reason is not None:
-        record = qr.query_records[0]
-        if isinstance(record, FailedRecord):
-            raise RuntimeError(record.traceback)
-        if (
-            record.validation_result is not None
-            and record.validation_result.status == "Failed"
-        ):
-            raise RuntimeError(record.validation_result.message or "Validation failed")
+        for record in qr.query_records:
+            if isinstance(record, FailedRecord):
+                message = record.traceback
+            elif (
+                record.validation_result is not None
+                and record.validation_result.status == "Failed"
+            ):
+                message = record.validation_result.message or "Validation failed"
+            else:
+                continue
+            raise RuntimeError(message)
     else:
         for record in qr.query_records:
             with subtests.test(msg=f"iter{record.iteration}"):

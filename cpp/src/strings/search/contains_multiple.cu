@@ -7,6 +7,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -33,6 +34,7 @@
 #include <thrust/sequence.h>
 #include <thrust/unique.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace cudf {
@@ -180,18 +182,26 @@ CUDF_KERNEL void multi_contains_kernel(column_device_view const d_strings,
 std::unique_ptr<table> contains_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(
     not targets.is_empty(), "Must specify at least one target string.", std::invalid_argument);
   CUDF_EXPECTS(not targets.has_nulls(), "Target strings cannot be null", std::invalid_argument);
 
+  if (input.is_empty()) {
+    auto results = std::vector<std::unique_ptr<column>>(targets.size());
+    std::generate(results.begin(), results.end(), [] { return make_empty_column(type_id::BOOL8); });
+    return std::make_unique<table>(std::move(results));
+  }
+
   auto const d_strings = column_device_view::create(input.parent(), stream);
   auto const d_targets = column_device_view::create(targets.parent(), stream);
 
   // copy the first byte of each target and sort them
-  auto first_bytes = rmm::device_uvector<u_char>(targets.size(), stream);
-  auto indices     = rmm::device_uvector<size_type>(targets.size(), stream);
+  auto first_bytes = cuda::device_buffer<u_char>(
+    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
+  auto indices = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
   {
     auto tgt_itr = cuda::transform_iterator(
       d_targets->begin<string_view>(),
@@ -215,7 +225,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
   }
 
   // remove duplicates to help speed up lower_bound
-  auto offsets = rmm::device_uvector<size_type>(targets.size(), stream);
+  auto offsets = cuda::device_buffer<size_type>(
+    stream, cudf::get_current_device_resource_ref(), targets.size(), cuda::no_init);
   thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    offsets.begin(),
                    offsets.end());
@@ -244,7 +255,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
       });
     auto host_results_pointers =
       std::vector<bool*>(host_results_pointer_iter, host_results_pointer_iter + results.size());
-    return cudf::detail::make_device_uvector(host_results_pointers, stream, mr);
+    return cudf::detail::make_device_buffer(
+      host_results_pointers, stream, cudf::get_current_device_resource_ref());
   }();
 
   constexpr cudf::thread_index_type block_size = 256;
@@ -279,7 +291,8 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
       (targets.size() <= targets_threshold) ? (block_size * targets.size()) : 0;
     auto const work_mem_size =
       (targets.size() <= targets_threshold) ? 0 : tile_size * targets.size() * input.size();
-    auto working_memory = rmm::device_uvector<bool>(work_mem_size, stream);
+    auto working_memory = cuda::device_buffer<bool>(
+      stream, cudf::get_current_device_resource_ref(), work_mem_size, cuda::no_init);
 
     cudf::detail::grid_1d grid{static_cast<cudf::thread_index_type>(input.size()) * tile_size,
                                block_size};
@@ -304,7 +317,7 @@ std::unique_ptr<table> contains_multiple(strings_column_view const& input,
 std::unique_ptr<table> contains_multiple(strings_column_view const& strings,
                                          strings_column_view const& targets,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::contains_multiple(strings, targets, stream, mr);

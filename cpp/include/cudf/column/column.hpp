@@ -7,6 +7,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -53,8 +54,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   column(column const& other,
-         cuda::stream_ref stream           = cudf::get_default_stream(),
-         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+         cuda::stream_ref stream   = cudf::get_default_stream(),
+         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Move the contents from `other` to create a new column.
@@ -72,7 +73,8 @@ class column {
    * @param null_mask Column's null value indicator bitmask. May be empty if `null_count` is 0.
    * @param null_count The count of null elements.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
   column(rmm::device_uvector<T>&& other,
          cuda::device_buffer<cudf::bitmask_type>&& null_mask,
          size_type null_count)
@@ -133,8 +135,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   explicit column(column_view view,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream   = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the column's logical element type

@@ -1428,6 +1428,71 @@ TEST_F(HybridScanTest, DecimalTypeOption)
   }
 }
 
+TEST_F(HybridScanTest, ArrowSchemaDurationType)
+{
+  auto col = cudf::test::fixed_width_column_wrapper<cudf::duration_ms, int64_t>{1, 2, 3, 4, 5};
+
+  std::vector<char> parquet_buffer;
+  {
+    auto const table = cudf::table_view{{col}};
+    auto opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&parquet_buffer}, table)
+        .write_arrow_schema(true)
+        .build();
+    cudf::io::write_parquet(opts);
+  }
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+  auto datasource   = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
+
+  auto const read_column_type = [&](auto const& reader, auto const& options) {
+    auto const row_groups           = reader->all_row_groups(options);
+    auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(row_groups, options);
+    auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
+    tasks.get();
+    return reader->materialize_all_columns(row_groups, col_data, options, stream, mr)
+      .tbl->view()
+      .column(0)
+      .type()
+      .id();
+  };
+
+  auto const options       = cudf::io::parquet_reader_options::builder().build();
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto const reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  EXPECT_EQ(read_column_type(reader, options), cudf::type_id::DURATION_MILLISECONDS);
+
+  // Footers without arrow types filled in, e.g. built by the caller, get them filled from the
+  // arrow:schema in their key value metadata
+  auto file_metadata = reader->parquet_metadata();
+  std::ranges::for_each(file_metadata.schema,
+                        [](auto& schema_elem) { schema_elem.arrow_type.reset(); });
+  {
+    auto const metadata_reader =
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata, options);
+    EXPECT_EQ(read_column_type(metadata_reader, options), cudf::type_id::DURATION_MILLISECONDS);
+  }
+  {
+    auto const shared_metadata =
+      cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
+    auto const metadata_reader =
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(shared_metadata);
+    EXPECT_EQ(read_column_type(metadata_reader, options), cudf::type_id::DURATION_MILLISECONDS);
+  }
+
+  // Arrow types are ignored when not using the arrow schema
+  auto const no_arrow_options =
+    cudf::io::parquet_reader_options::builder().use_arrow_schema(false).build();
+  auto const no_arrow_reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer,
+                                                                          no_arrow_options);
+  EXPECT_EQ(read_column_type(no_arrow_reader, no_arrow_options), cudf::type_id::INT64);
+}
+
 TEST_F(HybridScanTest, StructChildFilterColumn)
 {
   // struct<a:int32_t, b:int32_t> column

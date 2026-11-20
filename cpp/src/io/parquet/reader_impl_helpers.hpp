@@ -218,6 +218,14 @@ struct metadata : public FileMetaData {
  protected:
   void sanitize_schema();
 
+  /**
+   * @brief Decodes the arrow:schema from the key value metadata, if any, and sets the arrow types
+   * of the corresponding schema elements
+   *
+   * Resets all previously set arrow types first so it is safe to call more than once.
+   */
+  void fill_arrow_types();
+
  private:
   bool is_page_index_setup_ = false;
 };
@@ -285,7 +293,7 @@ class aggregate_reader_metadata {
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
   std::unordered_set<int32_t> nullable_across_sources;
-  std::unordered_map<int, type_id> _arrow_types;  ///< arrow:schema types keyed by file-0 schema_idx
+  bool _use_arrow_schema = false;  ///< Whether to use the arrow:schema types of the sources
 
   int64_t num_rows;
   size_type num_row_groups;
@@ -323,25 +331,6 @@ class aggregate_reader_metadata {
    * @param src Corresponding SchemaElement in another source
    */
   void propagate_optional_field(int schema_idx, SchemaElement const& src);
-
-  /**
-   * @brief Decodes and constructs the arrow schema from the ARROW_SCHEMA_KEY IPC message
-   * in key value metadata section of Parquet file footer
-   */
-  [[nodiscard]] arrow_schema_data_types collect_arrow_schema() const;
-
-  /**
-   * @brief Co-walks the collected arrow and Parquet schemas and records the arrow types
-   * keyed by file-0 schema index
-   */
-  void collect_arrow_types();
-
-  /**
-   * @brief Decode an arrow:IPC message and returns an optional string_view of
-   * its metadata header
-   */
-  [[nodiscard]] std::optional<std::string_view> decode_ipc_message(
-    std::string_view const serialized_message) const;
 
   /**
    * @brief Sums up the number of rows of each source
@@ -738,14 +727,14 @@ class aggregate_reader_metadata {
   }
 
   /**
-   * @brief Returns the arrow:schema type of a column, if any
+   * @brief Returns the arrow:schema type of a column, if any and if arrow:schema is in use
    *
-   * @param schema_idx Schema index in the zeroth source
+   * @param schema_idx Schema index in the `pfm_idx`th source
+   * @param pfm_idx Source index
    */
-  [[nodiscard]] std::optional<type_id> arrow_type(int schema_idx) const
+  [[nodiscard]] std::optional<type_id> arrow_type(int schema_idx, int pfm_idx = 0) const
   {
-    auto const it = _arrow_types.find(schema_idx);
-    return it != _arrow_types.end() ? std::optional{it->second} : std::nullopt;
+    return _use_arrow_schema ? get_schema(schema_idx, pfm_idx).arrow_type : std::nullopt;
   }
 
   [[nodiscard]] auto const& get_schema_tree(int pfm_idx = 0) const

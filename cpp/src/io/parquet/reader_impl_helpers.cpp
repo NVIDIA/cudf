@@ -607,6 +607,8 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
       return col.column_index.has_value() or col.offset_index.has_value();
     });
   });
+
+  fill_arrow_types();
 }
 
 metadata::metadata(datasource* source, bool read_page_indexes)
@@ -650,6 +652,7 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   }
 
   sanitize_schema();
+  fill_arrow_types();
 }
 
 text::byte_range_info metadata::page_index_byte_range() const
@@ -1081,8 +1084,8 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     }
   }
 
-  // Collect arrow:schema types from Parquet's key value metadata section
-  if (use_arrow_schema) { collect_arrow_types(); }
+  // Use arrow:schema types, filled into each source's schema at parse time, if requested
+  _use_arrow_schema = use_arrow_schema;
 
   // Erase ARROW_SCHEMA_KEY from the output pfm if exists
   std::ranges::for_each(keyval_maps, [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
@@ -1128,7 +1131,18 @@ aggregate_reader_metadata::aggregate_reader_metadata(
   initialize_internals(use_arrow_schema, has_cols_from_mismatched_srcs);
 }
 
-arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
+namespace {
+
+/**
+ * @brief Decodes an arrow:IPC message and returns an optional string_view of its metadata header
+ */
+std::optional<std::string_view> decode_ipc_message(std::string_view const serialized_message);
+
+/**
+ * @brief Decodes and constructs the arrow schema from the base64 encoded ARROW_SCHEMA_KEY IPC
+ * message
+ */
+arrow_schema_data_types decode_arrow_schema(std::string_view serialized_schema)
 {
   // Check the key_value metadata for arrow schema, decode and walk it
   // Function to convert from flatbuf::duration type to cudf::type_id
@@ -1203,14 +1217,11 @@ arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
       return true;
     };
 
-  auto const it = keyval_maps[0].find(ARROW_SCHEMA_KEY);
-  if (it == keyval_maps[0].end()) { return {}; }
-
   // Decode the base64 encoded ipc message string
   // Note: Store the output from base64_decode in the lvalue here and then pass
   // it to decode_ipc_message. Directly passing rvalue from base64_decode to
   // decode_ipc_message can lead to unintended nullptr dereferences.
-  auto const decoded_message = cudf::io::detail::base64_decode(it->second);
+  auto const decoded_message = cudf::io::detail::base64_decode(serialized_schema);
 
   // Decode the ipc message to get an optional string_view of the ipc:Message flatbuffer
   auto const metadata_buf = decode_ipc_message(decoded_message);
@@ -1224,9 +1235,9 @@ arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
   // Verify the decoded Message flatbuffer before any accessor reads it
   auto verifier_options            = ::flatbuffers::Verifier::Options{};
   verifier_options.check_alignment = false;
-  auto verifier = ::flatbuffers::Verifier{reinterpret_cast<uint8_t const*>(metadata_buf->data()),
-                                          metadata_buf->size(),
-                                          verifier_options};
+  verifier_options.max_depth       = 1024;
+  auto verifier                    = ::flatbuffers::Verifier{
+    reinterpret_cast<uint8_t const*>(metadata_buf->data()), metadata_buf->size(), verifier_options};
   if (not flatbuf::VerifyMessageBuffer(verifier)) {
     CUDF_LOG_ERROR("Parquet reader encountered an invalid ipc:Message flatbuffer.",
                    "arrow:schema not processed.");
@@ -1270,10 +1281,22 @@ arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
   return schema;
 }
 
-void aggregate_reader_metadata::collect_arrow_types()
+}  // namespace
+
+void metadata::fill_arrow_types()
 {
+  // Reset any previously filled arrow types so this is idempotent
+  std::ranges::for_each(schema, [](auto& schema_elem) { schema_elem.arrow_type.reset(); });
+
+  if (schema.empty()) { return; }
+
   // Collect the arrow schema from the key value section of Parquet metadata
-  auto arrow_schema_root = collect_arrow_schema();
+  auto const arrow_schema_kv =
+    std::ranges::find(key_value_metadata, ARROW_SCHEMA_KEY, &KeyValue::key);
+  if (arrow_schema_kv == key_value_metadata.end() or not arrow_schema_kv->value.has_value()) {
+    return;
+  }
+  auto const arrow_schema_root = decode_arrow_schema(arrow_schema_kv->value.value());
 
   // Check if empty arrow schema collected
   if (arrow_schema_root.type.id() == type_id::EMPTY and arrow_schema_root.children.size() == 0) {
@@ -1283,7 +1306,7 @@ void aggregate_reader_metadata::collect_arrow_types()
   // Function to verify equal num_children at each level in Parquet and arrow schemas.
   std::function<bool(arrow_schema_data_types const&, int const)> validate_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
-      auto const& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
+      auto const& pq_schema_elem = schema[schema_idx];
 
       // ensure equal number of children first to avoid any segfaults in children
       if (std::cmp_equal(pq_schema_elem.num_children, arrow_schema.children.size())) {
@@ -1304,7 +1327,7 @@ void aggregate_reader_metadata::collect_arrow_types()
   // Function to co-walk arrow and parquet schemas
   std::function<void(arrow_schema_data_types const&, int const)> co_walk_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
-      auto const& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
+      auto const& pq_schema_elem = schema[schema_idx];
       std::for_each(cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.begin(), pq_schema_elem.children_idx.begin())),
                     cuda::make_zip_iterator(cuda::std::make_tuple(
@@ -1315,12 +1338,12 @@ void aggregate_reader_metadata::collect_arrow_types()
 
       // true for DurationType columns only for now.
       if (arrow_schema.type.id() != type_id::EMPTY) {
-        _arrow_types[schema_idx] = arrow_schema.type.id();
+        schema[schema_idx].arrow_type = arrow_schema.type.id();
       }
     };
 
   // Get Parquet schema root
-  auto pq_schema_root = get_schema(0);
+  auto const& pq_schema_root = schema[0];
 
   // verify equal number of children for both schemas at root level
   if (std::cmp_not_equal(pq_schema_root.num_children, arrow_schema_root.children.size())) {
@@ -1348,8 +1371,9 @@ void aggregate_reader_metadata::collect_arrow_types()
   });
 }
 
-std::optional<std::string_view> aggregate_reader_metadata::decode_ipc_message(
-  std::string_view const serialized_message) const
+namespace {
+
+std::optional<std::string_view> decode_ipc_message(std::string_view const serialized_message)
 {
   // message buffer
   auto message_buf = serialized_message.data();
@@ -1420,6 +1444,8 @@ std::optional<std::string_view> aggregate_reader_metadata::decode_ipc_message(
   return std::string_view{message_buf,
                           static_cast<std::basic_string_view<char>::size_type>(message_size)};
 }
+
+}  // namespace
 
 RowGroup const& aggregate_reader_metadata::get_row_group(size_type row_group_index,
                                                          size_type src_idx) const
@@ -1603,8 +1629,12 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
       auto const& schema_tree = get_schema_tree(src_idx);
       auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
-      if (src_idx == 0) { col_arrow_type = arrow_type(schema_idx); }
-      auto const source_dtype = statistics_dtype(schema_tree[schema_idx], col_arrow_type);
+      // Sources without an arrow:schema type for this column follow the zeroth source
+      auto const source_arrow_type = arrow_type(schema_idx, src_idx);
+      if (src_idx == 0) { col_arrow_type = source_arrow_type; }
+      auto const source_dtype =
+        statistics_dtype(schema_tree[schema_idx],
+                         source_arrow_type.has_value() ? source_arrow_type : col_arrow_type);
 
       if (src_idx == 0) {
         dtype = source_dtype;

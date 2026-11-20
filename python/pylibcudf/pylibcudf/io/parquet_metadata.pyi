@@ -6,7 +6,7 @@ from enum import IntEnum
 
 from pylibcudf.io.types import SourceInfo
 from pylibcudf.table import Table
-from pylibcudf.types import DataType
+from pylibcudf.types import DataType, TypeId
 from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
@@ -164,6 +164,8 @@ class SchemaElement:
     def repetition_type(self) -> FieldRepetitionType: ...
     @property
     def output_as_byte_array(self) -> bool: ...
+    @property
+    def arrow_type(self) -> TypeId | None: ...
     @property
     def max_definition_level(self) -> int: ...
     @property

@@ -1205,7 +1205,9 @@ def test_read_parquet_arrow_schema_duration() -> None:
     ).build()
     result = plc.io.parquet.read_parquet(options)
 
-    assert result.tbl.columns()[0].to_arrow().equals(table.column("d").chunk(0))
+    assert (
+        result.tbl.columns()[0].to_arrow().equals(table.column("d").chunk(0))
+    )
 
 
 @pytest.mark.parametrize("from_bytes", [False, True])
@@ -1273,6 +1275,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             element.is_struct(),
             element.is_one_level_list(elements[element.parent_idx]),
             element.output_as_byte_array,
+            element.arrow_type,
         )
         for element in elements
     ]
@@ -1288,6 +1291,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             True,
             False,
             False,
+            None,
         ),
         (
             "a",
@@ -1300,6 +1304,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             False,
             False,
             False,
+            None,
         ),
         (
             "s",
@@ -1312,6 +1317,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             True,
             False,
             False,
+            None,
         ),
         (
             "x",
@@ -1324,6 +1330,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             False,
             False,
             False,
+            None,
         ),
         (
             "l",
@@ -1336,6 +1343,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             True,
             False,
             False,
+            None,
         ),
         (
             "list",
@@ -1348,6 +1356,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             False,
             False,
             False,
+            None,
         ),
         (
             "element",
@@ -1360,6 +1369,7 @@ def test_file_metadata_schema_element_nesting() -> None:
             False,
             False,
             False,
+            None,
         ),
         (
             "r",
@@ -1372,8 +1382,31 @@ def test_file_metadata_schema_element_nesting() -> None:
             False,
             False,
             False,
+            None,
         ),
     ]
+
+
+def test_file_metadata_schema_element_arrow_type() -> None:
+    table = pa.table(
+        {
+            "d": pa.array([1, 2, 3], type=pa.duration("ms")),
+            "i": pa.array([1, 2, 3], type=pa.int32()),
+        }
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, store_schema=True)
+    sink.seek(0)
+    footer, _ = _extract_footer_bytes_with_suffix(sink.getvalue())
+
+    from_footers = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.SourceInfo([sink])
+    )[0]
+    from_bytes = plc.io.parquet_metadata.FileMetaData.from_bytes(footer)
+
+    expected = [None, plc.TypeId.DURATION_MILLISECONDS, None]
+    assert [element.arrow_type for element in from_footers.schema] == expected
+    assert [element.arrow_type for element in from_bytes.schema] == expected
 
 
 def test_file_metadata_schema_without_field_ids() -> None:

@@ -7,7 +7,7 @@ from libcpp.optional cimport optional
 from libcpp.string cimport string
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
-from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.types cimport size_type, type_id
 
 
 cdef extern from "<cuda/std/optional>" nogil:
@@ -135,6 +135,7 @@ cdef extern from "cudf/io/parquet_schema.hpp" namespace "cudf::io::parquet" nogi
         cuda_optional[LogicalType] logical_type
         FieldRepetitionType repetition_type
         bool output_as_byte_array
+        optional[type_id] arrow_type
         int max_definition_level
         int max_repetition_level
         size_type parent_idx

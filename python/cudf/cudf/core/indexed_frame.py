@@ -1277,7 +1277,10 @@ class IndexedFrame(Frame):
         """
         # TODO: This function does not currently support nulls.
         for obj in (self, other):
-            if isinstance(obj, (cudf.Series, cudf.DataFrame)) and any(
+            if (
+                cudf.get_option("mode.pandas_compatible")
+                and isinstance(obj, (cudf.Series, cudf.DataFrame))
+            ) and any(
                 is_pandas_nullable_extension_dtype(dtype)
                 for _, dtype in obj._dtypes
             ):

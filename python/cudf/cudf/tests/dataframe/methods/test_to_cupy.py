@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import cupy as cp
@@ -309,3 +309,15 @@ def test_to_numpy_nullable_multiple_columns_distinguish_nan_and_na():
     assert result.dtype == expected.dtype
     assert result[0].tolist() == expected[0].tolist()
     assert all(v is pd.NA for v in result[1])
+
+
+def test_to_numpy_nullable_float_keeps_nan_with_na_value_none():
+    arr = pd.arrays.FloatingArray(
+        np.array([np.nan, 0.0]), np.array([False, True])
+    )
+    with pd.option_context("future.distinguish_nan_and_na", True):
+        expected = pd.Series(arr).to_numpy(na_value=None)
+        result = cudf.Series(arr, nan_as_null=False).to_numpy(na_value=None)
+
+    assert [v is None for v in result] == [v is None for v in expected]
+    assert np.isnan(result[0])

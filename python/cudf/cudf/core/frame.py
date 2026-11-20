@@ -697,7 +697,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
                 and is_pandas_nullable_extension_dtype(col.dtype)
                 and col.has_nulls()
             ):
-                casted_array[col.isnull().to_numpy()] = None
+                casted_array[(~col._get_mask_as_column()).to_numpy()] = None
             if (
                 col.has_nulls()
                 and dtype is not None

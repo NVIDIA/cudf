@@ -272,9 +272,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the left row
-   *         hashes that partitioned_inner_join() reuses. `left` must stay valid until the last
-   *         partitioned join, which compares its rows again
+   * @return A join_match_context holding the per-row match counts and caching the first
+   *         match of each left row that partitioned_inner_join() resumes from. `left` must stay
+   *         valid until the last partitioned join, which can compare its rows again
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
     cudf::table_view const& left,
@@ -298,9 +298,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the left row
-   *         hashes that partitioned_left_join() reuses. `left` must stay valid until the last
-   *         partitioned join, which compares its rows again
+   * @return A join_match_context holding the per-row match counts and caching the first
+   *         match of each left row that partitioned_left_join() resumes from. `left` must stay
+   *         valid until the last partitioned join, which can compare its rows again
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
     cudf::table_view const& left,
@@ -324,9 +324,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the left row
-   *         hashes that partitioned_full_join() reuses. `left` must stay valid until the last
-   *         partitioned join, which compares its rows again
+   * @return A join_match_context holding the per-row match counts and caching the first
+   *         match of each left row that partitioned_full_join() resumes from. `left` must stay
+   *         valid until the last partitioned join, which can compare its rows again
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
     cudf::table_view const& left,

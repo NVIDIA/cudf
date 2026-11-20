@@ -24,25 +24,21 @@ __device__ inline cuda::std::uint32_t hash_graph_bucket(hash_value_type hash,
   return cuda::mul_hi(hash, num_buckets);
 }
 
+/// What the count pass records about a probe row for retrieval: the position of its first
+/// matching record, or `hash_graph_no_match`. `hash_graph_compare_rows` is set when a record of
+/// the bucket shares the row's hash without being a match, so that retrieval has to compare rows
+/// again instead of trusting the stored hashes.
+using hash_graph_probe_state                             = cuda::std::uint32_t;
+constexpr hash_graph_probe_state hash_graph_no_match     = 0xffff'ffff;
+constexpr hash_graph_probe_state hash_graph_compare_rows = 0x8000'0000;
+
 /// Device-side view of the HashGraph. Build rows are grouped by hash bucket, and bucket `b`
 /// holds `records[offsets[b], offsets[b + 1])`. Rows with different keys share a bucket, so
-/// every probe compares against all records of its bucket.
+/// counting the matches of a probe row compares it against all records of its bucket.
 struct hash_graph_ref {
   size_type const* offsets;
   hash_graph_record const* records;
   cuda::std::uint32_t num_buckets;
-
-  /// Calls `on_match` with the build row of every record equal to `key`
-  template <typename Equal, typename OnMatch>
-  __device__ void for_each_match(hash_graph_record key, Equal equal, OnMatch on_match) const
-  {
-    auto const bucket = hash_graph_bucket(key.first, num_buckets);
-    auto const end    = offsets[bucket + 1];
-    for (auto position = offsets[bucket]; position < end; ++position) {
-      auto const record = records[position];
-      if (equal(key, record)) { on_match(record.second); }
-    }
-  }
 };
 
 }  // namespace cudf::detail

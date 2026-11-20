@@ -79,25 +79,26 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   auto const preprocessed_left =
     cudf::detail::row::equality::preprocessed_table::create(left_partition, stream, temp_mr);
 
-  // Contexts created by a factory cache the row hashes; others probe the partition again.
+  // Contexts created by a factory cache the first matches; others probe the partition again.
   // TODO: Remove the probe when the deprecated join_match_context constructor is removed in 27.02
   // (#20958).
-  cuda::device_buffer<hash_value_type> probed_hashes(
+  cuda::device_buffer<hash_graph_probe_state> probed_states(
     stream, temp_mr, state == nullptr ? partition_size : 0, cuda::no_init);
   if (state == nullptr) {
     validate_hash_join_probe(_right, left_partition, _has_nulls);
-    probe(join, left_partition, preprocessed_left, probed_hashes, {}, nullptr, {}, nullptr, stream);
+    probe(join, left_partition, preprocessed_left, probed_states, {}, nullptr, {}, nullptr, stream);
   }
-  auto const hashes = state == nullptr ? device_span<hash_value_type const>{probed_hashes}
-                                       : device_span<hash_value_type const>{state->hashes}.subspan(
-                                           left_start_idx, partition_size);
+  auto const states = state == nullptr
+                        ? device_span<hash_graph_probe_state const>{probed_states}
+                        : device_span<hash_graph_probe_state const>{state->states}.subspan(
+                            left_start_idx, partition_size);
 
   auto const [offsets, output_size] =
     hash_graph_match_offsets(match_counts.subspan(left_start_idx, partition_size), stream);
   return retrieve(join,
                   left_partition,
                   preprocessed_left,
-                  hashes,
+                  states,
                   offsets,
                   output_size,
                   left_start_idx,

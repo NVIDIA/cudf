@@ -212,31 +212,13 @@ kernel get_linked_kernel(
     kernel_fragment = fragment_blob->view();
   }
 
-  // nvJitLink consumes PTX as a NUL-terminated string.
-  std::string ptx;
-  if (source_type == lto_binary_type::PTX) {
-    ptx        = jit::parse_single_function_ptx(reinterpret_cast<char const*>(udf_binary.data()));
-    udf_binary = {reinterpret_cast<uint8_t const*>(ptx.c_str()), ptx.size() + 1};
-  }
-
-  std::vector<rtcx::memory_fragment> memory_fragments = {
-    {
-      .data = kernel_fragment,
-      .type = jit::as_rtcx_binary_type(kernel_fragment_binary_type),
-      .name = kernel_fragment_id.c_str(),
-    },
-    {
-      .data = udf_binary,
-      .type = jit::as_rtcx_binary_type(source_type),
-      .name = nullptr  // nullptr = unnamed fragment: the binary will be used to hash the UDF
-    }};
-
-  for (auto const& fragment : link_fragments) {
-    memory_fragments.push_back(
-      {.data = fragment.data, .type = jit::as_rtcx_binary_type(fragment.type), .name = nullptr});
-  }
-
-  return get_lto_linked_kernel("cudf/cpp/src/transform/jit/kernel.cu", {}, memory_fragments);
+  return jit::get_lto_udf_kernel("cudf/cpp/src/transform/jit/kernel.cu",
+                                 kernel_fragment,
+                                 kernel_fragment_binary_type,
+                                 kernel_fragment_id,
+                                 udf_binary,
+                                 source_type,
+                                 link_fragments);
 }
 
 kernel get_kernel(bool is_null_aware,

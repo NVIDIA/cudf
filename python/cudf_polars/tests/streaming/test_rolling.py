@@ -18,12 +18,14 @@ from cudf_polars import Translator
 from cudf_polars.engine.core import all_gather_host_data
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
-from cudf_polars.streaming.actor_graph.collectives import overlap
+from cudf_polars.streaming.actor_graph.collectives import overlap, slice_exchange
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.overlap import (
     OverlapInput,
     RowCountOverlapPolicy,
+    _PreparedInput,
 )
+from cudf_polars.streaming.actor_graph.collectives.slice_exchange import SparseExchange
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
@@ -73,6 +75,37 @@ def test_overlap_allgather_cancellation_does_not_wait_for_peers(
     )
 
     cancel_when(lambda: rolling_input._allgather_ints((1,)), fake_collective.waiting)
+    assert_pending_then_released(comm, fake_collective, 6)
+
+
+def test_overlap_ghost_exchange_cancellation_does_not_wait_for_peers(
+    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
+) -> None:
+    monkeypatch.setattr(
+        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
+    )
+    comm = Mock(rank=0, nranks=2)
+    entered = asyncio.Event()
+
+    async def body() -> None:
+        async with OverlapInput(
+            Mock(),
+            comm,
+            Mock(),
+            RowCountOverlapPolicy(1, 1),
+            duplicated=True,
+            collective_id=6,
+        ) as rolling_input:
+            rolling_input._prepared = _PreparedInput(
+                Mock(),
+                SparseExchange(Mock(), comm, 6, sources=(1,), destinations=()),
+                (1,),
+                (),
+            )
+            entered.set()
+            await asyncio.Event().wait()
+
+    cancel_when(body, entered)
     assert_pending_then_released(comm, fake_collective, 6)
 
 

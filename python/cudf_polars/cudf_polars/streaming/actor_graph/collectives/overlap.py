@@ -745,13 +745,21 @@ class _PreparedInput:
     owned_host_values: tuple[RangeValues | None, ...]
     """Cached host range values for locally owned chunks."""
 
-    async def aclose(self) -> None:
-        """Release buffered chunks and finish the ghost exchange."""
+    async def aclose(self, *, error: BaseException | None = None) -> None:
+        """
+        Release buffered chunks and finish the ghost exchange.
+
+        Parameters
+        ----------
+        error
+            The exception that ended the use of the input, if any. See
+            :meth:`SparseExchange.aclose`.
+        """
         try:
             self.owned_buffer.clear()
         finally:
             if self.ghost_exchange is not None:
-                await self.ghost_exchange.aclose()
+                await self.ghost_exchange.aclose(error=error)
 
 
 class OverlapInput[BufferedChunkT: BufferedChunk]:
@@ -796,14 +804,14 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         return self
 
     async def __aexit__(
-        self, exc_type: object, _exc_value: object, _traceback: object
+        self, _exc_type: object, exc: BaseException | None, _traceback: object
     ) -> None:
         """Release messages still owned by this input."""
         prepared, self._prepared = self._prepared, None
         if prepared is not None:
-            if exc_type is not None:
-                with suppress(BaseException):
-                    await prepared.aclose()
+            if exc is not None:
+                with suppress(Exception):
+                    await prepared.aclose(error=exc)
             else:
                 await prepared.aclose()
 
@@ -1244,9 +1252,9 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                     output.insert(Message(0, available))
                 start += size
             await exchange.finish()
-        except BaseException:
-            with suppress(BaseException):
-                await prepared.aclose()
+        except BaseException as exc:
+            with suppress(Exception):
+                await prepared.aclose(error=exc)
             raise
         return prepared
 

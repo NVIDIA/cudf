@@ -235,7 +235,6 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/floating/test_construction.py::test_to_array_none_is_nan[False-a3-b3]": "AssertionError: ExtensionArray NA mask are different",
     "tests/arrays/floating/test_construction.py::test_to_array_none_is_nan[False-a4-b4]": "AssertionError: ExtensionArray NA mask are different",
     "tests/arrays/floating/test_repr.py::test_frame_repr[Float32Dtype]": "AssertionError: assert '            ...  0.100000001' == '      A\n0  <NA>\n1   0.1'",
-    "tests/arrays/floating/test_to_numpy.py::test_to_numpy[False-series]": "AssertionError: numpy array are different",
     "tests/arrays/floating/test_to_numpy.py::test_to_numpy_copy": "TODO: Add a reason for failure",
     "tests/arrays/integer/test_arithmetic.py::test_values_multiplying_large_series_by_NA": "TODO: Add a reason for failure",
     "tests/arrays/integer/test_comparison.py::TestComparisonOps::test_ufunc_with_out[Int16Dtype]": "TODO: Add a reason for failure",

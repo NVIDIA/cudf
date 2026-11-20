@@ -28,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -112,14 +113,28 @@ struct page_stats_caster : public stats_caster_base {
             std::ranges::find(row_group.columns, mapped_schema_idx, &ColumnChunk::schema_idx);
 
           auto const& colchunk               = *colchunk_iter;
-          auto const& column_index           = colchunk.column_index.value();
-          auto const num_pages_in_colchunk   = column_index.min_values.size();
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
           // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
           auto const ignore_int96_min_max = parquet::detail::is_unordered_int96(
             per_file_metadata[src_idx],
             colchunk.meta_data.type,
             std::distance(row_group.columns.begin(), colchunk_iter));
+
+          // Without a column index (e.g. a float chunk with NaNs), no page can be pruned
+          if (not colchunk.column_index.has_value()) {
+            std::ranges::for_each(
+              std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
+              [&](auto column_page_idx) {
+                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                all_null.set_index(column_page_idx, std::nullopt, {});
+                has_nan.set_value(column_page_idx, std::nullopt);
+              });
+            return;
+          }
+
+          auto const& column_index         = colchunk.column_index.value();
+          auto const num_pages_in_colchunk = column_index.min_values.size();
 
           CUDF_EXPECTS(column_index.max_values.size() == num_pages_in_colchunk,
                        "Number of max values must match the number of pages in the column chunk",
@@ -300,12 +315,12 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
     return build_all_true_row_mask(row_group_indices, stream, mr);
   }
 
-  // We need both column and offset indexes to be present for each participating column.
-  auto const [has_column_index, has_offset_index] =
-    page_index_presence(row_group_indices, stats_column_schemas);
-  CUDF_EXPECTS(has_column_index and has_offset_index,
-               "Filter column page pruning using page-statistics requires both column and "
-               "offset indexes to be present",
+  // We need offset indexes for each participating column. Column indexes may be missing for some
+  // column chunks, whose pages are then kept.
+  auto const has_offset_index = page_index_presence(row_group_indices, stats_column_schemas).second;
+  CUDF_EXPECTS(has_offset_index,
+               "Filter column page pruning using page-statistics requires offset indexes to be "
+               "present",
                std::runtime_error);
 
   // Convert the filter to an expression over page statistics
@@ -357,7 +372,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   cudf::column_view const& row_mask,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<input_column_info const> input_columns,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -376,7 +392,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     std::overflow_error);
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, stream)) { return thrust::host_vector<bool>{}; }
+  if (are_all_rows_retained(row_mask, stream, mr)) { return thrust::host_vector<bool>{}; }
 
   // Collect column schema indices from the input columns.
   auto column_schema_indices = std::vector<size_type>(input_columns.size());
@@ -465,7 +481,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   auto data_page_mask = thrust::host_vector<bool>{};
 
   auto const row_range_mask =
-    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream);
+    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream, mr);
   if (row_range_mask.empty()) { return data_page_mask; }
 
   data_page_mask.reserve(page_row_offsets.size() - num_columns);

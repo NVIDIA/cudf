@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Benchmarks of Series methods."""
@@ -38,3 +38,22 @@ def bench_to_cupy(benchmark, series):
 @benchmark_with_object(cls="series", dtype="int", nulls=False)
 def bench_series_values(benchmark, series):
     benchmark(lambda: series.values)
+
+
+@pytest.mark.parametrize("num_rows", NUM_ROWS)
+@pytest.mark.parametrize(
+    "container", [cudf.Series, cudf.Index], ids=["series", "index"]
+)
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        pytest.param(r"([A-Z]+)-(\d+)", id="unnamed"),
+        pytest.param(r"(?P<letters>[A-Z]+)-(?P<number>\d+)", id="named"),
+        pytest.param(r"(?P<letters>[A-Z]+)-(\d+)", id="mixed"),
+    ],
+)
+def bench_str_extract(benchmark, num_rows, container, pattern):
+    values = ["AB-123", "CD-456", None, "unmatched"] * (num_rows // 4)
+    strings = container(values, dtype="str")
+
+    benchmark(strings.str.extract, pattern, expand=True)

@@ -51,10 +51,6 @@ from cudf_polars.quent._runtime import (
     QuentControllerRuntime,
     QuentWorkerRuntime,
 )
-from cudf_polars.streaming.actor_graph.collectives.closing import (
-    discard_pending_closes,
-    wait_for_pending_closes,
-)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
@@ -439,12 +435,6 @@ class RankActor:
             Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
         kvikio_request_ceiling
             ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
-
-        Raises
-        ------
-        RuntimeError
-            If the actor is not set up, or if a cancelled collective close on
-            the communicator has not completed.
         """
         if self._ctx is None:
             raise RuntimeError("reset() requires setup_worker() to have run")
@@ -460,7 +450,6 @@ class RankActor:
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:
             barrier(self._comm)
-        wait_for_pending_closes(self._comm)
         # Drop persisted partitions before tearing down the Context.
         rank_local_store.close_all()
         self._ctx.shutdown()
@@ -506,8 +495,6 @@ class RankActor:
             if self._ctx is not None:
                 self._ctx.shutdown()
         finally:
-            if self._comm is not None:
-                discard_pending_closes(self._comm)
             self._ctx = None
             self._comm = None
             self._mr = None

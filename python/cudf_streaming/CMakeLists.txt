@@ -10,15 +10,12 @@ cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 include(../../cmake/rapids_config.cmake)
 include(rapids-cpm)
 rapids_cpm_init()
-include(rapids-cuda)
 include(rapids-find)
-
-rapids_cuda_init_architectures(cudf-streaming-python)
 
 project(
   cudf-streaming-python
   VERSION "${RAPIDS_VERSION}"
-  LANGUAGES CXX CUDA
+  LANGUAGES CXX
 )
 
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the

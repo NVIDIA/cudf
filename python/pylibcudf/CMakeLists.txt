@@ -8,8 +8,6 @@
 cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../../cmake/rapids_config.cmake)
-include(rapids-cuda)
-rapids_cuda_init_architectures(pylibcudf)
 
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
 # version RAPIDS uses in CI that causes it to handle the resulting -M* flags incorrectly with
@@ -19,7 +17,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 project(
   pylibcudf
   VERSION "${RAPIDS_VERSION}"
-  LANGUAGES CXX CUDA
+  LANGUAGES CXX
 )
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

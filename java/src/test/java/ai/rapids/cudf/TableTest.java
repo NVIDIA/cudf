@@ -2582,6 +2582,52 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testDirectInnerJoinGatherMaps() {
+    try (ColumnVector leftKeys = ColumnVector.fromUnsignedInts(2, 3, 9, 0, 1, 7, 4, 6, 5, 8, 6);
+         ColumnVector rightKeys = ColumnVector.fromUnsignedInts(6, 5, 9, 8, 10, 32);
+         Table expected = new Table.TestBuilder()
+             .column(2, 7, 8, 9, 10) // left
+             .column(2, 0, 1, 3, 0) // right
+             .build()) {
+      checkInnerDistinctJoinGatherMaps(
+          Table.directInnerJoinGatherMaps(leftKeys, rightKeys, 64), expected);
+    }
+  }
+
+  @Test
+  void testDirectInnerJoinGatherMapsEmpty() {
+    try (ColumnVector leftKeys = ColumnVector.fromUnsignedInts();
+         ColumnVector rightKeys = ColumnVector.fromUnsignedInts(1, 0);
+         Table expected = new Table.TestBuilder()
+             .column(new Integer[0]) // left
+             .column(new Integer[0]) // right
+             .build()) {
+      checkInnerDistinctJoinGatherMaps(
+          Table.directInnerJoinGatherMaps(leftKeys, rightKeys, 2), expected);
+    }
+  }
+
+  @Test
+  void testDirectInnerJoinGatherMapsInvalidArguments() {
+    try (ColumnVector uint32Keys = ColumnVector.fromUnsignedInts(0, 1, 2);
+         ColumnVector int32Keys = ColumnVector.fromInts(0, 1, 2);
+         ColumnVector nullableKeys = ColumnVector.fromBoxedUnsignedInts(0, null, 2)) {
+      assertThrows(CudfException.class,
+          () -> Table.directInnerJoinGatherMaps(int32Keys, uint32Keys, 3));
+      assertThrows(CudfException.class,
+          () -> Table.directInnerJoinGatherMaps(uint32Keys, int32Keys, 3));
+      assertThrows(CudfException.class,
+          () -> Table.directInnerJoinGatherMaps(nullableKeys, uint32Keys, 3));
+      assertThrows(CudfException.class,
+          () -> Table.directInnerJoinGatherMaps(uint32Keys, nullableKeys, 3));
+      assertThrows(CudfException.class,
+          () -> Table.directInnerJoinGatherMaps(uint32Keys, uint32Keys, 2));
+      assertThrows(IllegalArgumentException.class,
+          () -> Table.directInnerJoinGatherMaps(uint32Keys, uint32Keys, -1));
+    }
+  }
+
+  @Test
   void testInnerDistinctJoinGatherMapsWithNested() {
     StructType structType = new StructType(false,
         new BasicType(false, DType.STRING),

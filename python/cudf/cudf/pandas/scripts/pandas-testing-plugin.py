@@ -661,7 +661,6 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::test_str_extract_non_symbolic": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_str_repeat_unsupported": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_str_replace_unsupported[pat-b]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::test_timestamp_vs_dt64_comparison": "AssertionError: Attributes of Series are different",
     "tests/extension/test_categorical.py::Test2DCompat::test_copy_order": "TODO: Add a reason for failure",
     "tests/extension/test_categorical.py::TestCategorical::test_astype_own_type[False]": "TODO: Add a reason for failure",
     "tests/extension/test_categorical.py::TestCategorical::test_memory_usage": "AssertionError",

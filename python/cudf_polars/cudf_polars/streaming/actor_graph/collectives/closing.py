@@ -41,7 +41,7 @@ _SKIPPED_FINISH = "aclose() called before insert_finished()"
 
 _logger = logging.getLogger(__name__)
 _lock = threading.Lock()
-_gate_locks: dict[Communicator, threading.Lock] = {}
+_gate_lock = threading.Lock()
 _pending: dict[Communicator, set[_PendingClose]] = {}
 _unusable: dict[Communicator, str] = {}
 _background_closes: set[asyncio.Task[None]] = set()
@@ -178,7 +178,6 @@ def discard_pending_closes(comm: Communicator) -> None:
     with _lock:
         _pending.pop(comm, None)
         _unusable.pop(comm, None)
-        _gate_locks.pop(comm, None)
 
 
 async def _finish_all(
@@ -202,8 +201,8 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     If a pending close fails or does not complete within ``timeout``,
     ``comm`` is marked unusable, and every later call raises at once.
 
-    Calls that wait are serialized per communicator, so that two threads
-    never close the same collective at the same time.
+    Calls that wait are serialized across all communicators, so that two
+    threads never close the same collective at the same time.
 
     The check is local to this rank. When it raises on one rank, the peer
     ranks do not know, and they can hang in their next collective while they
@@ -228,9 +227,7 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
         return
     if timeout is None:
         timeout = PENDING_CLOSE_TIMEOUT
-    with _lock:
-        gate_lock = _gate_locks.setdefault(comm, threading.Lock())
-    with gate_lock:
+    with _gate_lock:
         pending = _pending_closes(comm)
         if not pending:
             return

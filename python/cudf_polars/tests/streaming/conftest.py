@@ -206,7 +206,6 @@ def pending_closes(monkeypatch: pytest.MonkeyPatch) -> dict[Any, Any]:
     pending: dict[Any, Any] = {}
     monkeypatch.setattr(closing, "_pending", pending)
     monkeypatch.setattr(closing, "_unusable", {})
-    monkeypatch.setattr(closing, "_gate_locks", {})
     return pending
 
 

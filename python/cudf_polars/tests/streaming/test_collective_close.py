@@ -43,7 +43,9 @@ def test_gate_timeout_marks_communicator_unusable(
     leave_pending_close(comm, 7)
     close_calls = fake_collective.close_calls
     start = time.monotonic()
-    with pytest.raises(RuntimeError, match=r"operation IDs \[7\].*every rank"):
+    with pytest.raises(
+        RuntimeError, match=r"operation IDs \[7\].*every rank.*new communicator"
+    ):
         wait_for_pending_closes(comm, timeout=0.2)
     assert time.monotonic() - start >= 0.2
     assert fake_collective.close_calls == close_calls + 1

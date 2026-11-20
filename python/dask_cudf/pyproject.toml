@@ -47,9 +47,7 @@ cudf = "dask_cudf.backends:CudfBackendEntrypoint"
 
 [project.optional-dependencies]
 test = [
-    "aiobotocore>=2.2.0,<3",
     "boto3>=1.21.21",
-    "botocore>=1.24.21",
     "dask-cuda==27.2.*,>=0.0.0a0",
     "pytest-cov",
     "pytest-xdist",

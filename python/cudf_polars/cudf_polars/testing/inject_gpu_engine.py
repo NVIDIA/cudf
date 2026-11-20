@@ -8,9 +8,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from functools import partialmethod, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import packaging.version
 import pytest
@@ -231,8 +232,22 @@ def pytest_configure(config: pytest.Config) -> None:
         )
 
     collect = polars.LazyFrame.collect
+    # Tests may collect from several threads at once, for example duckdb's polars
+    # source collecting the frames of one query in parallel. cudf-polars sets the
+    # current device resource per query, which is not thread safe, so the queries
+    # on the injected engine run one at a time. Other engines, such as the CPU
+    # fallback's ``engine="in-memory"``, are not serialized.
+    injected_engine_lock = threading.RLock()
+
+    @wraps(collect)
+    def serialized_collect(self: polars.LazyFrame, *args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("engine") is not engine:
+            return collect(self, *args, **kwargs)
+        with injected_engine_lock:
+            return collect(self, *args, **kwargs)
+
     # https://github.com/python/mypy/issues/2427
-    polars.LazyFrame.collect = partialmethod(collect, engine=engine)  # type: ignore[method-assign, assignment]
+    polars.LazyFrame.collect = partialmethod(serialized_collect, engine=engine)  # type: ignore[method-assign, assignment]
     config._inject_gpu_engine = engine  # type: ignore[attr-defined]
     _verify_collect_patch(engine)
 

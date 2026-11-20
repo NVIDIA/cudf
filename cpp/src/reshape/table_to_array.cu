@@ -11,6 +11,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -74,13 +75,13 @@ struct table_to_array_dispatcher {
   cuda::stream_ref stream;
   cudf::memory_resources mr;
 
-  template <typename T, CUDF_ENABLE_IF(is_fixed_width<T>())>
+  template <cudf::concepts::fixed_width T>
   void operator()() const
   {
     table_to_array_impl<T>(input, output, stream, mr);
   }
 
-  template <typename T, CUDF_ENABLE_IF(!is_fixed_width<T>())>
+  template <typename T>
   void operator()() const
   {
     CUDF_FAIL("Unsupported dtype");

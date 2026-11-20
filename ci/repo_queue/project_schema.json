@@ -1,0 +1,47 @@
+{
+  "short_description": "Explicit action ownership and follow-through for cuDF Python and C++ work.",
+  "fields": [
+    {"name": "Status", "data_type": "SINGLE_SELECT", "options": [
+      {"name": "Awaiting action", "previous_name": "Todo", "color": "YELLOW"},
+      {"name": "In progress", "previous_name": "In Progress", "color": "BLUE"},
+      {"name": "Deferred", "color": "GRAY"},
+      {"name": "Complete", "previous_name": "Done", "color": "GREEN"}
+    ]},
+    {"name": "Next action", "data_type": "SINGLE_SELECT", "options": [
+      {"name": "Triage", "color": "PURPLE"},
+      {"name": "Assign reviewer", "color": "YELLOW"},
+      {"name": "Review", "color": "BLUE"},
+      {"name": "Respond", "color": "ORANGE"},
+      {"name": "Resolve conflicts", "color": "ORANGE"},
+      {"name": "Inspect blockers", "color": "RED"},
+      {"name": "Clarify handoff", "color": "GRAY"}
+    ]},
+    {"name": "Component", "data_type": "SINGLE_SELECT", "options": [
+      {"name": "Python", "color": "BLUE"},
+      {"name": "C++", "color": "PURPLE"}
+    ]},
+    {"name": "Attention", "data_type": "SINGLE_SELECT", "options": [
+      {"name": "On track", "color": "GREEN"},
+      {"name": "Overdue", "color": "ORANGE"},
+      {"name": "Escalated", "color": "RED"},
+      {"name": "Needs routing", "color": "YELLOW"},
+      {"name": "Unknown age", "color": "GRAY"}
+    ]},
+    {"name": "Waiting since", "data_type": "DATE"},
+    {"name": "Last author activity", "data_type": "DATE"},
+    {"name": "Follow-up", "data_type": "DATE"},
+    {"name": "Escalate on", "data_type": "DATE"},
+    {"name": "Source", "data_type": "TEXT"},
+    {"name": "Handoff evidence", "data_type": "TEXT"},
+    {"name": "Slack thread", "data_type": "TEXT"},
+    {"name": "Action key", "data_type": "TEXT"}
+  ],
+  "visible_fields": ["Title", "Assignees", "Status", "Next action", "Component", "Attention", "Waiting since", "Last author activity", "Follow-up", "Escalate on", "Source"],
+  "views": [
+    {"name": "Outstanding actions", "layout": "TABLE_LAYOUT", "filter": "-status:Complete", "adopt_default": "View 1"},
+    {"name": "My actions", "layout": "TABLE_LAYOUT", "filter": "assignee:@me -status:Complete"},
+    {"name": "Overdue actions", "layout": "TABLE_LAYOUT", "filter": "attention:Overdue,Escalated -status:Complete"},
+    {"name": "Needs routing", "layout": "TABLE_LAYOUT", "filter": "attention:\"Needs routing\",\"Unknown age\" -status:Complete"},
+    {"name": "Action board", "layout": "BOARD_LAYOUT", "filter": "-status:Complete"}
+  ]
+}

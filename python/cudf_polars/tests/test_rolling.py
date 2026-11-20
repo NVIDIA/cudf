@@ -227,6 +227,21 @@ def test_rolling_expr_series_literal_raises(in_memory_engine: pl.GPUEngine) -> N
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+def test_rolling_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
+    q = df.rolling("orderby", period="2i").agg(
+        (pl.col("values") + pl.lit(pl.Series([7]))).sum()
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_rolling_expr_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
+    expr = (pl.col("values") + pl.lit(pl.Series([7]))).sum()
+    q = df.select(expr.rolling("orderby", period="2i"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_rolling_aggregation_is_in_list(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
     q = df.rolling("orderby", period="3i").agg(pl.col("values").sum().is_in([13, 24]))

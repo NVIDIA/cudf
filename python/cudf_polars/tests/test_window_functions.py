@@ -187,3 +187,10 @@ def test_over_series_literal_raises(in_memory_engine: pl.GPUEngine) -> None:
     expr = pl.col("j").sum() + pl.lit(pl.Series([7]))
     q = df.select(expr.over("g"))
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_over_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    expr = (pl.col("j") + pl.lit(pl.Series([7]))).sum()
+    q = df.select(expr.over("g"))
+    assert_gpu_result_equal(q, engine=engine)

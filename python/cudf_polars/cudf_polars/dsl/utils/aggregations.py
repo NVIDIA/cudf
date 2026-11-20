@@ -85,8 +85,15 @@ def _is_list_elements_literal(node: expr.LiteralColumn) -> bool:
     )
 
 
+def _pointwise_traversal(value: expr.Expr) -> Generator[expr.Expr, None, None]:
+    yield value
+    if value.is_pointwise:
+        for child in value.children:
+            yield from _pointwise_traversal(child)
+
+
 def _combines_aggregation_with_literal_column(value: expr.Expr) -> bool:
-    nodes = tuple(traversal([value]))
+    nodes = tuple(_pointwise_traversal(value))
     return any(not node.is_pointwise for node in nodes) and any(
         isinstance(node, expr.LiteralColumn) and not _is_list_elements_literal(node)
         for node in nodes

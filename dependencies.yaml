@@ -1265,6 +1265,8 @@ dependencies:
           - *pandas
       - output_types: conda
         packages:
+          # binutils is needed because it provides 'nm'
+          - binutils
           - python-xxhash
       - output_types: [pyproject, requirements]
         packages:
@@ -1289,8 +1291,6 @@ dependencies:
           - zstandard
       - output_types: conda
         packages:
-          # binutils is needed because it provides 'nm'
-          - binutils
           - msgpack-python
       - output_types: [pyproject, requirements]
         packages:

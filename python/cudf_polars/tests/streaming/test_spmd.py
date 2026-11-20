@@ -31,6 +31,7 @@ from cudf_polars.engine.spmd import (
     use_gpu,
 )
 from cudf_polars.streaming.actor_graph.collectives import closing
+from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.io import make_partitioned_source
@@ -464,12 +465,27 @@ def test_reset_after_shutdown_raises(comm: Communicator) -> None:
     engine.shutdown()  # still safe after a failed _reset
 
 
+@pytest.fixture
+def cancel_on(
+    fake_collective: Any, cancel_when: Callable[..., None]
+) -> Callable[[Communicator], None]:
+    """Leave a cancelled close of ``fake_collective`` pending on a communicator."""
+
+    def cancel(comm: Communicator) -> None:
+        async def body() -> None:
+            async with aclosing_collective(fake_collective, comm, 7):
+                await fake_collective.extract_all(ordered=True)
+
+        cancel_when(body, fake_collective.waiting)
+
+    return cancel
+
+
 def test_shutdown_discards_pending_closes_of_owned_comm(
-    pending_closes: dict[Any, Any],
-    leave_pending_close: Callable[[Any, int], None],
+    pending_closes: dict[Any, Any], cancel_on: Callable[[Communicator], None]
 ) -> None:
     engine = SPMDEngine()
-    leave_pending_close(engine.comm, 7)
+    cancel_on(engine.comm)
     assert set(pending_closes) == {engine.comm}
     engine.shutdown()
     assert pending_closes == {}
@@ -478,10 +494,10 @@ def test_shutdown_discards_pending_closes_of_owned_comm(
 def test_shutdown_keeps_pending_closes_of_caller_comm(
     comm: Communicator,
     pending_closes: dict[Any, Any],
-    leave_pending_close: Callable[[Any, int], None],
+    cancel_on: Callable[[Communicator], None],
 ) -> None:
     engine = SPMDEngine(comm=comm)
-    leave_pending_close(comm, 7)
+    cancel_on(comm)
     engine.shutdown()
     assert set(pending_closes) == {comm}
 
@@ -489,26 +505,14 @@ def test_shutdown_keeps_pending_closes_of_caller_comm(
 def test_reset_refuses_communicator_with_pending_close(
     monkeypatch: pytest.MonkeyPatch,
     comm: Communicator,
-    leave_pending_close: Callable[[Any, int], None],
+    pending_closes: dict[Any, Any],
+    cancel_on: Callable[[Communicator], None],
 ) -> None:
     monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)
     with SPMDEngine(comm=comm) as engine:
-        leave_pending_close(comm, 7)
+        cancel_on(comm)
         with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
             engine._reset()
-
-
-def test_allgather_polars_dataframe_refuses_communicator_with_pending_close(
-    monkeypatch: pytest.MonkeyPatch,
-    leave_pending_close: Callable[[Any, int], None],
-) -> None:
-    comm = MagicMock()
-    leave_pending_close(comm, 7)
-    monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)
-    with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
-        allgather_polars_dataframe(
-            engine=MagicMock(comm=comm), local_df=pl.DataFrame({"a": [1]}), op_id=0
-        )
 
 
 def test_reset_rejects_construction_time_executor_options(

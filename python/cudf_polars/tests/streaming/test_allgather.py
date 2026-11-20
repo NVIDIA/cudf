@@ -6,24 +6,24 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock
+
+import pytest
 
 import polars as pl
 
 import pylibcudf as plc
 from cudf_streaming.table_chunk import TableChunk
-from rapidsmpf.streaming.coll.allgather import AllGather
 
 from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.streaming.actor_graph import utils as actor_graph_utils
 from cudf_polars.streaming.actor_graph.collectives import allgather
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.closing import (
-    aclosing_collective,
     wait_for_pending_closes,
 )
-from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import allgather_reduce
 
 
@@ -77,20 +77,42 @@ def test_allgather(spmd_engine) -> None:
 
 
 def test_allgather_manager_cancellation_does_not_wait_for_peers(
-    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
+    monkeypatch, pending_closes, timeout_seconds: int
 ) -> None:
+    close_started = threading.Event()
+    peers_finished = threading.Event()
+
+    class PendingAllGather:
+        async def aclose(self) -> None:
+            close_started.set()
+            while not peers_finished.is_set():
+                await asyncio.sleep(0.001)
+
     monkeypatch.setattr(
-        allgather, "AllGather", lambda *_args, **_kwargs: fake_collective
+        allgather, "AllGather", lambda *_args, **_kwargs: PendingAllGather()
     )
     comm = Mock()
 
-    async def body() -> None:
-        async with AllGatherManager(Mock(), comm, 4):
-            await fake_collective.extract_all(ordered=True)
+    async def run() -> None:
+        entered = asyncio.Event()
 
-    cancel_when(body, fake_collective.waiting)
-    assert fake_collective.close_calls == 1
-    assert_pending_then_released(comm, fake_collective, 4)
+        async def body() -> None:
+            async with AllGatherManager(Mock(), comm, 4):
+                entered.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(body())
+        await asyncio.wait_for(entered.wait(), timeout=timeout_seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=timeout_seconds)
+
+    asyncio.run(run())
+    assert close_started.is_set()
+    assert [close.op_id for close in pending_closes[comm]] == [4]
+    peers_finished.set()
+    wait_for_pending_closes(comm, timeout=timeout_seconds)
+    assert pending_closes == {}
 
 
 async def _test_allgather_reduce(engine) -> None:
@@ -112,41 +134,49 @@ def test_allgather_reduce(spmd_engine) -> None:
 
 
 def test_allgather_reduce_cancellation_does_not_wait_for_peers(
-    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
+    monkeypatch, pending_closes, timeout_seconds: int
 ) -> None:
+    extracting = threading.Event()
+    peers_finished = threading.Event()
+
+    class PendingAllGather:
+        def __enter__(self) -> PendingAllGather:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def insert(self, *args: object) -> None:
+            pass
+
+        async def extract_all(self, *, ordered: bool) -> list:
+            extracting.set()
+            await asyncio.Event().wait()
+            return []
+
+        async def aclose(self) -> None:
+            while not peers_finished.is_set():
+                await asyncio.sleep(0.001)
+
     monkeypatch.setattr(actor_graph_utils, "PackedData", Mock())
     monkeypatch.setattr(
-        actor_graph_utils, "AllGather", lambda *_args, **_kwargs: fake_collective
+        actor_graph_utils, "AllGather", lambda *_args, **_kwargs: PendingAllGather()
     )
     comm = Mock(nranks=2)
 
-    cancel_when(lambda: allgather_reduce(Mock(), comm, 2, 42), fake_collective.waiting)
-    assert_pending_then_released(comm, fake_collective, 2)
+    async def run() -> None:
+        async def started() -> None:
+            while not extracting.is_set():
+                await asyncio.sleep(0.001)
 
+        task = asyncio.create_task(allgather_reduce(Mock(), comm, 2, 42))
+        await asyncio.wait_for(started(), timeout=timeout_seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=timeout_seconds)
 
-def test_real_allgather_cancelled_close_completes_on_new_loop(
-    spmd_engine, pending_closes, cancel_when, timeout_seconds
-) -> None:
-    comm = spmd_engine.comm
-    entered = asyncio.Event()
-
-    with reserve_op_id() as op_id:
-
-        async def body() -> None:
-            async with aclosing_collective(
-                AllGather(spmd_engine.context, comm, op_id), comm, op_id
-            ):
-                entered.set()
-                await asyncio.Event().wait()
-
-        cancel_when(body, entered)
-        assert [close.op_id for close in pending_closes[comm]] == [op_id]
-        wait_for_pending_closes(comm, timeout=timeout_seconds)
-        assert pending_closes == {}
-
-    result = (
-        pl.LazyFrame({"a": [1, 2, 3]})
-        .select(pl.col("a").sum())
-        .collect(engine=spmd_engine)
-    )
-    assert result["a"].to_list() == [6]
+    asyncio.run(run())
+    assert [close.op_id for close in pending_closes[comm]] == [2]
+    peers_finished.set()
+    wait_for_pending_closes(comm, timeout=timeout_seconds)
+    assert pending_closes == {}

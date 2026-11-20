@@ -112,26 +112,6 @@ def cancel_when(
 
 
 @pytest.fixture
-def leave_pending_close(
-    pending_closes: dict[Any, Any],
-    fake_collective: FakeCollective,
-    cancel_when: Callable[
-        [Callable[[], Coroutine[Any, Any, Any]], asyncio.Event], None
-    ],
-) -> Callable[[Any, int], None]:
-    """Leave a cancelled close of ``fake_collective`` pending on a communicator."""
-
-    def leave(comm: Any, op_id: int) -> None:
-        async def body() -> None:
-            async with closing.aclosing_collective(fake_collective, comm, op_id):
-                await fake_collective.extract_all(ordered=True)
-
-        cancel_when(body, fake_collective.waiting)
-
-    return leave
-
-
-@pytest.fixture
 def assert_pending_then_released(
     pending_closes: dict[Any, Any], timeout_seconds: int
 ) -> Callable[[Any, FakeCollective, int], None]:

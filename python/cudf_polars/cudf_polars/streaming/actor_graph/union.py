@@ -222,7 +222,9 @@ async def _passthrough_union(
     for ch_in, drop in zip(chs_in, suppress, strict=True):
         num_ch_chunks = 0
         while (msg := await ch_in.recv(context)) is not None:
+            sequence_number = msg.sequence_number + seq_num_offset
             if drop:
+                del msg
                 stream = ir_context.get_cuda_stream()
                 out_chunk = empty_table_chunk(ir, context, stream)
             else:
@@ -234,13 +236,7 @@ async def _passthrough_union(
                     reserve_extra=0,
                     net_memory_delta=0,
                 )
-            await ch_out.send(
-                context,
-                Message(
-                    msg.sequence_number + seq_num_offset,
-                    out_chunk,
-                ),
-            )
+            await ch_out.send(context, Message(sequence_number, out_chunk))
             num_ch_chunks += 1
         seq_num_offset += num_ch_chunks
 
@@ -273,6 +269,7 @@ async def _exchange_child(
         while (msg := await ch_in.recv(context)) is not None:
             if drop:
                 # Duplicated child: only rank 0's copy takes part.
+                del msg
                 continue
             dst = plan.destination(child, rank, index)
             chunk = TableChunk.from_message(msg, br=context.br())

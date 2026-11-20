@@ -9,11 +9,11 @@ This rule describes the procedure for updating the pandas unit testing of cudf.p
 
 ## Prerequisites
 1. Prompt the user for a development environment. Assume that the provided environment already contains cudf, the target version of pandas, and the pandas test dependencies.
-2. If the user does not provide an environment, create one from the file in `conda/environments/` that matches the CUDA version and CPU architecture of the machine (`all_cuda-<CUDA major><CUDA minor>_arch-<arch>.yaml`), then add the `test_python_pandas_tests` dependencies, which you generate with `rapids-dependency-file-generator` from the `pandas_tests` file key in `dependencies.yaml`. Neither file contains cudf. Build and install cudf into the new environment in editable mode.
+2. If the user does not provide an environment, create one from the newest file in `conda/environments/` for the machine's CUDA major version and CPU architecture (`all_cuda-<CUDA major><CUDA minor>_arch-<arch>.yaml`), then add the `test_python_pandas_tests` dependencies, which you generate with `rapids-dependency-file-generator` from the `pandas_tests` file key in `dependencies.yaml`. Neither file contains cudf. Build and install cudf into the new environment in editable mode.
 
-    For example, to create a fictional conda development environment named "cudf-dev" on an x86_64 machine with CUDA 13
+    For example, to create a fictional conda development environment named "cudf-dev", replacing the placeholders with the values for the machine
     ```bash
-    conda env create -n cudf-dev -f conda/environments/all_cuda-133_arch-x86_64.yaml
+    conda env create -n cudf-dev -f conda/environments/all_cuda-<CUDA major><CUDA minor>_arch-<arch>.yaml
     rapids-dependency-file-generator --file-key pandas_tests --output conda --matrix "" > /tmp/pandas_tests.yaml
     conda env update -n cudf-dev -f /tmp/pandas_tests.yaml
     conda run -n cudf-dev ./build.sh libcudf pylibcudf cudf --pydevelop

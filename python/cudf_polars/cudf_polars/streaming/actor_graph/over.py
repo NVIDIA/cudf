@@ -53,6 +53,7 @@ from cudf_streaming.table_chunk import (
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.shuffler import PartitionAssignment
 from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import Column, DataFrame, DataType
@@ -304,7 +305,7 @@ def _evaluate_window_with_stamps(
 ) -> DataFrame:
     """Evaluate *ir* on the un-stamped portion of *chunk*; reattach stamps after."""
     child_schema = ir.children[0].schema
-    stream = ir_context.get_cuda_stream()
+    stream = chunk.stream
     n_child = len(child_schema)
     table = chunk.table_view()
     if sort_by_input_order:
@@ -531,10 +532,12 @@ async def _distribute_by_group(
                         chunk,
                         chunk_index,
                         comm.rank,
-                        ir_context.get_cuda_stream(),
+                        chunk.stream,
                         context.br(),
                     )
                 await inserter.insert_hash(stamped, key_indices)
+                del stamped
+            del chunk
             chunk_index += 1
     return sequence_numbers
 
@@ -561,17 +564,29 @@ async def _evaluate_and_route_to_origin(
             partition = TableChunk.from_pylibcudf_table(
                 extracted, stream, exclusive_view=True, br=context.br()
             )
-            evaluated = await ir_context.to_thread(
-                _evaluate_window_with_stamps,
-                partition,
-                ir,
-                ir_context,
-                stamps,
-                sort_by_input_order=sort_by_input_order,
+            del extracted
+            # Approximation: the window result holds the child columns plus
+            # the window columns, so it can be larger than the partition.
+            # The optional stable sort needs a second copy.
+            window_bytes = partition.data_alloc_size() * (
+                2 if sort_by_input_order else 1
             )
+            with opaque_memory_usage(
+                await reserve_memory(context, size=window_bytes, net_memory_delta=0)
+            ):
+                evaluated = await ir_context.to_thread(
+                    _evaluate_window_with_stamps,
+                    partition,
+                    ir,
+                    ir_context,
+                    stamps,
+                    sort_by_input_order=sort_by_input_order,
+                )
+            del partition
             routed = await ir_context.to_thread(
                 _split_off_origin_rank, evaluated, context.br()
             )
+            del evaluated
             if routed is not None:
                 if duplicated_origin:
                     # Duplicated input was inserted by rank 0 only. Every
@@ -584,8 +599,10 @@ async def _evaluate_and_route_to_origin(
                             payload,
                             [0] * rank + [nrows] * (comm.nranks - rank - 1),
                         )
+                    del payload
                 else:
                     await inserter.insert_index(*routed)
+            del routed
 
 
 async def _reassemble_input_chunks(
@@ -622,19 +639,32 @@ async def _reassemble_input_chunks(
         if tbl.num_rows() == 0:
             chunk = empty_table_chunk(ir, context, stream)
         else:
-            sorted_tbl = plc.sorting.stable_sort_by_key(
-                tbl,
-                plc.Table([tbl.columns()[n_exprs]]),
-                [plc.types.Order.ASCENDING],
-                [plc.types.NullOrder.AFTER],
-                stream=stream,
-            )
+            # The sorted copy replaces the unsorted input. The sort also
+            # builds a row index column of int32 (cudf::size_type), which
+            # is 4 bytes per row.
+            with opaque_memory_usage(
+                await reserve_memory(
+                    context,
+                    size=sum(col.device_buffer_size() for col in tbl.columns())
+                    + tbl.num_rows() * 4,
+                    net_memory_delta=0,
+                )
+            ):
+                sorted_tbl = plc.sorting.stable_sort_by_key(
+                    tbl,
+                    plc.Table([tbl.columns()[n_exprs]]),
+                    [plc.types.Order.ASCENDING],
+                    [plc.types.NullOrder.AFTER],
+                    stream=stream,
+                )
             chunk = TableChunk.from_pylibcudf_table(
                 plc.Table(sorted_tbl.columns()[:n_exprs]),
                 stream,
                 exclusive_view=True,
                 br=context.br(),
             )
+            del sorted_tbl
+        del tbl
         await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
 
 

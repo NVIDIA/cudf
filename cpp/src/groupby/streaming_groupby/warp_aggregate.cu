@@ -7,7 +7,6 @@
 #include "warp_aggregate.hpp"
 
 #include <cudf/detail/copy.hpp>
-#include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/utilities/device_atomics.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/utilities/bit.hpp>
@@ -167,7 +166,7 @@ CUDF_KERNEL void __launch_bounds__(partial_aggregation_block_size)
   auto const row = cudf::detail::grid_1d::global_thread_id();
   if (row >= num_rows) { return; }
   auto const group = group_ids[row];
-  if (group == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) { return; }
+  if (group < 0) { return; }
   auto const partial =
     static_cast<size_type>(blockIdx.x % static_cast<uint32_t>(partials_per_group));
   auto const target = partial * capacity + group;

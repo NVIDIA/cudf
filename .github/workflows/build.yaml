@@ -37,16 +37,15 @@ on:
 # interruption of `cancel-in-progress` during publishing could lead to a
 # corrupt or incorrect release that we cannot undo.
 #
-# Workflow-level concurrency applies to the whole run. Before the publisher
-# starts, canceling the run stops preparation. Once publishing starts, it
-# also stops the publisher, even if that job disables cancellation in its
-# own group. Branch and nightly runs keep workflow-level cancellation. Each
-# tag run gets its own workflow group so a competing run can't cancel it.
+# Branch and nightly runs keep workflow-level cancellation. Each tag run
+# gets its own workflow group so a competing run can't cancel the whole
+# run. If we allowed workflow-level cancellation for tags, it could stop
+# an active publisher even with cancellation disabled in the job's group.
 #
 # Job-level concurrency applies only to jobs in the same group. Selected
 # build and gather jobs can cancel matching jobs for the same tag. The shared
 # publisher groups jobs by repository and artifact and disables cancellation
-# so a competing publisher job lets the active one finish.
+# by competing publisher jobs. The publisher's polling timeout still applies.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}

@@ -236,7 +236,9 @@ def pytest_configure(config: pytest.Config) -> None:
     # source collecting the frames of one query in parallel. cudf-polars sets the
     # current device resource per query, which is not thread safe, so the queries
     # on the injected engine run one at a time. Other engines, such as the CPU
-    # fallback's ``engine="in-memory"``, are not serialized.
+    # fallback's ``engine="in-memory"``, are not serialized. The lock is held for the
+    # whole query, so a query that waits on another thread collecting on the injected
+    # engine deadlocks.
     injected_engine_lock = threading.RLock()
 
     @wraps(collect)

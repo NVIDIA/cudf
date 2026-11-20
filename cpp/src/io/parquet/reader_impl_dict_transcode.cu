@@ -347,7 +347,7 @@ void reader_impl::prepare_dict_transcode(read_mode mode)
 }
 
 void reader_impl::assemble_dict_transcoded_columns(
-  std::vector<std::unique_ptr<column>>& out_columns)
+  std::vector<std::unique_ptr<column>>& out_columns, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -430,13 +430,13 @@ void reader_impl::assemble_dict_transcoded_columns(
       // `indices_owner` intact for the path below.
       auto const emit_single_row_group_column = [&]() -> bool {
         auto const& chunk = pass.chunks[chunk_indices[0]];
-        auto keys         = make_keys_column_from_index_pairs(
-          chunk.str_dict_index, chunk_key_counts[0], _stream, _mr);
+        auto keys =
+          make_keys_column_from_index_pairs(chunk.str_dict_index, chunk_key_counts[0], _stream, mr);
         auto const num_distinct_keys = cudf::detail::distinct_count(
           keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
         out_columns[out_idx] = cudf::make_dictionary_column(
-          std::move(keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+          std::move(keys), std::move(indices_owner), _stream, mr.get_output_mr());
         return false;
       };
 
@@ -493,9 +493,9 @@ void reader_impl::assemble_dict_transcoded_columns(
       // Device copies of the per-chunk row/key boundaries, reused by the strided key gather below
       // and by `remap_dict_indices_by_chunk`.
       auto const d_row_offsets =
-        cudf::detail::make_device_buffer_async(chunk_row_offsets, _stream, _mr.as_temporary());
+        cudf::detail::make_device_buffer_async(chunk_row_offsets, _stream, mr.as_temporary());
       auto const d_key_counts_prefix =
-        cudf::detail::make_device_buffer_async(key_counts_prefix, _stream, _mr.as_temporary());
+        cudf::detail::make_device_buffer_async(key_counts_prefix, _stream, mr.as_temporary());
 
       // Host source for the strided gather's per-chunk base offsets. Declared at iteration scope
       // (populated only in the strided branch) so it outlives its async copy until the synchronize.
@@ -513,7 +513,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       std::unique_ptr<column> stacked_keys_owner;
       if (contiguous) {
         stacked_keys_owner = make_keys_column_from_index_pairs(
-          pass.chunks[chunk_indices[0]].str_dict_index, total_keys, _stream, _mr.as_temporary());
+          pass.chunks[chunk_indices[0]].str_dict_index, total_keys, _stream, mr.as_temporary());
       } else {
         key_base_offsets.resize(chunk_indices.size());
         std::transform(cuda::counting_iterator<size_t>{0},
@@ -521,7 +521,7 @@ void reader_impl::assemble_dict_transcoded_columns(
                        key_base_offsets.begin(),
                        [&](size_t k) { return key_offset_of(k); });
         auto const d_key_base_offsets =
-          cudf::detail::make_device_buffer_async(key_base_offsets, _stream, _mr.as_temporary());
+          cudf::detail::make_device_buffer_async(key_base_offsets, _stream, mr.as_temporary());
 
         auto const keys_begin = cudf::detail::make_counting_transform_iterator(
           size_type{0},
@@ -531,20 +531,20 @@ void reader_impl::assemble_dict_transcoded_columns(
                                 cudf::device_span<size_type const>{d_key_base_offsets.data(),
                                                                    d_key_base_offsets.size()}});
         stacked_keys_owner = cudf::strings::detail::make_strings_column(
-          keys_begin, keys_begin + total_keys, _stream, _mr.get_temporary_mr());
+          keys_begin, keys_begin + total_keys, _stream, mr.get_temporary_mr());
       }
       column_view const stacked_keys = stacked_keys_owner->view();
 
-      // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `_mr`, the output
+      // Deduplicate the stacked keys. `encode` yields the compact unique keys (on `mr`, the output
       // keys child) plus an INT32 map from each stacked-key position to its compact index.
       auto encoded =
-        cudf::dictionary::detail::encode(stacked_keys, data_type{type_id::INT32}, _stream, _mr);
+        cudf::dictionary::detail::encode(stacked_keys, data_type{type_id::INT32}, _stream, mr);
       auto encoded_contents  = encoded->release();
       auto stacked_to_unique = std::move(
         encoded_contents.children[dictionary_column_view::indices_column_index]);  // INT32 map
       auto unique_keys = std::move(
         encoded_contents
-          .children[dictionary_column_view::keys_column_index]);  // compact keys, owned on _mr
+          .children[dictionary_column_view::keys_column_index]);  // compact keys, owned on mr
 
       // Remap every row's index onto the compact key space in place. Null rows carry a zero index
       // (fill_pruned_offsets); the shift keeps them in range and the null mask (carried by
@@ -561,7 +561,7 @@ void reader_impl::assemble_dict_transcoded_columns(
       _stream.sync();
 
       out_columns[out_idx] = cudf::make_dictionary_column(
-        std::move(unique_keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+        std::move(unique_keys), std::move(indices_owner), _stream, mr.get_output_mr());
     });
 }
 

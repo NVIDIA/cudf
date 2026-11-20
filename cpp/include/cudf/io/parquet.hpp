@@ -351,7 +351,9 @@ class parquet_reader_options {
    * When AST/JIT filters are set, a string column the filter references is materialized as
    * STRING, operated on by the filter, and its filtered result is then encoded as a DICTIONARY32
    * column. Every other eligible column still takes the direct transcode fast path, and the filter
-   * is applied to its DICTIONARY32 column.
+   * is applied to its DICTIONARY32 column. Such a column keeps all of its Parquet dictionary
+   * entries as keys, so some keys may be unused by the surviving rows; use
+   * `cudf::dictionary::remove_unused_keys` to drop them.
    *
    * @return `true` if the reader returns flat string columns as DICTIONARY32 encoded columns
    */

@@ -23,6 +23,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/bit.hpp>
 
 #include <rmm/device_buffer.hpp>
 
@@ -338,27 +339,71 @@ TEST_F(ParquetReaderDictTest, SlicedFlatStringDictTranscode)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(sliced, decoded_read->view());
 }
 
+namespace {
+
+// A low-cardinality string column whose rows dropped by `predicate` (false or null) take values
+// that no surviving row has. Under a filter, the direct transcode fast path keeps every Parquet
+// dictionary entry of the surviving row groups as a key, while the post-filter fallback encode
+// keeps only the surviving values, so the two paths are told apart by the key count.
+cudf::test::strings_column_wrapper make_carried_strings(cudf::column_view const& predicate,
+                                                        unsigned int col_seed = seed + 1)
+{
+  auto const [kept, kept_mask] = cudf::test::to_host<bool>(predicate);
+
+  std::mt19937 engine(col_seed);
+  std::uniform_int_distribution<int> value_dist(0, cardinality - 1);
+  std::bernoulli_distribution null_dist(null_probability);
+
+  std::vector<std::string> strings(num_rows);
+  std::vector<bool> valids(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    bool const is_kept = kept[i] and (kept_mask.empty() or cudf::bit_is_set(kept_mask.data(), i));
+    strings[i]         = make_value_string(value_dist(engine) + (is_kept ? 0 : cardinality));
+    valids[i]          = not null_dist(engine);
+  }
+
+  return cudf::test::strings_column_wrapper(strings.begin(), strings.end(), valids.begin());
+}
+
+void expect_dictionary_of(cudf::column_view const& expected, cudf::column_view const& read)
+{
+  ASSERT_EQ(read.type().id(), cudf::type_id::DICTIONARY32);
+  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
+}
+
+// Checks that a `make_carried_strings` column took the direct transcode fast path.
+void expect_fast_path_keys(cudf::column_view const& expected, cudf::column_view const& read)
+{
+  auto const num_keys = cudf::dictionary_column_view(read).keys_size();
+  auto const num_surviving_values =
+    cudf::distinct_count(expected, cudf::null_policy::EXCLUDE, cudf::nan_policy::NAN_IS_VALID);
+  EXPECT_GT(num_keys, num_surviving_values)
+    << "Expected the Parquet dictionary entries of dropped rows among the keys";
+}
+
+}  // namespace
+
 // A filter combined with `output_dict_columns`. The filter references only the key column, so the
 // string column still takes the direct transcode fast path and the filter is applied to its
 // DICTIONARY32 column. The key column is projected through unchanged.
 TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
 {
-  auto key_col = make_int_key_column();
-  auto str_col = make_low_cardinality_strings();
-
-  auto const input_tbl = cudf::table_view{{key_col, str_col}};
-  auto const filepath  = temp_env->get_temp_filepath("FilterWithOutputDictColumns.parquet");
-  write_parquet(input_tbl, filepath);
-
   // Filter: key column (col 0) >= num_rows / 2.
   auto literal_value = cudf::numeric_scalar<int32_t>(num_rows / 2);
   auto literal       = cudf::ast::literal(literal_value);
   auto col_ref       = cudf::ast::column_reference(0);
   auto filter_expr = cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
 
-  // Expected result: apply the same predicate to the input table on host-visible data.
-  auto const predicate = cudf::compute_column(input_tbl, filter_expr);
-  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
+  auto key_col         = make_int_key_column();
+  auto const predicate = cudf::compute_column(cudf::table_view{{key_col}}, filter_expr);
+  auto str_col         = make_carried_strings(predicate->view());
+
+  auto const input_tbl = cudf::table_view{{key_col, str_col}};
+  auto const filepath  = temp_env->get_temp_filepath("FilterWithOutputDictColumns.parquet");
+  write_parquet(input_tbl, filepath);
+
+  auto const expected = cudf::apply_retention_mask(input_tbl, predicate->view());
   ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
 
   auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
@@ -372,44 +417,33 @@ TEST_F(ParquetReaderDictTest, FilterWithOutputDictColumns)
   // Key column: unchanged INT32.
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(0), read_table->view().column(0));
 
-  // String column: DICTIONARY32 via the post-filter fallback encode; decodes to the surviving rows.
+  // String column: DICTIONARY32 via the direct transcode fast path; decodes to the surviving rows.
   auto const read_str = read_table->view().column(1);
-  ASSERT_EQ(read_str.type().id(), cudf::type_id::DICTIONARY32);
-  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read_str));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(1), decoded->view());
+  expect_dictionary_of(expected->view().column(1), read_str);
+  expect_fast_path_keys(expected->view().column(1), read_str);
 }
-
-namespace {
-
-void expect_dictionary_of(cudf::column_view const& expected, cudf::column_view const& read)
-{
-  ASSERT_EQ(read.type().id(), cudf::type_id::DICTIONARY32);
-  auto const decoded = cudf::dictionary::decode(cudf::dictionary_column_view(read));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
-}
-
-}  // namespace
 
 // A filter on one string column: that column is materialized as STRING for the filter and encoded
 // after it, while the unreferenced string column takes the direct transcode fast path.
 TEST_F(ParquetReaderDictTest, FilterOnStringColumnWithOutputDictColumns)
 {
+  auto literal_value = cudf::string_scalar(make_value_string(1));
+  auto literal       = cudf::ast::literal(literal_value);
+  auto col_ref       = cudf::ast::column_reference(1);
+  auto filter_expr   = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, literal);
+
   auto key_col      = make_int_key_column();
   auto filtered_col = make_low_cardinality_strings();
-  auto carried_col  = make_low_cardinality_strings(seed + 1);
+  auto const predicate =
+    cudf::compute_column(cudf::table_view{{key_col, filtered_col}}, filter_expr);
+  auto carried_col = make_carried_strings(predicate->view());
 
   auto const input_tbl = cudf::table_view{{key_col, filtered_col, carried_col}};
   auto const filepath =
     temp_env->get_temp_filepath("FilterOnStringColumnWithOutputDictColumns.parquet");
   write_parquet(input_tbl, filepath);
 
-  auto literal_value = cudf::string_scalar(make_value_string(1));
-  auto literal       = cudf::ast::literal(literal_value);
-  auto col_ref       = cudf::ast::column_reference(1);
-  auto filter_expr   = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref, literal);
-
-  auto const predicate = cudf::compute_column(input_tbl, filter_expr);
-  auto const expected  = cudf::apply_retention_mask(input_tbl, predicate->view());
+  auto const expected = cudf::apply_retention_mask(input_tbl, predicate->view());
   ASSERT_LT(expected->num_rows(), num_rows) << "filter must remove some rows to be meaningful";
 
   auto const read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
@@ -423,6 +457,7 @@ TEST_F(ParquetReaderDictTest, FilterOnStringColumnWithOutputDictColumns)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view().column(0), read_table->view().column(0));
   expect_dictionary_of(expected->view().column(1), read_table->view().column(1));
   expect_dictionary_of(expected->view().column(2), read_table->view().column(2));
+  expect_fast_path_keys(expected->view().column(2), read_table->view().column(2));
 }
 
 // Non-happy test (Fast path ineligible): a column whose chunks mix dictionary and PLAIN data pages.

@@ -207,8 +207,10 @@ class reader_impl {
    * `prepare_dict_transcode`.
    *
    * @param out_columns The output columns vector to transcode in place.
+   * @param mr Memory resources for the assembled columns
    */
-  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns);
+  void assemble_dict_transcoded_columns(std::vector<std::unique_ptr<column>>& out_columns,
+                                        cudf::memory_resources mr);
 
   /**
    * @brief Copies over the relevant page mask information for the subpass

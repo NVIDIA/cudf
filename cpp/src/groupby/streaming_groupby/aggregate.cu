@@ -52,14 +52,16 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     update_nullable_state(batch_keys);
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
-    insertion_started  = true;
-    auto const targets = probe_and_insert(batch_keys, true, stream);
+    insertion_started    = true;
+    auto const group_ids = probe_and_insert(batch_keys, stream);
     _insert_done.record(stream);
     _results_read_done.wait(stream);
 
     compute_warp_aggregates(data.select(_value_col_indices),
                             _agg_kinds,
-                            {targets.data(), targets.size()},
+                            {group_ids.data(), group_ids.size()},
+                            _aggregate_capacity,
+                            _partials_per_group,
                             _agg_results->mutable_view(),
                             stream,
                             cudf::get_current_device_resource_ref());

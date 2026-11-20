@@ -689,7 +689,7 @@ std::unique_ptr<table> read_parquet_column_chunk_bounds(
 
   auto metadata = detail_parquet::aggregate_reader_metadata{
     std::vector<parquet::FileMetaData>{parquet_metadatas.begin(), parquet_metadatas.end()},
-    false,  // use_arrow_schema
+    true,   // use_arrow_schema
     false   // has_cols_from_mismatched_srcs
   };
 

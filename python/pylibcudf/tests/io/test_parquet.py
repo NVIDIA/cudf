@@ -1205,9 +1205,33 @@ def test_read_parquet_arrow_schema_duration() -> None:
     ).build()
     result = plc.io.parquet.read_parquet(options)
 
-    assert (
-        result.tbl.columns()[0].type().id() == plc.TypeId.DURATION_MILLISECONDS
+    assert result.tbl.columns()[0].to_arrow().equals(table.column("d").chunk(0))
+
+
+@pytest.mark.parametrize("from_bytes", [False, True])
+def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
+    tmp_path, from_bytes
+) -> None:
+    table = pa.table({"d": pa.array([1, 2, 3, 4], type=pa.duration("ms"))})
+    path = tmp_path / "duration.parquet"
+    write_table(table, path, row_group_size=2, store_schema=True)
+
+    if from_bytes:
+        footer, _ = _extract_footer_bytes_with_suffix(path.read_bytes())
+        file_metadatas = [
+            plc.io.parquet_metadata.FileMetaData.from_bytes(footer)
+        ]
+    else:
+        file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
+            plc.io.SourceInfo([path])
+        )
+
+    bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+        file_metadatas, columns=["d"]
     )
+    d_min, d_max = bounds.columns()[2], bounds.columns()[3]
+    assert d_min.to_arrow().equals(pa.array([1, 3], type=pa.duration("ms")))
+    assert d_max.to_arrow().equals(pa.array([2, 4], type=pa.duration("ms")))
 
 
 def test_file_metadata_schema_element_nesting() -> None:

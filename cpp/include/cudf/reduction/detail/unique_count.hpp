@@ -17,7 +17,8 @@ namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::unique_count(column_view const&, null_policy, nan_policy, cuda::stream_ref)
+ * @copydoc cudf::unique_count(column_view const&, null_policy, nan_policy, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 cudf::size_type unique_count(column_view const& input,
                              null_policy null_handling,
@@ -26,7 +27,8 @@ cudf::size_type unique_count(column_view const& input,
                              cudf::memory_resources mr);
 
 /**
- * @copydoc cudf::unique_count(table_view const&, null_equality, cuda::stream_ref)
+ * @copydoc cudf::unique_count(table_view const&, null_equality, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 cudf::size_type unique_count(table_view const& input,
                              null_equality nulls_equal,

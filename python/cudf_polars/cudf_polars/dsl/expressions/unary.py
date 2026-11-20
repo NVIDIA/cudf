@@ -1586,9 +1586,16 @@ class UnaryFunction(Expr):
                 else:
                     arg = evaluated.obj
                     if column.size == 1 != evaluated.size:
-                        (column,) = broadcast(
-                            column, target_length=evaluated.size, stream=df.stream
-                        )
+                        if column.null_count == 1:
+                            if column.dtype == evaluated.dtype:
+                                return Column(evaluated.obj, dtype=self.dtype)
+                        else:
+                            (column,) = broadcast(
+                                column,
+                                target_length=evaluated.size,
+                                stream=df.stream,
+                            )
+                            return column
             if isinstance(arg, plc.Scalar) and dtypes.can_cast(
                 column.dtype.plc_type, arg.type()
             ):  # pragma: no cover

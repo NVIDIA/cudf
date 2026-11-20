@@ -1,95 +1,76 @@
 ---
 name: review-cudf
-description: Use this skill to review GitHub pull requests for cudf
+description: Review cuDF pull requests or local diffs, using repository guidelines and targeted execution to investigate correctness, compatibility, and performance risks.
 ---
 
-Use this skill when the user invokes `/review-cudf` with:
-- a cudf GitHub PR link
-- currently checked out cudf PR
-- specified cudf code changes or a diff
+# Review cuDF
 
-cudf GitHub repository is located at: https://github.com/NVIDIA/cudf
+Review as a cuDF maintainer responsible for evidence-backed findings that add to
+existing human and CodeRabbit reviews. The repository is NVIDIA/cudf.
 
-# Review cuDF Pull Request
+Accept a PR link or number, a checked-out PR, or a local diff.
 
-1. **Fetch PR metadata and diff**
+## Context
+
+- Fetch the PR metadata, base/head SHAs, diff, CI results, and existing review
+  threads and submissions, including resolved and outside-diff comments.
+  For local changes, record the compared revisions and uncommitted diff.
+- Use available GitHub tools or authenticated gh without printing credentials.
+  If authentication fails, stop and report it. If those tools are unavailable,
+  use the public PR diff or REST API, or fetch the PR ref from a cuDF remote.
+- Read the root REVIEW_GUIDELINES.md and the guides applicable to the changed paths,
+  including package-specific guides under python/pylibcudf and python/cudf_polars
+  when present.
+  For libcudf conventions, the authority is
+  cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md. Consult TESTING.md,
+  BENCHMARKING.md, DOCUMENTATION.md, or PROFILING.md there when relevant.
+  Keep code-review policy in those shared guides, which CodeRabbit also consumes.
+
+For example, with GitHub CLI:
 
 ```bash
-gh pr view <PR_NUMBER> --repo NVIDIA/cudf --json title,body,files,additions,deletions,baseRefName,headRefName
+gh pr view <PR_NUMBER> --repo NVIDIA/cudf --json title,body,baseRefOid,headRefOid,files,statusCheckRollup
 gh pr diff <PR_NUMBER> --repo NVIDIA/cudf
 ```
 
-Hint: Check if `GH_TOKEN` (or GitHub CLI auth) is already configured in the environment (for example via your secret manager) so `gh` can authenticate and bypass rate limits; do not run `gh auth token` from within the agent. If `gh` auth is unavailable, fall back to GitHub's raw diff/patch URLs, `git fetch` of the PR ref, unauthenticated GitHub REST API with `curl`, or any other available methods.
+## Investigation
 
-2. **Fetch review comments already posted** for context on what's already been suggested and need not be repeated.
+- Trace changed behavior through callers, bindings, ownership, streams, and
+  existing tests. Focus on the risks introduced by this diff.
+- Use the smallest experiment that resolves a material uncertainty: targeted
+  builds, regression inputs, CPU/reference comparisons, sanitizers, or benchmarks.
+  Use `build-test-cudf` for builds/tests or `perf-compare-cudf` for performance
+  comparisons, under .agents/skills/, in a supported environment.
+  A review need not run the full suite or manufacture a finding.
+- Verify that execution uses the reviewed sources and matching native libraries.
+  Record relevant test selection, skips/xfails, dispatch conditions, and fallback
+  settings when establishing which implementation ran.
+- For suspected regressions, compare the same reproducer on base and head.
+  For performance claims, control hardware/load and cache state, include the
+  affected workload axes, and preserve raw measurements.
+- Extend existing coverage when useful; keep review experiments isolated from
+  the developer's edits. Do not change the submitted patch as part of review.
 
-3. **Read the Developer Guide** (`cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`) — it is the authoritative reference for libcudf conventions. All rules in the guide apply during review. The checklist below calls out the most review-relevant rules and adds items **not** covered by the guide.
+## Result
 
-4. **Analyze the changes** against the checklist below, reading relevant source files as needed for context.
-
-5. **Produce a structured review** using the output format at the bottom.
-
-6. **Dump the structured review** to `.agents/reviews/<PR_NUMBER>/review.md`
-
----
-
-## Review Checklist
-
-For the detailed review checklist, read these files:
-- **C++/CUDA**: `cpp/REVIEW_GUIDELINES.md`
-- **Python**: `python/REVIEW_GUIDELINES.md`
-- **pylibcudf**: `python/pylibcudf/REVIEW_GUIDELINES.md`
-- **cudf_polars**: `python/cudf_polars/REVIEW_GUIDELINES.md`
-- **Developer Guide**: `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`
-- **Testing Guide**: `cpp/doxygen/developer_guide/TESTING.md`
-- **Benchmarking Guide**: `cpp/doxygen/developer_guide/BENCHMARKING.md`
-- **Documentation Guide**: `cpp/doxygen/developer_guide/DOCUMENTATION.md`
-
-Use all applicable checklist items from those files when reviewing the PR. The Developer Guide is the authoritative reference for libcudf conventions — all rules in the guide apply during review.
-
----
-
-## Reference Material
-
-| Topic | Path |
-|-------|------|
-| Developer guide | `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md` |
-| Testing guide | `cpp/doxygen/developer_guide/TESTING.md` |
-| Benchmarking guide | `cpp/doxygen/developer_guide/BENCHMARKING.md` |
-| Documentation guide | `cpp/doxygen/developer_guide/DOCUMENTATION.md` |
-| Profiling guide | `cpp/doxygen/developer_guide/PROFILING.md` |
-
-Online libcudf API docs if needed: https://docs.nvidia.com/cudf/latest/libcudf/
-
----
-
-## Output Format
-
-Structure your review as follows:
+Save the review to .agents/reviews/<PR_NUMBER>/review.md (use a descriptive name
+for local diffs) with this structure:
 
 ```markdown
-## PR Review: <PR title>
+**Base:** compared revision
+**Head:** reviewed revision, including any uncommitted changes
 
-**PR:** <link>
-**Summary:** <1-2 sentence summary of what the PR does>
+## Findings
+List findings by severity, or state "No findings".
+For each: severity, file:line, trigger, consequence, evidence or reproducer,
+and whether it is new or confirms an existing finding (link the original).
 
-### Findings
+## Checks run
+Commands and results, including evidence added to existing findings.
 
-#### Critical
-- **[file:line]** Description of issue that must be fixed before merge.
-
-#### Suggestions
-- **[file:line]** Description of improvement to consider.
-
-#### Nits
-- **[file:line]** Minor style or formatting issue. Keep these minimal, don't suggest adding comments around every line of code or obvious logic.
-
-#### Highlights
-- Highlight well-written code, good test coverage, or clever solutions.
-
-### Verdict
-One of: **Approve**, **Request Changes**, or **Comment**
-With a brief justification.
+## Gaps
+Material uncertainties and checks that could not be run, or "None".
 ```
 
-If there are no findings in a category, omit that category.
+Keep confirmations with their evidence rather than repeating the complaint.
+Posting to GitHub requires authorization from the user or invoking workflow.

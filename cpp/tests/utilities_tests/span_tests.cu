@@ -29,6 +29,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using cudf::device_span;
@@ -220,6 +221,21 @@ TEST(SpanTest, CanConstructFromHostContainers)
 
   (void)host_span<int const>(std_vector_c);
   (void)host_span<int const>(h_vector_c);
+}
+
+TEST(SpanTest, HostSpanContainerConstraints)
+{
+  static_assert(std::is_constructible_v<host_span<int>, std::vector<int>&>);
+  static_assert(std::is_constructible_v<host_span<int const>, std::vector<int>&>);
+  static_assert(std::is_constructible_v<host_span<int const>, std::vector<int> const&>);
+  static_assert(std::is_constructible_v<host_span<int const>, thrust::host_vector<int> const&>);
+  static_assert(std::is_constructible_v<host_span<char const>, std::string const&>);
+
+  static_assert(not std::is_constructible_v<host_span<int>, std::vector<int> const&>);
+  static_assert(not std::is_constructible_v<host_span<int>, thrust::host_vector<int> const&>);
+  static_assert(not std::is_constructible_v<host_span<int>, std::vector<int>&&>);
+  static_assert(not std::is_constructible_v<host_span<long>, std::vector<int>&>);
+  static_assert(not std::is_constructible_v<host_span<int>, thrust::device_vector<int>&>);
 }
 
 TEST(SpanTest, CanUseStdSpan)

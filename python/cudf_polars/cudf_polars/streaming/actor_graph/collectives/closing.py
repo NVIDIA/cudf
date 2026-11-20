@@ -56,11 +56,15 @@ def _discard(comm: Communicator, pending: _PendingClose) -> None:
                 del _pending[comm]
 
 
+def _is_skipped_finish(exc: RuntimeError) -> bool:
+    return str(exc) == _SKIPPED_FINISH
+
+
 async def _finish(comm: Communicator, pending: _PendingClose) -> None:
     try:
         await pending.collective.aclose()
     except RuntimeError as exc:
-        if str(exc) != _SKIPPED_FINISH:
+        if not _is_skipped_finish(exc):
             raise
     _discard(comm, pending)
 
@@ -97,10 +101,10 @@ async def aclose_collective(
     """
     Release a collective without letting cancellation wait for peers.
 
-    Without ``error``, wait for ``collective.aclose()``. With ``error``, a
-    ``RuntimeError`` from ``aclose()`` (for example, because
-    ``insert_finished()`` was skipped) is suppressed so that the caller can
-    raise ``error`` instead.
+    Without ``error``, wait for ``collective.aclose()``. With ``error``, the
+    ``RuntimeError`` that ``aclose()`` raises because ``insert_finished()``
+    was skipped is suppressed so that the caller can raise ``error`` instead.
+    Other close failures propagate.
 
     If ``error`` is a cancellation, or the close is cancelled, the close
     continues in the background and the collective is recorded as pending on
@@ -127,8 +131,8 @@ async def aclose_collective(
     except asyncio.CancelledError:
         await _close_in_background(collective, comm, op_id)
         raise
-    except RuntimeError:
-        if error is None:
+    except RuntimeError as exc:
+        if error is None or not _is_skipped_finish(exc):
             raise
 
 

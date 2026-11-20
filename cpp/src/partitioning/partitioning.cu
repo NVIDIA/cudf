@@ -899,11 +899,14 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   size_type num_partitions,
   partition_order order,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
-  auto const temp_mr = cudf::get_current_device_resource_ref();
-  auto gather_map    = make_numeric_column(
-    data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, mr);
+  auto const temp_mr        = mr.get_temporary_mr();
+  auto gather_map           = make_numeric_column(data_type{type_to_id<size_type>()},
+                                        num_rows,
+                                        mask_state::UNALLOCATED,
+                                        stream,
+                                        mr.get_output_mr());
   auto const gather_map_ptr = gather_map->mutable_view().data<size_type>();
 
   int dev;
@@ -1056,10 +1059,9 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   partition_order order,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
-  auto const row_hasher =
-    detail::row::hash::row_hasher(keys, stream, cudf::get_current_device_resource_ref());
+  auto const row_hasher = detail::row::hash::row_hasher(keys, stream, mr.get_temporary_mr());
   auto const hasher =
     row_hasher.device_hasher<hash_function>(nullate::DYNAMIC{hash_has_nulls}, seed);
   if (is_power_two(num_partitions)) {
@@ -1239,7 +1241,7 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   partition_order order,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_partitions >= 0, "num_partitions must be non-negative", std::invalid_argument);
   if (num_partitions == 0 || keys.num_rows() == 0 || keys.num_columns() == 0) {
@@ -1309,7 +1311,7 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   hash_id hash_function,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   switch (hash_function) {
     case (hash_id::HASH_IDENTITY):
@@ -1369,7 +1371,7 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   hash_id hash_function,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::hash_partition_indices(

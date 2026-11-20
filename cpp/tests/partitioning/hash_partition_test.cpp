@@ -6,6 +6,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -732,6 +733,42 @@ TEST_F(HashPartitionIndices, IdentityHashFailure)
     cudf::hash_partition_indices(
       cudf::table_view({strings}), 2, cudf::partition_order::STABLE, cudf::hash_id::HASH_IDENTITY),
     cudf::logic_error);
+}
+
+TEST_F(HashPartitionIndices, MemoryResources)
+{
+  // 8 partitions use the shared-memory tile path; 70000 use the radix sort or atomic scatter
+  for (auto const num_partitions : {8, 70000}) {
+    for (auto const order : {cudf::partition_order::STABLE, cudf::partition_order::UNSTABLE}) {
+      auto harness         = cudf::test::memory_resource_test_harness{};
+      auto stream          = cudf::test::get_default_stream();
+      auto keys            = make_int64_keys(4097, 4097);
+      auto const keys_view = cudf::table_view({keys->view()});
+
+      cudf::test::expect_api_uses_memory_resources(
+        harness,
+        [&](cudf::memory_resources mr) {
+          return cudf::hash_partition_indices(keys_view,
+                                              num_partitions,
+                                              order,
+                                              cudf::hash_id::HASH_MURMUR3,
+                                              cudf::DEFAULT_HASH_SEED,
+                                              stream,
+                                              mr);
+        },
+        [](auto const& result) { return result.first->alloc_size(); },
+        [&](auto const& result) {
+          expect_valid_partition_indices(keys_view,
+                                         result.first->view(),
+                                         result.second,
+                                         num_partitions,
+                                         order == cudf::partition_order::STABLE);
+        },
+        {cudf::test::output_allocation_expectation::EXACT,
+         cudf::test::temporary_allocation_expectation::SOME},
+        stream);
+    }
+  }
 }
 
 CUDF_TEST_PROGRAM_MAIN()

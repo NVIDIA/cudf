@@ -189,10 +189,10 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   table_view const& keys,
   int num_partitions,
   partition_order order,
-  hash_id hash_function             = hash_id::HASH_MURMUR3,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  hash_id hash_function     = hash_id::HASH_MURMUR3,
+  uint32_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Round-robin partition.

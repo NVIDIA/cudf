@@ -317,11 +317,13 @@ def _hybrid_scan_columns(
                     row_group_indices, options
                 )
                 if bloom_ranges:
-                    bloom_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
-                        source_info,
-                        bloom_ranges,
-                        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
-                        stream=stream,
+                    bloom_chunks = (
+                        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+                            source_info,
+                            bloom_ranges,
+                            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+                            stream=stream,
+                        )
                     )
                     row_group_indices = reader.filter_row_groups_with_bloom_filters(
                         bloom_chunks, row_group_indices, options, stream=stream

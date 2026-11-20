@@ -41,27 +41,6 @@ namespace cudf::io::parquet::detail {
 
 namespace {
 
-/**
- * @brief Decide which nz map consumer, if any, can decode @p page.
- *
- * @param page Page to classify
- * @param chunk Column chunk the page belongs to
- * @return The page's nz map kind, or `NONE` if no consumer can decode it
- */
-[[nodiscard]] nz_map_kind classify_nz_map_kind(PageInfo const& page, ColumnChunkDesc const& chunk)
-{
-  // The encodings with an nz map consumer.
-  bool const has_consumer =
-    BitAnd(page.kernel_mask,
-           BitOr(decode_kernel_mask::DELTA_BINARY, decode_kernel_mask::DELTA_LENGTH_BA)) != 0;
-  if (!has_consumer) { return nz_map_kind::NONE; }
-
-  // Only flat (depth-1, non-repeated) columns have a consumer today. Lists and structs of delta
-  // leaves keep decoding their own levels.
-  bool const is_flat = chunk.max_level[level_type::REPETITION] == 0 && chunk.max_nesting_depth <= 1;
-  return is_flat ? nz_map_kind::DELTA_FLAT : nz_map_kind::NONE;
-}
-
 // Tests the passed in logical type for a FIXED_LENGTH_BYTE_ARRAY column to see if it should
 // be treated as a string. Currently the only logical type that has special handling is DECIMAL.
 // Other valid types in the future would be UUID (still treated as string) and FLOAT16 (which
@@ -402,12 +381,8 @@ void reader_impl::allocate_level_decode_space()
   // called in that case, so every page is `NONE`. Return before allocating or scanning anything.
   if (!_nz_map_enabled) { return; }
 
-  // TODO: count the nz map scratch in the chunked-read budget, before the nz map producer is
-  // enabled by default.
-  //
-  // For now, both `level_decode_data` above and the allocations below are not tracked in the
-  // chunked-read budget. We will fix that once we start actually leveraging the nz map producer and
-  // therefore introduce some of the machinery that will be needed to calculate the memory usage.
+  // `compute_nz_map_sizes` includes these allocations in the pass read limit. Size them
+  // only through `compute_page_rank_map_size` so the two stay in sync.
   //
   // Hand out the out-of-line nz map scratch. There is exactly one for each mapped page, so most
   // pages (those that do not use the nz map producer) have nothing here. This information is only
@@ -431,10 +406,8 @@ void reader_impl::allocate_level_decode_space()
 
   // Point each mapped page at its scratch and size the flat valid-rank maps in a single walk.
   // `PageInfo` travels to the device, so the page carries the device address while the seeding
-  // here goes through `host_state()`. A required page needs no map at all since its rank map is
-  // the identity, which the consumer synthesizes rather than reading. The sizes are stored rather
-  // than recomputed so that the loop below, which hands out the slices, cannot disagree with this
-  // one.
+  // here goes through `host_state()`. The sizes are stored rather than recomputed so that the loop
+  // below, which hands out the slices, cannot disagree with this one.
   std::vector<size_t> flat_map_sizes(num_pages, 0);
   size_t flat_nz_map_size = 0;
   for (size_t idx = 0; idx < num_pages; ++idx) {
@@ -445,17 +418,10 @@ void reader_impl::allocate_level_decode_space()
     if (page.has_nz_map(nz_map_kind::DELTA_FLAT)) {
       auto const& chunk = pass.chunks[page.chunk_idx];
       state->nz_count   = page_nz_map::not_yet_produced;
-      if (chunk.max_level[level_type::DEFINITION] != 0) {
-        // The producer never indexes past `min(num_input_values, num_decoded_level_values)`, which
-        // is set above and is the smaller of the two for a sliced read. A page whose levels are
-        // entirely outside the row range decodes none, so it gets no slice at all; the producer
-        // takes that page's `def == nullptr` path and reports a zero count, and the consumer never
-        // reaches the map.
-        flat_map_sizes[idx] =
-          static_cast<size_t>(std::min(page.num_input_values, page.num_decoded_level_values)) *
-          sizeof(uint32_t);
-        flat_nz_map_size += flat_map_sizes[idx];
-      }
+      // A page outside the row range has no values in range, so it gets no slice. The producer
+      // sees `def == nullptr` there and reports a zero count.
+      flat_map_sizes[idx] = compute_page_rank_map_size(page, chunk, pass.skip_rows, pass.num_rows);
+      flat_nz_map_size += flat_map_sizes[idx];
     }
   }
   subpass.flat_nz_map_data = cuda::device_buffer<std::byte>{

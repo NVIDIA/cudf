@@ -1139,11 +1139,38 @@ def _(
 
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Union, translator: Translator, schema: Schema) -> ir.IR:
+    children = tuple(translator.translate_ir(n=n) for n in node.inputs)
+    # polars supports pl.concat(tables) with mixed dtypes when one of the dtypes is
+    # Null. We support that by inserting a Cast node to cast the Null column to
+    # the non-null, output dtype.
+    normalized_children: list[ir.IR] = []
+    for child in children:
+        exprs: list[expr.NamedExpr] = []
+        needs_normalization = False
+        for (name, dtype), (child_name, child_dtype) in zip(
+            schema.items(), child.schema.items(), strict=True
+        ):
+            value: expr.Expr = expr.Col(child_dtype, child_name)
+            if isinstance(child_dtype.polars_type, pl.Null) and not isinstance(
+                dtype.polars_type, pl.Null
+            ):
+                if plc.traits.is_nested(dtype.plc_type):
+                    raise NotImplementedError(
+                        "Concatenating a Null column with a nested dtype is not supported"
+                    )
+                value = expr.Cast(dtype, True, value)  # noqa: FBT003
+                needs_normalization = True
+            exprs.append(expr.NamedExpr(name, value))
+        normalized_children.append(
+            ir.Select(schema, exprs, False, child)  # noqa: FBT003
+            if needs_normalization
+            else child
+        )
     return ir.Union(
         schema,
         node.slice,
         node.maintain_order,
-        *(translator.translate_ir(n=n) for n in node.inputs),
+        *normalized_children,
     )
 
 
@@ -1451,9 +1478,19 @@ def _translate_function(
         if name == plrs._expr_nodes.StructFunction.RenameFields:
             (new_field_names,) = options
             options = (tuple(new_field_names),)
+        elif name == plrs._expr_nodes.StructFunction.MapFieldNames:
+            options = ()
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),
+            options,
+            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
+        )
+    # Polars does not register BitwiseFunction in _expr_nodes (crates/polars-python/src/c_api/mod.rs)
+    elif type(name).__name__ == "BitwiseFunction":
+        return expr.BitwiseFunction(
+            dtype,
+            expr.BitwiseFunction.Name.from_polars(name),
             options,
             *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )

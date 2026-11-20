@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Sequence
+from collections.abc import Buffer, Sequence
 from enum import IntEnum
 
 from pylibcudf.io.types import SourceInfo
@@ -9,11 +9,6 @@ from pylibcudf.table import Table
 from pylibcudf.types import DataType
 from pylibcudf.utils import CudaStreamLike
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
-
-try:
-    from collections.abc import Buffer
-except ImportError:
-    from typing_extensions import Buffer
 
 __all__ = [
     "ColumnChunk",

@@ -1478,6 +1478,8 @@ def _translate_function(
         if name == plrs._expr_nodes.StructFunction.RenameFields:
             (new_field_names,) = options
             options = (tuple(new_field_names),)
+        elif name == plrs._expr_nodes.StructFunction.MapFieldNames:
+            options = ()
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),

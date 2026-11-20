@@ -331,11 +331,9 @@ def allgather_polars_dataframe(
     Raises
     ------
     RuntimeError
-        If ``engine`` has already been shut down, or if a cancelled
-        collective close on its communicator has not completed.
+        If ``engine`` has already been shut down.
     """
     comm = engine.comm
-    wait_for_pending_closes(comm)
     ctx = engine.context
     stream = ctx.br().stream_pool.get_stream()
     col_names = local_df.columns
@@ -348,6 +346,7 @@ def allgather_polars_dataframe(
         stream,
         ctx.br(),
     )
+    wait_for_pending_closes(comm)
     # Bulk AllGather: each rank contributes once (sequence_number=0)
     allgather = AllGather(comm, op_id, ctx.br())
     try:

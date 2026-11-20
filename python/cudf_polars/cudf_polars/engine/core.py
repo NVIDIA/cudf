@@ -817,11 +817,6 @@ def all_gather_host_data(
     Returns
     -------
     List of bytes, one element per rank, ordered by rank index.
-
-    Raises
-    ------
-    RuntimeError
-        If a cancelled collective close on ``comm`` has not completed.
     """
     wait_for_pending_closes(comm)
     allgather = AllGather(comm=comm, op_id=op_id, br=br)

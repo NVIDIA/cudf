@@ -80,7 +80,6 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
-      - depends_on_pytorch
       - test_python_cudf_pandas
   test_python_cudf:
     output: none
@@ -261,7 +260,6 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
-      - depends_on_pytorch
       - test_python_s3
   py_build_libcudf:
     output: pyproject
@@ -709,7 +707,6 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
-      - depends_on_pytorch
       - test_python_narwhals
       - depends_on_cudf
       - depends_on_cudf_polars

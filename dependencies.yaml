@@ -205,7 +205,6 @@ files:
   docs:
     output: none
     includes:
-      - cuda
       - cuda_version
       - depends_on_cudf
       - depends_on_dask_cuda

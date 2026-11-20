@@ -1088,6 +1088,7 @@ def test_extract_groups(engine: pl.GPUEngine, ldf_extract):
         r"[\x61]",
         "[0-9]{001}",
         "[0-9]{01,2}",
+        "a(?:(?:b+)?){2,3}",
     ],
 )
 def test_extract_all(engine: pl.GPUEngine, pattern: str) -> None:
@@ -1187,6 +1188,10 @@ def test_extract_all_empty_frame(engine: pl.GPUEngine) -> None:
         r"[^]\s]+",
         r"\b.",
         r"a\B",
+        "a(?:(?:b+)?)*",
+        "a(?:(?:b+)?)+",
+        "a(?:(?:b+)?){2,}",
+        "a(?:b|(?:c+)?)*?",
     ],
 )
 def test_extract_all_pattern_unsupported(

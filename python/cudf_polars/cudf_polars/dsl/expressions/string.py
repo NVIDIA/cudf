@@ -273,6 +273,22 @@ class StringFunction(Expr):
                     "an empty string"
                 )
             tokens = tuple(self._iter_regex_tokens(parsed))
+            # libcudf crashes compiling an unbounded repetition of a group
+            # that can match an empty string
+            if any(
+                op
+                in {
+                    re._constants.MAX_REPEAT,  # type: ignore[attr-defined]
+                    re._constants.MIN_REPEAT,  # type: ignore[attr-defined]
+                }
+                and av[1] == re._constants.MAXREPEAT  # type: ignore[attr-defined]
+                and av[2].getwidth()[0] == 0
+                for op, av in tokens
+            ):
+                raise NotImplementedError(
+                    "extract_all does not support unbounded repetitions of "
+                    "groups that can match an empty string"
+                )
             # libcudf also matches $ before a final newline, unlike polars
             if (
                 not parsed.state.flags & re.MULTILINE

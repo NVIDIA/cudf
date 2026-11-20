@@ -2680,7 +2680,6 @@ TEST_F(OrcStatisticsTest, AllNulls)
   check_all_null_stats<cudf::io::string_statistics>(stats.file_stats[3]);
 }
 
-namespace {
 // Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
 std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   std::vector<char> const& file)
@@ -2734,7 +2733,6 @@ std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   }
   return result;
 }
-}  // namespace
 
 TEST_F(OrcStatisticsTest, RowGroupNaN)
 {

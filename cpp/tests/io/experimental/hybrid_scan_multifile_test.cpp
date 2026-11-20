@@ -16,6 +16,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
@@ -736,8 +737,8 @@ TEST_F(HybridScanMultifileTest, SharedMultifileMetadata)
 {
   // Readers, slices, selections and combinations of the same metadata share the parsed per-file
   // metadata, so page indexes set up through any of them are visible to all
+  using cudf::io::parquet::experimental::hybrid_scan_metadata;
   using cudf::io::parquet::experimental::hybrid_scan_multifile;
-  using cudf::io::parquet::experimental::hybrid_scan_multifile_metadata;
 
   auto constexpr num_sources         = std::size_t{2};
   auto const [table, parquet_buffer] = create_parquet_with_stats<uint32_t, 1>();
@@ -781,10 +782,25 @@ TEST_F(HybridScanMultifileTest, SharedMultifileMetadata)
   auto const reversed = metadata.select(std::vector<std::size_t>{1, 0});
   EXPECT_TRUE(shares_source(reversed, 0, 1) and shares_source(reversed, 1, 0));
   auto const combined =
-    hybrid_scan_multifile_metadata{std::vector{metadata.slice(0, 1), metadata.slice(1, 2)}};
+    hybrid_scan_metadata{std::vector{metadata.slice(0, 1), metadata.slice(1, 2)}};
   EXPECT_TRUE(shares_source(combined, 0, 0) and shares_source(combined, 1, 1));
   auto reader_c = hybrid_scan_multifile{reversed, options};
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected->view(), read_all(reader_c).tbl->view());
+
+  // A single-file reader shares a one-source slice and rejects any other source count
+  auto const single_reader =
+    cudf::io::parquet::experimental::hybrid_scan_reader{metadata.slice(1, 2), options};
+  EXPECT_EQ(single_reader.parquet_metadata().get(), metadata.parquet_metadata(1).get());
+  EXPECT_THROW(std::ignore = cudf::io::parquet::experimental::hybrid_scan_reader(metadata, options),
+               std::invalid_argument);
+
+  // A handle moved into a reader hands over its metadata, which outlives both
+  auto const outlived =
+    cudf::io::parquet::experimental::hybrid_scan_reader{make_multifile_metadata(inputs).slice(0, 1),
+                                                        options}
+      .parquet_metadata();
+  EXPECT_EQ(outlived.use_count(), 1);
+  EXPECT_FALSE(outlived->row_groups.empty());
 
   // Readers with different options share the same metadata
   EXPECT_NO_THROW(
@@ -825,7 +841,7 @@ TEST_F(HybridScanMultifileTest, EmptySources)
                  std::vector<cudf::io::parquet::FileMetaData>{}, options),
                std::invalid_argument);
   EXPECT_THROW(cudf::io::parquet::experimental::hybrid_scan_multifile(
-                 cudf::io::parquet::experimental::hybrid_scan_multifile_metadata{
+                 cudf::io::parquet::experimental::hybrid_scan_metadata{
                    std::span<std::span<uint8_t const> const>{}},
                  options),
                std::invalid_argument);

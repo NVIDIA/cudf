@@ -37,13 +37,12 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
 
     cdef cppclass hybrid_scan_metadata:
         hybrid_scan_metadata(
-            host_span[const_uint8_t] footer_bytes,
-            const parquet_reader_options& options
+            std_span[const_uint8_t] footer_bytes
         ) except +libcudf_exception_handler
 
+        # Takes `FileMetaData&&`: pass `move(...)`
         hybrid_scan_metadata(
-            const FileMetaData& parquet_metadata,
-            const parquet_reader_options& options
+            FileMetaData parquet_metadata
         ) except +libcudf_exception_handler
 
     cdef cppclass hybrid_scan_reader:
@@ -58,7 +57,8 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
         ) except +libcudf_exception_handler
 
         hybrid_scan_reader(
-            hybrid_scan_metadata metadata
+            const hybrid_scan_metadata& metadata,
+            const parquet_reader_options& options
         ) except +libcudf_exception_handler
 
         shared_ptr[const_FileMetaData] parquet_metadata() \

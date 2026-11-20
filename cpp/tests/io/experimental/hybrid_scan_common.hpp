@@ -85,8 +85,8 @@ struct multisource_device_data {
 /**
  * @brief Parse the footers of all sources into shareable multi-file metadata
  */
-[[nodiscard]] cudf::io::parquet::experimental::hybrid_scan_multifile_metadata
-make_multifile_metadata(multifile_inputs const& inputs);
+[[nodiscard]] cudf::io::parquet::experimental::hybrid_scan_metadata make_multifile_metadata(
+  multifile_inputs const& inputs);
 
 /**
  * @brief Fetch and set up page indexes for all sources in a multifile reader

@@ -176,12 +176,12 @@ std::vector<cudf::io::parquet::FileMetaData> copy_parquet_metadatas(
   return copies;
 }
 
-cudf::io::parquet::experimental::hybrid_scan_multifile_metadata make_multifile_metadata(
+cudf::io::parquet::experimental::hybrid_scan_metadata make_multifile_metadata(
   multifile_inputs const& inputs)
 {
   auto const footer_spans = std::vector<std::span<uint8_t const>>(inputs.footer_byte_spans.begin(),
                                                                   inputs.footer_byte_spans.end());
-  return cudf::io::parquet::experimental::hybrid_scan_multifile_metadata{footer_spans};
+  return cudf::io::parquet::experimental::hybrid_scan_metadata{footer_spans};
 }
 
 void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,

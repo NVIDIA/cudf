@@ -1558,13 +1558,12 @@ TEST_F(HybridScanTest, SharedMetadataReaderMatchesReadParquet)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
 
   // Parse the file metadata once and share it across independent readers.
-  auto const metadata =
-    cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
+  auto const metadata = cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer};
 
   // Read all columns (single step) through a reader that borrows the shared metadata.
   auto const read_all_columns = [&] {
     auto const reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata, options);
     auto const row_groups       = reader->all_row_groups(options);
     auto const chunk_ranges     = reader->all_column_chunks_byte_ranges(row_groups, options);
     auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
@@ -1609,15 +1608,15 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
   auto file_metadata = *seed_reader->parquet_metadata();
 
   // Build shared metadata from the FileMetaData by copy and by move
-  auto const copied_metadata =
-    cudf::io::parquet::experimental::hybrid_scan_metadata{file_metadata, options};
+  auto const copied_metadata = cudf::io::parquet::experimental::hybrid_scan_metadata{
+    cudf::io::parquet::FileMetaData{file_metadata}};
   auto const moved_metadata =
-    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
+    cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata)};
 
   // Readers from either FileMetaData-derived metadata each produce the correct table.
   auto const read_all_columns = [&](auto const& metadata) {
     auto const reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata, options);
     auto const row_groups       = reader->all_row_groups(options);
     auto const chunk_ranges     = reader->all_column_chunks_byte_ranges(row_groups, options);
     auto [buffers, data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
@@ -1657,12 +1656,11 @@ TEST_F(HybridScanTest, SharedMetadataConcurrentReadersMatchReadParquet)
 
   // Parse the metadata once and share it, by value, across two readers that are alive at the
   // same time, each responsible for a disjoint range of the file's row groups.
-  auto const metadata =
-    cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer, options};
+  auto const metadata = cudf::io::parquet::experimental::hybrid_scan_metadata{*footer_buffer};
   auto const reader_a =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata, options);
   auto const reader_b =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata);
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata, options);
 
   // Only one of the readers sharing this metadata sets up the page index.
   auto const page_index_byte_range = reader_a->page_index_byte_range();

@@ -61,7 +61,7 @@ struct hybrid_scan_reader_wrapper {
                              cudf::io::parquet_reader_options opts)
     : options(opts),
       base_options(std::move(opts)),
-      reader(std::make_unique<exp_pq::hybrid_scan_reader>(metadata))
+      reader(std::make_unique<exp_pq::hybrid_scan_reader>(metadata, options))
   {
   }
 };

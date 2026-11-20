@@ -72,7 +72,7 @@ public class HybridScanReaderTest extends CudfTestBase {
     try (OpenReader open = OpenReader.standard(tmp)) {
       HybridScanReader fromMetadata;
       try (HybridScanMetadata metadata =
-               new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+               new HybridScanMetadata(open.footer)) {
         fromMetadata = new HybridScanReader(metadata, optsForColumns(DEFAULT_COLS));
       }
       try (HybridScanReader reader = fromMetadata) {
@@ -88,7 +88,7 @@ public class HybridScanReaderTest extends CudfTestBase {
   void testParquetMetadataAddress(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.standard(tmp);
          HybridScanMetadata metadata =
-             new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS))) {
+             new HybridScanMetadata(open.footer)) {
       assertTrue(metadata.getParquetMetadataAddress() != 0);
     }
   }
@@ -98,7 +98,7 @@ public class HybridScanReaderTest extends CudfTestBase {
   void testClosedMetadataThrows(@TempDir Path tmp) throws IOException {
     try (OpenReader open = OpenReader.standard(tmp)) {
       HybridScanMetadata metadata =
-          new HybridScanMetadata(open.footer, optsForColumns(DEFAULT_COLS));
+          new HybridScanMetadata(open.footer);
       metadata.close();
       assertThrows(IllegalStateException.class, () -> metadata.getParquetMetadataAddress());
       assertThrows(IllegalStateException.class,

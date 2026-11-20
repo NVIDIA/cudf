@@ -25,23 +25,20 @@ python -c "import cudf_polars_quent"
 
 ## Updating Quent
 
-Quent is pinned by full Git commit SHA in the `Cargo.toml` for `store`,
-`analyzer`, `browser`, and `bridge`. To update Quent:
+Quent is pinned by full Git commit SHA in the workspace
+[`Cargo.toml`](../Cargo.toml). To update Quent:
 
-1. Replace every Quent dependency's `rev` in all four manifests with the same
-   full commit SHA. Do not use a branch, tag, abbreviated SHA, or different
+1. Replace every Quent dependency's `rev` in the workspace manifest with the
+   same full commit SHA. Do not use a branch, tag, abbreviated SHA, or different
    revision spelling: Cargo must resolve one package identity for the generated
    model, analyzer, and `quent-open` viewer traits. See
    [../README.md](../README.md#pinning-quent).
 
-2. Refresh each crate's Cargo lockfile.
+2. Refresh the workspace lockfile.
 
    ```sh
-   # From python/cudf_polars/quent, once per crate directory
-   cargo update --manifest-path store/Cargo.toml
-   cargo update --manifest-path analyzer/Cargo.toml
-   cargo update --manifest-path browser/Cargo.toml
-   cargo update --manifest-path bridge/Cargo.toml
+   # From python/cudf_polars/quent
+   cargo update
    ```
 
    Review and then commit the changes (including the lockfiles).

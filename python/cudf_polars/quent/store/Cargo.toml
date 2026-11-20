@@ -1,6 +1,3 @@
-[workspace]
-
-# Pin Quent by full commit SHA. See ../README.md.
 [package]
 name = "cudf-polars-quent-store"
 version = "0.1.0"
@@ -12,13 +9,13 @@ default = ["filesystem"]
 filesystem = ["quent-store/io-ndjson"]
 
 [dependencies]
-quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-events = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", features = ["serde"] }
-quent-store = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", default-features = false, features = ["serde"] }
+quent-analyzer.workspace = true
+quent-events = { workspace = true, features = ["serde"] }
+quent-store = { workspace = true, features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 smallvec = "1"
 
 [build-dependencies]
-quent-store-build = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-yaml = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
+quent-store-build.workspace = true
+quent-yaml.workspace = true
 sha2 = "0.11"

@@ -10,11 +10,11 @@ telemetry and the Rust crates that capture and analyze that telemetry.
 
 ## Pinning Quent
 
-Every Quent dependency in `store`, `analyzer`, `browser`, and `bridge` must use
-the same full commit SHA. Cargo keys git sources on the exact `rev` spelling,
-so a branch, tag, or abbreviated SHA builds a second copy of those crates. The
-generated model, the analyzer, and the `quent-open` viewer traits then fail to
-unify.
+All Quent dependencies inherit the same full commit SHA from the workspace
+manifest's `[workspace.dependencies]`. Cargo keys git sources on the exact
+`rev` spelling, so a branch, tag, or abbreviated SHA builds a second copy of
+those crates. The generated model, the analyzer, and the `quent-open` viewer
+traits then fail to unify.
 
 See the bridge's [Updating Quent](./bridge/README.md#updating-quent) section for
 the update procedure.

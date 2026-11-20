@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# Pin Quent by full commit SHA. See ../README.md.
-
 [features]
 default = ["filesystem"]
 filesystem = [
@@ -16,15 +14,15 @@ filesystem = [
 
 [dependencies]
 cudf-polars-quent-store = { path = "../store", default-features = false }
-quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-dynamic-attributes = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-events = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", features = ["serde"] }
-quent-io = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", default-features = false, optional = true }
-quent-query-engine-analyzer = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-query-engine-ui = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-store = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772", default-features = false, features = ["io-ndjson"], optional = true }
-quent-time = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
-quent-ui = { git = "https://github.com/rapidsai/quent", rev = "1037aa10c73778ca5a69017270661c3648e5f772" }
+quent-analyzer.workspace = true
+quent-dynamic-attributes.workspace = true
+quent-events = { workspace = true, features = ["serde"] }
+quent-io = { workspace = true, optional = true }
+quent-query-engine-analyzer.workspace = true
+quent-query-engine-ui.workspace = true
+quent-store = { workspace = true, features = ["io-ndjson"], optional = true }
+quent-time.workspace = true
+quent-ui.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["serde"] }

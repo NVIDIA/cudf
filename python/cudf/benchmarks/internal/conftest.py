@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 """Defines pytest fixtures for internal benchmarks."""
@@ -15,9 +15,7 @@ fixtures = OrderedSet()
 for dtype, column_generator in column_generators.items():
     for nr in NUM_ROWS_FIXTURES:
 
-        def column_nulls_false(
-            request, nr=nr, column_generator=column_generator
-        ):
+        def column_nulls_false(request, nr=nr):
             return cudf.core.column.as_column(column_generator(nr))
 
         make_fixture(
@@ -27,9 +25,7 @@ for dtype, column_generator in column_generators.items():
             fixtures,
         )
 
-        def column_nulls_true(
-            request, nr=nr, column_generator=column_generator
-        ):
+        def column_nulls_true(request, nr=nr):
             c = cudf.core.column.as_column(column_generator(nr))
             c[::2] = None
             return c

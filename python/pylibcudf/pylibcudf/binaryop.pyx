@@ -20,7 +20,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from cuda.bindings.cyruntime cimport cudaStream_t
 from typing import TYPE_CHECKING
 
@@ -84,7 +84,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif LeftBinaryOperand is Column and RightBinaryOperand is Scalar:
         c_lhs_column = lhs.view()
@@ -95,7 +95,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     elif LeftBinaryOperand is Scalar and RightBinaryOperand is Column:
         c_rhs_column = rhs.view()
@@ -106,7 +106,7 @@ cpdef Column binary_operation(
                 op,
                 output_type.c_obj,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         raise ValueError(f"Invalid arguments {lhs} and {rhs}")

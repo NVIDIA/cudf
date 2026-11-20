@@ -34,7 +34,7 @@ from pylibcudf.libcudf.types cimport size_type
 
 from .column cimport Column
 from .types cimport DataType
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -199,7 +199,7 @@ cdef class Table:
                     move(dereference(c_schema)),
                     move(dereference(c_array)),
                     _cs,
-                    result.mr.get_mr(),
+                    _get_memory_resources(result.mr),
                 )
             result.tbl.swap(c_result)
 
@@ -222,7 +222,7 @@ cdef class Table:
                 c_result = make_unique[arrow_table](
                     move(dereference(c_stream)),
                     _cs,
-                    result.mr.get_mr(),
+                    _get_memory_resources(result.mr),
                 )
             result.tbl.swap(c_result)
 
@@ -384,7 +384,7 @@ cdef class Table:
         cdef table_view c_self = self.view()
         mr = _get_memory_resource(mr)
         with nogil:
-            c_result = make_unique[table](c_self, _stream.view(), mr.get_mr())
+            c_result = make_unique[table](c_self, _stream.view(), _get_memory_resources(mr))
         return Table.from_libcudf(move(c_result), _stream, mr)
 
     def _to_schema(self, metadata=None):

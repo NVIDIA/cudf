@@ -32,7 +32,7 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ cpdef Scalar reduce(
             data_type.c_obj,
             c_init,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Scalar.from_libcudf(move(result))
 
@@ -158,7 +158,7 @@ cpdef Column scan(
             inclusive,
             null_policy.EXCLUDE,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -197,7 +197,7 @@ cpdef tuple[Scalar, Scalar] minmax(
 
     cdef column_view c_col = col.view()
     with nogil:
-        result = cpp_minmax(c_col, _cs, mr.get_mr())
+        result = cpp_minmax(c_col, _cs, _get_memory_resources(mr))
 
     min_scalar = Scalar.from_libcudf(move(result.first))
     max_scalar = Scalar.from_libcudf(move(result.second))

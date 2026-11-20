@@ -21,7 +21,7 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .scalar cimport Scalar
 from .types cimport DataType
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -187,7 +187,7 @@ cpdef Table grouped_range_rolling_window(
             dereference(following.c_obj.get()),
             crequests,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -252,7 +252,7 @@ cpdef Column rolling_window(
                 min_periods,
                 dereference(c_agg),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         with nogil:
@@ -263,7 +263,7 @@ cpdef Column rolling_window(
                 min_periods,
                 dereference(c_agg),
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -339,7 +339,7 @@ cpdef tuple[Column, Column] make_range_windows(
             dereference(preceding.c_obj.get()),
             dereference(following.c_obj.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         Column.from_libcudf(move(result.first), _stream, mr),

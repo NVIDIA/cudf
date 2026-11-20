@@ -9,7 +9,7 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_floats as cpp_convert_floats,
 )
 from pylibcudf.types cimport DataType
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ cpdef Column to_floats(
             c_strings,
             output_type.c_obj,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -95,7 +95,7 @@ cpdef Column from_floats(
     cdef column_view c_floats = floats.view()
     with nogil:
         c_result = cpp_convert_floats.from_floats(
-            c_floats, _cs, mr.get_mr()
+            c_floats, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -129,7 +129,7 @@ cpdef Column is_float(Column input, object stream: CudaStreamLike | None = None,
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_floats.is_float(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

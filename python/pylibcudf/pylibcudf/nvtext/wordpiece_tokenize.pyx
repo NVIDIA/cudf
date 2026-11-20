@@ -12,7 +12,7 @@ from pylibcudf.libcudf.nvtext.wordpiece_tokenize cimport (
     wordpiece_tokenize as cpp_wordpiece_tokenize,
 )
 from pylibcudf.libcudf.types cimport size_type
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ cdef class WordPieceVocabulary:
         mr = _get_memory_resource(mr)
         with nogil:
             self.c_obj = move(cpp_load_wordpiece_vocabulary(
-                c_vocab, _cs, mr.get_mr()
+                c_vocab, _cs, _get_memory_resources(mr)
             ))
 
     __hash__ = None
@@ -90,7 +90,7 @@ cpdef Column wordpiece_tokenize(
             dereference(vocabulary.c_obj.get()),
             max_words_per_row,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

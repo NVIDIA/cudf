@@ -55,7 +55,7 @@ from pylibcudf.types cimport DataType
 
 from pylibcudf.variant cimport get_if, holds_alternative
 
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import Any, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
@@ -477,7 +477,7 @@ cpdef TableWithMetadata read_orc(
     cdef cudaStream_t _cs = s.view().get()
     mr = _get_memory_resource(mr)
     with nogil:
-        c_result = move(cpp_read_orc(options.c_obj, _cs, mr.get_mr()))
+        c_result = move(cpp_read_orc(options.c_obj, _cs, _get_memory_resources(mr)))
 
     return TableWithMetadata.from_libcudf(c_result, s, mr)
 

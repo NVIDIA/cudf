@@ -15,7 +15,7 @@ from pylibcudf.libcudf.nvtext.generate_ngrams cimport (
 from pylibcudf.libcudf.scalar.scalar cimport string_scalar
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ cpdef Column generate_ngrams(
             ngrams,
             c_separator[0],
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -112,7 +112,7 @@ cpdef Column generate_character_ngrams(
             c_strings,
             ngrams,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -157,6 +157,6 @@ cpdef Column hash_character_ngrams(
             ngrams,
             seed,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)

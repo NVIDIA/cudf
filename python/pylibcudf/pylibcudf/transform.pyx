@@ -30,7 +30,7 @@ from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview, _from_cuda_device_buffer
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from .types cimport DataType, null_aware, output_nullability
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ cpdef Column column_nans_to_nulls(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.column_nans_to_nulls(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -121,7 +121,7 @@ cpdef Column compute_column(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.compute_column(
-            c_input, dereference(expr.c_obj.get()), _cs, mr.get_mr()
+            c_input, dereference(expr.c_obj.get()), _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -161,7 +161,7 @@ cpdef Column compute_column_jit(
     with nogil:
         c_result = cpp_transform.compute_column_jit(
             c_input, dereference(expr.c_obj.get()),
-            span[cpp_transform.const_lto_fragment](), _cs, mr.get_mr()
+            span[cpp_transform.const_lto_fragment](), _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -197,7 +197,7 @@ cpdef tuple[gpumemoryview, int] bools_to_mask(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.bools_to_mask(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return (
@@ -246,7 +246,7 @@ cpdef Column mask_to_bools(
             begin_bit,
             end_bit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -353,7 +353,7 @@ cpdef Column transform(
             move(string_offsets),
             row_size,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
         c_columns = dereference(c_table_result).release()
         c_result = move(c_columns[0])
@@ -388,7 +388,7 @@ cpdef tuple[Table, Column] encode(
 
     cdef table_view c_input = input.view()
     with nogil:
-        c_result = cpp_transform.encode(c_input, _cs, mr.get_mr())
+        c_result = cpp_transform.encode(c_input, _cs, _get_memory_resources(mr))
 
     return (
         Table.from_libcudf(move(c_result.first), _stream, mr),
@@ -435,7 +435,7 @@ cpdef Table one_hot_encode(
             c_input,
             c_categories,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     owner_table = Table(

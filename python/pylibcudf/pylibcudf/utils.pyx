@@ -23,10 +23,13 @@ from libc.stdint cimport uint32_t, uintptr_t
 from libcpp.functional cimport reference_wrapper
 from libcpp.optional cimport make_optional, nullopt, optional
 from libcpp.vector cimport vector
+from cpython.object cimport PyObject, PyTypeObject
 from pylibcudf.libcudf.utilities.config_utils cimport set_up_kvikio as cpp_set_up_kvikio
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 
 from pylibcudf.libcudf.scalar.scalar cimport scalar
 
+from .memory_resources cimport MemoryResources
 from .scalar cimport Scalar
 
 from rmm.pylibrmm.stream cimport Stream
@@ -105,6 +108,13 @@ cdef DeviceMemoryResource _get_memory_resource(DeviceMemoryResource mr = None):
     if mr is None:
         return get_current_device_resource()
     return mr
+
+
+# Callers release the GIL, so test the exact type without isinstance.
+cdef memory_resources _get_memory_resources(DeviceMemoryResource mr) noexcept nogil:
+    if (<PyObject*>mr).ob_type == <PyTypeObject*>MemoryResources:
+        return (<MemoryResources>mr).c_obj
+    return memory_resources(mr.get_mr())
 
 
 cpdef void _set_up_kvikio(object nthreads=None):

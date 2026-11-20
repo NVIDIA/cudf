@@ -14,7 +14,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from typing import TYPE_CHECKING
@@ -74,7 +74,7 @@ cpdef Column lower_bound(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -128,7 +128,7 @@ cpdef Column upper_bound(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -169,6 +169,6 @@ cpdef Column contains(
             c_haystack,
             c_needles,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)

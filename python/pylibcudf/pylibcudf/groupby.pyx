@@ -27,7 +27,7 @@ from .aggregation cimport Aggregation
 from .column cimport Column
 from .table cimport Table
 from .types cimport null_order, null_policy, order, sorted
-from .utils cimport _as_vector, _get_stream, _get_memory_resource
+from .utils cimport _as_vector, _get_stream, _get_memory_resource, _get_memory_resources
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from typing import TYPE_CHECKING
@@ -211,7 +211,7 @@ cdef class GroupBy:
         # ourselves.
         with nogil:
             c_res = dereference(self.c_obj).aggregate(
-                c_requests, _cs, mr.get_mr()
+                c_requests, _cs, _get_memory_resources(mr)
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
@@ -254,7 +254,7 @@ cdef class GroupBy:
             c_res = dereference(self.c_obj).scan(
                 c_requests,
                 _cs,
-                mr.get_mr(),
+                _get_memory_resources(mr),
             )
         return GroupBy._parse_outputs(move(c_res), _stream, mr)
 
@@ -304,7 +304,7 @@ cdef class GroupBy:
                 c_offset,
                 c_fill_values,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return (
             Table.from_libcudf(move(c_res.first), _stream, mr),
@@ -348,7 +348,7 @@ cdef class GroupBy:
                 c_value,
                 c_replace_policies,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return (
             Table.from_libcudf(move(c_res.first), _stream, mr),
@@ -385,7 +385,7 @@ cdef class GroupBy:
         mr = _get_memory_resource(mr)
         if values:
             c_groups = dereference(self.c_obj).get_groups(
-                values.view(), _stream.view().get(), mr.get_mr()
+                values.view(), _stream.view().get(), _get_memory_resources(mr)
             )
             return (
                 c_groups.offsets,
@@ -395,7 +395,7 @@ cdef class GroupBy:
         else:
             # c_groups.values is nullptr - call get_groups with empty table view
             c_groups = dereference(self.c_obj).get_groups(
-                empty_view, _stream.view().get(), mr.get_mr()
+                empty_view, _stream.view().get(), _get_memory_resources(mr)
             )
             return (
                 c_groups.offsets,

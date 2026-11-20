@@ -58,7 +58,7 @@ from .traits cimport (
 )
 from .types cimport DataType, size_of, type_id
 from pylibcudf.types import TypeId
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from pylibcudf.typing import SupportsArrayInterface, SupportsCudaArrayInterface
 from typing import TYPE_CHECKING
 
@@ -491,7 +491,7 @@ cdef class Column:
                     move(dereference(c_schema)),
                     move(dereference(c_device_array)),
                     _cs,
-                    result.mr.get_mr(),
+                    _get_memory_resources(result.mr),
                 )
             result.col.swap(c_result)
 
@@ -512,7 +512,7 @@ cdef class Column:
                     move(dereference(c_schema)),
                     move(dereference(c_array)),
                     _cs,
-                    result.mr.get_mr(),
+                    _get_memory_resources(result.mr),
                 )
             result.col.swap(c_result)
 
@@ -536,7 +536,7 @@ cdef class Column:
                 c_result = make_unique[arrow_column](
                     move(dereference(c_arrow_stream)),
                     _cs,
-                    result.mr.get_mr(),
+                    _get_memory_resources(result.mr),
                 )
             result.col.swap(c_result)
 
@@ -862,7 +862,7 @@ cdef class Column:
                 dereference(c_scalar),
                 size,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -894,7 +894,7 @@ cdef class Column:
         mr = _get_memory_resource(mr)
 
         with nogil:
-            result = get_element(cv, 0, _cs, mr.get_mr())
+            result = get_element(cv, 0, _cs, _get_memory_resources(mr))
 
         return Scalar.from_libcudf(move(result))
 
@@ -931,7 +931,7 @@ cdef class Column:
                 dereference(slr.get()),
                 size,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -1441,7 +1441,7 @@ cdef class Column:
         mr = _get_memory_resource(mr)
         cdef column_view c_self = self.view()
         with nogil:
-            c_result = make_unique[cpp_column](c_self, _cs, mr.get_mr())
+            c_result = make_unique[cpp_column](c_self, _cs, _get_memory_resources(mr))
         return Column.from_libcudf(move(c_result), _stream, mr)
 
     cpdef uint64_t device_buffer_size(self):

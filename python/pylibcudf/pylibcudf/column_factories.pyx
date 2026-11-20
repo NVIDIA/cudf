@@ -19,7 +19,7 @@ from rmm.pylibrmm.stream cimport Stream
 from .types cimport DataType, type_id
 
 from .types import MaskState, TypeId
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -117,7 +117,7 @@ cpdef Column make_numeric_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -152,7 +152,7 @@ cpdef Column make_fixed_point_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -188,7 +188,7 @@ cpdef Column make_timestamp_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -224,7 +224,7 @@ cpdef Column make_duration_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -260,7 +260,7 @@ cpdef Column make_fixed_width_column(
             size,
             state,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)

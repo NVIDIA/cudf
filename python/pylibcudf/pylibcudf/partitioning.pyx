@@ -15,7 +15,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -84,7 +84,7 @@ cpdef tuple[Table, list] hash_partition(
                 hash_function,
                 seed,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     else:
         columns_to_hash = keys
@@ -96,7 +96,7 @@ cpdef tuple[Table, list] hash_partition(
                 hash_function,
                 seed,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)
 
@@ -148,7 +148,7 @@ cpdef tuple[Table, list] partition(
             c_partition_map,
             c_num_partitions,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)
@@ -200,7 +200,7 @@ cpdef tuple[Table, list] round_robin_partition(
             c_num_partitions,
             c_start_partition,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result.first), _stream, mr), list(c_result.second)

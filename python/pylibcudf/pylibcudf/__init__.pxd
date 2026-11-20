@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # TODO: Verify consistent usage of relative/absolute imports in pylibcudf.
@@ -19,6 +19,7 @@ from . cimport (
     json,
     labeling,
     lists,
+    memory_resources,
     merge,
     null_mask,
     nvtext,
@@ -44,6 +45,7 @@ from . cimport (
 )
 from .column cimport Column
 from .gpumemoryview cimport gpumemoryview
+from .memory_resources cimport MemoryResources
 from .scalar cimport Scalar
 from .table cimport Table
 # TODO: cimport type_id once
@@ -53,6 +55,7 @@ from .types cimport DataType, type_id
 __all__ = [
     "Column",
     "DataType",
+    "MemoryResources",
     "Scalar",
     "Table",
     "aggregation",
@@ -71,6 +74,7 @@ __all__ = [
     "join",
     "json",
     "lists",
+    "memory_resources",
     "merge",
     "null_mask",
     "prefetch",

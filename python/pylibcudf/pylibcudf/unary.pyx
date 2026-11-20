@@ -17,7 +17,7 @@ from pylibcudf.libcudf.unary import \
 
 from .column cimport Column
 from .types cimport DataType
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ cpdef Column unary_operation(
     cdef column_view c_input = input.view()
     with nogil:
         result = cpp_unary.unary_operation(
-            c_input, op, _cs, mr.get_mr()
+            c_input, op, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -101,7 +101,7 @@ cpdef Column is_null(Column input, object stream: CudaStreamLike | None = None, 
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_null(c_input, _cs, mr.get_mr())
+        result = cpp_unary.is_null(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -133,7 +133,7 @@ cpdef Column is_valid(Column input, object stream: CudaStreamLike | None = None,
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_valid(c_input, _cs, mr.get_mr())
+        result = cpp_unary.is_valid(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -170,7 +170,7 @@ cpdef Column cast(
     cdef column_view c_input = input.view()
     with nogil:
         result = cpp_unary.cast(
-            c_input, data_type.c_obj, _cs, mr.get_mr()
+            c_input, data_type.c_obj, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(result), _stream, mr)
@@ -209,7 +209,7 @@ cpdef Column bit_cast(
     cdef column_view c_result
     with nogil:
         c_result = cpp_bit_cast(c_input, data_type.c_obj)
-        result = make_unique[column](c_result, _cs, mr.get_mr())
+        result = make_unique[column](c_result, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -241,7 +241,7 @@ cpdef Column is_nan(Column input, object stream: CudaStreamLike | None = None, D
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_nan(c_input, _cs, mr.get_mr())
+        result = cpp_unary.is_nan(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -273,7 +273,7 @@ cpdef Column is_not_nan(Column input, object stream: CudaStreamLike | None = Non
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_unary.is_not_nan(c_input, _cs, mr.get_mr())
+        result = cpp_unary.is_not_nan(c_input, _cs, _get_memory_resources(mr))
 
     return Column.from_libcudf(move(result), _stream, mr)
 

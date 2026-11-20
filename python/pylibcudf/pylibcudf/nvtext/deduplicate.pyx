@@ -18,7 +18,7 @@ from pylibcudf.libcudf.nvtext.deduplicate cimport (
 )
 from pylibcudf.libcudf.types cimport mask_state, size_type
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ cdef Column _column_from_suffix_array(
             0,
             mask_state.UNALLOCATED,
             stream.view().get(),
-            mr.get_mr(),
+            _get_memory_resources(mr),
         )
     )
     return Column.from_libcudf(
@@ -89,7 +89,7 @@ cpdef Column build_suffix_array(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_build_suffix_array(
-            c_input, min_width, _cs, mr.get_mr()
+            c_input, min_width, _cs, _get_memory_resources(mr)
         )
 
     return _column_from_suffix_array(move(c_result), _stream, mr)
@@ -135,7 +135,7 @@ cpdef Column resolve_duplicates(
     cdef column_view c_indices = indices.view()
     with nogil:
         c_result = cpp_resolve_duplicates(
-            c_input, c_indices, min_width, _cs, mr.get_mr()
+            c_input, c_indices, min_width, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -196,7 +196,7 @@ cpdef Column resolve_duplicates_pair(
             c_indices2,
             min_width,
             _cs,
-            mr.get_mr(),
+            _get_memory_resources(mr),
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

@@ -9,7 +9,7 @@ from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_datetime as cpp_convert_datetime,
 )
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ cpdef Column to_timestamps(
             timestamp_type.c_obj,
             c_format,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -116,7 +116,7 @@ cpdef Column from_timestamps(
             c_format,
             c_input_strings_names,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -160,7 +160,7 @@ cpdef Column is_timestamp(
             c_input,
             c_format,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

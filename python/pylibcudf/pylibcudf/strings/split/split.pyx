@@ -11,7 +11,7 @@ from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.strings.regex_program cimport RegexProgram
 from pylibcudf.table cimport Table
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -81,7 +81,7 @@ cpdef Table split(
             dereference(c_delimiter),
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -135,7 +135,7 @@ cpdef Table rsplit(
             dereference(c_delimiter),
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -184,7 +184,7 @@ cpdef Column split_record(
             dereference(c_delimiter),
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -235,7 +235,7 @@ cpdef Column rsplit_record(
             dereference(c_delimiter),
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -283,7 +283,7 @@ cpdef Table split_re(
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -331,7 +331,7 @@ cpdef Table rsplit_re(
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)
@@ -378,7 +378,7 @@ cpdef Column split_record_re(
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -422,7 +422,7 @@ cpdef Column rsplit_record_re(
             prog.c_obj.get()[0],
             maxsplit,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -447,7 +447,7 @@ cpdef Column split_part(
             dereference(c_delimiter),
             index,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

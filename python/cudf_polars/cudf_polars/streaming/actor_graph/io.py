@@ -27,7 +27,6 @@ from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, CallbackSink, DataFrameScan, PythonScan, Sink
-from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -918,16 +917,12 @@ async def callback_sink_actor(
 
         # Ordered callbacks and the default mode process all chunks on rank 0.
         async with (
-            aclosing_collective(
-                SparseAlltoall(
-                    context,
-                    comm,
-                    collective_id,
-                    srcs=range(1, comm.nranks) if comm.rank == 0 else (),
-                    dsts=(0,) if comm.rank != 0 else (),
-                ),
+            SparseAlltoall(
+                context,
                 comm,
                 collective_id,
+                srcs=range(1, comm.nranks) if comm.rank == 0 else (),
+                dsts=(0,) if comm.rank != 0 else (),
             )
             if comm.nranks > 1 and not parallel
             else nullcontext()

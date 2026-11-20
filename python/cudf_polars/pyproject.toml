@@ -26,6 +26,7 @@ dependencies = [
     "cudf-streaming==27.2.*,>=0.0.0a0",
     "kvikio==27.2.*,>=0.0.0a0",
     "nvidia-ml-py>=12",
+    "nvtx>=0.2.1",
     "packaging",
     "polars>=2.0,<2.2",
     "pylibcudf==27.2.*,>=0.0.0a0",

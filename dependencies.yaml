@@ -45,7 +45,6 @@ files:
       - run_common
       - run_cudf
       - run_cudf_polars
-      - run_pylibcudf
       - run_dask_cudf
       - run_custreamz
       - test_cpp
@@ -345,7 +344,6 @@ files:
       - depends_on_cuda_bindings
       - depends_on_libcudf
       - depends_on_rmm
-      - run_pylibcudf
   py_run_pylibcudf_numpy:
     output: pyproject
     matrix:
@@ -1081,11 +1079,6 @@ dependencies:
       - output_types: [requirements, pyproject]
         packages:
           - cuda-pathfinder
-  run_pylibcudf:
-    common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          - nvtx>=0.2.1
   depends_on_cuda_bindings:
     specific:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1144,6 +1137,7 @@ dependencies:
         packages:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
+          - nvtx>=0.2.1
           - packaging
           - polars>=2.0,<2.2
   run_cudf_polars_dask:

@@ -250,7 +250,7 @@ cdef class HybridScanReader:
         cdef unique_ptr[cpp_FileMetaData] metadata
         with nogil:
             metadata = make_unique[cpp_FileMetaData](
-                self.c_obj.get()[0].parquet_metadata()
+                dereference(self.c_obj.get()[0].parquet_metadata())
             )
         return c_FileMetaData.from_libcudf(move(metadata))
 

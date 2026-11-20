@@ -29,6 +29,7 @@
 #include <functional>
 #include <memory>
 #include <random>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -74,6 +75,18 @@ struct multisource_device_data {
  */
 [[nodiscard]] cudf::io::source_info build_source_info(
   std::vector<std::vector<char>> const& file_buffers);
+
+/**
+ * @brief Deep copy shared Parquet file metadata into owned `FileMetaData`
+ */
+[[nodiscard]] std::vector<cudf::io::parquet::FileMetaData> copy_parquet_metadatas(
+  std::span<std::shared_ptr<cudf::io::parquet::FileMetaData const> const> metadatas);
+
+/**
+ * @brief Parse the footers of all sources into shareable multi-file metadata
+ */
+[[nodiscard]] cudf::io::parquet::experimental::hybrid_scan_multifile_metadata
+make_multifile_metadata(multifile_inputs const& inputs);
 
 /**
  * @brief Fetch and set up page indexes for all sources in a multifile reader

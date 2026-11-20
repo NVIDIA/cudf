@@ -106,9 +106,10 @@ chunked_hybrid_scan_multifile(cudf::io::source_info const& source_info,
                    .build();
   if (payload_column_names.has_value()) { options.set_column_names(payload_column_names.value()); }
 
-  auto inputs = multifile_inputs(source_info);
-  auto reader =
-    cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
+  // Build the reader from shared, pre-parsed multi-file metadata
+  auto inputs         = multifile_inputs(source_info);
+  auto const metadata = make_multifile_metadata(inputs);
+  auto reader         = cudf::io::parquet::experimental::hybrid_scan_multifile{metadata, options};
   setup_page_indexes(reader, inputs);
 
   auto const input_row_groups = reader.all_row_groups(options);

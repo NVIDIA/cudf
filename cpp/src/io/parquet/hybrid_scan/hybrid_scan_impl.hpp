@@ -93,7 +93,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::parquet_metadatas
    */
-  [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
+  [[nodiscard]] std::vector<std::shared_ptr<FileMetaData const>> parquet_metadatas() const;
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::page_index_byte_ranges

@@ -48,6 +48,19 @@ struct metadata : public metadata_base {
   ~metadata() = default;
 };
 
+/**
+ * @brief Set up the page index of each source in place, skipping sources with empty page index
+ *        bytes
+ *
+ * @throws std::invalid_argument if the number of byte spans differs from the number of sources or
+ * any page index buffer is invalid
+ *
+ * @param per_file_metadata Per-file metadata, one per source
+ * @param page_index_bytes Page index bytes, one span per source
+ */
+void setup_page_indexes(std::span<std::shared_ptr<metadata_base> const> per_file_metadata,
+                        std::span<std::span<uint8_t const> const> page_index_bytes);
+
 class aggregate_reader_metadata : public aggregate_reader_metadata_base {
  private:
   /**
@@ -122,6 +135,22 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
 
+  /**
+   * @brief Constructor that shares pre-parsed per-file metadata
+   *
+   * The per-file metadata is shared, not copied. Page indexes set up later through this object are
+   * visible to every other object sharing the per-file metadata.
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Shared per-file metadata, one per source
+   * @param use_arrow_schema Whether to use Arrow schema
+   * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
+   */
+  aggregate_reader_metadata(std::vector<std::shared_ptr<metadata_base>>&& parquet_metadatas,
+                            bool use_arrow_schema,
+                            bool has_cols_from_mismatched_srcs);
+
   aggregate_reader_metadata(aggregate_reader_metadata const&)            = delete;
   aggregate_reader_metadata& operator=(aggregate_reader_metadata const&) = delete;
   aggregate_reader_metadata(aggregate_reader_metadata&&)                 = default;
@@ -133,13 +162,6 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @return Vector of byte ranges of the page index, one per source
    */
   [[nodiscard]] std::vector<text::byte_range_info> page_index_byte_ranges() const;
-
-  /**
-   * @brief Get the Parquet file metadata for every source
-   *
-   * @return Vector of file metadata, one per source
-   */
-  [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
 
   /**
    * @brief Get the Parquet file metadata of one source without copying it

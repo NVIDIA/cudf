@@ -3,17 +3,119 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io/parquet/hybrid_scan/hybrid_scan_helpers.hpp"
 #include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
+#include "io/parquet/reader_impl_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <iterator>
+#include <memory>
 #include <numeric>
+#include <ranges>
+#include <span>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace cudf::io::parquet::experimental {
+
+hybrid_scan_multifile_metadata::hybrid_scan_multifile_metadata(
+  std::vector<std::shared_ptr<parquet::detail::metadata>>&& sources)
+  : _sources{std::move(sources)}
+{
+}
+
+hybrid_scan_multifile_metadata::hybrid_scan_multifile_metadata(
+  std::span<std::span<uint8_t const> const> footer_bytes)
+  : hybrid_scan_multifile_metadata{
+      parquet::detail::parallel_construct_metadatas(footer_bytes, [](auto const& bytes) {
+        return std::make_shared<parquet::detail::metadata>(
+          FileMetaData{hybrid_scan::detail::metadata{bytes}});
+      })}
+{
+}
+
+hybrid_scan_multifile_metadata::hybrid_scan_multifile_metadata(
+  std::vector<FileMetaData>&& parquet_metadatas)
+  : hybrid_scan_multifile_metadata{[&] {
+      std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+      sources.reserve(parquet_metadatas.size());
+      std::ranges::transform(parquet_metadatas, std::back_inserter(sources), [](auto& metadata) {
+        return std::make_shared<parquet::detail::metadata>(std::move(metadata));
+      });
+      return sources;
+    }()}
+{
+}
+
+hybrid_scan_multifile_metadata::hybrid_scan_multifile_metadata(
+  std::span<hybrid_scan_multifile_metadata const> metadatas)
+  : hybrid_scan_multifile_metadata{[&] {
+      std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+      for (auto const& metadata : metadatas) {
+        std::ranges::copy(metadata._sources, std::back_inserter(sources));
+      }
+      return sources;
+    }()}
+{
+}
+
+std::size_t hybrid_scan_multifile_metadata::num_sources() const { return _sources.size(); }
+
+std::shared_ptr<FileMetaData const> hybrid_scan_multifile_metadata::parquet_metadata(
+  std::size_t source_index) const
+{
+  CUDF_EXPECTS(source_index < _sources.size(), "Invalid source index", std::out_of_range);
+  return _sources[source_index];
+}
+
+std::vector<std::shared_ptr<FileMetaData const>> hybrid_scan_multifile_metadata::parquet_metadatas()
+  const
+{
+  return {_sources.begin(), _sources.end()};
+}
+
+std::vector<byte_range_info> hybrid_scan_multifile_metadata::page_index_byte_ranges() const
+{
+  std::vector<byte_range_info> byte_ranges;
+  byte_ranges.reserve(_sources.size());
+  std::ranges::transform(_sources, std::back_inserter(byte_ranges), [](auto const& source) {
+    return source->page_index_byte_range();
+  });
+  return byte_ranges;
+}
+
+void hybrid_scan_multifile_metadata::setup_page_indexes(
+  std::span<std::span<uint8_t const> const> page_index_bytes) const
+{
+  CUDF_FUNC_RANGE();
+  hybrid_scan::detail::setup_page_indexes(_sources, page_index_bytes);
+}
+
+hybrid_scan_multifile_metadata hybrid_scan_multifile_metadata::slice(std::size_t begin,
+                                                                     std::size_t end) const
+{
+  CUDF_EXPECTS(begin <= end and end <= _sources.size(), "Invalid source range", std::out_of_range);
+  return hybrid_scan_multifile_metadata{std::vector<std::shared_ptr<parquet::detail::metadata>>(
+    _sources.begin() + begin, _sources.begin() + end)};
+}
+
+hybrid_scan_multifile_metadata hybrid_scan_multifile_metadata::select(
+  std::span<std::size_t const> source_indices) const
+{
+  std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+  sources.reserve(source_indices.size());
+  std::ranges::transform(source_indices, std::back_inserter(sources), [&](auto source_index) {
+    CUDF_EXPECTS(source_index < _sources.size(), "Invalid source index", std::out_of_range);
+    return _sources[source_index];
+  });
+  return hybrid_scan_multifile_metadata{std::move(sources)};
+}
 
 hybrid_scan_multifile::hybrid_scan_multifile(
   cudf::host_span<cudf::host_span<uint8_t const> const> footer_bytes,
@@ -36,9 +138,19 @@ hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet
 {
 }
 
+hybrid_scan_multifile::hybrid_scan_multifile(hybrid_scan_multifile_metadata const& metadata,
+                                             parquet_reader_options const& options)
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+      std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+        std::vector<std::shared_ptr<parquet::detail::metadata>>{metadata._sources},
+        options.is_enabled_use_arrow_schema(),
+        options.is_enabled_allow_mismatched_pq_schemas()))}
+{
+}
+
 hybrid_scan_multifile::~hybrid_scan_multifile() = default;
 
-std::vector<FileMetaData> hybrid_scan_multifile::parquet_metadatas() const
+std::vector<std::shared_ptr<FileMetaData const>> hybrid_scan_multifile::parquet_metadatas() const
 {
   return _impl->parquet_metadatas();
 }

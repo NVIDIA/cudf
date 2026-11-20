@@ -302,7 +302,7 @@ void BM_page_stats_row_mask(nvbench::state& state)
 
   auto const parquet_metadatas = reader.parquet_metadatas();
   auto const [segment_offsets, total_page_row_offsets] =
-    compute_segment_offsets(parquet_metadatas.front(), num_rows, num_filter_columns);
+    compute_segment_offsets(*parquet_metadatas.front(), num_rows, num_filter_columns);
 
   add_count_summary(state,
                     "page_row_offsets",

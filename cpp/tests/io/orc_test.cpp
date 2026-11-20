@@ -2715,11 +2715,15 @@ std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   // RowIndexEntry { repeated uint64 positions = 1 [packed]; ColumnStatistics statistics = 2; }
   // All are length-delimited fields with one-byte keys
   auto const next_field = [](uint8_t const*& cur) {
-    uint64_t len = 0;
+    // Protobuf varint: 7 payload bits per byte, high bit means more bytes follow
+    auto constexpr payload_bits = 7;
+    auto constexpr payload_mask = 0x7f;
+    auto constexpr more_bytes   = 0x80;
+    uint64_t len                = 0;
     ++cur;
-    for (int shift = 0;; shift += 7) {
-      len |= static_cast<uint64_t>(*cur & 0x7f) << shift;
-      if ((*cur++ & 0x80) == 0) { break; }
+    for (int shift = 0;; shift += payload_bits) {
+      len |= static_cast<uint64_t>(*cur & payload_mask) << shift;
+      if ((*cur++ & more_bytes) == 0) { break; }
     }
     cur += len;
     return std::pair{cur - len, static_cast<size_t>(len)};

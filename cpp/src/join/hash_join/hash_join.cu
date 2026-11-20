@@ -5,7 +5,7 @@
 
 #include "common.cuh"
 #include "dispatch.cuh"
-#include "hash_csr_kernels.cuh"
+#include "hash_graph_kernels.cuh"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/null_mask.hpp>
@@ -57,16 +57,18 @@ bool has_list_or_string(column_view const& column)
          std::any_of(column.child_begin(), column.child_end(), has_list_or_string);
 }
 
-cuda::std::uint32_t hash_csr_capacity(size_type rows, double load_factor)
+/// Average number of build rows per bucket at a load factor of 1. The default load factor of
+/// 0.5 gives the 8 rows per bucket that NVIDIA/cuCollections#880 defaults to.
+constexpr long double rows_per_bucket_at_full_load = 16;
+
+cuda::std::uint32_t hash_graph_num_buckets(size_type rows, double load_factor)
 {
-  auto const checked   = checked_load_factor(load_factor);
-  auto const requested = std::max(static_cast<long double>(rows) + 1,
-                                  std::ceil(static_cast<long double>(rows) / checked));
+  auto const rows_per_bucket = rows_per_bucket_at_full_load * checked_load_factor(load_factor);
+  auto const requested =
+    std::max(1.0L, std::ceil(static_cast<long double>(rows) / rows_per_bucket));
   CUDF_EXPECTS(requested <= std::numeric_limits<cuda::std::uint32_t>::max(),
-               "HashCSR table capacity is not representable",
+               "HashGraph bucket count is not representable",
                std::overflow_error);
-  // Hash reduction uses multiply-high, and linear probing wraps with a conditional increment.
-  // Neither requires a power-of-two capacity. Keep one empty slot even at load_factor == 1.
   return static_cast<cuda::std::uint32_t>(requested);
 }
 }  // namespace
@@ -95,14 +97,12 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
       _right, stream, cudf::get_current_device_resource_ref())},
     _impl{std::make_unique<impl>(
-      hash_csr_capacity(right.num_rows(), load_factor), right.num_rows(), stream, std::move(mr))}
+      hash_graph_num_buckets(right.num_rows(), load_factor), stream, std::move(mr))}
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(0 != right.num_columns(), "Hash join right table is empty", std::invalid_argument);
   if (_is_empty) { return; }
 
-  CUDF_CUDA_TRY(cudaMemsetAsync(
-    _impl->_slots.data(), 0xff, _impl->_slots.size() * sizeof(hash_table_slot_type), stream.get()));
   CUDF_CUDA_TRY(cudaMemsetAsync(
     _impl->_offsets.data(), 0, _impl->_offsets.size() * sizeof(size_type), stream.get()));
 
@@ -112,26 +112,23 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
       ? cudf::detail::bitmask_and(right, stream, temp_mr).first
       : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr);
   auto const valid_rows = _nulls_equal == null_equality::UNEQUAL ? row_bitmask.data() : nullptr;
-  // Hashing and comparing variable-width rows again can dominate construction. Cache one
-  // representative index per row for keys containing lists or strings, including within structs.
-  auto const cache_representatives = std::any_of(right.begin(), right.end(), has_list_or_string);
-  auto representatives             = cuda::device_buffer<size_type>(
-    stream,
-    temp_mr,
-    cache_representatives ? static_cast<std::size_t>(right.num_rows()) : 0,
-    cuda::no_init);
-  auto build = [&](auto equality, auto hasher) {
-    launch_hash_csr_build_count_kernel(right.num_rows(),
-                                       valid_rows,
-                                       _impl->_offsets.data(),
-                                       representatives.data(),
-                                       _impl->hash_table(),
-                                       equality,
-                                       hasher,
-                                       stream);
+  // Hashing variable-width rows again can dominate construction. Cache the hash of each row
+  // for keys containing lists or strings, including within structs.
+  auto const cache_hashes = std::any_of(right.begin(), right.end(), has_list_or_string);
+  auto hashes             = cuda::device_buffer<hash_value_type>(
+    stream, temp_mr, cache_hashes ? static_cast<std::size_t>(right.num_rows()) : 0, cuda::no_init);
+  // The HashGraph groups the build rows by hash bucket and never compares them.
+  auto count = [&](auto, auto hasher) {
+    launch_hash_graph_build_count_kernel(right.num_rows(),
+                                         valid_rows,
+                                         _impl->_offsets.data(),
+                                         hashes.data(),
+                                         _impl->_num_buckets,
+                                         hasher,
+                                         stream);
   };
   dispatch_join_comparator(
-    right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, build);
+    right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, count);
   {
     std::size_t temp_storage_bytes{};
     CUDF_CUDA_TRY(cub::DeviceScan::InclusiveSum(nullptr,
@@ -149,27 +146,19 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
                                                 stream.get()));
   }
   // The output array is not needed until the scan workspace has been released.
-  _impl->_values =
-    cuda::device_buffer<size_type>(stream, _impl->_mr, right.num_rows(), cuda::no_init);
-  // Reuse each cumulative end as a scatter cursor. Once all rows in a group have been
-  // scattered, its cursor is the group's exclusive begin. No per-row positions are retained.
-  if (cache_representatives) {
-    launch_hash_csr_build_fill_cached_kernel(right.num_rows(),
-                                             representatives.data(),
-                                             _impl->_offsets.data(),
-                                             _impl->_values.data(),
-                                             stream);
-    return;
-  }
-  auto fill = [&](auto equality, auto hasher) {
-    launch_hash_csr_build_fill_kernel(right.num_rows(),
-                                      valid_rows,
-                                      _impl->_offsets.data(),
-                                      _impl->_values.data(),
-                                      _impl->hash_table(),
-                                      equality,
-                                      hasher,
-                                      stream);
+  _impl->_records =
+    cuda::device_buffer<hash_graph_record>(stream, _impl->_mr, right.num_rows(), cuda::no_init);
+  // Reuse each cumulative end as a scatter cursor. Once all rows of a bucket have been
+  // scattered, its cursor is the bucket's exclusive begin. No per-row positions are retained.
+  auto fill = [&](auto, auto hasher) {
+    launch_hash_graph_build_fill_kernel(right.num_rows(),
+                                        valid_rows,
+                                        _impl->_offsets.data(),
+                                        _impl->_records.data(),
+                                        hashes.data(),
+                                        _impl->_num_buckets,
+                                        hasher,
+                                        stream);
   };
   dispatch_join_comparator(
     right, right, _preprocessed_right, _preprocessed_right, _has_nulls, _nulls_equal, fill);

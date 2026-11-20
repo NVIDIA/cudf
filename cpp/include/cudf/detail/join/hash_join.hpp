@@ -74,7 +74,8 @@ class hash_join {
    * @copydoc hash_join(cudf::table_view const&, bool, null_equality, cuda::stream_ref,
    * cuda::mr::any_resource<cuda::mr::device_accessible>)
    *
-   * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
+   * @param load_factor Scales the average number of build rows per hash bucket, which is 16
+   * times this value. Must be in (0,1].
    */
   hash_join(cudf::table_view const& right,
             bool has_nulls,
@@ -201,23 +202,56 @@ class hash_join {
    *
    * @param join Join kind; left and full joins count an unmatched left row as one match
    * @param left Probe table
-   * @param groups Matching build group of each left row
+   * @param preprocessed_left `left` preprocessed for row operators
+   * @param hashes Hash of each left row
    * @param counts Match count of each left row
    * @param total Sum of `counts`, added to the existing value
-   * @param matched_groups Zero-initialized flag of each build group, sized to the right row
-   * count; outer joins set the flags of the groups they match
-   * @param matched_build_rows Number of build rows in the groups newly flagged in
-   * `matched_groups`, added to the existing value
+   * @param matched_rows Zero-initialized flag of each build row; full joins set the flags of
+   * the rows they match
+   * @param matched_build_rows Number of build rows newly flagged in `matched_rows`, added to
+   * the existing value
    * @param stream CUDA stream used for kernel launches
    */
-  void probe(join_kind join,
-             cudf::table_view const& left,
-             device_span<size_type> groups,
-             device_span<size_type> counts,
-             cuda::std::uint64_t* total,
-             device_span<cuda::std::uint32_t> matched_groups,
-             cuda::std::uint64_t* matched_build_rows,
-             cuda::stream_ref stream) const;
+  void probe(
+    join_kind join,
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    device_span<hash_value_type> hashes,
+    device_span<size_type> counts,
+    cuda::std::uint64_t* total,
+    device_span<cuda::std::uint32_t> matched_rows,
+    cuda::std::uint64_t* matched_build_rows,
+    cuda::stream_ref stream) const;
+
+  /**
+   * @brief Emits the row index pairs of `left` from the hashes and output offsets of its rows
+   *
+   * Each output holds `output_size` pairs and has room for `extra_capacity` more elements.
+   *
+   * @param join Join kind; left and full joins emit an unmatched left row once
+   * @param left Probe table
+   * @param preprocessed_left `left` preprocessed for row operators
+   * @param hashes Hash of each left row
+   * @param offsets Output offset of each left row plus the end offset
+   * @param output_size Total number of output pairs
+   * @param left_index_offset Value added to every emitted left row index
+   * @param extra_capacity Number of elements to reserve beyond `output_size`
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resources used to allocate the returned indices
+   */
+  [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
+                          std::unique_ptr<rmm::device_uvector<size_type>>>
+  retrieve(
+    join_kind join,
+    cudf::table_view const& left,
+    std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
+    device_span<hash_value_type const> hashes,
+    device_span<cuda::std::int64_t const> offsets,
+    std::size_t output_size,
+    size_type left_index_offset,
+    std::size_t extra_capacity,
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>

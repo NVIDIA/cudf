@@ -226,6 +226,7 @@ class Translator:
         self._expr_context: ExecutionContext = ExecutionContext.FRAME
         self._internal_name_gen: Generator[str, None, None] | None = None
         self._list_literals_as_elements: bool = False
+        self._num_unwrapped_implodes: int = 0
 
     def translate_ir(self, *, n: int | None = None) -> ir.IR:
         """
@@ -353,7 +354,7 @@ class Translator:
             Schema of the IR node this expression uses as evaluation context.
         allow_passthrough
             Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
-            returned.
+            returned. Also allows a direct cast of a Null column to String.
 
         Returns
         -------
@@ -432,7 +433,14 @@ class Translator:
             )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
-        is_null_passthrough = allow_passthrough and isinstance(translated, expr.Col)
+        is_null_passthrough = allow_passthrough and (
+            isinstance(translated, expr.Col)
+            or (
+                isinstance(translated, expr.Cast)
+                and isinstance(dtype.polars_type, pl.String)
+                and isinstance(translated.children[0], expr.Col)
+            )
+        )
         if not is_null_passthrough and _contains_null_column_input(translated):
             error = NotImplementedError(_NULL_PASSTHROUGH_ERROR)
             self.errors.append(error)
@@ -1486,6 +1494,31 @@ def _translate_function(
             options,
             *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )
+    elif isinstance(name, plrs._expr_nodes.ListFunction):
+        # Unwrapping an implode in group_by or rolling turns its list input
+        # into the element-wise column, so list functions above it would
+        # operate on the wrong values.
+        num_unwrapped_implodes = translator._num_unwrapped_implodes
+        list_inputs = [
+            translator.translate_expr(n=n, schema=schema) for n in node.input
+        ]
+        if translator._num_unwrapped_implodes != num_unwrapped_implodes:
+            raise NotImplementedError(
+                f"{name} is not supported for implode in group_by or rolling"
+            )
+        if translator._expr_context in (
+            ExecutionContext.GROUPBY,
+            ExecutionContext.ROLLING,
+        ) and any(isinstance(e, expr.LiteralColumn) for e in traversal(list_inputs)):
+            raise NotImplementedError(
+                f"{name} is not supported for list literals in group_by or rolling"
+            )
+        return expr.ListFunction(
+            dtype,
+            expr.ListFunction.Name.from_polars(name),
+            options,
+            *list_inputs,
+        )
     # Polars does not register BitwiseFunction in _expr_nodes (crates/polars-python/src/c_api/mod.rs)
     elif type(name).__name__ == "BitwiseFunction":
         return expr.BitwiseFunction(
@@ -1968,7 +2001,13 @@ def _(
 ) -> expr.Expr:
     strict = node.options != 1
     cast_cls = expr.WrappingCast if node.options == 2 else expr.Cast
-    inner = translator.translate_expr(n=node.expr, schema=schema)
+    # SQL UNION ALL can coerce an untyped NULL branch to String in a projection.
+    inner = translator.translate_expr(
+        n=node.expr,
+        schema=schema,
+        allow_passthrough=isinstance(dtype.polars_type, pl.String)
+        and isinstance(translator.visitor.get_dtype(node.expr), pl.Null),
+    )
 
     if isinstance(inner.dtype.polars_type, pl.Array):
         raise NotImplementedError("Casting from Array is not supported")
@@ -2023,6 +2062,7 @@ def _(
         # wrapped in an explicit ``implode`` node. Unwrap it so the existing
         # pointwise-collect path handles it.
         (child,) = args
+        translator._num_unwrapped_implodes += 1
         return child
 
     # libcudf does not support std/var on decimal types; cast to float first.

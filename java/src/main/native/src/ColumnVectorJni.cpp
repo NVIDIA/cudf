@@ -416,6 +416,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_md5(JNIEnv* env,
 
   JNI_TRY
   {
+    cudf::jni::auto_set_device(env);
     auto column_views =
       cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
     return release_as_jlong(cudf::hashing::md5(cudf::table_view{column_views}));
@@ -431,9 +432,161 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha1(JNIEnv* env,
 
   JNI_TRY
   {
+    cudf::jni::auto_set_device(env);
     auto column_views =
       cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
     return release_as_jlong(cudf::hashing::sha1(cudf::table_view{column_views}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha224(JNIEnv* env,
+                                                                jclass,
+                                                                jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::sha224(cudf::table_view{column_views}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha256(JNIEnv* env,
+                                                                jclass,
+                                                                jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::sha256(cudf::table_view{column_views}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha384(JNIEnv* env,
+                                                                jclass,
+                                                                jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::sha384(cudf::table_view{column_views}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sha512(JNIEnv* env,
+                                                                jclass,
+                                                                jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::sha512(cudf::table_view{column_views}));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_murmurHash32(JNIEnv* env,
+                                                                      jclass,
+                                                                      jint seed,
+                                                                      jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::murmurhash3_x86_32(cudf::table_view{column_views},
+                                                              static_cast<uint32_t>(seed)));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_sparkMurmurHash32(
+  JNIEnv* env, jclass, jint seed, jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{column_views},
+                                                                    static_cast<uint32_t>(seed)));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnVector_murmurHash128(
+  JNIEnv* env, jclass, jlong seed, jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", nullptr);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    auto result = cudf::hashing::murmurhash3_x64_128(cudf::table_view{column_views},
+                                                     static_cast<uint64_t>(seed));
+    return cudf::jni::convert_table_for_return(env, result);
+  }
+  JNI_CATCH(env, nullptr);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_xxHash32(JNIEnv* env,
+                                                                  jclass,
+                                                                  jint seed,
+                                                                  jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(
+      cudf::hashing::xxhash_32(cudf::table_view{column_views}, static_cast<uint32_t>(seed)));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnVector_xxHash64(JNIEnv* env,
+                                                                  jclass,
+                                                                  jlong seed,
+                                                                  jlongArray column_handles)
+{
+  JNI_NULL_CHECK(env, column_handles, "array of column handles is null", 0);
+
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto column_views =
+      cudf::jni::native_jpointerArray<cudf::column_view>{env, column_handles}.get_dereferenced();
+    return release_as_jlong(
+      cudf::hashing::xxhash_64(cudf::table_view{column_views}, static_cast<uint64_t>(seed)));
   }
   JNI_CATCH(env, 0);
 }

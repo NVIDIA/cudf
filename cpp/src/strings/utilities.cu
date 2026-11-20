@@ -76,10 +76,9 @@ std::unique_ptr<column> create_offsets_child_column(int64_t chars_bytes,
                                                     cudf::memory_resources mr)
 {
   auto const threshold = get_offset64_threshold();
-  if (!is_large_strings_enabled()) {
-    CUDF_EXPECTS(
-      chars_bytes < threshold, "Size of output exceeds the column size limit", std::overflow_error);
-  }
+  CUDF_EXPECTS(chars_bytes < threshold || is_large_strings_enabled(),
+               "Size of output exceeds the column size limit",
+               std::overflow_error);
   return make_numeric_column(
     chars_bytes < threshold ? data_type{type_id::INT32} : data_type{type_id::INT64},
     count,

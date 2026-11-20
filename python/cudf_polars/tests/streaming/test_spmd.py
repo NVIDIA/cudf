@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import cuda.core
@@ -30,12 +30,16 @@ from cudf_polars.engine.spmd import (
     allgather_polars_dataframe,
     use_gpu,
 )
+from cudf_polars.streaming.actor_graph.collectives import closing
+from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import MemoryResourceConfig
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rapidsmpf.communicator.communicator import Communicator
 
 pytestmark = pytest.mark.spmd
@@ -459,6 +463,56 @@ def test_reset_after_shutdown_raises(comm: Communicator) -> None:
     with pytest.raises(RuntimeError, match="shut-down"):
         engine._reset()  # still raises on a second attempt
     engine.shutdown()  # still safe after a failed _reset
+
+
+@pytest.fixture
+def cancel_on(
+    fake_collective: Any, cancel_when: Callable[..., None]
+) -> Callable[[Communicator], None]:
+    """Leave a cancelled close of ``fake_collective`` pending on a communicator."""
+
+    def cancel(comm: Communicator) -> None:
+        async def body() -> None:
+            async with aclosing_collective(fake_collective, comm, 7):
+                await fake_collective.extract_all(ordered=True)
+
+        cancel_when(body, fake_collective.waiting)
+
+    return cancel
+
+
+def test_shutdown_discards_pending_closes_of_owned_comm(
+    pending_closes: dict[Any, Any], cancel_on: Callable[[Communicator], None]
+) -> None:
+    engine = SPMDEngine()
+    cancel_on(engine.comm)
+    assert set(pending_closes) == {engine.comm}
+    engine.shutdown()
+    assert pending_closes == {}
+
+
+def test_shutdown_keeps_pending_closes_of_caller_comm(
+    comm: Communicator,
+    pending_closes: dict[Any, Any],
+    cancel_on: Callable[[Communicator], None],
+) -> None:
+    engine = SPMDEngine(comm=comm)
+    cancel_on(comm)
+    engine.shutdown()
+    assert set(pending_closes) == {comm}
+
+
+def test_reset_refuses_communicator_with_pending_close(
+    monkeypatch: pytest.MonkeyPatch,
+    comm: Communicator,
+    pending_closes: dict[Any, Any],
+    cancel_on: Callable[[Communicator], None],
+) -> None:
+    monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)
+    with SPMDEngine(comm=comm) as engine:
+        cancel_on(comm)
+        with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
+            engine._reset()
 
 
 def test_reset_rejects_construction_time_executor_options(

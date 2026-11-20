@@ -54,6 +54,10 @@ from cudf_polars.quent._runtime import (
     QuentControllerRuntime,
     QuentWorkerRuntime,
 )
+from cudf_polars.streaming.actor_graph.collectives.closing import (
+    discard_pending_closes,
+    wait_for_pending_closes,
+)
 from cudf_polars.unstable import unstable
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
@@ -518,6 +522,8 @@ def _teardown_worker(
             if mp_ctx.ctx is not None:
                 mp_ctx.ctx.shutdown()
         finally:
+            if mp_ctx.comm is not None:
+                discard_pending_closes(mp_ctx.comm)
             mp_ctx.ctx = None
             mp_ctx.comm = None
             mp_ctx.base_mr = None
@@ -587,6 +593,12 @@ def _reset_worker(
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
+
+    Raises
+    ------
+    RuntimeError
+        If the worker is not set up, or if a cancelled collective close on
+        the communicator has not completed.
     """
     assert dask_worker is not None
     configure_kvikio(
@@ -607,6 +619,7 @@ def _reset_worker(
     # Collective: all ranks idle before any rank tears down its Context.
     if mp_ctx.comm.nranks > 1:
         barrier(mp_ctx.comm)
+    wait_for_pending_closes(mp_ctx.comm)
     # Drop this engine's persisted partitions before the Context is torn down, so they
     # don't outlive their allocator. This invalidates any live QueryResult from execute().
     rank_local_store.close_store(uid)

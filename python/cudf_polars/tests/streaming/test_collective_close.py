@@ -16,6 +16,7 @@ import cudf_polars.engine.core
 from cudf_polars.streaming.actor_graph.collectives import closing
 from cudf_polars.streaming.actor_graph.collectives.closing import (
     aclosing_collective,
+    discard_pending_closes,
     wait_for_pending_closes,
 )
 
@@ -98,6 +99,24 @@ def test_gate_timeout_marks_communicator_unusable(
     with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
         wait_for_pending_closes(comm, timeout=30)
     assert fake_collective.close_calls == close_calls + 1
+
+
+def test_discard_pending_closes_forgets_communicator(
+    pending_closes, fake_collective, cancel_when
+) -> None:
+    comm = Mock()
+
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, comm, 7):
+            await fake_collective.extract_all(ordered=True)
+
+    cancel_when(body, fake_collective.waiting)
+    with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
+        wait_for_pending_closes(comm, timeout=0)
+
+    discard_pending_closes(comm)
+    assert pending_closes == {}
+    wait_for_pending_closes(comm, timeout=0)
 
 
 def test_cancelled_close_only_blocks_its_communicator(

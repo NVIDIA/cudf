@@ -38,7 +38,10 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.traversal import traversal
-from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
+from cudf_polars.streaming.actor_graph.collectives.closing import (
+    aclosing_collective,
+    discard_pending_closes,
+)
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -384,7 +387,10 @@ class LocalRepartitioner:
         tb: TracebackType | None,
     ) -> None:
         """Exit the context manager, releasing the local shuffle."""
-        await self._local_shuffle.__aexit__(exc_type, exc, tb)
+        try:
+            await self._local_shuffle.__aexit__(exc_type, exc, tb)
+        finally:
+            discard_pending_closes(self._local_shuffle.comm)
 
     def _iter_pieces(self) -> Iterator[Any]:
         for partition_id in self._global_shuffle.local_partitions():

@@ -69,6 +69,7 @@ from cudf_polars.quent._runtime import (
     QuentWorkerRuntime,
 )
 from cudf_polars.streaming.actor_graph.collectives.closing import (
+    discard_pending_closes,
     wait_for_pending_closes,
 )
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
@@ -649,6 +650,7 @@ class SPMDEngine(StreamingEngine):
             "memory_resource_config", MemoryResourceConfig.default()
         )
         base_mr = mr_config.create_memory_resource()
+        self._owns_comm = comm is None
         if comm is None:
             statistics = Statistics.from_options(self.rapidsmpf_options)
             if bootstrap.is_running_with_rrun():
@@ -1051,10 +1053,17 @@ class SPMDEngine(StreamingEngine):
 
         Must be called collectively on all ranks. A barrier ensures no
         rank tears down its Context while peers may still be using it.
+
+        Raises
+        ------
+        RuntimeError
+            If the engine is shut down, or if a cancelled collective close on
+            the communicator has not completed.
         """
         if self._ctx is None:
             raise RuntimeError("Cannot reset a shut-down engine")
         assert self._comm is not None
+        wait_for_pending_closes(self._comm)
         existing_executor_options = self.config.get("executor_options", {})
         if not isinstance(existing_executor_options, dict):
             existing_executor_options = {}
@@ -1308,6 +1317,8 @@ class SPMDEngine(StreamingEngine):
         try:
             super().shutdown()
         finally:
+            if self._owns_comm and self._comm is not None:
+                discard_pending_closes(self._comm)
             self._comm = None
             self._ctx = None
             self._py_executor = None

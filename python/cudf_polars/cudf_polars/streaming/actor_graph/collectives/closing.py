@@ -144,6 +144,24 @@ async def aclosing_collective[CollectiveT: Collective](
     await aclose_collective(collective, comm, op_id)
 
 
+def discard_pending_closes(comm: Communicator) -> None:
+    """
+    Forget the pending closes and unusable mark of ``comm``.
+
+    Call this when ``comm`` is no longer used, so that the registry does not
+    keep ``comm`` and its collectives alive. Closes that are still running
+    continue in rapidsmpf.
+
+    Parameters
+    ----------
+    comm
+        The communicator that is no longer used.
+    """
+    with _lock:
+        _pending.pop(comm, None)
+        _unusable.pop(comm, None)
+
+
 async def _finish_all(
     comm: Communicator, pending: tuple[_PendingClose, ...], timeout: float
 ) -> None:

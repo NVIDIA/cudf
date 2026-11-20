@@ -1221,23 +1221,28 @@ arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
     return {};
   }
 
-  // Check if the decoded Message flatbuffer is valid
-  if (flatbuf::GetMessage(metadata_buf.value().data()) == nullptr) {
-    CUDF_LOG_ERROR("Parquet reader encountered an invalid ipc:Message flatbuffer pointer.",
+  // Verify the decoded Message flatbuffer before any accessor reads it
+  auto verifier_options            = ::flatbuffers::Verifier::Options{};
+  verifier_options.check_alignment = false;
+  auto verifier = ::flatbuffers::Verifier{reinterpret_cast<uint8_t const*>(metadata_buf->data()),
+                                          metadata_buf->size(),
+                                          verifier_options};
+  if (not flatbuf::VerifyMessageBuffer(verifier)) {
+    CUDF_LOG_ERROR("Parquet reader encountered an invalid ipc:Message flatbuffer.",
                    "arrow:schema not processed.");
     return {};
   }
 
   // Check if the Message flatbuffer has a valid arrow:schema in its header
-  if (flatbuf::GetMessage(metadata_buf.value().data())->header_as_Schema() == nullptr) {
+  auto const arrow_schema = flatbuf::GetMessage(metadata_buf->data())->header_as_Schema();
+  if (arrow_schema == nullptr) {
     CUDF_LOG_ERROR("Parquet reader encountered an invalid arrow:schema flatbuffer pointer.",
                    "arrow:schema not processed.");
     return {};
   }
 
   // Get the vector of fields from arrow:schema flatbuffer object
-  auto const fields =
-    flatbuf::GetMessage(metadata_buf.value().data())->header_as_Schema()->fields();
+  auto const fields = arrow_schema->fields();
   if (fields == nullptr) {
     CUDF_LOG_ERROR("Parquet reader encountered an invalid fields pointer.",
                    "arrow:schema not processed.");

@@ -98,7 +98,6 @@ metadata::metadata(std::span<uint8_t const> footer_bytes)
 
   parquet::detail::decode_footer_and_init_schema(footer_bytes, this);
   sanitize_schema();
-  fill_arrow_types();
 }
 
 aggregate_reader_metadata::aggregate_reader_metadata(

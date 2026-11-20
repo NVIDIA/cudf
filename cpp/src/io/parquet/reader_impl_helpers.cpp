@@ -1136,7 +1136,77 @@ namespace {
 /**
  * @brief Decodes an arrow:IPC message and returns an optional string_view of its metadata header
  */
-std::optional<std::string_view> decode_ipc_message(std::string_view const serialized_message);
+std::optional<std::string_view> decode_ipc_message(std::string_view const serialized_message)
+{
+  // message buffer
+  auto message_buf = serialized_message.data();
+  // current message (buffer) size
+  auto message_size = static_cast<int32_t>(serialized_message.size());
+
+  // Lambda function to read and return 4 bytes as int32_t from the ipc message buffer and update
+  // buffer pointer and size
+  auto read_int32_from_ipc_message = [&]() {
+    int32_t bytes = 0;
+    std::memcpy(&bytes, message_buf, sizeof(int32_t));
+    // Offset the message buf and reduce remaining size
+    message_buf += sizeof(int32_t);
+    message_size -= sizeof(int32_t);
+    return bytes;
+  };
+
+  // Check for empty message
+  if (message_size == 0) {
+    CUDF_LOG_ERROR("Parquet reader encountered zero length arrow:schema.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // Check for improper message size.
+  if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_INITIAL) {
+    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // Get the first 4 bytes (continuation) of the ipc message
+  // and check if it matches the expected token
+  if (read_int32_from_ipc_message() != IPC_CONTINUATION_TOKEN) {
+    CUDF_LOG_ERROR("Parquet reader encountered unexpected IPC continuation token.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // Check for improper message size after the continuation bytes.
+  if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_METADATA_LENGTH) {
+    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // Get the next 4 bytes (metadata_len) of the ipc message
+  // and check if invalid metadata length read
+  auto const metadata_len = read_int32_from_ipc_message();
+
+  // Check if the read metadata (header) length is > zero
+  if (metadata_len <= 0) {
+    CUDF_LOG_ERROR("Parquet reader encountered unexpected metadata length.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // Check if the remaining message size is smaller than the expected metadata length
+  // TODO: Since the arrow:schema message doesn't have a body,
+  // the following check may be made tighter from < to ==
+  if (message_size < metadata_len) {
+    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
+                   "arrow:schema not processed.");
+    return std::nullopt;
+  }
+
+  // All good, return the current message_buf as string_view
+  return std::string_view{message_buf,
+                          static_cast<std::basic_string_view<char>::size_type>(message_size)};
+}
 
 /**
  * @brief Decodes and constructs the arrow schema from the base64 encoded ARROW_SCHEMA_KEY IPC
@@ -1370,82 +1440,6 @@ void metadata::fill_arrow_types()
     co_walk_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
   });
 }
-
-namespace {
-
-std::optional<std::string_view> decode_ipc_message(std::string_view const serialized_message)
-{
-  // message buffer
-  auto message_buf = serialized_message.data();
-  // current message (buffer) size
-  auto message_size = static_cast<int32_t>(serialized_message.size());
-
-  // Lambda function to read and return 4 bytes as int32_t from the ipc message buffer and update
-  // buffer pointer and size
-  auto read_int32_from_ipc_message = [&]() {
-    int32_t bytes = 0;
-    std::memcpy(&bytes, message_buf, sizeof(int32_t));
-    // Offset the message buf and reduce remaining size
-    message_buf += sizeof(int32_t);
-    message_size -= sizeof(int32_t);
-    return bytes;
-  };
-
-  // Check for empty message
-  if (message_size == 0) {
-    CUDF_LOG_ERROR("Parquet reader encountered zero length arrow:schema.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // Check for improper message size.
-  if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_INITIAL) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // Get the first 4 bytes (continuation) of the ipc message
-  // and check if it matches the expected token
-  if (read_int32_from_ipc_message() != IPC_CONTINUATION_TOKEN) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected IPC continuation token.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // Check for improper message size after the continuation bytes.
-  if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_METADATA_LENGTH) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // Get the next 4 bytes (metadata_len) of the ipc message
-  // and check if invalid metadata length read
-  auto const metadata_len = read_int32_from_ipc_message();
-
-  // Check if the read metadata (header) length is > zero
-  if (metadata_len <= 0) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected metadata length.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // Check if the remaining message size is smaller than the expected metadata length
-  // TODO: Since the arrow:schema message doesn't have a body,
-  // the following check may be made tighter from < to ==
-  if (message_size < metadata_len) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
-    return std::nullopt;
-  }
-
-  // All good, return the current message_buf as string_view
-  return std::string_view{message_buf,
-                          static_cast<std::basic_string_view<char>::size_type>(message_size)};
-}
-
-}  // namespace
 
 RowGroup const& aggregate_reader_metadata::get_row_group(size_type row_group_index,
                                                          size_type src_idx) const

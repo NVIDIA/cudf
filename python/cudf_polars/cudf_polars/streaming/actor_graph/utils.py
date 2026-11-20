@@ -11,7 +11,7 @@ import math
 import operator
 import struct
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
 from typing import TYPE_CHECKING, Any
@@ -38,7 +38,6 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
 from cudf_polars.streaming.actor_graph.tracing import (
     ActorTracer,
@@ -1382,9 +1381,7 @@ async def allgather_reduce(
     data = struct.pack(fmt, *local_values)
     packed = PackedData.from_host_bytes(data, context.br())
 
-    async with aclosing_collective(
-        AllGather(context, comm, op_id), comm, op_id
-    ) as allgather:
+    async with aclosing(AllGather(context, comm, op_id)) as allgather:
         with allgather:
             allgather.insert(0, packed)
         results = await allgather.extract_all(ordered=False)

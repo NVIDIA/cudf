@@ -1210,6 +1210,28 @@ def test_read_parquet_arrow_schema_duration() -> None:
     )
 
 
+def test_read_parquet_arrow_schema_duration_beside_deep_nesting() -> None:
+    nested = pa.array([1, 2, 3], type=pa.int32())
+    for _ in range(70):
+        nested = pa.StructArray.from_arrays([nested], ["s"])
+    table = pa.table(
+        {"d": pa.array([1, 2, 3], type=pa.duration("ms")), "n": nested}
+    )
+    sink = io.BytesIO()
+    write_table(table, sink, store_schema=True)
+    sink.seek(0)
+
+    options = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([sink])
+    ).build()
+    options.set_column_names(["d"])
+    result = plc.io.parquet.read_parquet(options)
+
+    assert (
+        result.tbl.columns()[0].to_arrow().equals(table.column("d").chunk(0))
+    )
+
+
 @pytest.mark.parametrize("from_bytes", [False, True])
 def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
     tmp_path, from_bytes

@@ -28,10 +28,15 @@ on:
         type: string
         default: nightly
 
+# Maven release concurrency: branch and nightly runs can cancel an earlier run
+# in the same workflow group. Each tag run gets its own workflow group so a
+# competing run cannot cancel it as a whole. Selected build and gather jobs can
+# still cancel matching jobs for the same tag, with separate groups for matrix
+# variants where applicable.
+# The shared Maven publisher runs one job at a time per repository and artifact
+# and lets an active job finish. Canceling it during upload or promotion could
+# leave an incomplete release or prevent us from saving the recovery receipt.
 concurrency:
-  # Branch and nightly runs keep workflow-wide cancellation. Give each tag run
-  # its own group so matching jobs can cancel preparation without stopping an
-  # active Maven publisher.
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
@@ -461,8 +466,7 @@ jobs:
       matrix_name: conda-cpp-build
       matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
-    # Include the matrix in the group so a replacement tag job cancels only the
-    # matching classifier build.
+    # See Maven release concurrency above. Each matrix variant has its own group.
     concurrency:
       group: ${{ github.workflow }}-prep-java-build-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}-${{ toJSON(matrix) }}
       cancel-in-progress: ${{ github.ref_type == 'tag' }}
@@ -492,7 +496,7 @@ jobs:
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
-    # A matching tag job can replace the gather while it prepares the repository.
+    # See Maven release concurrency above.
     concurrency:
       group: ${{ github.workflow }}-prep-java-gather-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
       cancel-in-progress: ${{ github.ref_type == 'tag' }}
@@ -529,8 +533,7 @@ jobs:
   # Other runs -> Sonatype snapshots (immediate, overwrites
   # -SNAPSHOT).
   java-publish:
-    # The shared publisher serializes by repository and artifact with cancellation
-    # disabled so upload, promotion, and receipt retention can finish.
+    # See Maven release concurrency above for the publisher's policy.
     needs: [java-gather]
     permissions:
       actions: read

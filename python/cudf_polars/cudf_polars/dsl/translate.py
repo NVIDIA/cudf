@@ -354,7 +354,7 @@ class Translator:
             Schema of the IR node this expression uses as evaluation context.
         allow_passthrough
             Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
-            returned.
+            returned. Also allows a direct cast of a Null column to String.
 
         Returns
         -------
@@ -433,7 +433,14 @@ class Translator:
             )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
-        is_null_passthrough = allow_passthrough and isinstance(translated, expr.Col)
+        is_null_passthrough = allow_passthrough and (
+            isinstance(translated, expr.Col)
+            or (
+                isinstance(translated, expr.Cast)
+                and isinstance(dtype.polars_type, pl.String)
+                and isinstance(translated.children[0], expr.Col)
+            )
+        )
         if not is_null_passthrough and _contains_null_column_input(translated):
             error = NotImplementedError(_NULL_PASSTHROUGH_ERROR)
             self.errors.append(error)
@@ -1995,7 +2002,13 @@ def _(
     # TODO: node.options can be 2 meaning wrap_numerical=True
     # don't necessarily raise because wrapping isn't always needed, but it's unhandled
     strict = node.options != 1
-    inner = translator.translate_expr(n=node.expr, schema=schema)
+    # SQL UNION ALL can coerce an untyped NULL branch to String in a projection.
+    inner = translator.translate_expr(
+        n=node.expr,
+        schema=schema,
+        allow_passthrough=isinstance(dtype.polars_type, pl.String)
+        and isinstance(translator.visitor.get_dtype(node.expr), pl.Null),
+    )
 
     if isinstance(inner.dtype.polars_type, pl.Array):
         raise NotImplementedError("Casting from Array is not supported")

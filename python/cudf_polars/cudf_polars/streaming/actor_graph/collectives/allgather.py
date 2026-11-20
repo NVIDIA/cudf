@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from cudf_streaming.partition_utils import unpack_and_concat, unpack_and_concat_cost
@@ -23,9 +21,6 @@ if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
     from cudf_polars.dsl.ir import IRExecutionContext
-
-
-_background_closes: set[asyncio.Task[None]] = set()
 
 
 class AllGatherManager:
@@ -107,27 +102,12 @@ class AllGatherManager:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        """
-        Exit the context manager, releasing the AllGather.
-
-        On cancellation, the release continues in the background so that
-        exiting does not wait for peers that never finish inserting.
-        """
-        if exc_type is not None and issubclass(exc_type, asyncio.CancelledError):
-            task = asyncio.create_task(self._close_ignoring_skipped_finish())
-            _background_closes.add(task)
-            task.add_done_callback(_background_closes.discard)
-            await asyncio.sleep(0)
-            return
+        """Exit the context manager, releasing the AllGather."""
         try:
             await self.allgather.aclose()
         except RuntimeError:
             if exc_type is None:
                 raise
-
-    async def _close_ignoring_skipped_finish(self) -> None:
-        with suppress(RuntimeError):
-            await self.allgather.aclose()
 
     def inserting(self) -> AllGatherManager.Inserter:
         """Return a context manager for the insert phase."""

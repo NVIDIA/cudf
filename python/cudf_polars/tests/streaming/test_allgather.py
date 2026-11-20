@@ -7,9 +7,6 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from unittest.mock import Mock
-
-import pytest
 
 import polars as pl
 
@@ -17,7 +14,6 @@ import pylibcudf as plc
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars.dsl.ir import IRExecutionContext
-from cudf_polars.streaming.actor_graph.collectives import allgather
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.utils import allgather_reduce
 
@@ -69,39 +65,6 @@ async def _test_allgather(engine) -> None:
 
 def test_allgather(spmd_engine) -> None:
     asyncio.run(_test_allgather(spmd_engine))
-
-
-def test_allgather_manager_cancellation_does_not_wait_for_peers(
-    monkeypatch, timeout_seconds: int
-) -> None:
-    async def run() -> None:
-        entered = asyncio.Event()
-        close_started = asyncio.Event()
-        peers_finished = asyncio.Event()
-
-        class PendingAllGather:
-            async def aclose(self) -> None:
-                close_started.set()
-                await peers_finished.wait()
-
-        monkeypatch.setattr(
-            allgather, "AllGather", lambda *_args, **_kwargs: PendingAllGather()
-        )
-
-        async def body() -> None:
-            async with AllGatherManager(Mock(), Mock(), 0):
-                entered.set()
-                await asyncio.Event().wait()
-
-        task = asyncio.create_task(body())
-        await asyncio.wait_for(entered.wait(), timeout=timeout_seconds)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=timeout_seconds)
-        assert close_started.is_set()
-        assert not peers_finished.is_set()
-
-    asyncio.run(run())
 
 
 async def _test_allgather_reduce(engine) -> None:

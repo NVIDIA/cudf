@@ -103,6 +103,7 @@ files:
     output: none
     includes:
       - depends_on_cuml
+      - test_cuml
   test_python_pylibcudf:
     output: none
     includes:
@@ -1351,6 +1352,12 @@ dependencies:
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0
+  test_cuml:
+    common:
+      - output_types: conda
+        packages:
+          # Imported by cuml's tests/conftest.py
+          - hypothesis>=6.131.7
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

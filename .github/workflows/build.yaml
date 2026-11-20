@@ -29,9 +29,10 @@ on:
         default: nightly
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
-  # Let tag runs finish Maven Central publication; canceling this workflow
-  # would also interrupt the shared publisher during upload or promotion.
+  # Branch and nightly runs keep workflow-wide cancellation. Give each tag run
+  # its own group so matching jobs can cancel preparation without stopping an
+  # active Maven publisher.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions: {}
@@ -460,6 +461,11 @@ jobs:
       matrix_name: conda-cpp-build
       matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
+    # Include the matrix in the group so a replacement tag job cancels only the
+    # matching classifier build.
+    concurrency:
+      group: ${{ github.workflow }}-prep-java-build-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}-${{ toJSON(matrix) }}
+      cancel-in-progress: ${{ github.ref_type == 'tag' }}
     needs: ["build-details", "java-build-matrix"]
     permissions:
       actions: read
@@ -486,6 +492,10 @@ jobs:
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
+    # A matching tag job can replace the gather while it prepares the repository.
+    concurrency:
+      group: ${{ github.workflow }}-prep-java-gather-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
+      cancel-in-progress: ${{ github.ref_type == 'tag' }}
     needs: [java-build]
     runs-on: linux-amd64-cpu4
     permissions:
@@ -519,6 +529,8 @@ jobs:
   # Other runs -> Sonatype snapshots (immediate, overwrites
   # -SNAPSHOT).
   java-publish:
+    # The shared publisher serializes by repository and artifact with cancellation
+    # disabled so upload, promotion, and receipt retention can finish.
     needs: [java-gather]
     permissions:
       actions: read

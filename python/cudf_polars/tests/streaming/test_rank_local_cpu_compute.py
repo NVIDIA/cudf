@@ -342,7 +342,9 @@ def test_binary_ops_match(
             id="first-last",
         ),
         pytest.param(
-            [(pl.col("i") * 100).cast(pl.Int8)], {"Cast.Int8"}, id="cast-wraps"
+            [(pl.col("i") * 100).cast(pl.Int8, wrap_numerical=True)],
+            {"Cast.Int8"},
+            id="cast-wraps",
         ),
         pytest.param(
             [pl.col("i").is_in([1, 2, 7])], {"BooleanFunction.IsIn"}, id="is_in"
@@ -395,6 +397,13 @@ def test_select_matches_gpu(
     # The planner can split a select, so check that the expressions under
     # test ran on the CPU, not only some Select.
     assert targets <= cpu_exprs
+
+
+def test_strict_cast_overflow_raises(left, engine, cpu_calls):
+    q = left.select((pl.col("a") * 100).cast(pl.Int8))
+    with pytest.raises((pl.exceptions.InvalidOperationError, ExceptionGroup)):
+        q.collect(engine=engine)
+    assert cpu_calls["Select"] > 0
 
 
 def test_col_reads_regex_shaped_name():

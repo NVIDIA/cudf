@@ -204,6 +204,19 @@ class WrappingCast(Cast):
         """Evaluate this expression given a dataframe for context."""
         (child,) = self.children
         column = child.evaluate(df, context=context)
+        if isinstance(self.dtype.polars_type, pl.Null) and not isinstance(
+            child.dtype.polars_type, pl.Null
+        ):
+            # Null is stored as INT8, so a libcudf cast would keep the values.
+            # Polars gives nulls here, even for a wrapping cast.
+            return Column(
+                plc.Column.from_scalar(
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    column.size,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
         return column.astype(self.dtype, stream=df.stream, strict=self.strict)
 
 

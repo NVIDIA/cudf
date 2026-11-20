@@ -512,7 +512,6 @@ EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[concat]": "https://github.com/NVIDIA/cudf/issues/24112",
     "tests/unit/lazyframe/test_projections.py::test_projection_pushdown_union_len_pushdown_28657[union]": "https://github.com/NVIDIA/cudf/issues/24112",
     "tests/unit/lazyframe/test_lazyframe.py::test_round[dtype2-123.55-1-123.6]": "libcudf HALF_EVEN rounding bug for Float64 with decimal_places > 0. See https://github.com/NVIDIA/cudf/issues/21319",
-    "tests/unit/lazyframe/test_lazyframe.py::test_cast_frame": "Casting that raises not supported on GPU",
     "tests/unit/lazyframe/test_lazyframe.py::test_lazy_cache_hit": "Debug output on stderr doesn't match",
     "tests/unit/operations/test_abs.py::test_abs_duration": "Need to raise for unsupported uops on timelike values",
     "tests/unit/operations/test_comparison.py::test_comparison_with_lower_precision_literal_matches_column[Datetime-ns-us]": "polars passes Datetime(ns) literals to the visitor as Python datetimes, which drops sub-microsecond precision",
@@ -529,11 +528,8 @@ EXPECTED_FAILURES: dict[str, str] = {
     # TODO: As of polars 1.34, the column names for left and right came in unaligned, which causes the dtypes to mismatch when calling plc.replace.replace_nulls
     # Need to investigate what changed in polars
     "tests/unit/operations/test_join.py::test_join_coalesce_column_order_23177": "Misaligned left/right column names left and right tables in join op",
-    "tests/unit/sql/test_cast.py::test_cast_errors[values4-values::int4-InvalidOperationError-conversion from `str` to `i32` failed]": "Strict cast failure message differs from polars",
     "tests/unit/sql/test_joins.py::test_constant_key_join_keeps_validation": "Join validation is not supported",
     "tests/unit/operations/namespaces/string/test_pad.py::test_str_zfill_unicode_not_respected": "polars doesn't add zeros for unicode characters.",
-    "tests/unit/lazyframe/test_predicates.py::test_predicate_pushdown_split_pushable": "Casting that raises not supported on GPU",
-    "tests/unit/lazyframe/test_predicates.py::test_filter_contradiction_fallible_error_handling": "Casting that raises not supported on GPU",
     "tests/unit/sql/test_miscellaneous.py::test_read_csv": "Incorrect handling of missing_is_null in read_csv",
     "tests/unit/lazyframe/test_cse.py::test_cse_predicate_self_join[False]": "Debug output on stderr doesn't match, see https://github.com/NVIDIA/cudf/issues/22967",
     "tests/unit/lazyframe/test_cse.py::test_cse_predicate_self_join[True]": "Debug output on stderr doesn't match, see https://github.com/NVIDIA/cudf/issues/22967",
@@ -965,6 +961,9 @@ STREAMING_ENGINE_TESTS_TO_SKIP_SMALL_BLOCKSIZE: Mapping[str, str] = {
 }
 
 STREAMING_ENGINE_EXPECTED_FAILURES: Mapping[str, str] = {
+    "tests/unit/lazyframe/test_lazyframe.py::test_cast_frame": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_predicates.py::test_predicate_pushdown_split_pushable": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
+    "tests/unit/lazyframe/test_predicates.py::test_filter_contradiction_fallible_error_handling": "Correct InvalidOperationError raised but it's in an ExceptionGroup",
     "tests/unit/functions/test_concat.py::test_concat_horizontal_zero_width_height_mismatch_26876": "https://github.com/NVIDIA/cudf/issues/21644",
     "tests/unit/operations/test_join.py::test_empty_outer_join_22206": "https://github.com/NVIDIA/cudf/issues/22084",
     "tests/unit/sql/test_cast.py::test_cast_errors[values0-values::uint8-InvalidOperationError-conversion from `f64` to `u64` failed]": "Correct InvalidOperationError raised but it's in an ExceptionGroup",

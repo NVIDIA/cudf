@@ -259,3 +259,11 @@ def test_wrapping_integer_cast_still_wraps(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [-1, 200, None]}, schema={"a": pl.Int16})
     q = df.select(pl.col("a").cast(pl.Int8, wrap_numerical=True))
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_wrapping_cast_through_null_returns_nulls(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [1, None]}, schema={"a": pl.Int8})
+    q = df.select(
+        pl.col("a").cast(pl.Null, wrap_numerical=True).cast(pl.Int8).alias("b")
+    )
+    assert_gpu_result_equal(q, engine=engine)

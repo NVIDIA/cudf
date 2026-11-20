@@ -109,7 +109,8 @@ def test_allgather_manager_cancellation_does_not_wait_for_peers(
 
     asyncio.run(run())
     assert close_started.is_set()
-    assert [close.op_id for close in pending_closes[comm]] == [4]
+    with pytest.raises(RuntimeError, match=r"operation IDs \[4\]"):
+        wait_for_pending_closes(comm, timeout=0)
     peers_finished.set()
     wait_for_pending_closes(comm, timeout=timeout_seconds)
     assert pending_closes == {}
@@ -176,7 +177,8 @@ def test_allgather_reduce_cancellation_does_not_wait_for_peers(
             await asyncio.wait_for(task, timeout=timeout_seconds)
 
     asyncio.run(run())
-    assert [close.op_id for close in pending_closes[comm]] == [2]
+    with pytest.raises(RuntimeError, match=r"operation IDs \[2\]"):
+        wait_for_pending_closes(comm, timeout=0)
     peers_finished.set()
     wait_for_pending_closes(comm, timeout=timeout_seconds)
     assert pending_closes == {}

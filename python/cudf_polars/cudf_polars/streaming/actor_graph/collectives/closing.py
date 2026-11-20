@@ -19,15 +19,7 @@ if TYPE_CHECKING:
 
 
 PENDING_CLOSE_TIMEOUT = 10.0
-"""
-Seconds :func:`wait_for_pending_closes` waits by default.
-
-A cancelled close usually completes soon after the query ends, once the peer
-ranks, which are often cancelled too, insert their finish markers. The wait
-covers that delay. If a peer never created the collective, the close never
-completes, and the wait bounds how long the next query blocks before it
-fails.
-"""
+"""Seconds :func:`wait_for_pending_closes` waits by default."""
 
 
 @dataclass(frozen=True, eq=False, slots=True)
@@ -38,7 +30,6 @@ class _PendingClose:
 
 _lock = threading.Lock()
 _pending: dict[Communicator, set[_PendingClose]] = {}
-_unusable: dict[Communicator, str] = {}
 _background_closes: set[asyncio.Task[None]] = set()
 
 
@@ -162,14 +153,6 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     collectives on a communicator after a cancelled ``aclose()`` whose
     collective never completes.
 
-    If a pending close does not complete within ``timeout``, ``comm`` is
-    marked unusable, and every later call raises at once.
-
-    The check is local to this rank. When it raises on one rank, the peer
-    ranks do not know, and they can hang in their next collective while they
-    wait for this rank. Every rank must shut down its engine and create a new
-    one.
-
     Parameters
     ----------
     comm
@@ -181,12 +164,9 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     Raises
     ------
     RuntimeError
-        If a pending close on ``comm`` does not complete within ``timeout``,
-        or if ``comm`` was already marked unusable.
+        If a pending close on ``comm`` does not complete within ``timeout``.
     """
     with _lock:
-        if (message := _unusable.get(comm)) is not None:
-            raise RuntimeError(message)
         pending = tuple(_pending.get(comm, ()))
     if not pending:
         return
@@ -198,13 +178,11 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
         executor.submit(asyncio.run, _finish_all(comm, pending, timeout)).result()
     with _lock:
         op_ids = sorted(close.op_id for close in _pending.get(comm, ()))
-        if not op_ids:
-            return
-        message = _unusable[comm] = (
+    if op_ids:
+        raise RuntimeError(
             f"The close of the collectives with operation IDs {op_ids} was "
-            f"cancelled and did not complete within {timeout} seconds, so "
-            "this communicator cannot run new collectives. Peer ranks may "
-            "hang in their next collective. Shut down the engine on every "
-            "rank and create a new one."
+            f"cancelled and did not complete within {timeout} seconds. New "
+            "collectives cannot run on this communicator until those "
+            "collectives complete on every rank. Create a new engine to run "
+            "more queries."
         )
-    raise RuntimeError(message)

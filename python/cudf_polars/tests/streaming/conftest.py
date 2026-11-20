@@ -185,7 +185,6 @@ def pending_closes(monkeypatch: pytest.MonkeyPatch) -> dict[Any, Any]:
     """Isolate the registry of cancelled collective closes."""
     pending: dict[Any, Any] = {}
     monkeypatch.setattr(closing, "_pending", pending)
-    monkeypatch.setattr(closing, "_unusable", {})
     return pending
 
 

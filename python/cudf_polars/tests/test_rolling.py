@@ -210,6 +210,14 @@ def test_unsupported_agg(in_memory_engine):
         pl.col("values").sum().is_in(pl.Series([1, 7])),
         (pl.col("values") + pl.lit(pl.Series([1, 2, 3, 4, 5]))).sum(),
         pl.lit(pl.Series([5])).max(),
+        pl.when(pl.col("values") > 7)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("values"))
+        .sum(),
+        pl.when(pl.col("values") > 7)
+        .then(pl.col("values"))
+        .otherwise(pl.lit(pl.Series([7])) + 1)
+        .max(),
     ],
 )
 def test_rolling_series_literal_raises(
@@ -220,9 +228,20 @@ def test_rolling_series_literal_raises(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_rolling_expr_series_literal_raises(in_memory_engine: pl.GPUEngine) -> None:
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("values").sum() + pl.lit(pl.Series([7])),
+        pl.when(pl.col("values") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("values"))
+        .sum(),
+    ],
+)
+def test_rolling_expr_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
     df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
-    expr = pl.col("values").sum() + pl.lit(pl.Series([7]))
     q = df.select(expr.rolling("orderby", period="2i"))
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 

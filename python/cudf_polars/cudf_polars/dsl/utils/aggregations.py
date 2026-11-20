@@ -114,6 +114,14 @@ def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
     )
 
 
+def _has_literal_column_ternary_branch(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.Ternary)
+        and any(map(_is_literal_column_expr, node.children[1:]))
+        for node in traversal([value])
+    )
+
+
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
     """
     Replace nulls with the given scalar if at top level.
@@ -201,6 +209,10 @@ def decompose_single_agg(
     ):
         raise NotImplementedError(
             "Combining aggregations with a list or Series literal in rolling or over"
+        )
+    if is_top and _has_literal_column_ternary_branch(agg):
+        raise NotImplementedError(
+            "A list or Series literal as a when/then/otherwise branch in groupby/rolling/over"
         )
     if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
         if context != ExecutionContext.GROUPBY:

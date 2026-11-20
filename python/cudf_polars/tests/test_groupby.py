@@ -1065,6 +1065,14 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
         pl.lit(pl.Series([7, 8])).first(),
         pl.lit(pl.Series([float("nan")])).max(),
         pl.lit(pl.Series([float("nan")])).min(),
+        pl.when(pl.col("j") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("j"))
+        .sum(),
+        pl.when(pl.col("j") > 1)
+        .then(pl.col("j"))
+        .otherwise(pl.lit(pl.Series([7])).cast(pl.Int64))
+        .first(),
     ],
 )
 def test_groupby_list_or_series_literal_raises(

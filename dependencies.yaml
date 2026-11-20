@@ -404,6 +404,8 @@ files:
       table: project.optional-dependencies
       key: cudf-pandas-tests
     includes:
+      - depends_on_cuda_core
+      - test_python_common
       - test_python_cudf_pandas
   py_build_cudf_polars:
     output: pyproject

@@ -1340,7 +1340,7 @@ def _sample_rg_sizes(
     options.set_row_groups(list(samples.values()))
     stream = get_cuda_stream()
     tbl_w_meta = plc.io.parquet.read_parquet(options, stream=stream)
-    result = {
+    return {
         name: column.device_buffer_size() // n_sampled
         for name, column in zip(
             tbl_w_meta.column_names(include_children=False),
@@ -1348,8 +1348,6 @@ def _sample_rg_sizes(
             strict=True,
         )
     }
-    stream.synchronize()
-    return result
 
 
 def _is_fixed_width(dtype: DataType) -> bool:

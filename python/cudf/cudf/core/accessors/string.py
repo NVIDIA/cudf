@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from cudf._typing import ColumnLike
     from cudf.core.column.string import StringColumn
+    from cudf.core.dataframe import DataFrame
     from cudf.core.index import Index
     from cudf.core.series import Series
 
@@ -584,7 +585,7 @@ class StringMethods(BaseAccessor):
 
     def extract(
         self, pat: str, flags: int = 0, expand: bool = True
-    ) -> Series | Index:
+    ) -> DataFrame | Series | Index:
         r"""
         Extract capture groups in the regex `pat` as columns in a DataFrame.
 
@@ -650,36 +651,74 @@ class StringMethods(BaseAccessor):
             )
 
         compiled = re.compile(pat)
-        group_names = list(compiled.groupindex.keys())
-        if len(group_names) > 0:
-            pat = re.sub(r"\(\?P<([A-Za-z_][A-Za-z0-9_]*)>", "(", pat)
+        if compiled.groups == 0:
+            raise ValueError("pattern contains no capture groups")
+        if (
+            isinstance(self._parent, cudf.Index)
+            and not expand
+            and compiled.groups > 1
+        ):
+            raise ValueError("only one regex group is supported with Index")
+        group_names = {
+            position - 1: name
+            for name, position in compiled.groupindex.items()
+        }
+        if group_names:
+            pat = self._remove_named_capture_groups(pat)
         data = self._column.extract(pat, flags)
-        result_name = None
-        if len(data) == 1 and expand is False:
-            _, data = data.popitem()  # type: ignore[assignment]
-            if len(group_names) > 0:
-                result_name = group_names[0]
-        elif expand is False and len(data) > 1:
-            expand = True
-        if len(group_names) == len(data):
-            named_data = {}
-            for key, value in data.items():
-                named_data[group_names[key]] = value
-            data = named_data  # type: ignore[assignment]
-        return self._return_or_inplace(
-            data, expand=expand, replace_name=result_name
-        )
+        if len(data) == 1 and not expand:
+            return self._return_or_inplace(
+                data[0], replace_name=group_names.get(0)
+            )
+        named_data = {
+            group_names.get(position, position): column
+            for position, column in data.items()
+        }
+        if isinstance(self._parent, cudf.Index):
+            return cudf.DataFrame(named_data)
+        return self._return_or_inplace(named_data, expand=True)
 
     def _remove_named_capture_groups(self, pat: str) -> str:
         r"""
-        Removes any named capture groups from the given regex pattern.
-        Named capture groups are expected in the format "(?P<name>)" only.
-        These are unnecessary (and unexpected) by the pylibcudf for non-extract regex calls.
+        Remove named capture declarations while preserving regex literals.
+
+        libcudf expects unnamed groups and does not support named backreferences.
         """
-        to_remove = "|".join(re.compile(pat).groupindex.keys())
-        if to_remove:
-            pat = re.sub(rf"\(\?P<(?:{to_remove})>", "(", pat)
-        return pat
+        if not re.compile(pat).groupindex:
+            return pat
+
+        result = []
+        class_start = -1
+        position = 0
+        while position < len(pat):
+            char = pat[position]
+            if char == "\\":
+                result.append(pat[position : position + 2])
+                position += 2
+                continue
+            if class_start >= 0:
+                result.append(char)
+                # A closing bracket is literal first in a class, after an
+                # optional negation marker.
+                if char == "]" and position > class_start:
+                    class_start = -1
+            elif char == "[":
+                result.append(char)
+                class_start = (
+                    position + 1 + (pat[position + 1 : position + 2] == "^")
+                )
+            elif pat.startswith("(?P=", position):
+                raise NotImplementedError(
+                    "Named backreferences are not supported"
+                )
+            elif pat.startswith("(?P<", position):
+                result.append("(")
+                position = pat.index(">", position + 4) + 1
+                continue
+            else:
+                result.append(char)
+            position += 1
+        return "".join(result)
 
     def contains(
         self,

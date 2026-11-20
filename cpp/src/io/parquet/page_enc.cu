@@ -8,6 +8,7 @@
 #include "io/utilities/block_utils.cuh"
 #include "page_string_utils.cuh"
 #include "parquet_gpu.cuh"
+#include "timestamp_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
@@ -25,6 +26,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.any_of.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
 #include <cuda/std/chrono>
@@ -755,6 +757,10 @@ CUDF_KERNEL void __launch_bounds__(128)
             } else {
               stats_hdr_len += ((col_g.stats_dtype >= dtype_int64) ? 10 : 5) * 3;
             }
+            // nan_count
+            if (col_g.stats_dtype == dtype_float32 || col_g.stats_dtype == dtype_float64) {
+              stats_hdr_len += 6;
+            }
             page_g.max_hdr_size += stats_hdr_len;
           }
           page_g.max_hdr_size = cuda::round_up(page_g.max_hdr_size, page_align);
@@ -1291,41 +1297,6 @@ static __device__ void PlainBoolEncode(rle_page_enc_state_s* s,
   }
 }
 
-/**
- * @brief Determines the difference between the Proleptic Gregorian Calendar epoch (1970-01-01
- * 00:00:00 UTC) and the Julian date epoch (-4713-11-24 12:00:00 UTC).
- *
- * @return The difference between two epochs in `cuda::std::chrono::duration` format with a period
- * of hours.
- */
-__device__ constexpr auto julian_calendar_epoch_diff()
-{
-  using namespace cuda::std::chrono;
-  using namespace cuda::std::chrono_literals;
-  return sys_days{January / 1 / 1970} - (sys_days{November / 24 / -4713} + 12h);
-}
-
-/**
- * @brief Converts number `v` of periods of type `PeriodT` into a pair with nanoseconds since
- * midnight and number of Julian days. Does not deal with time zones. Used by INT96 code.
- *
- * @tparam PeriodT a ratio representing the tick period in duration
- * @param v count of ticks since epoch
- * @return A pair of (nanoseconds, days) where nanoseconds is the number of nanoseconds
- * elapsed in the day and days is the number of days from Julian epoch.
- */
-template <typename PeriodT>
-__device__ auto julian_days_with_time(int64_t v)
-{
-  using namespace cuda::std::chrono;
-  auto const dur_total             = duration<int64_t, PeriodT>{v};
-  auto const dur_days              = floor<days>(dur_total);
-  auto const dur_time_of_day       = dur_total - dur_days;
-  auto const dur_time_of_day_nanos = duration_cast<nanoseconds>(dur_time_of_day);
-  auto const julian_days           = dur_days + ceil<days>(julian_calendar_epoch_diff());
-  return cuda::std::pair{dur_time_of_day_nanos, julian_days};
-}
-
 // this has been split out into its own kernel because of the amount of shared memory required
 // for the state buffer. encode kernels that don't use the RLE buffer can get started while
 // the level data is encoded.
@@ -1763,24 +1734,19 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
           }
 
           auto const [last_day_nanos, julian_days] = [&] {
-            using namespace cuda::std::chrono;
             switch (s->col.leaf_column->type().id()) {
               case type_id::TIMESTAMP_SECONDS:
-              case type_id::TIMESTAMP_MILLISECONDS: {
-                return julian_days_with_time<cuda::std::milli>(v);
-              } break;
+              case type_id::TIMESTAMP_MILLISECONDS: return duration_to_int96(duration_ms{v});
               case type_id::TIMESTAMP_MICROSECONDS:
-              case type_id::TIMESTAMP_NANOSECONDS: {
-                return julian_days_with_time<cuda::std::micro>(v);
-              } break;
+              case type_id::TIMESTAMP_NANOSECONDS: return duration_to_int96(duration_us{v});
+              default: return duration_to_int96(duration_ns{0});
             }
-            return julian_days_with_time<cuda::std::nano>(0);
           }();
 
           // the 12 bytes of fixed length data.
-          v = last_day_nanos.count();
+          v = last_day_nanos;
           encode_value(dst + pos, v, 1);
-          uint32_t w = julian_days.count();
+          uint32_t w = julian_days;
           encode_value(dst + pos + 8, w, 1);
         } break;
 
@@ -3000,6 +2966,8 @@ __device__ uint8_t* EncodeStatistics(uint8_t* start,
     encoder.field_bool(7, true);
     encoder.field_bool(8, true);
   }
+  // nan_count must be written for floating point columns, even if zero
+  if (dtype == dtype_float32 or dtype == dtype_float64) { encoder.field_int64(9, s->nan_count); }
   encoder.end(&end);
   return end;
 }
@@ -3303,6 +3271,14 @@ CUDF_KERNEL void __launch_bounds__(1)
   uint32_t const pageidx         = ck_g->first_page;
   size_t var_bytes               = 0;
 
+  // Float pages with NaNs have no min/max (see merge_group_statistics), so no column index is
+  // written for their chunk (the histograms and var_bytes below are still needed)
+  auto const is_float   = col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64;
+  auto const has_nan    = [](statistics_chunk const& stats) { return stats.nan_count > 0; };
+  auto const page_stats = column_stats.begin() + pageidx;
+  auto const has_nan_page =
+    is_float and cuda::std::any_of(page_stats + first_data_page, page_stats + num_pages, has_nan);
+
   header_encoder encoder(ck_g->column_index_blob);
 
   // make sure scratch is aligned properly. here column_index_size indicates
@@ -3386,6 +3362,15 @@ CUDF_KERNEL void __launch_bounds__(1)
     encoder.field_list_end(7);
   }
 
+  // nan_counts
+  if (is_float) {
+    encoder.field_list_begin(8, num_data_pages, FieldType::I64);
+    for (uint32_t page = first_data_page; page < num_pages; page++) {
+      encoder.put_int64(column_stats[pageidx + page].nan_count);
+    }
+    encoder.field_list_end(8);
+  }
+
   if (col_g.physical_type == Type::BYTE_ARRAY) {
     thrust::for_each(thrust::seq, page_start, page_end, [&] __device__(auto const& page) {
       var_bytes += page.var_bytes_size;
@@ -3395,8 +3380,9 @@ CUDF_KERNEL void __launch_bounds__(1)
   encoder.end(&col_idx_end, false);
 
   // now reset column_index_size to the actual size of the encoded column index blob
-  ck_g->column_index_size = static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
-  ck_g->var_bytes_size    = var_bytes;
+  ck_g->column_index_size =
+    has_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
+  ck_g->var_bytes_size = var_bytes;
 }
 
 void InitRowGroupFragments(device_2dspan<PageFragment> frag,

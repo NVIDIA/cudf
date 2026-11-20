@@ -29,13 +29,14 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
 from cudf_polars.streaming.actor_graph.tracing import (
@@ -464,11 +465,7 @@ def _evaluate_chunk_sync(
     The resulting table chunk after evaluation.
     """
     df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
-    df = ir.do_evaluate(
-        *ir._non_child_args,
-        df_in,
-        context=ir_context,
-    )
+    df = evaluate_ir(ir, df_in, context=ir_context)
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=br
     )
@@ -512,8 +509,8 @@ async def evaluate_chunk(
     if already_available:
         if not chunk.is_available():
             raise ValueError("already_available=True requires an available TableChunk")
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            chunk.data_alloc_size(), net_memory_delta=0
+        reservation = await reserve_memory(
+            context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
     else:
         chunk, reservation = await make_table_chunks_available_or_wait(
@@ -603,6 +600,12 @@ async def concat_batch(
     -------
     The table chunk after concatenation.
     """
+    if len(batch) == 1:
+        (chunk,) = batch
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context, chunk, reserve_extra=0, net_memory_delta=0
+        )
+        return chunk
     batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
@@ -623,8 +626,6 @@ async def concat_batch(
             ],
             context=ir_context,
         )
-        if len(batch) > 1:
-            del batch
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
@@ -659,7 +660,6 @@ async def evaluate_batch(
     first_ir = irs[0]
     input_schema = first_ir.children[0].schema
     chunk = await concat_batch(batch, context, input_schema, ir_context)
-    del batch
     return await evaluate_chunk(context, chunk, *irs, ir_context=ir_context)
 
 
@@ -735,7 +735,6 @@ async def chunkwise_evaluate(
             ir_context=chunk_ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
@@ -747,7 +746,6 @@ async def chunkwise_evaluate(
             ir_context=ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)

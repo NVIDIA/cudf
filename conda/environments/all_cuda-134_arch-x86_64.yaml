@@ -11,10 +11,9 @@ dependencies:
 - botocore>=1.24.21
 - breathe>=4.35.0
 - c-compiler
-- cachetools
 - clang-tools==20.1.8
 - clang==20.1.8
-- cmake>=4.0
+- cmake>=4.0,<4.5
 - cramjam
 - croaring==4.4.2
 - cuda-bindings>=13.0.2,<13.5
@@ -67,8 +66,8 @@ dependencies:
 - nbsphinx
 - ninja
 - notebook
+- numba
 - numba-cuda-mlir>=0.3.0
-- numba>=0.60.0,<0.65.0
 - numpy>=2.0,<3.0
 - numpydoc
 - nvidia-ml-py>=12

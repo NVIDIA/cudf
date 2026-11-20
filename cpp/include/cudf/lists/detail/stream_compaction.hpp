@@ -19,6 +19,7 @@ namespace lists::detail {
  * @param input The input lists column to filter
  * @param boolean_mask A nullable lists-of-bools column used to filter @p input
  * @param mask_kind Specifies how the boolean mask is treated (retentions or deletions)
+ * @param null_handling Whether to keep or drop elements with null mask elements
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  * @return A lists column containing the elements selected by @p boolean_mask and @p mask_kind
@@ -26,6 +27,7 @@ namespace lists::detail {
 std::unique_ptr<column> apply_mask(lists_column_view const& input,
                                    lists_column_view const& boolean_mask,
                                    cudf::detail::mask_type mask_kind,
+                                   null_policy null_handling,
                                    cuda::stream_ref stream,
                                    cudf::memory_resources mr);
 

@@ -301,11 +301,17 @@ class Column:
         Notes
         -----
         This only produces a copy if the requested dtype doesn't match
-        the current one.
+        the current one. If only the logical dtype differs (for example a
+        Null column, stored as INT8, cast to Int8), the result shares data
+        with self and carries the requested dtype.
         """
         plc_dtype = dtype.plc_type
         if self.obj.type() == plc_dtype:
-            return self
+            if self.dtype == dtype:
+                return self
+            result = self.copy()
+            result.dtype = dtype
+            return result
 
         if (
             plc_dtype.id() == plc.TypeId.STRING

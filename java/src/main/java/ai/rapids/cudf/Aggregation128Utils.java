@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -45,7 +45,7 @@ public class Aggregation128Utils {
    *         it was reassembled. A null input row will result in a corresponding null output row.
    */
   public static Table combineInt64SumChunks(Table chunks, DType type) {
-    return new Table(combineInt64SumChunks(chunks.getNativeView(),
+    return Table.fromRowCountAndColumns(combineInt64SumChunks(chunks.getNativeView(),
         type.getTypeId().getNativeId(),
         type.getScale()));
   }

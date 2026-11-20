@@ -211,6 +211,25 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testOrderByNoKeys() {
+    try (Table table = new Table.TestBuilder().column(5, 3, 4).build();
+         Table sorted = table.orderBy();
+         ColumnVector order = table.sortOrder();
+         ColumnVector expectedOrder = ColumnVector.fromInts(0, 1, 2)) {
+      assertTablesAreEqual(table, sorted);
+      assertColumnsAreEqual(expectedOrder, order);
+    }
+    try (Table table = new Table(4);
+         Table sorted = table.orderBy();
+         ColumnVector order = table.sortOrder();
+         ColumnVector expectedOrder = ColumnVector.fromInts(0, 1, 2, 3)) {
+      assertEquals(4, sorted.getRowCount());
+      assertEquals(0, sorted.getNumberOfColumns());
+      assertColumnsAreEqual(expectedOrder, order);
+    }
+  }
+
+  @Test
   void testSortOrderSimple() {
     try (Table table = new Table.TestBuilder()
         .column(5, 3, 3, 1, 1)
@@ -297,6 +316,168 @@ public class TableTest extends CudfTestBase {
         });
       }
     });
+  }
+
+  @Test
+  void testCreateTableFromColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector v2 = ColumnVector.fromStrings("a", "b", "c");
+         Table expected = new Table(v1, v2);
+         Table t = new Table(new long[] {
+             ColumnView.copyColumnViewToCV(v1.getNativeView()),
+             ColumnView.copyColumnViewToCV(v2.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
+  void testCreateTableFromRowCountAndColumnPointers() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         Table expected = new Table(v1);
+         Table t = Table.fromRowCountAndColumns(new long[] {
+             3, ColumnView.copyColumnViewToCV(v1.getNativeView())})) {
+      assertTablesAreEqual(expected, t);
+    }
+  }
+
+  @Test
+  void testZeroColumnTable() {
+    try (Table t = new Table(5)) {
+      assertEquals(5, t.getRowCount());
+      assertEquals(0, t.getNumberOfColumns());
+      assertEquals(0, t.getDeviceMemorySize());
+    }
+  }
+
+  @Test
+  void testTableWithExplicitRowCount() {
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3);
+         Table t = new Table(3, v1)) {
+      assertEquals(3, t.getRowCount());
+      assertEquals(1, t.getNumberOfColumns());
+    }
+    try (ColumnVector v1 = ColumnVector.fromInts(1, 2, 3)) {
+      assertThrows(CudfException.class, () -> new Table(4, v1).close());
+      // The failed constructor must release its reference, so this close frees the column
+      assertEquals(1, v1.getRefCount());
+    }
+    ColumnVector closed = ColumnVector.fromInts(1, 2, 3);
+    closed.close();
+    assertThrows(IllegalStateException.class, () -> new Table(closed).close());
+    assertThrows(IllegalStateException.class, () -> new Table(3, closed).close());
+    assertThrows(IllegalArgumentException.class, () -> new Table(-1).close());
+  }
+
+  @Test
+  void testZeroColumnTableOperations() {
+    try (Table t = new Table(4);
+         ColumnVector map = ColumnVector.fromInts(3, 0, 0, 1, 2, 2);
+         ColumnVector mask = ColumnVector.fromBooleans(true, false, true, true);
+         ColumnVector counts = ColumnVector.fromInts(1, 0, 2, 3);
+         Table other = new Table(3);
+         ColumnVector values = ColumnVector.fromInts(7, 8, 9);
+         Table withColumn = new Table(values)) {
+      try (Table gathered = t.gather(map)) {
+        assertEquals(6, gathered.getRowCount());
+        assertEquals(0, gathered.getNumberOfColumns());
+      }
+      try (Table filtered = t.filter(mask)) {
+        assertEquals(3, filtered.getRowCount());
+        assertEquals(0, filtered.getNumberOfColumns());
+      }
+      try (Table concatenated = Table.concatenate(t, other)) {
+        assertEquals(7, concatenated.getRowCount());
+        assertEquals(0, concatenated.getNumberOfColumns());
+      }
+      try (Table repeated = t.repeat(3)) {
+        assertEquals(12, repeated.getRowCount());
+        assertEquals(0, repeated.getNumberOfColumns());
+      }
+      try (Table repeated = t.repeat(counts)) {
+        assertEquals(6, repeated.getRowCount());
+        assertEquals(0, repeated.getNumberOfColumns());
+      }
+      try (Table sampled = t.sample(2, false, 0)) {
+        assertEquals(2, sampled.getRowCount());
+        assertEquals(0, sampled.getNumberOfColumns());
+      }
+      try (Table joined = t.crossJoin(other)) {
+        assertEquals(12, joined.getRowCount());
+        assertEquals(0, joined.getNumberOfColumns());
+      }
+      try (Table joined = t.crossJoin(withColumn);
+           Table expected = new Table.TestBuilder().column(7, 8, 9, 7, 8, 9, 7, 8, 9, 7, 8, 9).build()) {
+        assertTablesAreEqual(expected, joined);
+      }
+      try (ColumnVector scatterMap = ColumnVector.fromInts(0, 2, 1);
+           Table scattered = other.scatter(scatterMap, t)) {
+        assertEquals(4, scattered.getRowCount());
+        assertEquals(0, scattered.getNumberOfColumns());
+      }
+      try (PartitionedTable partitioned = t.roundRobinPartition(3, 0)) {
+        assertEquals(4, partitioned.getTable().getRowCount());
+        assertEquals(0, partitioned.getTable().getNumberOfColumns());
+        assertArrayEquals(new int[] {0, 2, 3, 4}, partitioned.getPartitions());
+      }
+    }
+  }
+
+  @Test
+  void testEmptyZeroColumnTable() {
+    try (Table t = new Table(0);
+         ColumnVector map = ColumnVector.fromInts();
+         Table gathered = t.gather(map);
+         Table concatenated = Table.concatenate(t, t)) {
+      assertEquals(0, t.getRowCount());
+      assertEquals(0, t.getNumberOfColumns());
+      assertEquals(0, gathered.getRowCount());
+      assertEquals(0, gathered.getNumberOfColumns());
+      assertEquals(0, concatenated.getRowCount());
+      assertEquals(0, concatenated.getNumberOfColumns());
+    }
+  }
+
+  @Test
+  void testZeroColumnTableContiguousSplit() {
+    ContiguousTable[] splits = null;
+    try (Table t = new Table(10)) {
+      splits = t.contiguousSplit(2, 5, 9);
+      assertEquals(4, splits.length);
+      long[] expectedRows = {2, 3, 4, 1};
+      for (int i = 0; i < splits.length; i++) {
+        assertEquals(expectedRows[i], splits[i].getRowCount());
+        assertEquals(expectedRows[i], splits[i].getTable().getRowCount());
+        assertEquals(0, splits[i].getTable().getNumberOfColumns());
+      }
+    } finally {
+      if (splits != null) {
+        for (ContiguousTable split : splits) {
+          split.close();
+        }
+      }
+    }
+  }
+
+  @Test
+  void testZeroColumnTableContiguousSplitEmptyPieces() {
+    // A piece with no columns and no rows packs to empty metadata
+    ContiguousTable[] splits = null;
+    try (Table t = new Table(10)) {
+      splits = t.contiguousSplit(0, 10);
+      assertEquals(3, splits.length);
+      long[] expectedRows = {0, 10, 0};
+      for (int i = 0; i < splits.length; i++) {
+        assertEquals(expectedRows[i], splits[i].getRowCount());
+        assertEquals(expectedRows[i], splits[i].getTable().getRowCount());
+        assertEquals(0, splits[i].getTable().getNumberOfColumns());
+      }
+    } finally {
+      if (splits != null) {
+        for (ContiguousTable split : splits) {
+          split.close();
+        }
+      }
+    }
   }
 
   @Test
@@ -1053,6 +1234,7 @@ public class TableTest extends CudfTestBase {
          Table table = tablemeta.releaseTable()) {
         assertArrayEquals(new String[] { "A", "B", "C" }, tablemeta.getColumnNames());
         assertTablesAreEqual(expected, table);
+        assertNull(tablemeta.releaseTable(), "the table can only be released once");
       }
     }
   }
@@ -4739,6 +4921,63 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testSerializationConcatZeroColumns() throws IOException {
+    ByteArrayOutputStream bout = new ByteArrayOutputStream();
+    JCudfSerialization.writeRowsToStream(bout, 10);
+    JCudfSerialization.writeRowsToStream(bout, 5);
+    DataInputStream din = new DataInputStream(new ByteArrayInputStream(bout.toByteArray()));
+    JCudfSerialization.SerializedTableHeader[] headers = new JCudfSerialization.SerializedTableHeader[2];
+    HostMemoryBuffer[] buffers = new HostMemoryBuffer[2];
+    try {
+      for (int i = 0; i < 2; i++) {
+        headers[i] = new JCudfSerialization.SerializedTableHeader(din);
+        buffers[i] = HostMemoryBuffer.allocate(headers[i].getDataLen());
+        JCudfSerialization.readTableIntoBuffer(din, headers[i], buffers[i]);
+      }
+      try (ContiguousTable ct = JCudfSerialization.concatToContiguousTable(headers, buffers)) {
+        assertEquals(15, ct.getRowCount());
+        assertEquals(15, ct.getTable().getRowCount());
+        assertEquals(0, ct.getTable().getNumberOfColumns());
+      }
+      try (Table t = JCudfSerialization.readAndConcat(headers, buffers)) {
+        assertEquals(15, t.getRowCount());
+        assertEquals(0, t.getNumberOfColumns());
+      }
+    } finally {
+      for (HostMemoryBuffer buffer : buffers) {
+        if (buffer != null) {
+          buffer.close();
+        }
+      }
+    }
+  }
+
+  @Test
+  void testSerializationConcatZeroColumnsTooManyRows() throws IOException {
+    ByteArrayOutputStream bout = new ByteArrayOutputStream();
+    JCudfSerialization.writeRowsToStream(bout, Integer.MAX_VALUE);
+    JCudfSerialization.writeRowsToStream(bout, 1);
+    DataInputStream din = new DataInputStream(new ByteArrayInputStream(bout.toByteArray()));
+    JCudfSerialization.SerializedTableHeader[] headers = new JCudfSerialization.SerializedTableHeader[2];
+    HostMemoryBuffer[] buffers = new HostMemoryBuffer[2];
+    try {
+      for (int i = 0; i < 2; i++) {
+        headers[i] = new JCudfSerialization.SerializedTableHeader(din);
+        buffers[i] = HostMemoryBuffer.allocate(headers[i].getDataLen());
+        JCudfSerialization.readTableIntoBuffer(din, headers[i], buffers[i]);
+      }
+      assertThrows(IllegalArgumentException.class,
+          () -> JCudfSerialization.writeConcatedStream(headers, buffers, new ByteArrayOutputStream()));
+    } finally {
+      for (HostMemoryBuffer buffer : buffers) {
+        if (buffer != null) {
+          buffer.close();
+        }
+      }
+    }
+  }
+
+  @Test
   void testSerializationZeroColsZeroRows() throws IOException {
     ByteArrayOutputStream bout = new ByteArrayOutputStream();
     JCudfSerialization.writeRowsToStream(bout, 0);
@@ -5146,6 +5385,25 @@ public class TableTest extends CudfTestBase {
           try (Table newTable = Table.fromPackedTable(metadata, newbuf)) {
             assertTablesAreEqual(t, newTable);
           }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFromPackedTableUsesBufferRemaining() {
+    try (Table t = buildTestTable();
+         ContiguousTable packed = t.contiguousSplit()[0]) {
+      ByteBuffer metadata = packed.getMetadataDirectBuffer();
+      int size = metadata.remaining();
+      // Only the bytes between position and limit are the metadata
+      for (ByteBuffer larger : new ByteBuffer[] {
+          ByteBuffer.allocateDirect(size + 16), ByteBuffer.allocate(size + 16)}) {
+        larger.position(8);
+        larger.put(metadata.duplicate());
+        larger.position(8).limit(8 + size);
+        try (Table unpacked = Table.fromPackedTable(larger, packed.getBuffer())) {
+          assertTablesAreEqual(t, unpacked);
         }
       }
     }

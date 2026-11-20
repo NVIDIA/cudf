@@ -77,6 +77,19 @@ def test_list_len_wrapped_implode_in_agg_not_supported(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize("how", ["group_by", "rolling"])
+def test_list_len_literal_in_agg_not_supported(
+    in_memory_engine: pl.GPUEngine, how: str
+) -> None:
+    lf = pl.LazyFrame({"k": [1, 1, 2], "i": [1, 2, 3]})
+    expr = pl.lit([10, 20]).list.len()
+    if how == "group_by":
+        q = lf.group_by("k", maintain_order=True).agg(expr)
+    else:
+        q = lf.rolling("i", period="2i").agg(expr)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_list_len_literal(engine: pl.GPUEngine) -> None:
     lf = pl.LazyFrame({"a": [1, 2, 3]})
     q = lf.select(pl.col("a"), pl.lit([1, 2]).list.len())

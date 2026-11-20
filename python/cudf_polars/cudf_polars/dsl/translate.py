@@ -1499,6 +1499,13 @@ def _translate_function(
             raise NotImplementedError(
                 f"{name} is not supported for implode in group_by or rolling"
             )
+        if translator._expr_context in (
+            ExecutionContext.GROUPBY,
+            ExecutionContext.ROLLING,
+        ) and any(isinstance(e, expr.LiteralColumn) for e in traversal(list_inputs)):
+            raise NotImplementedError(
+                f"{name} is not supported for list literals in group_by or rolling"
+            )
         return expr.ListFunction(
             dtype,
             expr.ListFunction.Name.from_polars(name),

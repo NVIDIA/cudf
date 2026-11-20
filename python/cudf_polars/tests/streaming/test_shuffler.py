@@ -48,6 +48,24 @@ def test_shuffle_manager_cancellation_does_not_wait_for_peers(
     assert_pending_then_released(comm, fake_collective, 9)
 
 
+def test_local_repartitioner_cancellation_discards_local_communicator(
+    monkeypatch, pending_closes, fake_collective, cancel_when
+) -> None:
+    monkeypatch.setattr(
+        shuffle, "ShufflerAsync", lambda *_args, **_kwargs: fake_collective
+    )
+    monkeypatch.setattr(shuffle, "single_comm", lambda *_args: Mock())
+    monkeypatch.setattr(shuffle, "Context", Mock())
+
+    async def body() -> None:
+        async with LocalRepartitioner(Mock(), 2):
+            await fake_collective.extract_all(ordered=True)
+
+    cancel_when(body, fake_collective.waiting)
+    assert fake_collective.close_calls == 1
+    assert pending_closes == {}
+
+
 @pytest.mark.parametrize(
     "options",
     [

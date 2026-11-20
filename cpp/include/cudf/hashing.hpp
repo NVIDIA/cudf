@@ -234,6 +234,34 @@ std::unique_ptr<column> xxhash_64(
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
+/**
+ * @brief Computes the XXHash_64 hash value of the bytes of each row in the given column
+ *
+ * Each row's hash is the XXH64 (https://github.com/Cyan4973/xxHash) of the row's bytes taken
+ * as one contiguous sequence:
+ * the UTF-8 bytes for a STRING column, or the list elements for a LIST<INT8> or LIST<UINT8>
+ * column. Unlike `xxhash_64`, list sizes are not hashed and no per-element hashes are combined,
+ * so a STRING row and a LIST row holding the same bytes have the same hash. Empty strings and
+ * empty lists hash to the XXH64 of zero bytes.
+ *
+ * The output is a UINT64 column with the input's null mask; null rows have undefined values.
+ *
+ * @throws cudf::data_type_error if `input` is not a STRING, LIST<INT8> or LIST<UINT8> column
+ * @throws std::invalid_argument if any row of a LIST column contains a null element
+ *
+ * @param input The STRING, LIST<INT8> or LIST<UINT8> column to hash
+ * @param seed Optional seed value to use for the hash function
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ *
+ * @returns A UINT64 column where each row is the hash of a row from the input
+ */
+std::unique_ptr<column> xxhash_64_bytes(
+  column_view const& input,
+  uint64_t seed             = DEFAULT_HASH_SEED,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
 /** @} */  // end of group
 
 }  // namespace hashing

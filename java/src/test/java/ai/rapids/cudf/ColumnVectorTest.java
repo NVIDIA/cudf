@@ -669,6 +669,206 @@ public class ColumnVectorTest extends CudfTestBase {
     }
   }
 
+  // XXH64 expected values below were checked with https://pypi.org/project/xxhash/ using
+  // xxhash.xxh64(s.encode(), seed).intdigest(), shown as signed long
+  private static String xxhashPattern(int n) {
+    StringBuilder sb = new StringBuilder(n);
+    for (int i = 0; i < n; i++) {
+      sb.append((char) ('a' + (i * 7) % 26));
+    }
+    return sb.toString();
+  }
+
+  private static final String[] XXHASH_STRINGS = {
+      "", "a", "abc", "abcde", "Warsaw", "hello world", "żółw", "Piękna łąka pod Warszawą",
+      "日本語テキスト", "🦆", "a\u0000b",
+      xxhashPattern(7), xxhashPattern(8), xxhashPattern(9), xxhashPattern(15), xxhashPattern(16),
+      xxhashPattern(17), xxhashPattern(31), xxhashPattern(32), xxhashPattern(33),
+      xxhashPattern(63), xxhashPattern(64), xxhashPattern(65), xxhashPattern(100),
+      xxhashPattern(1000)};
+
+  private static final long[] XXHASH_STRINGS_EXPECTED = {
+      -1205034819632174695L, -3292477735350538661L, 4952883123889572249L,
+      568411279426701291L, 8590661318172513296L, 5020219685658847592L, -6821380559250244984L,
+      -2498295930008233328L, -288678580755411052L, -3094550817314355270L, -5396678125053331263L,
+      5465359184387589880L, 3637908662901066584L, 7925971995785503353L, -7665010453094871458L,
+      -3706092872040145005L, 858555312169015728L, -4176239779691378328L, -1390078389112370860L,
+      -6126234497777409047L, -4539092539492093118L, -7380227243665498089L, 5466244630048845467L,
+      -1853830471762710058L, -8189329308232753930L};
+
+  private static byte[] xxhashAllBytes() {
+    byte[] bytes = new byte[256];
+    for (int i = 0; i < bytes.length; i++) {
+      bytes[i] = (byte) i;
+    }
+    return bytes;
+  }
+
+  private static final byte[][] XXHASH_RAW_BYTES = {
+      {0x00}, {(byte) 0x80}, {(byte) 0xff},
+      {(byte) 0xff, (byte) 0xfe, (byte) 0xfd, (byte) 0xfc},
+      {(byte) 0xc3, 0x28, 0x00, (byte) 0x9f, (byte) 0xff, 0x01, 0x02, (byte) 0x80, (byte) 0xa0},
+      xxhashAllBytes()};
+
+  private static final long[] XXHASH_RAW_BYTES_EXPECTED = {
+      -1642502924627794072L, -8930033155996351329L, -7682224578696088252L, 1589102993886860747L,
+      2549835520743713308L, 2282408585429094475L};
+
+  private static byte[][] utf8(String... values) {
+    byte[][] result = new byte[values.length][];
+    for (int i = 0; i < values.length; i++) {
+      result[i] = values[i] == null ? null : values[i].getBytes(StandardCharsets.UTF_8);
+    }
+    return result;
+  }
+
+  /** Build a LIST of {@code elementType} (INT8 or UINT8) whose rows are the given bytes. */
+  private static ColumnVector byteLists(DType elementType, byte[]... rows) {
+    try (HostColumnVector.ColumnBuilder builder = new HostColumnVector.ColumnBuilder(
+        new ListType(true, new BasicType(false, elementType)), Math.max(1, rows.length))) {
+      for (byte[] row : rows) {
+        if (row == null) {
+          builder.appendNull();
+        } else {
+          builder.appendByteList(row);
+        }
+      }
+      return builder.buildAndPutOnDevice();
+    }
+  }
+
+  /** Hash {@code input} and compare the result, read as signed longs, to {@code expected}. */
+  private static void assertXxhash64(long seed, ColumnView input, Long... expected) {
+    try (ColumnVector result = ColumnVector.xxhash64(seed, input);
+         ColumnView asLong = result.bitCastTo(DType.INT64);
+         HostColumnVector host = asLong.copyToHost()) {
+      assertEquals(DType.UINT64, result.getType());
+      assertEquals(expected.length, host.getRowCount());
+      long expectedNulls = Arrays.stream(expected).filter(e -> e == null).count();
+      assertEquals(expectedNulls, result.getNullCount());
+      for (int i = 0; i < expected.length; i++) {
+        if (expected[i] == null) {
+          assertTrue(host.isNull(i), "row " + i + " should be null");
+        } else {
+          assertFalse(host.isNull(i), "row " + i + " should not be null");
+          assertEquals(expected[i].longValue(), host.getLong(i), "row " + i);
+        }
+      }
+    }
+  }
+
+  private static Long[] boxed(long... values) {
+    return Arrays.stream(values).boxed().toArray(Long[]::new);
+  }
+
+  @Test
+  void testXxhash64Strings() {
+    try (ColumnVector v = ColumnVector.fromStrings(XXHASH_STRINGS)) {
+      assertXxhash64(0, v, boxed(XXHASH_STRINGS_EXPECTED));
+    }
+  }
+
+  @Test
+  void testXxhash64ByteListsMatchStrings() {
+    try (ColumnVector v = byteLists(DType.INT8, utf8(XXHASH_STRINGS))) {
+      assertXxhash64(0, v, boxed(XXHASH_STRINGS_EXPECTED));
+    }
+    try (ColumnVector v = byteLists(DType.UINT8, utf8(XXHASH_STRINGS))) {
+      assertXxhash64(0, v, boxed(XXHASH_STRINGS_EXPECTED));
+    }
+  }
+
+  @Test
+  void testXxhash64RawBytes() {
+    try (ColumnVector v = byteLists(DType.INT8, XXHASH_RAW_BYTES)) {
+      assertXxhash64(0, v, boxed(XXHASH_RAW_BYTES_EXPECTED));
+    }
+    try (ColumnVector v = byteLists(DType.UINT8, XXHASH_RAW_BYTES)) {
+      assertXxhash64(0, v, boxed(XXHASH_RAW_BYTES_EXPECTED));
+    }
+  }
+
+  @Test
+  void testXxhash64Seed() {
+    String[] strings = {"", "a", "Warsaw", "żółw", "Piękna łąka pod Warszawą",
+        xxhashPattern(33), xxhashPattern(1000)};
+    long[] expected = {-7444071767201028348L, -8582455328737087284L, 7716771431931769078L,
+        -1977324222704220536L, 7912833126575397331L, 2787016302402053460L,
+        -2981541204050368602L};
+    try (ColumnVector v = ColumnVector.fromStrings(strings)) {
+      assertXxhash64(42, v, boxed(expected));
+    }
+    try (ColumnVector v = byteLists(DType.INT8, utf8(strings))) {
+      assertXxhash64(42, v, boxed(expected));
+    }
+    try (ColumnVector v = byteLists(DType.INT8, xxhashAllBytes())) {
+      assertXxhash64(42, v, -2156533592262354883L);
+    }
+  }
+
+  @Test
+  void testXxhash64Nulls() {
+    Long[] expected = {-3292477735350538661L, null, -1205034819632174695L, null,
+        8590661318172513296L};
+    try (ColumnVector v = ColumnVector.fromStrings("a", null, "", null, "Warsaw")) {
+      assertXxhash64(0, v, expected);
+    }
+    try (ColumnVector v = byteLists(DType.INT8, new byte[]{0x61}, null, new byte[0], null,
+        "Warsaw".getBytes(StandardCharsets.UTF_8))) {
+      assertXxhash64(0, v, expected);
+    }
+  }
+
+  @Test
+  void testXxhash64AllNullsAndEmpty() {
+    try (ColumnVector v = ColumnVector.fromStrings(null, null, null)) {
+      assertXxhash64(0, v, null, null, null);
+    }
+    try (ColumnVector v = byteLists(DType.INT8, null, null, null)) {
+      assertXxhash64(0, v, null, null, null);
+    }
+    try (ColumnVector v = ColumnVector.fromStrings()) {
+      assertXxhash64(0, v);
+    }
+    try (ColumnVector v = byteLists(DType.INT8)) {
+      assertXxhash64(0, v);
+    }
+  }
+
+  @Test
+  void testXxhash64Sliced() {
+    Long[] expected = boxed(Arrays.copyOfRange(XXHASH_STRINGS_EXPECTED, 4, 15));
+    try (ColumnVector strings = ColumnVector.fromStrings(XXHASH_STRINGS);
+         ColumnVector stringsSlice = strings.subVector(4, 15);
+         ColumnVector lists = byteLists(DType.INT8, utf8(XXHASH_STRINGS));
+         ColumnVector listsSlice = lists.subVector(4, 15)) {
+      assertXxhash64(0, stringsSlice, expected);
+      assertXxhash64(0, listsSlice, expected);
+    }
+  }
+
+  @Test
+  void testXxhash64UnsupportedTypes() {
+    try (ColumnVector longs = ColumnVector.fromLongs(1, 2);
+         ColumnVector intLists = ColumnVector.fromLists(
+             new ListType(true, new BasicType(true, DType.INT32)),
+             Arrays.asList(1, 2), Arrays.asList(3));
+         ColumnVector nestedLists = ColumnVector.fromLists(
+             new ListType(true, new ListType(true, new BasicType(true, DType.INT8))),
+             Arrays.asList(Arrays.asList((byte) 1)), Arrays.asList(Arrays.asList((byte) 2)));
+         ColumnVector structs = ColumnVector.fromStructs(
+             new StructType(true, new BasicType(true, DType.INT8)),
+             new StructData((byte) 1), new StructData((byte) 2))) {
+      for (ColumnView input : new ColumnView[]{longs, intLists, nestedLists, structs}) {
+        assertThrows(CudfException.class, () -> {
+          try (ColumnVector ignored = ColumnVector.xxhash64(0, input)) {
+            fail("expected an exception for " + input.getType());
+          }
+        }, input.getType().toString());
+      }
+    }
+  }
+
   @Test
   public void testSha1HashStrings() {
     try (ColumnVector v0 = ColumnVector.fromStrings("Hello", "World", "CuDF", "Rapids", "AI", "Spark", "不好darn");

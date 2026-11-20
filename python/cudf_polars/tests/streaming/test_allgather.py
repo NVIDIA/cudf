@@ -18,6 +18,7 @@ import pylibcudf as plc
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars.dsl.ir import IRExecutionContext
+from cudf_polars.streaming.actor_graph import utils as actor_graph_utils
 from cudf_polars.streaming.actor_graph.collectives import allgather
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.collectives.closing import (
@@ -131,3 +132,53 @@ async def _test_allgather_reduce(engine) -> None:
 
 def test_allgather_reduce(spmd_engine) -> None:
     asyncio.run(_test_allgather_reduce(spmd_engine))
+
+
+def test_allgather_reduce_cancellation_does_not_wait_for_peers(
+    monkeypatch, pending_closes, timeout_seconds: int
+) -> None:
+    extracting = threading.Event()
+    peers_finished = threading.Event()
+
+    class PendingAllGather:
+        def __enter__(self) -> PendingAllGather:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def insert(self, *args: object) -> None:
+            pass
+
+        async def extract_all(self, *, ordered: bool) -> list:
+            extracting.set()
+            await asyncio.Event().wait()
+            return []
+
+        async def aclose(self) -> None:
+            while not peers_finished.is_set():
+                await asyncio.sleep(0.001)
+
+    monkeypatch.setattr(actor_graph_utils, "PackedData", Mock())
+    monkeypatch.setattr(
+        actor_graph_utils, "AllGather", lambda *_args, **_kwargs: PendingAllGather()
+    )
+    comm = Mock(nranks=2)
+
+    async def run() -> None:
+        async def started() -> None:
+            while not extracting.is_set():
+                await asyncio.sleep(0.001)
+
+        task = asyncio.create_task(allgather_reduce(Mock(), comm, 2, 42))
+        await asyncio.wait_for(started(), timeout=timeout_seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=timeout_seconds)
+
+    asyncio.run(run())
+    with pytest.raises(RuntimeError, match=r"operation IDs \[2\]"):
+        wait_for_pending_closes(comm, timeout=0)
+    peers_finished.set()
+    wait_for_pending_closes(comm, timeout=timeout_seconds)
+    assert pending_closes == {}

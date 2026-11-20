@@ -16,6 +16,7 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/string_view.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -23,6 +24,7 @@
 
 #include <cuda/iterator>
 #include <cuda/std/bit>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -231,16 +233,15 @@ struct HasherDispatcher {
   {
   }
 
-  template <typename Element,
-            CUDF_ENABLE_IF(is_fixed_width<Element>() and not is_floating_point<Element>() and
-                           not is_chrono<Element>())>
+  template <cudf::concepts::fixed_width Element>
+    requires(not cuda::std::floating_point<Element> and not cudf::concepts::chrono<Element>)
   __device__ inline void operator()(size_type row_index)
   {
     Element const& key = input_col.element<Element>(row_index);
     hasher->process_fixed_width(key);
   }
 
-  template <typename Element, CUDF_ENABLE_IF(is_floating_point<Element>())>
+  template <cuda::std::floating_point Element>
   __device__ inline void operator()(size_type row_index)
   {
     Element const& key = input_col.element<Element>(row_index);
@@ -254,7 +255,7 @@ struct HasherDispatcher {
     }
   }
 
-  template <typename Element, CUDF_ENABLE_IF(std::is_same_v<Element, string_view>)>
+  template <cudf::concepts::string_view Element>
   __device__ inline void operator()(size_type row_index)
   {
     string_view key     = input_col.element<string_view>(row_index);
@@ -263,9 +264,7 @@ struct HasherDispatcher {
     hasher->process(data, len);
   }
 
-  template <typename Element,
-            CUDF_ENABLE_IF((not is_fixed_width<Element>() or is_chrono<Element>()) and
-                           not std::is_same_v<Element, string_view>)>
+  template <typename Element>
   __device__ inline void operator()(size_type row_index)
   {
     (void)row_index;

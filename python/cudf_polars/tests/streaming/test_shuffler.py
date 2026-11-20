@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import Mock
 
 import pytest
 
@@ -20,7 +19,6 @@ from cudf_streaming.table_chunk import TableChunk
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import allgather_polars_dataframe
-from cudf_polars.streaming.actor_graph.collectives import shuffle
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     LocalRepartitioner,
@@ -30,22 +28,6 @@ from cudf_polars.streaming.actor_graph.utils import (
     _is_already_partitioned,
 )
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-
-
-def test_shuffle_manager_cancellation_does_not_wait_for_peers(
-    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
-) -> None:
-    monkeypatch.setattr(
-        shuffle, "ShufflerAsync", lambda *_args, **_kwargs: fake_collective
-    )
-    comm = Mock()
-
-    async def body() -> None:
-        async with ShuffleManager(Mock(), comm, 2, 9) as manager:
-            await manager.shuffler.extract_all(ordered=True)
-
-    cancel_when(body, fake_collective.waiting)
-    assert_pending_then_released(comm, fake_collective, 9)
 
 
 @pytest.mark.parametrize(

@@ -4,40 +4,14 @@
 from __future__ import annotations
 
 import random
-from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 import polars as pl
 
 from cudf_polars.engine.options import StreamingOptions
-from cudf_polars.streaming.actor_graph import union
 from cudf_polars.streaming.actor_graph.union import _OrderedUnionPlan
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-
-
-def test_union_exchange_cancellation_does_not_wait_for_peers(
-    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
-) -> None:
-    monkeypatch.setattr(
-        union, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
-    )
-    comm = Mock(rank=0, nranks=2)
-
-    async def exchange() -> None:
-        await union._exchange_child(
-            Mock(),
-            comm,
-            Mock(),
-            0,
-            Mock(recv=AsyncMock(return_value=None)),
-            3,
-            owned=(),
-            drop=False,
-        )
-
-    cancel_when(exchange, fake_collective.waiting)
-    assert_pending_then_released(comm, fake_collective, 3)
 
 
 def test_union_shared_fanout_no_deadlock(streaming_engine):

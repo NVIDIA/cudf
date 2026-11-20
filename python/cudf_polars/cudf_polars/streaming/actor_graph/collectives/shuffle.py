@@ -38,7 +38,6 @@ from rapidsmpf.streaming.core.message import Message
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.traversal import traversal
-from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -267,11 +266,10 @@ class ShuffleManager:
             num_partitions,
             partition_assignment=partition_assignment,
         )
-        self._closing = aclosing_collective(self.shuffler, comm, collective_id)
 
     async def __aenter__(self) -> ShuffleManager:
         """Enter the context manager."""
-        await self._closing.__aenter__()
+        await self.shuffler.__aenter__()
         return self
 
     async def __aexit__(
@@ -280,13 +278,8 @@ class ShuffleManager:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        """
-        Exit the context manager, releasing the shuffler.
-
-        See :func:`~cudf_polars.streaming.actor_graph.collectives.closing.aclosing_collective`
-        for how cancellation is handled.
-        """
-        await self._closing.__aexit__(exc_type, exc, tb)
+        """Exit the context manager, releasing the shuffler."""
+        await self.shuffler.__aexit__(exc_type, exc, tb)
 
     def inserting(self) -> ShuffleManager.Inserter:
         """Return a context manager for the insert phase."""

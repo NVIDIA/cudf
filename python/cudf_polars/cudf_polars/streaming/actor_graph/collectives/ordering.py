@@ -37,7 +37,6 @@ from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
-from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.partitioning import add_row_ordering
 from cudf_polars.streaming.actor_graph.utils import (
     ChunkStore,
@@ -987,16 +986,12 @@ async def _adjust_ordering_impl(
     local_pieces = pieces_by_source[comm.rank]
     owed_remote_pid_set = set(plan.owed_remote_pids)
     async with (
-        aclosing_collective(
-            SparseAlltoall(
-                context,
-                comm,
-                collective_id,
-                srcs=plan.remote_sources,
-                dsts=plan.remote_destinations,
-            ),
+        SparseAlltoall(
+            context,
             comm,
             collective_id,
+            srcs=plan.remote_sources,
+            dsts=plan.remote_destinations,
         )
         if plan.remote_sources or plan.remote_destinations
         else nullcontext()

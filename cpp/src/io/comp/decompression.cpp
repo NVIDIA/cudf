@@ -889,7 +889,11 @@ void decompress(compression_type compression,
                               streams[1]);
     } catch (...) {
       // Buffers are freed in `stream` order, so it must wait for work already queued on the forks
-      cudf::detail::join_streams(streams, stream);
+      try {
+        cudf::detail::join_streams(streams, stream);
+      } catch (...) {
+        // A join failure means the context is already faulted; it must not replace the original
+      }
       throw;
     }
     cudf::detail::join_streams(streams, stream);

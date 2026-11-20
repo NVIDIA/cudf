@@ -1,0 +1,25 @@
+{
+  "triage_label": "? - Needs Triage",
+  "triage_owner": null,
+  "parked_labels": [],
+  "waiting_for_author_labels": [],
+  "bot_logins": ["rapids-bot"],
+  "routing": {"merge_conflicts": "author"},
+  "thresholds": {
+    "Needs triage": {"days": 3, "business_days": true},
+    "Needs reviewer assignment": {"days": 0, "business_days": true},
+    "Waiting for first review": {"days": 3, "business_days": true},
+    "Waiting for another review": {"days": 3, "business_days": true},
+    "Waiting for author": {"days": 14, "business_days": false},
+    "Has approvals; inspect blockers": {"days": 2, "business_days": true}
+  },
+  "component_owners": {
+    "libcudf": "NVIDIA/cudf-cpp-codeowners",
+    "Python": "NVIDIA/cudf-python-codeowners",
+    "cudf.pandas": "NVIDIA/cudf-python-codeowners",
+    "cudf-polars": "NVIDIA/cudf-polars-codeowners",
+    "pylibcudf": "NVIDIA/cudf-python-codeowners",
+    "CMake": "NVIDIA/cudf-cmake-codeowners",
+    "Java": "NVIDIA/cudf-java-codeowners"
+  }
+}

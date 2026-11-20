@@ -706,7 +706,6 @@ files:
       - py_version
       - test_python_common
       - test_python_cudf_common
-      - test_python_cudf
       - test_python_narwhals
       - depends_on_cudf
       - depends_on_cudf_polars

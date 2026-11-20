@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -18,6 +19,10 @@ from cudf_polars import Translator
 from cudf_polars.engine.core import all_gather_host_data
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
+from cudf_polars.streaming.actor_graph.collectives import overlap
+from cudf_polars.streaming.actor_graph.collectives.closing import (
+    wait_for_pending_closes,
+)
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.overlap import (
     OverlapInput,
@@ -54,6 +59,64 @@ def test_multirank_overlap_input_requires_preparation() -> None:
             await anext(aiter(rolling_input))
 
     asyncio.run(run())
+
+
+def test_overlap_allgather_cancellation_does_not_wait_for_peers(
+    monkeypatch, pending_closes, timeout_seconds: int
+) -> None:
+    extracting = threading.Event()
+    peers_finished = threading.Event()
+
+    class PendingAllGather:
+        def __enter__(self) -> PendingAllGather:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def insert(self, *args: object) -> None:
+            pass
+
+        async def extract_all(self, *, ordered: bool) -> list:
+            extracting.set()
+            await asyncio.Event().wait()
+            return []
+
+        async def aclose(self) -> None:
+            while not peers_finished.is_set():
+                await asyncio.sleep(0.001)
+
+    monkeypatch.setattr(overlap, "PackedData", Mock())
+    monkeypatch.setattr(
+        overlap, "AllGather", lambda *_args, **_kwargs: PendingAllGather()
+    )
+    comm = Mock(nranks=2)
+    rolling_input = OverlapInput(
+        Mock(),
+        comm,
+        Mock(),
+        RowCountOverlapPolicy(1, 1),
+        duplicated=False,
+        collective_id=6,
+    )
+
+    async def run() -> None:
+        async def started() -> None:
+            while not extracting.is_set():
+                await asyncio.sleep(0.001)
+
+        task = asyncio.create_task(rolling_input._allgather_ints((1,)))
+        await asyncio.wait_for(started(), timeout=timeout_seconds)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=timeout_seconds)
+
+    asyncio.run(run())
+    with pytest.raises(RuntimeError, match=r"operation IDs \[6\]"):
+        wait_for_pending_closes(comm, timeout=0)
+    peers_finished.set()
+    wait_for_pending_closes(comm, timeout=timeout_seconds)
+    assert pending_closes == {}
 
 
 def test_rolling_datetime(engine):

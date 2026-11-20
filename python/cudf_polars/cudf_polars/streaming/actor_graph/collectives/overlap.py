@@ -26,6 +26,7 @@ from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.dsl.utils.windows import duration_to_scalar
+from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.collectives.slice_exchange import (
     SliceRoute,
     SparseExchange,
@@ -980,8 +981,10 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     ) -> tuple[tuple[int, ...], ...]:
         """All-gather fixed-width signed integer metadata in rank order."""
         fmt = f"<{len(payload)}q"
-        async with aclosing(
-            AllGather(self.context, self.comm, self.collective_id)
+        async with aclosing_collective(
+            AllGather(self.context, self.comm, self.collective_id),
+            self.comm,
+            self.collective_id,
         ) as gather:
             with gather:
                 gather.insert(

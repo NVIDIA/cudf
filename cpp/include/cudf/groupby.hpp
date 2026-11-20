@@ -693,8 +693,10 @@ class direct_groupby {
    * @param stream CUDA stream used for device memory operations and kernel launches
    *
    * @throws std::invalid_argument if `group_ids.size() != values.num_rows()`
-   * @throws std::invalid_argument if the first non-empty batch has an unsupported combination
-   *         of value type and aggregation kind
+   * @throws cudf::logic_error if the first non-empty batch has a MEAN aggregation on a value
+   *         column that is not fixed-width
+   * @throws std::invalid_argument if the first non-empty batch has any other unsupported
+   *         combination of value type and aggregation kind
    * @throws cudf::logic_error if an earlier `aggregate()` call failed while it changed the
    *         aggregate state
    */

@@ -15,7 +15,7 @@ std::unique_ptr<column> string_segmented_minmax(column_view const& col,
                                                 bool is_argmin,
                                                 null_policy null_handling,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   auto device_col         = cudf::column_device_view::create(col, stream);
   auto it                 = cuda::counting_iterator<cudf::size_type>{0};
@@ -27,8 +27,14 @@ std::unique_ptr<column> string_segmented_minmax(column_view const& col,
     data_type{type_to_id<size_type>()}, num_segments, mask_state::UNALLOCATED, stream, mr);
   auto gather_map_it = gather_map->mutable_view().begin<size_type>();
 
-  cudf::reduction::detail::segmented_reduce(
-    it, offsets.begin(), offsets.end(), gather_map_it, string_comparator, identity, stream);
+  cudf::reduction::detail::segmented_reduce(it,
+                                            offsets.begin(),
+                                            offsets.end(),
+                                            gather_map_it,
+                                            string_comparator,
+                                            identity,
+                                            stream,
+                                            cudf::get_current_device_resource_ref());
 
   auto result = std::move(cudf::detail::gather(table_view{{col}},
                                                *gather_map,
@@ -55,7 +61,7 @@ std::unique_ptr<cudf::column> segmented_min(
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(col.type() == output_dtype,
                "segmented_min() operation requires matching output type");

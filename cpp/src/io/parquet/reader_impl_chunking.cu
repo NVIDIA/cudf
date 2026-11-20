@@ -170,11 +170,15 @@ void reader_impl::setup_next_pass(read_mode mode)
     // store off how much memory we've used so far. This includes the compressed page data and the
     // decompressed dictionary data. we will subtract this from the available total memory for the
     // subpasses
+    cudf::memory_resources mrs(_mr);
     auto chunk_iter = cuda::transform_iterator(pass.chunks.d_begin(), get_chunk_compressed_size{});
     pass.base_mem_size =
-      decomp_dict_data_size +
-      cudf::detail::reduce(
-        chunk_iter, chunk_iter + pass.chunks.size(), size_t{0}, cuda::std::plus<size_t>{}, _stream);
+      decomp_dict_data_size + cudf::detail::reduce(chunk_iter,
+                                                   chunk_iter + pass.chunks.size(),
+                                                   size_t{0},
+                                                   cuda::std::plus<size_t>{},
+                                                   _stream,
+                                                   mrs.as_temporary());
 
     // if we are doing subpass reading, generate more accurate num_row estimates for list columns.
     // this helps us to generate more accurate subpass splits.
@@ -280,10 +284,15 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                                            pass.num_rows,
                                                            _stream,
                                                            _mr.get_temporary_mr());
+      if (_nz_map_enabled) {
+        pass.nz_map_sizes = compute_nz_map_sizes(
+          pass.chunks, pass.pages, pass.skip_rows, pass.num_rows, _stream, _mr.get_temporary_mr());
+      }
     }
     include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream);
     include_scratch_size(pass.string_offset_sizes, c_info, _stream);
     include_scratch_size(pass.level_decode_sizes, c_info, _stream);
+    if (_nz_map_enabled) { include_scratch_size(pass.nz_map_sizes, c_info, _stream); }
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;

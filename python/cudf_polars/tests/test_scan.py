@@ -6,18 +6,23 @@ import datetime as dt
 import gzip
 import zlib
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 import zstandard as zstd
 from werkzeug import Response
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -181,6 +186,35 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_cloud_storage_options_raises(in_memory_engine: pl.GPUEngine) -> None:
+    # libcudf/KvikIO cannot honor storage_options (endpoint, credentials, ...),
+    # so a cloud scan that sets them must fall back to the CPU.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options={"aws_region": "us-east-1"},
+        credential_provider=None,
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("storage_options", [None, {}])
+def test_scan_cloud_empty_storage_options_translates(
+    in_memory_engine, storage_options
+) -> None:
+    # Polars serializes an empty provider config (e.g. ``{"Aws": []}``) even
+    # when the user passes no storage_options; that must not force a CPU fallback.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options=storage_options,
+        credential_provider=None,
+    )
+    translator = Translator(q._ldf.visit(), in_memory_engine)
+    translator.translate_ir()
+    assert not translator.errors
+
+
 def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
     with pytest.raises(
         NotImplementedError,
@@ -218,6 +252,7 @@ def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
             parquet_options,
             None,
             [],
+            None,
             context=context,
         )
 
@@ -436,6 +471,19 @@ def test_scan_ndjson_unsupported(engine: pl.GPUEngine, df, tmp_path):
     make_partitioned_source(df, tmp_path / "file", "ndjson")
     q = pl.scan_ndjson(tmp_path / "file", ignore_errors=True)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_parquet_empty_name_null_slice(engine: pl.GPUEngine, tmp_path):
+    path = tmp_path / "null.parquet"
+    pq.write_table(
+        pa.table({"": pa.array([None], type=pa.null())}),
+        path,
+        data_page_size=1,
+        use_dictionary=True,
+    )
+    q = pl.scan_parquet(path).slice(0, 0)
+
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_parquet_nested_null_raises(engine: pl.GPUEngine, tmp_path):
@@ -1259,3 +1307,91 @@ def test_scan_ndjson_schema_column_missing_from_file(
     (tmp_path / "test.ndjson").write_text(contents)
     q = pl.scan_ndjson(tmp_path / "test.ndjson", schema={"b": pl.String, "c": dtype})
     assert_gpu_result_equal(q, engine=engine)
+
+
+def _read_mismatched_sources(paths: list[Path]) -> plc.Table:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(p) for p in paths])
+        )
+        .allow_mismatched_pq_schemas(val=True)
+        .build()
+    )
+    options.set_column_names(["t"])
+    return plc.io.parquet.read_parquet(options).tbl
+
+
+@pytest.mark.parametrize("pyarrow_first", [True, False])
+@pytest.mark.parametrize("utc", [False, True])
+def test_read_parquet_sources_from_different_writers(
+    tmp_path: Path, *, pyarrow_first: bool, utc: bool
+) -> None:
+    # pyarrow writes the deprecated TIMESTAMP_MICROS converted type next to
+    # the logical type, polars writes only the logical type. Sources whose
+    # logical types are identical can be read together.
+    tz = "UTC" if utc else None
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pyarrow_path = tmp_path / "pyarrow.parquet"
+    polars_path = tmp_path / "polars.parquet"
+    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), pyarrow_path)
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+        polars_path
+    )
+    paths = [pyarrow_path, polars_path]
+    result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
+    assert result.columns()[0].to_arrow().to_pylist() == [t, t]
+
+
+@pytest.mark.parametrize("pyarrow_first", [True, False])
+def test_read_parquet_sources_with_different_utc_adjustment(
+    tmp_path: Path, *, pyarrow_first: bool
+) -> None:
+    # A timestamp with a time zone and one without, from different writers,
+    # are different types and must not be read together.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pyarrow_path = tmp_path / "pyarrow.parquet"
+    polars_path = tmp_path / "polars.parquet"
+    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us"))}), pyarrow_path)
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", "UTC")}).write_parquet(
+        polars_path
+    )
+    paths = [pyarrow_path, polars_path]
+    with pytest.raises(ValueError, match="mismatching data type or schema"):
+        _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
+
+
+@pytest.mark.parametrize("writer", ["polars", "pyarrow"])
+def test_read_parquet_sources_naive_and_utc_from_same_writer(
+    tmp_path: Path, writer: str
+) -> None:
+    # The reader does not use the time zone flag, so files from one writer
+    # that differ only in it can still be read together.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    paths = [tmp_path / "naive.parquet", tmp_path / "utc.parquet"]
+    for path, tz in zip(paths, (None, "UTC"), strict=True):
+        if writer == "pyarrow":
+            pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), path)
+        else:
+            pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+                path
+            )
+    assert _read_mismatched_sources(paths).num_rows() == 2
+
+
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ms", "ns")])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_read_parquet_sources_with_different_time_units(
+    tmp_path: Path,
+    units: tuple[Literal["ms", "us", "ns"], Literal["ms", "us", "ns"]],
+    *,
+    reverse: bool,
+) -> None:
+    # The values are copied without conversion, so sources with different
+    # time units must not be read together. Polars writes no converted type,
+    # so only the logical type tells the files apart.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
+    paths = [tmp_path / f"{unit}.parquet" for unit in units]
+    for path, unit in zip(paths, units, strict=True):
+        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(path)
+    with pytest.raises(ValueError, match="mismatching data type or schema"):
+        _read_mismatched_sources(paths[::-1] if reverse else paths)

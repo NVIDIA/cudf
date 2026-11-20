@@ -25,8 +25,8 @@
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
@@ -80,7 +80,7 @@ void enable_hugepage(ArrowBuffer* buffer)
 struct dispatch_to_arrow_host {
   cudf::column_view column;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   int populate_validity_bitmap(ArrowBitmap* bitmap) const
   {
@@ -109,14 +109,15 @@ struct dispatch_to_arrow_host {
     return NANOARROW_OK;
   }
 
-  template <typename T,
-            CUDF_ENABLE_IF(!is_rep_layout_compatible<T>() && !cudf::is_fixed_point<T>())>
+  template <typename T>
+    requires(not cudf::concepts::rep_layout_compatible<T> and not cudf::concepts::fixed_point<T>)
   int operator()(ArrowArray*) const
   {
     CUDF_FAIL("Unsupported type for to_arrow_host", cudf::data_type_error);
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>() || is_fixed_point<T>())>
+  template <typename T>
+    requires(cudf::concepts::rep_layout_compatible<T> or cudf::concepts::fixed_point<T>)
   int operator()(ArrowArray* out) const
   {
     nanoarrow::UniqueArray tmp;
@@ -137,7 +138,7 @@ struct dispatch_to_arrow_host {
 
 int get_column(cudf::column_view column,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr,
+               cudf::memory_resources mr,
                ArrowArray* out);
 
 template <>
@@ -307,7 +308,7 @@ int dispatch_to_arrow_host::operator()<cudf::struct_view>(ArrowArray* out) const
 
 int get_column(cudf::column_view column,
                cuda::stream_ref stream,
-               rmm::device_async_resource_ref mr,
+               cudf::memory_resources mr,
                ArrowArray* out)
 {
   return column.type().id() != type_id::EMPTY
@@ -339,7 +340,7 @@ unique_device_array_t create_device_array(nanoarrow::UniqueArray&& out)
 
 unique_device_array_t to_arrow_host(cudf::table_view const& table,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   nanoarrow::UniqueArray tmp;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(tmp.get(), NANOARROW_TYPE_STRUCT));
@@ -365,7 +366,7 @@ unique_device_array_t to_arrow_host(cudf::table_view const& table,
 
 unique_device_array_t to_arrow_host(cudf::column_view const& col,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   nanoarrow::UniqueArray tmp;
 
@@ -425,7 +426,7 @@ struct strings_to_binary_view {
 
 unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& col,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   nanoarrow::UniqueArray out;
   NANOARROW_THROW_NOT_OK(ArrowArrayInitFromType(out.get(), NANOARROW_TYPE_STRING_VIEW));
@@ -481,7 +482,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
   // using max/2 here ensures no buffer is greater than 2GB
   constexpr int64_t max_size = std::numeric_limits<int32_t>::max() / 2;
-  auto const num_buffers     = cudf::util::div_rounding_up_safe(longer_chars_size, max_size);
+  auto const num_buffers     = cudf::detail::div_rounding_up_safe(longer_chars_size, max_size);
   auto buffer_offsets        = cuda::device_buffer<int64_t>(
     stream, cudf::get_current_device_resource_ref(), num_buffers, cuda::no_init);
   // copy the bytes for the longer strings into Arrow variadic buffers
@@ -551,7 +552,7 @@ unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& 
 
 unique_device_array_t to_arrow_host(cudf::column_view const& col,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host(col, stream, mr);
@@ -559,7 +560,7 @@ unique_device_array_t to_arrow_host(cudf::column_view const& col,
 
 unique_device_array_t to_arrow_host(cudf::table_view const& table,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host(table, stream, mr);
@@ -567,7 +568,7 @@ unique_device_array_t to_arrow_host(cudf::table_view const& table,
 
 unique_device_array_t to_arrow_host_stringview(cudf::strings_column_view const& col,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_arrow_host_stringview(col, stream, mr);

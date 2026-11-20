@@ -8,11 +8,11 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/reduction/detail/reduction_functions.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/atomic>
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
 #include <thrust/for_each.h>
 
 namespace cudf {
@@ -42,11 +42,10 @@ struct any_fn {
     int32_t* d_result;
   };
 
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   std::unique_ptr<scalar> operator()(column_view const& input,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(cuda::std::is_arithmetic_v<T>)
+                                     cudf::memory_resources mr)
   {
     auto const d_dict = cudf::column_device_view::create(input, stream);
     auto const iter   = [&] {
@@ -64,10 +63,7 @@ struct any_fn {
     return std::make_unique<numeric_scalar<bool>>(d_result.value(stream), true, stream, mr);
   }
   template <typename T>
-  std::unique_ptr<scalar> operator()(column_view const&,
-                                     cuda::stream_ref,
-                                     rmm::device_async_resource_ref)
-    requires(!cuda::std::is_arithmetic_v<T>)
+  std::unique_ptr<scalar> operator()(column_view const&, cuda::stream_ref, cudf::memory_resources)
   {
     CUDF_FAIL("Unexpected key type for dictionary in reduction any()");
   }
@@ -79,7 +75,7 @@ std::unique_ptr<cudf::scalar> any(column_view const& col,
                                   cudf::data_type const output_dtype,
                                   std::optional<std::reference_wrapper<scalar const>> init,
                                   cuda::stream_ref stream,
-                                  rmm::device_async_resource_ref mr)
+                                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(output_dtype == cudf::data_type(cudf::type_id::BOOL8),
                "any() operation can be applied with output type `bool8` only");

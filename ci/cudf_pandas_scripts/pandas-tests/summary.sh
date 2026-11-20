@@ -20,6 +20,7 @@
 set -uo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 # shellcheck source=ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 source ci/cudf_pandas_scripts/pandas-tests/shard-results.sh
 
@@ -29,7 +30,7 @@ RAPIDS_FULL_VERSION=$(<./VERSION)
 rapids-logger "Aggregating pandas-tests results from ${NUM_SHARDS} shards"
 
 # job-summary.py renders markdown tables with pandas; tabulate backs to_markdown.
-if ! rapids-pip-retry install pandas tabulate; then
+if ! rapids-uv-pip install pandas tabulate; then
     rapids-logger "Could not install summary dependencies; skipping summary."
     exit 0
 fi

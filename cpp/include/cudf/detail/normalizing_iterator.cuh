@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,7 @@
 
 #endif
 
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/std/type_traits>
@@ -199,7 +200,7 @@ struct alignas(16) base_normalator {
 
  private:
   struct integer_sizeof_fn {
-    template <typename T, CUDF_ENABLE_IF(not cudf::is_integral_not_bool<T>())>
+    template <typename T>
     CUDF_HOST_DEVICE std::size_t operator()() const
     {
 #ifndef __CUDA_ARCH__
@@ -208,7 +209,7 @@ struct alignas(16) base_normalator {
       CUDF_UNREACHABLE("only integral types are supported");
 #endif
     }
-    template <typename T, CUDF_ENABLE_IF(cudf::is_integral_not_bool<T>())>
+    template <cudf::concepts::integral_not_bool T>
     CUDF_HOST_DEVICE std::size_t operator()() const noexcept
     {
       return sizeof(T);

@@ -44,7 +44,7 @@ std::unique_ptr<scalar> compound_reduction(column_view const& col,
                                            data_type const output_dtype,
                                            size_type ddof,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   auto const valid_count = col.size() - col.null_count();
 
@@ -101,7 +101,7 @@ struct result_type_dispatcher {
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ResultType>())
   {
     return compound_reduction<ElementType, ResultType, Op>(col, output_dtype, ddof, stream, mr);
@@ -112,7 +112,7 @@ struct result_type_dispatcher {
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(not is_supported_v<ResultType>())
   {
     CUDF_FAIL("Unsupported output data type");
@@ -136,7 +136,7 @@ struct element_type_dispatcher {
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(is_supported_v<ElementType>())
   {
     CUDF_EXPECTS(ddof >= 0, "ddof must be non-negative", std::domain_error);
@@ -149,7 +149,7 @@ struct element_type_dispatcher {
                                      cudf::data_type const output_dtype,
                                      size_type ddof,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
     requires(not is_supported_v<ElementType>())
   {
     CUDF_FAIL(

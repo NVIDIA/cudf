@@ -14,9 +14,10 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <cuda/std/type_traits>
+#include <cuda/std/utility>
 
 #include <random>
 #include <string>
@@ -164,6 +165,14 @@ cudf::io::parquet::OffsetIndex read_offset_index(
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk);
 
 /**
+ * @brief Encodes an INT96 timestamp as in Parquet statistics
+ *
+ * @param int96 Nanoseconds of the day and Julian day number
+ * @return The 12 bytes of the INT96 value
+ */
+std::vector<uint8_t> to_int96_bytes(cuda::std::pair<int64_t, int32_t> int96);
+
+/**
  * @brief Reads and parses the page header at `page_loc`
  *
  * @throws cudf::logic_error if the page_loc data is invalid
@@ -272,79 +281,69 @@ static constexpr int page_size_for_ordered_tests = 5000;
 namespace testdata {
 
 // ----- most numerics
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-ascending();
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> ascending();
 
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-descending();
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> descending();
 
-template <typename T>
-std::enable_if_t<cuda::std::is_arithmetic_v<T> && !std::is_same_v<T, bool>,
-                 cudf::test::fixed_width_column_wrapper<T>>
-unordered();
+template <cudf::concepts::arithmetic_not_bool T>
+cudf::test::fixed_width_column_wrapper<T> unordered();
 
 // ----- bool
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> ascending();
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> ascending();
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>>
-descending();
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> descending();
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, bool>, cudf::test::fixed_width_column_wrapper<bool>> unordered();
+template <cudf::concepts::boolean T>
+cudf::test::fixed_width_column_wrapper<bool> unordered();
 
 // ----- fixed point types
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending();
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> ascending();
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> descending();
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> descending();
 
-template <typename T>
-std::enable_if_t<cudf::is_fixed_point<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered();
+template <cudf::concepts::fixed_point T>
+cudf::test::fixed_width_column_wrapper<T> unordered();
 
 // ----- chrono types
 // ----- timstamp
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending();
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> ascending();
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> descending();
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> descending();
 
-template <typename T>
-std::enable_if_t<cudf::is_timestamp<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered();
+template <cudf::concepts::timestamp T>
+cudf::test::fixed_width_column_wrapper<T> unordered();
 
 // ----- duration
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> ascending();
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> ascending();
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> descending();
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> descending();
 
-template <typename T>
-std::enable_if_t<cudf::is_duration<T>(), cudf::test::fixed_width_column_wrapper<T>> unordered();
+template <cudf::concepts::duration T>
+cudf::test::fixed_width_column_wrapper<T> unordered();
 
 // ----- string_view
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-ascending();
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper ascending();
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-descending();
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper descending();
 
-template <typename T>
-std::enable_if_t<std::is_same_v<T, cudf::string_view>, cudf::test::strings_column_wrapper>
-unordered();
+template <cudf::concepts::string_view T>
+cudf::test::strings_column_wrapper unordered();
 
 }  // namespace testdata

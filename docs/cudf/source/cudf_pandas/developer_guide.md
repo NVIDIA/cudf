@@ -24,23 +24,24 @@ Also note that the module `xpd` is a wrapped module and contains cuDF and Pandas
 To check if an object is a proxy type, we can use `cudf.pandas.is_proxy_object`.
   ```python
   import cudf.pandas
+
   cudf.pandas.install()
   import pandas as xpd
 
   cudf = xpd._fsproxy_fast
   pd = xpd._fsproxy_slow
 
-  s1 = cudf.Series([1,2])
-  s2 = pd.Series([1,2])
-  s3 = xpd.Series([1,2])
+  s1 = cudf.Series([1, 2])
+  s2 = pd.Series([1, 2])
+  s3 = xpd.Series([1, 2])
 
   from cudf.pandas import is_proxy_object
 
-  is_proxy_object(s1) # returns False
+  is_proxy_object(s1)  # returns False
 
-  is_proxy_object(s2) # returns False
+  is_proxy_object(s2)  # returns False
 
-  is_proxy_object(s3) # returns True
+  is_proxy_object(s3)  # returns True
   ```
 
 ```{note}
@@ -110,10 +111,11 @@ For example, in the snippet below, the `xpd.Series` type is an instance of `_Fas
 Therefore we can access the property `_fsproxy_fast` defined in the metaclass.
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 import pandas as xpd
 
-print(xpd.Series._fsproxy_fast) # output is cudf.core.series.Series
+print(xpd.Series._fsproxy_fast)  # output is cudf.core.series.Series
 ```
 
 ## debugging `cudf.pandas`
@@ -123,12 +125,17 @@ Setting the environment variable `CUDF_PANDAS_DEBUGGING` produces a warning when
 For example, the snippet below produces the warning below.
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 import pandas as pd
 import numpy as np
 
-setattr(pd.Series.mean, "_fsproxy_slow", lambda self, *args, **kwargs: np.float64(1))
-s = pd.Series([1,2,3])
+setattr(
+    pd.Series.mean,
+    "_fsproxy_slow",
+    lambda self, *args, **kwargs: np.float64(1),
+)
+s = pd.Series([1, 2, 3])
 s.mean()
 ```
 ```
@@ -142,13 +149,12 @@ Setting the environment variable `CUDF_PANDAS_FAIL_ON_FALLBACK` causes `cudf.pan
 For example,
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 import pandas as pd
 import numpy as np
 
-df = pd.DataFrame({
-    'complex_col': [1 + 2j, 3 + 4j, 5 + 6j]
-})
+df = pd.DataFrame({"complex_col": [1 + 2j, 3 + 4j, 5 + 6j]})
 
 print(df)
 ```

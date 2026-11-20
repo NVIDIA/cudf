@@ -26,6 +26,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
@@ -49,6 +50,7 @@ from cudf_polars.streaming.actor_graph.nodes import (
 )
 from cudf_polars.streaming.actor_graph.partitioning import (
     NormalizedPartitioning,
+    is_row_ordered_by,
     maybe_remap_partitioning,
     replace_row_orderings,
 )
@@ -71,7 +73,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.sort import _has_simple_zlice
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -254,6 +256,7 @@ async def _receive_and_buffer_chunks(
             )
             local_row_offset += nrows
             tbl = plc.Table([*df.table.columns(), seq_id_col])
+            del seq_id_col
         else:
             tbl = df.table
         chunk_store.insert(
@@ -264,7 +267,7 @@ async def _receive_and_buffer_chunks(
                 ),
             )
         )
-        del df
+        del df, tbl
 
     return local_candidates_list
 
@@ -307,6 +310,7 @@ async def _insert_chunks_into_shuffle(
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
             if skip_insert:
+                del msg
                 continue
             seq_num = msg.sequence_number
             # The chunk's data moves into shuffler-owned packed buffers,
@@ -320,23 +324,24 @@ async def _insert_chunks_into_shuffle(
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
-            stream = get_joined_cuda_stream(
+            with stream_ordered_after(
                 ir_context.get_cuda_stream,
                 upstreams=(available_chunk.stream, sort_boundaries_df.stream),
-            )
-
-            # TODO: Pre-sort chunks if they do not originate from the ChunkStore.
-            # (Not possible until we use _global_sort outside of sort_actor.)
-            splits = find_sort_splits(
-                sort_cols_tbl,
-                sort_boundaries_df.table,
-                seq_num,
-                column_order,
-                null_order,
-                stream=stream,
-                chunk_relative=True,
-            )
+            ) as stream:
+                # TODO: Pre-sort chunks if they do not originate from the
+                # ChunkStore. (Not possible until we use _global_sort outside
+                # of sort_actor.)
+                splits = find_sort_splits(
+                    sort_cols_tbl,
+                    sort_boundaries_df.table,
+                    seq_num,
+                    column_order,
+                    null_order,
+                    stream=stream,
+                    chunk_relative=True,
+                )
             await inserter.insert_split(available_chunk, splits)
+            del tbl, sort_cols_tbl, available_chunk
 
     post_sort_ir = ir
     if ir.stable:
@@ -374,8 +379,9 @@ async def _extract_partitions_and_send(
         stream = ir_context.get_cuda_stream()
         table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
-            table = post_sort_ir.do_evaluate(
-                *post_sort_ir._non_child_args,
+            df = await ir_context.to_thread(
+                evaluate_ir,
+                post_sort_ir,
                 DataFrame.from_table(
                     table,
                     list(post_sort_ir.schema.keys()),
@@ -383,12 +389,14 @@ async def _extract_partitions_and_send(
                     stream,
                 ),
                 context=ir_context,
-            ).table
+            )
+            table = df.table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
             chunk = TableChunk.from_pylibcudf_table(
-                table, stream, exclusive_view=True, br=context.br()
+                table, df.stream, exclusive_view=True, br=context.br()
             )
+            del df, table
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
 
     await ch_out.drain(context)
@@ -505,7 +513,6 @@ async def sort_actor(
     ) as actor_scope:
         tracer = actor_scope.tracer
         ir_context = actor_scope.require_ir_context()
-        # TODO: Skip sort if OrderScheme metadata is present and compatible.
         metadata_in = await recv_metadata(ch_in, context)
 
         if ir.zlice is not None:
@@ -526,6 +533,20 @@ async def sort_actor(
             return
 
         order_keys = sort_to_order_keys(ir)
+        if is_row_ordered_by(
+            metadata_in.partitioning, order_keys, scope=RowOrderingScope.GLOBAL
+        ):
+            if tracer is not None:
+                tracer.decision = "already_row_ordered"
+                tracer.set_duplicated(duplicated=metadata_in.duplicated)
+            await send_metadata(ch_out, context, metadata_in)
+            while (msg := await ch_in.recv(context)) is not None:
+                if tracer is not None:
+                    tracer.add_chunk()
+                await ch_out.send(context, msg)
+            await ch_out.drain(context)
+            return
+
         partitioning = NormalizedPartitioning.from_keys(
             metadata_in.partitioning, comm.nranks, keys=order_keys
         )

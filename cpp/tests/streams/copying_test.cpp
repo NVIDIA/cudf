@@ -17,6 +17,7 @@
 #include <cuda/iterator>
 
 #include <limits>
+#include <span>
 
 class CopyingTest : public cudf::test::BaseFixture {};
 
@@ -348,7 +349,8 @@ TEST_F(CopyingTest, ContiguousSplit)
   std::vector<std::string> strings(string_randomizer, string_randomizer + size);
   cudf::test::strings_column_wrapper col2(strings.begin(), strings.end());
   cudf::table_view tbl({col, col2});
-  auto result = cudf::contiguous_split(tbl, splits, cudf::test::get_default_stream());
+  auto result = cudf::contiguous_split(
+    tbl, std::span<cudf::size_type const>{splits}, cudf::test::get_default_stream());
 }
 
 CUDF_TEST_PROGRAM_MAIN()

@@ -14,6 +14,7 @@
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
@@ -53,24 +54,47 @@ static_assert(values_per_mini_block % 32 == 0);
 
 __device__ constexpr int rolling_idx(int index) { return rolling_index<buffer_size>(index); }
 
+// Largest scratch type of the bit packer
+using max_scratch_type = uint64_t;
+
+// Block-scope atomic OR for the bit packer's shared scratch words. The order is relaxed, the
+// __syncwarp() calls order the scratch accesses. atomicOr_block has no uint64_t overload, so pass
+// 64-bit words as the same-size unsigned long long
+static_assert(sizeof(unsigned long long) == sizeof(max_scratch_type),
+              "atomic_or_block passes max_scratch_type words as unsigned long long");
+template <cuda::std::unsigned_integral T>
+inline __device__ void atomic_or_block(T* address, T val)
+{
+  if constexpr (sizeof(T) == sizeof(unsigned long long)) {
+    atomicOr_block(reinterpret_cast<unsigned long long*>(address), val);
+  } else {
+    atomicOr_block(address, val);
+  }
+}
+
 // Version of bit packer that can handle up to 64 bits values.
-// T is the type to use for processing. if nbits <= 32 use uint32_t, otherwise unsigned long long
-// (not uint64_t because of atomicOr's typing). allowing this to be selectable since there's a
-// measurable impact to using the wider types.
+// T is the type to use for processing. if nbits <= 32 use uint32_t, otherwise max_scratch_type.
+// allowing this to be selectable since there's a measurable impact to using the wider types.
+// temp_space must hold warp_size max_scratch_type words for each warp of the block, whichever
+// type the warp uses.
 template <typename scratch_type>
+  requires(cuda::std::same_as<scratch_type, uint32_t> or
+           cuda::std::same_as<scratch_type, max_scratch_type>)
 inline __device__ void bitpack_mini_block(
-  uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, void* temp_space)
+  uint8_t* dst, uleb128_t val, uint32_t count, uint8_t nbits, max_scratch_type* temp_space)
 {
   using wide_type = cuda::std::
-    conditional_t<cuda::std::is_same_v<scratch_type, unsigned long long>, __uint128_t, uint64_t>;
+    conditional_t<cuda::std::same_as<scratch_type, max_scratch_type>, __uint128_t, uint64_t>;
   using cudf::detail::warp_size;
-  scratch_type constexpr mask = sizeof(scratch_type) * 8 - 1;
-  auto constexpr div          = sizeof(scratch_type) * 8;
+  auto constexpr div          = cuda::std::numeric_limits<scratch_type>::digits;  // bits per word
+  scratch_type constexpr mask = div - 1;  // bit offset within a word
 
   auto const lane_id = threadIdx.x % warp_size;
   auto const warp_id = threadIdx.x / warp_size;
 
-  auto const scratch = reinterpret_cast<scratch_type*>(temp_space) + warp_id * warp_size;
+  // The warps of a block can pack their mini-blocks with different scratch types, so each warp
+  // gets a region sized for max_scratch_type. Regions sized by `scratch_type` would overlap.
+  auto const scratch = reinterpret_cast<scratch_type*>(temp_space + warp_id * warp_size);
 
   // zero out scratch
   scratch[lane_id] = 0;
@@ -98,13 +122,14 @@ inline __device__ void bitpack_mini_block(
     memcpy(&v1, &v2, sizeof(wide_type));
 
     // Atomically write result to scratch.
-    if (v1[0]) { atomicOr(scratch + ((lane_id * nbits) / div), v1[0]); }
-    if (v1[1]) { atomicOr(scratch + ((lane_id * nbits) / div) + 1, v1[1]); }
+    auto const word = (lane_id * nbits) / div;
+    if (v1[0]) { atomic_or_block(&scratch[word], v1[0]); }
+    if (v1[1]) { atomic_or_block(&scratch[word + 1], v1[1]); }
   }
   __syncwarp();
 
   // Copy scratch data to final destination.
-  auto const available_bytes = util::div_rounding_up_safe(count * nbits, 8U);
+  auto const available_bytes = cudf::detail::div_rounding_up_safe(count * nbits, 8U);
   auto const scratch_bytes   = reinterpret_cast<uint8_t const*>(scratch);
 
   for (uint32_t i = lane_id; i < available_bytes; i += warp_size) {
@@ -140,7 +165,7 @@ class delta_binary_packer {
   typename warp_reduce::TempStorage* _warp_tmp;
   typename block_reduce::TempStorage* _block_tmp;
 
-  void* _bitpack_tmp;  // pointer to shared scratch memory used in bitpacking
+  delta::max_scratch_type* _bitpack_tmp;  // pointer to shared scratch memory used in bitpacking
 
   // Write the delta binary header. Only call from thread 0.
   inline __device__ void write_header()
@@ -177,7 +202,7 @@ class delta_binary_packer {
     _scan_tmp         = reinterpret_cast<index_scan::TempStorage*>(temp_storage);
     _warp_tmp         = reinterpret_cast<typename warp_reduce::TempStorage*>(temp_storage);
     _block_tmp        = reinterpret_cast<typename block_reduce::TempStorage*>(temp_storage);
-    _bitpack_tmp      = _buffer + delta::buffer_size;
+    _bitpack_tmp      = reinterpret_cast<delta::max_scratch_type*>(_buffer + delta::buffer_size);
     _current_idx      = 0;
     _values_in_buffer = 0;
     _buffer[0]        = 0;
@@ -271,7 +296,7 @@ class delta_binary_packer {
     if (warp_idx < _num_values) {
       auto const num_enc = min(delta::values_per_mini_block, _num_values - warp_idx);
       if (_mb_bits[warp_id] > 32) {
-        delta::bitpack_mini_block<unsigned long long>(
+        delta::bitpack_mini_block<delta::max_scratch_type>(
           mb_ptr, norm_delta, num_enc, _mb_bits[warp_id], _bitpack_tmp);
       } else {
         delta::bitpack_mini_block<uint32_t>(

@@ -13,6 +13,7 @@ import pylibcudf as plc
 from cudf_polars.containers import Column
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.utils.reshape import broadcast
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
     from cudf_polars.containers import DataFrame, DataType
@@ -40,12 +41,7 @@ class Gather(Expr):
         )
         n = values.size
         if indices.size == 0:
-            return Column(
-                plc.column_factories.make_empty_column(
-                    self.dtype.plc_type, stream=df.stream
-                ),
-                dtype=self.dtype,
-            )
+            return Column(make_empty_column(self.dtype, df.stream), dtype=self.dtype)
         lo, hi = plc.reduce.minmax(indices.obj, stream=df.stream)
         if hi.to_py(stream=df.stream) >= n or lo.to_py(stream=df.stream) < -n:  # type: ignore[operator]
             raise ValueError("gather indices are out of bounds")

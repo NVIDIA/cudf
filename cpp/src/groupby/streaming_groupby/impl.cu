@@ -206,10 +206,18 @@ streaming_groupby::impl::impl(host_span<size_type const> key_indices,
                               size_type max_distinct_keys,
                               null_policy null_handling,
                               cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _max_distinct_keys{max_distinct_keys}, _null_handling{null_handling}, _mr{std::move(mr)}
+  : aggregate_state{requests, std::move(mr)},
+    _max_distinct_keys{max_distinct_keys},
+    _null_handling{null_handling}
 {
   CUDF_EXPECTS(max_distinct_keys > 0, "max_distinct_keys must be positive.", std::invalid_argument);
   if (!key_indices.empty()) { _key_indices.assign(key_indices.begin(), key_indices.end()); }
+}
+
+aggregate_state::aggregate_state(host_span<streaming_aggregation_request const> requests,
+                                 cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+  : _mr{std::move(mr)}
+{
   validate_requests(requests);
 
   for (auto const& req : requests) {
@@ -240,6 +248,19 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
   }
   _empty_key_schema = std::make_unique<table>(std::move(empty_key_cols));
 
+  initialize_aggregates(data, stream, mr);
+
+  // Companion vector: one compacted batch ID per dense group.
+  _key_batch_ids = std::make_unique<cuda::device_buffer<size_type>>(
+    stream, mr.get_output_mr(), _max_distinct_keys, cuda::no_init);
+
+  _initialized = true;
+}
+
+void aggregate_state::initialize_aggregates(table_view const& data,
+                                            cuda::stream_ref stream,
+                                            cudf::memory_resources mr)
+{
   auto agg_requests = build_aggregation_requests(_requests_clone, data);
 
   auto [values_view, agg_kinds_hv, agg_objects, is_intermediate, has_compound] =
@@ -324,20 +345,13 @@ void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_re
     }
     CUDF_EXPECTS(found, "Internal error: request's first simple agg not found.");
   }
-
-  // Companion vector: one compacted batch ID per dense group.
-  _key_batch_ids = std::make_unique<cuda::device_buffer<size_type>>(
-    stream, mr.get_output_mr(), _max_distinct_keys, cuda::no_init);
-
-  _initialized = true;
 }
 
-std::unique_ptr<table> streaming_groupby::impl::make_aggregate_results(
-  size_type capacity,
-  size_type first_column,
-  size_type num_columns,
-  cuda::stream_ref stream,
-  cudf::memory_resources mr) const
+std::unique_ptr<table> aggregate_state::make_aggregate_results(size_type capacity,
+                                                               size_type first_column,
+                                                               size_type num_columns,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr) const
 {
   auto const kinds =
     host_span<aggregation::Kind const>{_agg_kinds}.subspan(first_column, num_columns);
@@ -376,6 +390,15 @@ void streaming_groupby::impl::ensure_aggregate_capacity(size_type required,
       ? _aggregate_capacity
       : static_cast<size_type>(std::min<int64_t>(
           _max_distinct_keys, std::max<int64_t>(required, 2LL * _aggregate_capacity)));
+  reshape_aggregate_results(
+    _distinct_keys.load(std::memory_order_relaxed), next_capacity, stream, mr);
+}
+
+void aggregate_state::reshape_aggregate_results(size_type old_groups,
+                                                size_type next_capacity,
+                                                cuda::stream_ref stream,
+                                                cudf::memory_resources mr)
+{
   // Multiple partials stay within the budget; a single partial uses capacity rows.
   auto const next_partials_per_group = std::max<size_type>(1, _partial_budget / next_capacity);
   if (next_capacity == _aggregate_capacity && next_partials_per_group == _partials_per_group) {
@@ -392,7 +415,6 @@ void streaming_groupby::impl::ensure_aggregate_capacity(size_type required,
     _partials_per_group = next_partials_per_group;
     return;
   }
-  auto const old_groups  = _distinct_keys.load(std::memory_order_relaxed);
   _growing_agg_columns   = _agg_results->release();
   _num_grown_agg_columns = 0;
   for (size_type i = 0; i < static_cast<size_type>(_growing_agg_columns.size()); ++i) {
@@ -448,10 +470,10 @@ void streaming_groupby::impl::update_nullable_state(table_view const& batch_keys
   _has_nullable_keys = _has_nullable_keys || cudf::has_nested_nullable_columns(batch_keys);
 }
 
-std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_ref stream,
-                                                                   cudf::memory_resources mr) const
+std::unique_ptr<table> aggregate_state::gather_agg_results(size_type size,
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr) const
 {
-  auto const size = _distinct_keys.load(std::memory_order_relaxed);
   if (!_growing_agg_columns.empty()) {
     // A failed grow leaves completed columns with their old groups in the first partial,
     // while the untouched suffix still uses the old pitch. Preserve finalize() recovery.
@@ -514,11 +536,8 @@ std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
   return cudf::concatenate(distinct_keys, stream, mr);
 }
 
-std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
-streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
-                                           std::unique_ptr<table> agg_gathered,
-                                           cuda::stream_ref stream,
-                                           cudf::memory_resources mr) const
+std::vector<aggregation_result> aggregate_state::finalize_gathered(
+  std::unique_ptr<table> agg_gathered, cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   // Each input column needs one cache identity shared by all of its simple and compound
   // aggregations. Prefer a result retaining the input type (e.g. SUM for decimal/duration
@@ -578,10 +597,8 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
     user_requests.push_back(std::move(ar));
   }
 
-  return {
-    std::move(keys),
-    detail::extract_results(
-      std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr())};
+  return detail::extract_results(
+    std::span<aggregation_request const>{user_requests}, cache, stream, mr.get_output_mr());
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
@@ -591,10 +608,11 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
   CUDF_EXPECTS(_initialized, "Cannot finalize streaming_groupby with no accumulated data.");
   _aggregate_done.wait(stream);
   try {
-    auto result = finalize_gathered(
-      gather_distinct_keys(stream, mr.get_output_mr()), gather_agg_results(stream, mr), stream, mr);
+    auto keys    = gather_distinct_keys(stream, mr.get_output_mr());
+    auto results = finalize_gathered(
+      gather_agg_results(_distinct_keys.load(std::memory_order_relaxed), stream, mr), stream, mr);
     record_result_read(stream);
-    return result;
+    return {std::move(keys), std::move(results)};
   } catch (...) {
     // A failed read must not leave untracked accesses before a subsequent resize.
     synchronize_on_error(stream);
@@ -609,11 +627,12 @@ streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::
   _compacted_batches.clear();
   _empty_key_schema.reset();
 
-  auto agg_gathered = gather_agg_results(stream, mr);
+  auto agg_gathered =
+    gather_agg_results(_distinct_keys.load(std::memory_order_relaxed), stream, mr);
   _agg_results.reset();
   _growing_agg_columns.clear();
 
-  return finalize_gathered(std::move(keys), std::move(agg_gathered), stream, mr);
+  return {std::move(keys), finalize_gathered(std::move(agg_gathered), stream, mr)};
 }
 
 cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert(

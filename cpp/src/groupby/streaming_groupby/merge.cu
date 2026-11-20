@@ -82,7 +82,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
       if (this == &other) {
         // Partials collapse into the first partial. A self-merge must snapshot first so its first
         // partial cannot observe contributions concurrently arriving from other partials.
-        source_snapshot           = other.gather_agg_results(stream, mr);
+        source_snapshot           = other.gather_agg_results(other_distinct_keys, stream, mr);
         source_partials_per_group = 1;
         source_capacity           = other_distinct_keys;
         return source_snapshot->view();

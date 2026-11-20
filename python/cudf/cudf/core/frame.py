@@ -691,6 +691,14 @@ class Frame(BinaryOperand, Scannable, Serializable):
                 to_dtype = None
             casted_array = module.asarray(array, dtype=to_dtype)
             if (
+                na_value is None
+                and module is np
+                and casted_array.dtype == np.dtype(object)
+                and is_pandas_nullable_extension_dtype(col.dtype)
+                and col.has_nulls()
+            ):
+                casted_array[col.isnull().to_numpy()] = None
+            if (
                 col.has_nulls()
                 and dtype is not None
                 and is_string_dtype(dtype)
@@ -765,6 +773,17 @@ class Frame(BinaryOperand, Scannable, Serializable):
                             )
                         else:
                             to_dtype = np.dtype("object")
+                    elif (
+                        module is np
+                        and (na_value is no_default or na_value is None)
+                        and pd.options.future.distinguish_nan_and_na
+                        and any(
+                            is_pandas_nullable_extension_dtype(col.dtype)
+                            and col.has_nulls()
+                            for col in self._columns
+                        )
+                    ):
+                        to_dtype = np.dtype(object)
                     elif to_dtype.kind in "ui":
                         to_dtype = np.dtype("float64")
 
@@ -886,6 +905,7 @@ class Frame(BinaryOperand, Scannable, Serializable):
         ):
             if dtype is None:
                 dtype = self._columns[0].dtype
+            dtype = getattr(dtype, "numpy_dtype", dtype)
 
             shape = (len(self), self._num_columns)
             out = cupy.empty(shape, dtype=dtype, order="F")

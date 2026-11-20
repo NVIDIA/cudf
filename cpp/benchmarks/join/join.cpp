@@ -102,8 +102,8 @@ void nvbench_inner_join_selectivity(
   BM_join<false, join_t::HASH, NullEquality>(state, dtypes, join, 1, selectivity);
 }
 
-// Times the phases of a hash join separately: building the hash table, counting the matches and
-// retrieving the matched row indices.
+// Times the phases of a hash join separately: building the hash table, counting the matches,
+// retrieving the matched row indices from a match context, and the whole inner join.
 template <bool Nullable, cudf::null_equality NullEquality, data_type DataType>
 void nvbench_hash_join_phase(nvbench::state& state,
                              nvbench::type_list<nvbench::enum_type<Nullable>,
@@ -144,13 +144,24 @@ void nvbench_hash_join_phase(nvbench::state& state,
   }
 
   auto const hash_join = build();
-  // The peak of a probe phase excludes the hash table built above.
+  // Only the retrieve phase consumes a match context.
+  auto const context = cudf::join_partition_context{
+    phase == "retrieve"
+      ? std::make_unique<cudf::join_match_context>(hash_join.inner_join_match_context(probe_keys))
+      : nullptr,
+    0,
+    probe_keys.num_rows()};
+  // The peak of a probe phase excludes the hash table and the match context built above.
   auto const mem_stats_logger = cudf::memory_stats_logger();
   if (phase == "count") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
       [[maybe_unused]] auto const size = hash_join.inner_join_size(probe_keys);
     });
   } else if (phase == "retrieve") {
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+      [[maybe_unused]] auto const result = hash_join.partitioned_inner_join(context);
+    });
+  } else if (phase == "join") {
     state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
       [[maybe_unused]] auto const result = hash_join.inner_join(probe_keys);
     });
@@ -211,7 +222,7 @@ NVBENCH_BENCH_TYPES(nvbench_hash_join_phase,
                                       JOIN_DATATYPES))
   .set_name("hash_join_phase")
   .set_type_axes_names({"Nullable", "NullEquality", "DataType"})
-  .add_string_axis("phase", {"build", "count", "retrieve"})
+  .add_string_axis("phase", {"build", "count", "retrieve", "join"})
   .add_int64_axis("num_keys", {1})
   .add_int64_axis("left_size", JOIN_SIZE_RANGE)
   .add_int64_axis("right_size", JOIN_SIZE_RANGE)

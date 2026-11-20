@@ -311,11 +311,13 @@ def _read_with_hybrid_scan(
                     row_group_indices, options
                 )
                 if bloom_ranges:
-                    bloom_chunks = plc.io.parquet_io_utils.fetch_byte_ranges_to_device(
-                        source_info,
-                        bloom_ranges,
-                        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
-                        stream=stream,
+                    bloom_chunks = (
+                        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+                            source_info,
+                            bloom_ranges,
+                            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+                            stream=stream,
+                        )
                     )
                     row_group_indices = reader.filter_row_groups_with_bloom_filters(
                         bloom_chunks, row_group_indices, options, stream=stream
@@ -1269,7 +1271,7 @@ def _sample_rg_sizes(
     options.set_row_groups(list(samples.values()))
     stream = get_cuda_stream()
     tbl_w_meta = plc.io.parquet.read_parquet(options, stream=stream)
-    result = {
+    return {
         name: column.device_buffer_size() // n_sampled
         for name, column in zip(
             tbl_w_meta.column_names(include_children=False),
@@ -1277,8 +1279,6 @@ def _sample_rg_sizes(
             strict=True,
         )
     }
-    stream.synchronize()
-    return result
 
 
 def _is_fixed_width(dtype: DataType) -> bool:

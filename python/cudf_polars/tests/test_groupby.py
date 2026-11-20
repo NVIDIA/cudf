@@ -1063,6 +1063,8 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
         (pl.col("j") + pl.lit(pl.Series([7, 8, 9]))).sum(),
         (pl.col("j") * pl.lit(pl.Series([7, 8]))).max(),
         pl.lit(pl.Series([7, 8])).first(),
+        pl.lit(pl.Series([float("nan")])).max(),
+        pl.lit(pl.Series([float("nan")])).min(),
     ],
 )
 def test_groupby_list_or_series_literal_raises(
@@ -1097,6 +1099,7 @@ def test_groupby_column_with_list_or_series_literal(
         pl.lit([7, 8]).last(),
         pl.lit(pl.Series([5])).max(),
         pl.lit(pl.Series([None], dtype=pl.Int64)).min(),
+        pl.lit(pl.Series([1.5])).max(),
     ],
 )
 def test_groupby_single_value_literal_agg(engine: pl.GPUEngine, expr: pl.Expr) -> None:

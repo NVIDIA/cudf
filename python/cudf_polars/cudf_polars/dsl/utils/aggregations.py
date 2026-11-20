@@ -66,23 +66,39 @@ def _is_single_value_literal_agg(agg: expr.Expr, context: ExecutionContext) -> b
         and agg.name in {"first", "last", "max", "min"}
         and all(
             len(node.value) == 1
+            and not (
+                agg.name in {"max", "min"}
+                and node.value.dtype.is_float()
+                and node.value.is_nan().any()
+            )
             for node in traversal(list(agg.children))
             if isinstance(node, expr.LiteralColumn)
         )
     )
 
 
-def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
-    nodes = tuple(traversal([value]))
+def _is_list_elements_literal(node: expr.LiteralColumn) -> bool:
     # Literals of list elements (e.g. the values of ``is_in``) are not
     # evaluated row by row.
+    return isinstance(node.dtype.polars_type, pl.List) and not isinstance(
+        node.value.dtype, pl.List
+    )
+
+
+def _combines_aggregation_with_literal_column(value: expr.Expr) -> bool:
+    nodes = tuple(traversal([value]))
+    return any(not node.is_pointwise for node in nodes) and any(
+        isinstance(node, expr.LiteralColumn) and not _is_list_elements_literal(node)
+        for node in nodes
+    )
+
+
+def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
+    nodes = tuple(traversal([value]))
     has_multi_element_literal = any(
         isinstance(node, expr.LiteralColumn)
         and len(node.value) != 1
-        and not (
-            isinstance(node.dtype.polars_type, pl.List)
-            and not isinstance(node.value.dtype, pl.List)
-        )
+        and not _is_list_elements_literal(node)
         for node in nodes
     )
     return has_multi_element_literal and any(
@@ -170,6 +186,14 @@ def decompose_single_agg(
     if is_top and _combines_columns_with_multi_element_literal(agg):
         raise NotImplementedError(
             "Combining columns with a multi-element list or Series literal in groupby/rolling"
+        )
+    if (
+        is_top
+        and context in {ExecutionContext.ROLLING, ExecutionContext.WINDOW}
+        and _combines_aggregation_with_literal_column(agg)
+    ):
+        raise NotImplementedError(
+            "Combining aggregations with a list or Series literal in rolling or over"
         )
     if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
         if context != ExecutionContext.GROUPBY:

@@ -322,11 +322,11 @@ def test_groupby_max_min_by_group_length_unsupported(
 )
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_literal_column_value_unsupported(
-    engine: pl.GPUEngine, agg: str, value: pl.Expr
+    in_memory_engine: pl.GPUEngine, agg: str, value: pl.Expr
 ) -> None:
     df = pl.LazyFrame({"g": [1, 1, 2, 2], "a": [10, 20, 30, 40], "b": [1, 5, 2, 1]})
     q = df.group_by("g").agg(getattr(value, agg)(pl.col("b")))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])

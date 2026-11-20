@@ -7,6 +7,7 @@ import asyncio
 import logging
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, NoReturn
 from unittest.mock import Mock
 
@@ -51,6 +52,38 @@ def test_gate_timeout_marks_communicator_unusable(
     with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
         wait_for_pending_closes(comm, timeout=30)
     assert fake_collective.close_calls == close_calls + 1
+
+
+def test_gate_on_one_communicator_does_not_delay_another(
+    fake_collective: Any,
+    leave_pending_close: Callable[[Any, int], None],
+    cancel_when: Callable[..., None],
+    timeout_seconds: int,
+) -> None:
+    blocked_comm, other_comm = Mock(), Mock()
+    leave_pending_close(blocked_comm, 1)
+    other = type(fake_collective)()
+
+    async def body() -> None:
+        async with aclosing_collective(other, other_comm, 2):
+            await other.extract_all(ordered=True)
+
+    try:
+        cancel_when(body, other.waiting)
+    finally:
+        other.release()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        blocked = executor.submit(wait_for_pending_closes, blocked_comm, 2)
+        deadline = time.monotonic() + timeout_seconds
+        while fake_collective.close_calls < 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        start = time.monotonic()
+        wait_for_pending_closes(other_comm, timeout=timeout_seconds)
+        assert time.monotonic() - start < 1
+        with pytest.raises(RuntimeError, match=r"operation IDs \[1\]"):
+            blocked.result()
 
 
 def test_discard_pending_closes_forgets_communicator(

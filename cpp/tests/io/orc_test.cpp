@@ -2680,6 +2680,8 @@ TEST_F(OrcStatisticsTest, AllNulls)
   check_all_null_stats<cudf::io::string_statistics>(stats.file_stats[3]);
 }
 
+namespace {
+
 // Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
 std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   std::vector<char> const& file)
@@ -2699,12 +2701,16 @@ std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
     .read(stripe_footer);
 
   // Streams are laid out in the order the stripe footer lists them
-  auto stream_data    = data + stripe.offset;
-  auto const& streams = stripe_footer.streams;
-  size_t s            = 0;
-  for (; streams.at(s).kind != cudf::io::orc::ROW_INDEX or streams[s].column_id != 1; ++s) {
-    stream_data += streams[s].length;
-  }
+  auto const& streams  = stripe_footer.streams;
+  auto const row_index = std::ranges::find_if(streams, [](auto const& stream) {
+    return stream.kind == cudf::io::orc::ROW_INDEX and stream.column_id == 1;
+  });
+  CUDF_EXPECTS(row_index != streams.end(), "Row index not found");
+  auto const preceding =
+    std::ranges::subrange(streams.begin(), row_index) | std::views::transform(&Stream::length);
+  auto const stream_data =
+    data + stripe.offset + std::accumulate(preceding.begin(), preceding.end(), uint64_t{0});
+
   // RowIndex { repeated RowIndexEntry entry = 1; }
   // RowIndexEntry { repeated uint64 positions = 1 [packed]; ColumnStatistics statistics = 2; }
   // All are length-delimited fields with one-byte keys
@@ -2719,7 +2725,7 @@ std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
     return std::pair{cur - len, static_cast<size_t>(len)};
   };
   std::vector<cudf::io::minmax_statistics<double>> result;
-  for (auto cur = stream_data; cur < stream_data + streams[s].length;) {
+  for (auto cur = stream_data; cur < stream_data + row_index->length;) {
     auto entry = next_field(cur).first;
     next_field(entry);  // positions
     auto const [stats, stats_len] = next_field(entry);
@@ -2733,6 +2739,8 @@ std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
   }
   return result;
 }
+
+}  // namespace
 
 TEST_F(OrcStatisticsTest, RowGroupNaN)
 {

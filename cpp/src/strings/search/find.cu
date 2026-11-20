@@ -118,7 +118,11 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
   auto const d_target = d_targets[str_idx];
 
   auto const [begin, left_over] = bytes_to_character_position(d_str, start);
-  auto const start_char_pos     = start - left_over;  // keep track of character position
+  // start is past the end of the string, so even an empty target is not found
+  if (left_over > 0) {
+    if (lane_idx == 0) { d_results[str_idx] = -1; }
+    return;
+  }
 
   auto const end = [d_str, start, stop, begin = begin] {
     if (stop < 0) { return d_str.size_bytes(); }
@@ -147,7 +151,7 @@ CUDF_KERNEL void finder_warp_parallel_fn(column_device_view const d_strings,
     // and a byte position to a character position
     d_results[str_idx] =
       ((result < cuda::std::numeric_limits<size_type>::max()) && (result >= begin))
-        ? start_char_pos + characters_in_string(d_str.data() + begin, result - begin)
+        ? start + characters_in_string(d_str.data() + begin, result - begin)
         : -1;
   }
 }
@@ -266,7 +270,17 @@ std::unique_ptr<column> find(strings_column_view const& input,
                                      stream,
                                      mr);
   // if input is empty or all-null then we are done
-  if (input.size() == input.null_count()) { return results; }
+  if (input.size() == input.null_count()) {
+    results->set_null_mask(
+      cudf::detail::create_null_mask(input.size(), cudf::mask_state::ALL_NULL, stream, mr),
+      input.size());
+    return results;
+  }
+
+  // AND the bitmasks from input and target
+  auto [null_mask, null_count] =
+    cudf::detail::bitmask_and(table_view({input.parent(), target.parent()}), stream, mr);
+  results->set_null_mask(std::move(null_mask), null_count);
 
   // call find utility with target iterator
   auto d_targets  = column_device_view::create(target.parent(), stream);
@@ -274,11 +288,6 @@ std::unique_ptr<column> find(strings_column_view const& input,
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(
     input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
-
-  // AND the bitmasks from input and target
-  auto [null_mask, null_count] =
-    cudf::detail::bitmask_and(table_view({input.parent(), target.parent()}), stream, mr);
-  results->set_null_mask(std::move(null_mask), null_count);
   return results;
 }
 

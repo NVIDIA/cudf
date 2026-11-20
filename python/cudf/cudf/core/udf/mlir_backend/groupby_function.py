@@ -21,6 +21,7 @@ from cudf.core.udf.mlir_backend.groupby_typing import (
     SUPPORTED_GROUPBY_NUMPY_TYPES,
     GroupByJITDataFrame,
     _group_slot,
+    _UnsupportedGroupByJITDataFrameReturn,
     register_group_slot,
 )
 from cudf.core.udf.mlir_backend.templates import groupby_apply_kernel_template
@@ -33,6 +34,7 @@ from cudf.core.udf.utils import (
     _supported_cols_from_frame,
     set_malloc_heap_size,
 )
+from cudf.options import get_option
 from cudf.utils._numba import _CUDFNumbaConfig
 from cudf.utils.performance_tracking import _performance_tracking
 
@@ -185,6 +187,11 @@ def _can_be_jitted(frame, func, args):
     try:
         kr._get_udf_return_type()
         return True
+    except _UnsupportedGroupByJITDataFrameReturn as err:
+        if get_option("mode.pandas_compatible"):
+            # Let cudf.pandas retry this operation with pandas.
+            raise UDFError() from err
+        return False
     except (UDFError, CoreTypingError, CudaTypingError):
         return False
 

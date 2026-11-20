@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
-from typing import NoReturn
 from unittest.mock import Mock
 
 import pytest
@@ -15,75 +13,56 @@ from cudf_polars.streaming.actor_graph.collectives.slice_exchange import SparseE
 
 
 @pytest.mark.parametrize("start_early", [False, True])
-def test_sparse_exchange_cancelled_finish_in_close_is_pending(
-    monkeypatch,
-    fake_collective,
-    cancel_when,
-    assert_pending_then_released,
-    *,
-    start_early: bool,
+def test_sparse_exchange_close_survives_cancellation(
+    monkeypatch, pending_closes, timeout_seconds: int, *, start_early: bool
 ) -> None:
-    monkeypatch.setattr(
-        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
-    )
-    comm = Mock(rank=0, nranks=2)
+    """Finish before releasing the exchange despite repeated cancellation."""
 
-    async def close() -> None:
-        exchange = SparseExchange(Mock(), comm, 5, sources=(1,), destinations=())
+    async def run() -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        finished = asyncio.Event()
+        closed = asyncio.Event()
+
+        class DelayedExchange:
+            async def insert_finished(self) -> None:
+                started.set()
+                await release.wait()
+                finished.set()
+
+            async def aclose(self) -> None:
+                closed.set()
+
+        monkeypatch.setattr(
+            slice_exchange,
+            "SparseAlltoall",
+            lambda *_args, **_kwargs: DelayedExchange(),
+        )
+        exchange = SparseExchange(
+            Mock(), Mock(rank=0, nranks=2), 0, sources=(1,), destinations=()
+        )
+
         if start_early:
             exchange.start_finish()
-        await exchange.aclose()
-
-    cancel_when(close, fake_collective.waiting)
-    assert fake_collective.close_calls == 1
-    assert_pending_then_released(comm, fake_collective, 5)
-
-
-def test_sparse_exchange_cancelled_finish_in_body_is_pending(
-    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
-) -> None:
-    monkeypatch.setattr(
-        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
-    )
-    comm = Mock(rank=0, nranks=2)
-
-    async def body() -> None:
-        async with SparseExchange(
-            Mock(), comm, 5, sources=(1,), destinations=()
-        ) as exchange:
-            await exchange.finish()
-
-    cancel_when(body, fake_collective.waiting)
-    assert_pending_then_released(comm, fake_collective, 5)
-
-
-def test_sparse_exchange_logs_unawaited_finish_failure(
-    monkeypatch, caplog, fake_collective, cancel_when, assert_pending_then_released
-) -> None:
-    async def fail_finish() -> NoReturn:
-        raise ValueError("finish failed")
-
-    monkeypatch.setattr(fake_collective, "insert_finished", fail_finish)
-    monkeypatch.setattr(
-        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
-    )
-    comm = Mock(rank=0, nranks=2)
-    entered = asyncio.Event()
-
-    async def body() -> None:
-        async with SparseExchange(
-            Mock(), comm, 5, sources=(1,), destinations=()
-        ) as exchange:
-            exchange.start_finish()
+        task = asyncio.create_task(exchange.aclose())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=timeout_seconds)
+            task.cancel()
             await asyncio.sleep(0)
-            entered.set()
-            await asyncio.Event().wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert finished.is_set()
+            assert closed.is_set()
+            await exchange.aclose()
+        finally:
+            release.set()
 
-    with caplog.at_level(logging.ERROR, logger=slice_exchange.__name__):
-        cancel_when(body, entered)
-    assert "Finishing the sparse exchange failed" in caplog.text
-    assert "finish failed" in caplog.text
-    assert_pending_then_released(comm, fake_collective, 5)
+    asyncio.run(run())
+    assert pending_closes == {}
 
 
 def test_sparse_exchange_cancellation_does_not_wait_for_peers(

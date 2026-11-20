@@ -745,21 +745,13 @@ class _PreparedInput:
     owned_host_values: tuple[RangeValues | None, ...]
     """Cached host range values for locally owned chunks."""
 
-    async def aclose(self, *, error: BaseException | None = None) -> None:
-        """
-        Release buffered chunks and finish the ghost exchange.
-
-        Parameters
-        ----------
-        error
-            The exception that ended the use of the input, if any. See
-            :meth:`SparseExchange.aclose`.
-        """
+    async def aclose(self) -> None:
+        """Release buffered chunks and finish the ghost exchange."""
         try:
             self.owned_buffer.clear()
         finally:
             if self.ghost_exchange is not None:
-                await self.ghost_exchange.aclose(error=error)
+                await self.ghost_exchange.aclose()
 
 
 class OverlapInput[BufferedChunkT: BufferedChunk]:
@@ -804,14 +796,14 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
         return self
 
     async def __aexit__(
-        self, _exc_type: object, exc: BaseException | None, _traceback: object
+        self, exc_type: object, _exc_value: object, _traceback: object
     ) -> None:
         """Release messages still owned by this input."""
         prepared, self._prepared = self._prepared, None
         if prepared is not None:
-            if exc is not None:
-                with suppress(Exception):
-                    await prepared.aclose(error=exc)
+            if exc_type is not None:
+                with suppress(BaseException):
+                    await prepared.aclose()
             else:
                 await prepared.aclose()
 
@@ -1252,9 +1244,9 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
                     output.insert(Message(0, available))
                 start += size
             await exchange.finish()
-        except BaseException as exc:
-            with suppress(Exception):
-                await prepared.aclose(error=exc)
+        except BaseException:
+            with suppress(BaseException):
+                await prepared.aclose()
             raise
         return prepared
 

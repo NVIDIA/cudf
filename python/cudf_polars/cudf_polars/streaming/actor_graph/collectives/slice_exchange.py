@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -27,18 +26,6 @@ if TYPE_CHECKING:
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
-
-
-_logger = logging.getLogger(__name__)
-
-
-def _log_finish_failure(
-    task: asyncio.Task[None], *, error: BaseException | None = None
-) -> None:
-    if task.cancelled():
-        return
-    if (exc := task.exception()) is not None and exc is not error:
-        _logger.error("Finishing the sparse exchange failed", exc_info=exc)
 
 
 @dataclass(frozen=True)
@@ -99,13 +86,20 @@ class SparseExchange:
         exc: object,
         _traceback: object,
     ) -> None:
-        """Close this exchange, as described in :meth:`aclose`."""
+        """
+        Close this exchange.
+
+        If the block was cancelled, release the exchange without waiting for
+        peers to finish, as described in
+        :func:`~cudf_polars.streaming.actor_graph.collectives.closing.aclose_collective`.
+        """
         if exc is None:
             await self.aclose()
+        elif isinstance(exc, asyncio.CancelledError):
+            await self._release(error=exc)
         else:
-            assert isinstance(exc, BaseException)
             with suppress(Exception):
-                await self.aclose(error=exc)
+                await self.aclose()
 
     async def insert_slices(
         self,
@@ -182,19 +176,22 @@ class SparseExchange:
             self._finish_task = asyncio.create_task(self._exchange.insert_finished())
 
     async def finish(self) -> None:
-        """
-        Finish insertion before extraction.
-
-        If this call is cancelled, insertion keeps finishing in the
-        background, and :meth:`aclose` releases the exchange without waiting
-        for peers.
-        """
+        """Finish insertion before extraction, even under cancellation."""
         if self._finished:
             return
         self.start_finish()
-        if self._finish_task is not None:
-            await asyncio.shield(self._finish_task)
+        cancelled = False
+        if self._exchange is not None:
+            assert self._finish_task is not None
+            while not self._finish_task.done():
+                try:
+                    await asyncio.shield(self._finish_task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            self._finish_task.result()
         self._finished = True
+        if cancelled:
+            raise asyncio.CancelledError
 
     def extract(self, source: int) -> ChunkStore:
         """
@@ -220,40 +217,21 @@ class SparseExchange:
         self._pending_sources.remove(source)
         return result
 
-    async def aclose(self, *, error: BaseException | None = None) -> None:
-        """
-        Finish insertion and release all unconsumed remote payloads.
-
-        If ``error`` is a cancellation, or this call is cancelled, release the
-        exchange without waiting for peers to finish, as described in
-        :func:`~cudf_polars.streaming.actor_graph.collectives.closing.aclose_collective`.
-
-        Parameters
-        ----------
-        error
-            The exception that ended the use of the exchange, if any.
-        """
+    async def aclose(self) -> None:
+        """Finish insertion and release all unconsumed remote payloads."""
         if self._closed:
-            return
-        if isinstance(error, asyncio.CancelledError):
-            await self._release(error=error)
             return
         try:
             await self.finish()
         except BaseException as exc:
             await self._release(error=exc)
             raise
-        await self._release(error=error)
+        await self._release()
 
     async def _release(self, *, error: BaseException | None = None) -> None:
         exchange, self._exchange = self._exchange, None
         self._closed = True
         self._pending_sources.clear()
-        if (task := self._finish_task) is not None:
-            if task.done():
-                _log_finish_failure(task, error=error)
-            else:
-                task.add_done_callback(_log_finish_failure)
         if exchange is not None:
             await aclose_collective(
                 exchange, self._comm, self._collective_id, error=error

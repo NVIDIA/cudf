@@ -912,6 +912,52 @@ def test_groupby_drop_nans_include_null_count_unsupported(
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("value").is_null().first(),
+        (pl.col("value") + 1).last(),
+        pl.col("text").cast(pl.Int64, strict=True).first(),
+    ],
+)
+def test_groupby_first_last_element_wise(engine: pl.GPUEngine, expr: pl.Expr) -> None:
+    q = (
+        pl.LazyFrame(
+            {
+                "key": [1, 1, 2, 2, 3, 3],
+                "value": [None, 2, 3, None, 5, 6],
+                "text": ["1", "bad", "2", "bad", None, "bad"],
+            }
+        )
+        .group_by("key")
+        .agg(expr)
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("value").is_in(pl.col("other").slice(0, 1).implode()).first(),
+        pl.lit("ab").is_in(pl.col("other").slice(0, 1).implode()).first(),
+        pl.col("value").str.contains_any(pl.col("other").slice(0, 1).implode()).first(),
+        pl.col("value").filter(pl.col("value") == "zz").fill_null("x").first(),
+        pl.lit(pl.Series([None, "ab"])).is_null().first(),
+    ],
+)
+def test_groupby_first_last_unsupported(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    q = (
+        pl.LazyFrame({"key": [1, 1], "value": ["ab", "ab"], "other": ["zz", "ab"]})
+        .group_by("key")
+        .agg(expr)
+    )
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_groupby_sum_all_null_group_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

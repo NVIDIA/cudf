@@ -694,27 +694,41 @@ def test_binop_dot_preserve_index():
     assert_eq(result, expected)
 
 
+@pytest.mark.parametrize("dtype", ["Float32", "Int16", "float[pyarrow]"])
+@pytest.mark.parametrize("lhs_type", ["DataFrame", "Series"])
+def test_binop_dot_nullable_extension_dtype(dtype, lhs_type):
+    cols = ["a", "b"]
+    lhs = pd.DataFrame([[1, 2], [3, 4], [5, 6]], columns=cols, dtype="int32")
+    if lhs_type == "Series":
+        lhs = pd.Series([1, 2], index=cols, dtype="int32")
+    rhs = pd.DataFrame([[1, 0], [0, 1]], index=cols, dtype=dtype)
+
+    expected = lhs.dot(rhs)
+    result = cudf.from_pandas(lhs).dot(cudf.from_pandas(rhs))
+
+    assert_eq(result, expected)
+
+
+def test_binop_dot_nullable_extension_dtype_vector():
+    # pandas returns an object result for a DataFrame, so compare the values.
+    pdf = pd.DataFrame({"a": pd.Series([1, 2], dtype="Int32"), "b": [3, 4]})
+    vector = np.array([1, 1])
+
+    result = cudf.from_pandas(pdf).dot(vector)
+    assert result.to_pandas().tolist() == pdf.dot(vector).tolist()
+    assert_eq(cudf.from_pandas(pdf["a"]).dot(vector), pdf["a"].dot(vector))
+
+
 @pytest.mark.parametrize("other_type", ["DataFrame", "Series"])
-def test_binop_dot_nullable_extension_dtype_not_supported(other_type):
-    cudf.set_option("mode.pandas_compatible", True)
+def test_binop_dot_nullable_extension_dtype_with_nulls_not_supported(
+    other_type,
+):
     df = cudf.DataFrame([[1, 2], [3, 4]], columns=["a", "b"], dtype="int32")
     if other_type == "DataFrame":
         other = cudf.DataFrame(
-            [[1, 0], [0, 1]], index=["a", "b"], dtype="Int32"
+            [[1, None], [0, 1]], index=["a", "b"], dtype="Int32"
         )
     else:
-        other = cudf.Series([1, 0], index=["a", "b"], dtype="Int32")
-    try:
-        with pytest.raises(NotImplementedError, match="nullable extension"):
-            df.dot(other)
-    finally:
-        cudf.set_option("mode.pandas_compatible", False)
-
-
-def test_binop_dot_nullable_extension_dtype_native():
-    lhs = cudf.DataFrame(
-        {"a": cudf.Series([1, 2], dtype="Int32"), "b": [3, 4]}
-    )
-    result = lhs.dot(np.array([1, 1]))
-    assert result.to_numpy().tolist() == [4, 6]
-    assert cudf.Series([1, 2], dtype="Int32").dot(np.array([1, 1])) == 3
+        other = cudf.Series([1, None], index=["a", "b"], dtype="Int32")
+    with pytest.raises(NotImplementedError, match="nullable extension"):
+        df.dot(other)

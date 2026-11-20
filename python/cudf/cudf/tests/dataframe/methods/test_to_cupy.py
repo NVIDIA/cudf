@@ -4,6 +4,7 @@
 import cupy as cp
 import numpy as np
 import pandas as pd
+import pandas._testing as tm
 import pytest
 
 import cudf
@@ -250,9 +251,7 @@ def test_to_array_nullable_extension_dtype(
     if constructor == "DataFrame":
         expected = expected.reshape(-1, 1)
 
-    assert result.dtype == expected.dtype
-    assert result.shape == expected.shape
-    np.testing.assert_array_equal(result, expected)
+    tm.assert_numpy_array_equal(result, expected)
 
 
 @pytest.mark.parametrize("method", ["to_cupy", "to_numpy"])
@@ -268,7 +267,6 @@ def test_to_array_nullable_extension_dtype_multiple_columns(method, has_nulls):
     expected = pd.DataFrame(data, dtype="Int32").to_numpy(
         dtype="float64", na_value=np.nan
     )
-    assert result.shape == expected.shape
     assert result.dtype == np.dtype("float64" if has_nulls else "int32")
     np.testing.assert_array_equal(result, expected)
 
@@ -291,13 +289,7 @@ def test_to_numpy_nullable_distinguish_nan_and_na(
             **kwargs
         )
 
-    assert result.dtype == expected.dtype
-    assert [v is None for v in result.ravel()] == [
-        v is None for v in expected.ravel()
-    ]
-    assert [v is pd.NA for v in result.ravel()] == [
-        v is pd.NA for v in expected.ravel()
-    ]
+    tm.assert_numpy_array_equal(result, expected)
 
 
 def test_to_numpy_nullable_multiple_columns_distinguish_nan_and_na():
@@ -306,9 +298,7 @@ def test_to_numpy_nullable_multiple_columns_distinguish_nan_and_na():
         expected = pd.DataFrame(data, dtype="UInt64").to_numpy()
         result = cudf.DataFrame(data, dtype="UInt64").to_numpy()
 
-    assert result.dtype == expected.dtype
-    assert result[0].tolist() == expected[0].tolist()
-    assert all(v is pd.NA for v in result[1])
+    tm.assert_numpy_array_equal(result, expected)
 
 
 def test_to_numpy_nullable_float_keeps_nan_with_na_value_none():
@@ -319,8 +309,7 @@ def test_to_numpy_nullable_float_keeps_nan_with_na_value_none():
         expected = pd.Series(arr).to_numpy(na_value=None)
         result = cudf.Series(arr, nan_as_null=False).to_numpy(na_value=None)
 
-    assert [v is None for v in result] == [v is None for v in expected]
-    assert np.isnan(result[0])
+    tm.assert_numpy_array_equal(result, expected)
 
 
 @pytest.mark.parametrize("ncols", [1, 2])
@@ -335,6 +324,4 @@ def test_to_numpy_nullable_float_dataframe_nan_with_na_value_none(ncols):
             na_value=None
         )
 
-    assert [v is None for v in result.ravel()] == [
-        v is None for v in expected.ravel()
-    ]
+    tm.assert_numpy_array_equal(result, expected)

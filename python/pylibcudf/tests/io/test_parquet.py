@@ -1257,9 +1257,7 @@ def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
 
     # Explicit int64 and duration arrow types must not mix, in either order
     for paths in ([duration_path, int64_path], [int64_path, duration_path]):
-        with pytest.raises(
-            ValueError, match="Mismatching parquet statistics dtype"
-        ):
+        with pytest.raises(RuntimeError, match="same schema"):
             plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
                 read_footers(paths), columns=["d"]
             )

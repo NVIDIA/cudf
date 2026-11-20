@@ -686,7 +686,7 @@ class direct_groupby {
    *
    * If a call fails while it changes the aggregate state, later `aggregate()` calls throw.
    * `finalize()` can still be called and returns the state accumulated so far, which may
-   * include part of the failed batch.
+   * include part of the failed batch. It throws if the first allocation of that state failed.
    *
    * @param group_ids Group ID of each row of `values`
    * @param values Table containing the value columns

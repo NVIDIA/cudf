@@ -9,15 +9,61 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/column/column.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 
 #include <nvtext/minhash.hpp>
 
 #include <cuda/iterator>
 
+#include <algorithm>
+#include <string>
 #include <vector>
 
 struct MinHashTest : public cudf::test::BaseFixture {};
+
+namespace {
+// Builds a deterministic string of at least min_bytes using 1-4 byte UTF-8 characters
+std::string make_multibyte_string(std::size_t min_bytes)
+{
+  char const* pieces[] = {"a", "b", " ", "é", "€", "😀", "z", "q"};
+  std::string result;
+  uint32_t x = 1;
+  while (result.size() < min_bytes) {
+    x = x * 1103515245u + 12345u;
+    result += pieces[(x >> 16) % 8];
+  }
+  return result;
+}
+
+// Verifies the minhash results for count parameters match the results computed
+// separately for each slice of 16 parameters
+template <typename T, typename MinHashFn>
+void verify_parameter_slices(cudf::strings_column_view const& input,
+                             cudf::size_type count,
+                             MinHashFn minhash_fn)
+{
+  auto first   = cuda::counting_iterator<uint32_t>{10};
+  auto params  = cudf::test::fixed_width_column_wrapper<T, uint32_t>(first, first + count);
+  auto pview   = cudf::column_view(params);
+  auto results = minhash_fn(input, pview);
+  auto actual  = cudf::test::to_host<T>(cudf::lists_column_view(results->view()).child()).first;
+
+  constexpr cudf::size_type slice_size = 16;
+  auto expected = std::vector<T>(static_cast<std::size_t>(input.size()) * count);
+  for (cudf::size_type s = 0; s < count; s += slice_size) {
+    auto const size   = std::min(slice_size, count - s);
+    auto const sliced = cudf::slice(pview, {s, s + size}).front();
+    auto const part   = minhash_fn(input, sliced);
+    auto const values = cudf::test::to_host<T>(cudf::lists_column_view(part->view()).child()).first;
+    for (cudf::size_type row = 0; row < input.size(); ++row) {
+      std::copy_n(values.begin() + row * size, size, expected.begin() + row * count + s);
+    }
+  }
+  EXPECT_EQ(std::vector<T>(actual.begin(), actual.end()), expected);
+}
+}  // namespace
 
 TEST_F(MinHashTest, Permuted)
 {
@@ -80,8 +126,8 @@ TEST_F(MinHashTest, Permuted)
 
 TEST_F(MinHashTest, PermutedWide)
 {
-  std::string const small(2 << 10, 'x');  // below wide_string_threshold
-  std::string const wide(2 << 19, 'y');   // above wide_string_threshold
+  std::string const small(2 << 10, 'x');  // processed by a single block
+  std::string const wide(2 << 19, 'y');   // processed by multiple blocks
   auto input = cudf::test::strings_column_wrapper({small, wide});
   auto view  = cudf::strings_column_view(input);
 
@@ -166,6 +212,131 @@ TEST_F(MinHashTest, PermutedManyParameters)
    });
   // clang-format on
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results64, expected64);
+}
+
+TEST_F(MinHashTest, PermutedWithNulls)
+{
+  auto validity = cudf::test::iterators::nulls_at({2, 6});
+  auto input    = cudf::test::strings_column_wrapper({"ignored row",
+                                                      "doc 1",
+                                                      "",
+                                                      "",
+                                                      "abc",  // fewer characters than width
+                                                      "héllo wörld €😀 ok",
+                                                      "",
+                                                      "this is doc 2",
+                                                      "ignored row"},
+                                                  validity);
+  auto view     = cudf::strings_column_view(cudf::slice(input, {1, 8}).front());
+
+  auto first   = cuda::counting_iterator<uint32_t>{10};
+  auto params  = cudf::test::fixed_width_column_wrapper<uint32_t>(first, first + 3);
+  auto results = nvtext::minhash(view, 0, cudf::column_view(params), cudf::column_view(params), 4);
+
+  using LCW32 = cudf::test::lists_column_wrapper<uint32_t>;
+  // clang-format off
+  LCW32 expected{{
+    {1392101586u,  394869177u,  811528444u},
+    {},
+    {         0u,          0u,          0u},
+    { 111658958u, 3129301961u, 1851977668u},
+    {  26214848u,  887829792u,   89411880u},
+    {},
+    { 211415830u,  187088503u,  130291444u}
+  }, cudf::test::iterators::nulls_at({1, 5})};
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  auto params64 = cudf::test::fixed_width_column_wrapper<uint64_t, uint32_t>(first, first + 3);
+  auto results64 =
+    nvtext::minhash64(view, 0, cudf::column_view(params64), cudf::column_view(params64), 4);
+
+  using LCW64 = cudf::test::lists_column_wrapper<uint64_t>;
+  // clang-format off
+  LCW64 expected64{{
+    { 827364888116975697ul, 1601854279692781452ul,   70500662054893256ul},
+    {},
+    {                  0ul,                   0ul,                   0ul},
+    { 999368626207634448ul,  176968285142920318ul, 1660410953291900131ul},
+    {  20596815676767043ul,  371077111640517574ul,  133315142570913187ul},
+    {},
+    {  18312093741021833ul,  133793446674258329ul,   21974512489226198ul}
+  }, cudf::test::iterators::nulls_at({1, 5})};
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results64, expected64);
+}
+
+TEST_F(MinHashTest, PermutedMultibyteWide)
+{
+  // multibyte characters span the tile and block boundaries of the wide row
+  auto input = cudf::test::strings_column_wrapper({make_multibyte_string(40000), "short"});
+  auto view  = cudf::strings_column_view(input);
+
+  auto first    = cuda::counting_iterator<uint32_t>{20};
+  auto params   = cudf::test::fixed_width_column_wrapper<uint32_t>(first, first + 3);
+  auto params64 = cudf::test::fixed_width_column_wrapper<uint64_t, uint32_t>(first, first + 3);
+
+  using LCW32 = cudf::test::lists_column_wrapper<uint32_t>;
+  using LCW64 = cudf::test::lists_column_wrapper<uint64_t>;
+
+  auto results = nvtext::minhash(view, 0, cudf::column_view(params), cudf::column_view(params), 4);
+  // clang-format off
+  LCW32 expected({
+    {    614084u,     199764u,      10836u},
+    {1169017180u,  153726215u, 3433402546u}
+  });
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  auto results64 =
+    nvtext::minhash64(view, 0, cudf::column_view(params64), cudf::column_view(params64), 4);
+  // clang-format off
+  LCW64 expected64({
+    {   631838257067200ul,   397872287627084ul,  603345717124258ul},
+    {1487620210039902932ul, 1467307088494363002ul, 252876425515676857ul}
+  });
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results64, expected64);
+
+  // a large width where the characters may not all fit in the staged shared memory
+  results = nvtext::minhash(view, 0, cudf::column_view(params), cudf::column_view(params), 1100);
+  // clang-format off
+  LCW32 expected_large({
+    {    983380u,       8459u,      65568u},
+    { 487932736u, 1371322832u, 2254712928u}
+  });
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_large);
+
+  results64 =
+    nvtext::minhash64(view, 0, cudf::column_view(params64), cudf::column_view(params64), 1100);
+  // clang-format off
+  LCW64 expected64_large({
+    {  14118113140685ul,  180992485396952ul,  133096206945288ul},
+    {497504788972762502ul, 752964329342770017ul, 1008423869712777540ul}
+  });
+  // clang-format on
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results64, expected64_large);
+}
+
+TEST_F(MinHashTest, PermutedParameterChunks)
+{
+  auto input =
+    cudf::test::strings_column_wrapper({make_multibyte_string(20000), "doc 1", "", "line two"});
+  auto view = cudf::strings_column_view(input);
+
+  auto mh32 = [](cudf::strings_column_view const& in, cudf::column_view const& p) {
+    return nvtext::minhash(in, 0, p, p, 5);
+  };
+  auto mh64 = [](cudf::strings_column_view const& in, cudf::column_view const& p) {
+    return nvtext::minhash64(in, 0, p, p, 5);
+  };
+  // parameter groups that do not evenly divide a warp
+  verify_parameter_slices<uint32_t>(view, 260, mh32);
+  verify_parameter_slices<uint64_t>(view, 260, mh64);
+  // more parameters than a block processes at once
+  verify_parameter_slices<uint32_t>(view, 5000, mh32);
+  verify_parameter_slices<uint64_t>(view, 5000, mh64);
 }
 
 TEST_F(MinHashTest, EmptyTest)

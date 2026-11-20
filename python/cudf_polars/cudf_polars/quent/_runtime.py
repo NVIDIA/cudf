@@ -12,6 +12,7 @@ import socket
 import threading
 from typing import TYPE_CHECKING
 
+from cudf_polars.quent._memory_monitor import memory_resource_sampler
 from cudf_polars.utils.cleanup import run_cleanup_steps
 
 if TYPE_CHECKING:
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     from os import PathLike
 
     import cudf_polars_quent as quent_bindings
+
+    from rapidsmpf.memory.buffer_resource import BufferResource
 
     from cudf_polars.containers import DataFrame
     from cudf_polars.dsl.ir import IR
@@ -218,7 +221,7 @@ class QuentControllerRuntime:
         run_cleanup_steps("Quent controller shutdown failed", *steps)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class QuentWorkerRuntime:
     """Own worker-side Worker, resource, plan, Actor, and Evaluate state."""
 
@@ -226,6 +229,7 @@ class QuentWorkerRuntime:
     session: QuentSession
     worker_resources: WorkerResources
     _worker_handle: quent_bindings.WorkerInitHandle | None
+    br: BufferResource
 
     @classmethod
     def create(
@@ -237,8 +241,29 @@ class QuentWorkerRuntime:
         rank: int,
         nranks: int,
         instance_name: str,
+        br: BufferResource,
     ) -> QuentWorkerRuntime:
-        """Create a worker runtime and declare its resources."""
+        """
+        Create a worker runtime and declare its resources.
+
+        Parameters
+        ----------
+        config
+            Engine configuration shared by all ranks.
+        collector_address
+            Address of the Collector that receives this worker's events.
+        worker_id
+            Identifier of the Worker entity.
+        rank
+            This worker's rank.
+        nranks
+            Total number of ranks.
+        instance_name
+            Display name of the Worker entity.
+        br
+            The worker's buffer resource whose device and host memory
+            resources are sampled.
+        """
         from cudf_polars.quent._context import WorkerResources
 
         session = QuentSession(collector_address)
@@ -269,13 +294,54 @@ class QuentWorkerRuntime:
             session=session,
             worker_resources=resources,
             _worker_handle=worker_handle,
+            br=br,
         )
 
-    def query_worker_state(self, query_id: uuid.UUID) -> QuentQueryWorkerState:
-        """Build state for one query executing on this worker."""
+    def update_buffer_resource(self, br: BufferResource) -> None:
+        """Use a replacement RapidsMPF buffer resource after an engine reset."""
+        self.br = br
+
+    @contextlib.contextmanager
+    def query(self, query_id: uuid.UUID) -> Iterator[QuentQueryWorkerState]:
+        """
+        Wrap the lifetime of an individual query.
+
+        Parameters
+        ----------
+        query_id
+            The ID of the query being executed.
+
+        Yields
+        ------
+        The state for the query executing on this worker.
+
+        Notes
+        -----
+        The lifetime of this context just includes query execution.
+        """
         from cudf_polars.quent._context import QuentQueryWorkerState
 
-        return QuentQueryWorkerState(runtime=self, query_id=query_id)
+        state = QuentQueryWorkerState(runtime=self, query_id=query_id)
+        interval_s = self.config.device_memory_poll_interval_s
+        if interval_s is None:
+            yield state
+            return
+        device_mr = self.br.device_mr_adaptor()
+        host_mr = self.br.host_mr
+        with memory_resource_sampler(
+            resources={
+                self.worker_resources.sampled_device_memory_resource_id: (
+                    lambda: device_mr.current_allocated
+                ),
+                self.worker_resources.sampled_host_memory_resource_id: (
+                    lambda: host_mr.current_allocated
+                ),
+            },
+            interval_s=interval_s,
+            quent_session=self.session,
+            query_id=query_id,
+        ):
+            yield state
 
     def emit_physical_plan(
         self,

@@ -24,8 +24,10 @@ verification checklist.
   those types and the analyzer entrypoint.
 - `model.rs` builds the query-engine model (the struct `CudfPolarsModel` and the
    traits implements).
-- `actor.rs`, `evaluate.rs`, and `resource.rs` reconstruct execution spans and
-   resource usage.
+- `actor.rs`, `evaluate.rs`, `memory_sample.rs`, and `resource.rs` reconstruct
+   execution spans and resource usage. `memory_sample.rs` turns the `sampling`
+   transitions of each `MemoryResourceSampler` FSM into `SampledMemoryResource`
+   occupancy usages.
 - `analyzer/` converts imported events into Quent UI query bundles, entity
   lists, and resource timelines:
   - `construction.rs` assembles the model, execution spans, and declared

@@ -263,10 +263,12 @@ def evaluate_pipeline_spmd_mode(
     spmd_context = config_options.executor.spmd_context
 
     quent_context = config_options.executor.quent_context
-    quent_query_worker_state: QuentQueryWorkerState | None = None
     quent_worker_runtime = spmd_context.quent_worker_runtime
     quent_controller_runtime = spmd_context.quent_controller_runtime
     query_scope: contextlib.AbstractContextManager = contextlib.nullcontext()
+    worker_query_scope: contextlib.AbstractContextManager[
+        QuentQueryWorkerState | None
+    ] = contextlib.nullcontext()
     if quent_context is not None:
         assert quent_worker_runtime is not None
         query_id = synchronize_quent_query_id(
@@ -274,14 +276,14 @@ def evaluate_pipeline_spmd_mode(
             context=context,
             query_id=query_id,
         )
-        quent_query_worker_state = quent_worker_runtime.query_worker_state(query_id)
+        worker_query_scope = quent_worker_runtime.query(query_id)
         if comm.rank == 0:
             assert quent_controller_runtime is not None
             query_scope = quent_controller_runtime.query(
                 query_id,
                 query_config=quent_context.query,
             )
-    with query_scope:
+    with query_scope, worker_query_scope as quent_query_worker_state:
         df, metadata = evaluate_on_rank(
             context,
             comm,
@@ -835,6 +837,7 @@ class SPMDEngine(StreamingEngine):
                 rank=comm.rank,
                 nranks=comm.nranks,
                 instance_name=f"rank-{comm.rank}",
+                br=self._ctx.br(),
             )
         except BaseException:  # pragma: no cover - defensive startup cleanup
             steps: list[Callable[[], object]] = [
@@ -1116,6 +1119,8 @@ class SPMDEngine(StreamingEngine):
         # callback still restores the pre-engine MR at engine shutdown.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.update_buffer_resource(self._ctx.br())
 
         effective_quent_context = executor_options["quent_context"]
         engine_id = (
@@ -1354,6 +1359,7 @@ class SPMDEngine(StreamingEngine):
             self.comm,
             self.py_executor,
             self._quent_worker_runtime,
+            self._quent_runtime,
         )
         return execute_persisted_query(self, lf, backend, self._store_uid)
 
@@ -1368,12 +1374,24 @@ class SpmdPersistedBackend(PersistedBackend):
         comm: Communicator,
         py_executor: ThreadPoolExecutor,
         quent_worker_runtime: QuentWorkerRuntime | None,
+        quent_controller_runtime: QuentControllerRuntime | None,
     ) -> None:
         self._uid = uid
         self._ctx = ctx
         self._comm = comm
         self._py_executor = py_executor
         self._quent_worker_runtime = quent_worker_runtime
+        self._quent_controller_runtime = quent_controller_runtime
+
+    def prepare_query_id(self, query_id: uuid.UUID) -> uuid.UUID:
+        """Use rank 0's query ID when Quent tracing is enabled."""
+        if self._quent_worker_runtime is None:
+            return query_id
+        return synchronize_quent_query_id(
+            comm=self._comm,
+            context=self._ctx,
+            query_id=query_id,
+        )
 
     def execute_persisted(
         self,
@@ -1382,25 +1400,38 @@ class SpmdPersistedBackend(PersistedBackend):
         query_id: uuid.UUID,
     ) -> list[int]:
         """Evaluate and store this rank's partition (see :class:`PersistedBackend`)."""
-        quent_query_worker_state = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if config_options.executor.quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
+            query_scope = self._quent_worker_runtime.query(query_id)
+            if self._comm.rank == 0:
+                assert self._quent_controller_runtime is not None
+                controller_query_scope: contextlib.AbstractContextManager = (
+                    self._quent_controller_runtime.query(
+                        query_id,
+                        query_config=config_options.executor.quent_context.query,
+                    )
+                )
+            else:
+                controller_query_scope = contextlib.nullcontext()
+        else:
+            controller_query_scope = contextlib.nullcontext()
+        with controller_query_scope, query_scope as quent_query_worker_state:
+            rank = persisted_result.evaluate_and_persist(
+                self._uid,
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                query_id,
+                # SPMD collects rank-locally: each rank reads its own partition, so a
+                # duplicated output must stay whole on every rank (not deduplicated).
+                deduplicate_replicated=False,
+                quent_query_worker_state=quent_query_worker_state,
             )
-        rank = persisted_result.evaluate_and_persist(
-            self._uid,
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            query_id,
-            # SPMD collects rank-locally: each rank reads its own partition, so a
-            # duplicated output must stay whole on every rank (not deduplicated).
-            deduplicate_replicated=False,
-            quent_query_worker_state=quent_query_worker_state,
-        )
         return [rank]
 
     def drop_persisted(self, query_id: uuid.UUID) -> None:

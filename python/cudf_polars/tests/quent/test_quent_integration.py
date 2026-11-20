@@ -137,6 +137,7 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         session=session,
         worker_resources=MagicMock(),
         _worker_handle=worker_handle,
+        br=MagicMock(),
     )
 
     with pytest.raises(ExceptionGroup, match="Quent worker shutdown failed"):
@@ -183,6 +184,15 @@ def test_quent_lifecycle(
     )
     engine.config["executor_options"]["quent_context"] = current_context
     query.collect(engine=engine)
+    current_context = dataclasses.replace(
+        current_context,
+        query=dataclasses.replace(
+            current_context.query,
+            query_name="Persisted iteration",
+        ),
+    )
+    engine.config["executor_options"]["quent_context"] = current_context
+    engine.execute(query).release()  # type: ignore[call-arg,attr-defined]
     current_context = dataclasses.replace(
         current_context,
         query=dataclasses.replace(
@@ -252,7 +262,7 @@ def test_quent_lifecycle(
         == "Updated Query Group"
     )
     query_events = _of_type(events, "Query")
-    assert len(query_events) == 12
+    assert len(query_events) == 16
     assert _of_type(events, "Plan")
     operator_declarations = [
         event["data"]["Operator"]["Declared"]
@@ -294,8 +304,70 @@ def test_quent_lifecycle(
         }.issubset(terminal["values"])
         for terminal in terminal_actor_events
     )
-    assert _of_type(events, "DeviceMemory")
+    memory_ids = {
+        event["id"]
+        for event in _of_type(events, "DeviceMemory")
+        if "Declared" in event["data"]["DeviceMemory"]
+    }
+    assert memory_ids
     assert _of_type(events, "Storage")
+
+    sampled_memory_declarations = {
+        event["id"]: event["data"]["SampledMemoryResource"]["Declared"]
+        for event in _of_type(events, "SampledMemoryResource")
+        if "Declared" in event["data"]["SampledMemoryResource"]
+    }
+    sampled_memory_ids = set(sampled_memory_declarations)
+    query_ids = {
+        event["id"] for event in query_events if "Initialized" in event["data"]["Query"]
+    }
+    assert sampled_memory_ids
+    assert not sampled_memory_ids & memory_ids
+    assert query_ids
+    memory_types_by_worker: dict[str, set[str]] = {}
+    for declaration in sampled_memory_declarations.values():
+        memory_types_by_worker.setdefault(declaration["worker"]["target"], set()).add(
+            declaration["memory_type"]
+        )
+    assert all(
+        memory_types == {"device", "host"}
+        for memory_types in memory_types_by_worker.values()
+    )
+
+    # One sampler FSM per query, rank, and memory resource. Both FSMs are
+    # advanced by one background thread. Even a query shorter than the sampling
+    # interval is sampled once, and each FSM is stopped when the query finishes.
+    sampler_events = _of_type(events, "MemoryResourceSampler")
+    assert sampler_events
+    sampler_states: dict[str, list[str]] = {}
+    for event in sampler_events:
+        sampler_states.setdefault(event["id"], []).append(
+            next(iter(event["data"]["MemoryResourceSampler"]))
+        )
+    for states in sampler_states.values():
+        assert states[:-1] == ["Sampling"] * (len(states) - 1)
+        assert states[-1] == "Stopped"
+        assert len(states) >= 2
+    queries_by_sampler: dict[str, set[str]] = {}
+    memory_types_by_query: dict[str, set[str]] = {}
+    for event in sampler_events:
+        sampling = event["data"]["MemoryResourceSampler"].get("Sampling")
+        if sampling is not None:
+            query_id = sampling["query"]["target"]
+            memory_id = sampling["memory"]["target"]
+            queries_by_sampler.setdefault(event["id"], set()).add(query_id)
+            assert memory_id in sampled_memory_ids
+            memory_types_by_query.setdefault(query_id, set()).add(
+                sampled_memory_declarations[memory_id]["memory_type"]
+            )
+            assert sampling["memory"]["data"]["bytes"] >= 0
+    assert all(len(queries) == 1 for queries in queries_by_sampler.values())
+    assert set().union(*queries_by_sampler.values()) <= query_ids
+    assert all(
+        memory_types == {"device", "host"}
+        for memory_types in memory_types_by_query.values()
+    )
+
     evaluate_events = _of_type(events, "Evaluate")
     assert evaluate_events
     evaluate_states: dict[str, list[str]] = {}
@@ -365,11 +437,16 @@ def test_quent_lifecycle(
         if isinstance(event["data"]["Query"], dict)
         and "Initialized" in event["data"]["Query"]
     ]
-    assert len({event["id"] for event in initialized_queries}) == 3
+    assert len({event["id"] for event in initialized_queries}) == 4
     assert [
         event["data"]["Query"]["Initialized"]["instance_name"]
         for event in initialized_queries
-    ] == ["Iteration 1", "Iteration 2", "Failed iteration"]
+    ] == [
+        "Iteration 1",
+        "Persisted iteration",
+        "Iteration 2",
+        "Failed iteration",
+    ]
     events_by_query = {
         initialized["id"]: [
             next(iter(event["data"]["Query"]))
@@ -381,6 +458,7 @@ def test_quent_lifecycle(
     assert list(events_by_query.values()) == [
         ["Initialized", "Planning", "Executing", "Completed"],
         ["Initialized", "Planning", "Executing", "Completed"],
+        ["Initialized", "Planning", "Executing", "Completed"],
         ["Initialized", "Planning", "Executing", "Failed"],
     ]
 
@@ -389,11 +467,11 @@ def test_quent_lifecycle(
         for event in _of_type(events, "Plan")
         if event["data"]["Plan"]["Declared"]["instance_name"] == "logical"
     ]
-    assert len({event["id"] for event in logical_plans}) == 3
+    assert len({event["id"] for event in logical_plans}) == 4
 
-    memory_ids = [
+    resource_ids = [
         event["id"]
         for entity in ("DeviceMemory", "Storage")
         for event in _of_type(events, entity)
     ]
-    assert len(memory_ids) == len(set(memory_ids))
+    assert len(resource_ids) == len(set(resource_ids))

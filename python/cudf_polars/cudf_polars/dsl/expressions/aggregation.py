@@ -12,6 +12,7 @@ from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import polars as pl
 from polars.exceptions import ComputeError
 
 import pylibcudf as plc
@@ -156,8 +157,7 @@ class Agg(Expr):
                 raise NotImplementedError("Median with temporal data types")
             req = plc.aggregation.median()
         elif name == "n_unique":
-            if children[0].dtype.plc_type.id() == plc.TypeId.EMPTY:
-                # libcudf cannot reduce a column of the (EMPTY) Null dtype.
+            if isinstance(children[0].dtype.polars_type, pl.Null):
                 raise NotImplementedError("n_unique of a Null dtype column")
             # TODO: datatype of result
             req = plc.aggregation.nunique(

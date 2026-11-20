@@ -12,14 +12,15 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cooperative_groups/scan.h>
 #include <cub/warp/warp_exchange.cuh>
 #include <cuda/annotated_ptr>
+#include <cuda/memory>
 #include <cuda/pipeline>
 #include <cuda/std/algorithm.lower_bound.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
-#include <cuda/std/limits>
 
 namespace cudf::io::parquet::detail {
 
@@ -560,11 +561,12 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
  *
  * One warp decodes one page in tiles of 128 values, four adjacent values per lane. Every lane runs
  * the same warp-uniform walk over blocks, mini-blocks and 32-value passes in registers, so the tile
- * descriptors need no shared memory, no single-lane parsing and no warp syncs, and the running sum
- * stays in a register. Each lane loads the packed bits of its four values with aligned 8-byte
- * loads, one tile ahead of decoding. An aligned word holding at least one in-bounds byte cannot
- * leave the allocation, and bytes past the end of the page read as zero, matching the bounded byte
- * loads of `delta_binary_decoder`. Page data is prefetched into L2 ahead of the read position.
+ * descriptors need no single-lane parsing and no exchange through shared memory, and the running
+ * sum stays in a register. Each lane loads the packed bits of its four values with aligned 8-byte
+ * loads, one tile ahead of decoding. The reader pads page buffers to a multiple of 8 bytes, so an
+ * aligned word holding at least one in-bounds byte cannot leave the allocation; bytes past the end
+ * of the page read as zero, matching the bounded byte loads of `delta_binary_decoder`. Page data is
+ * prefetched into L2 ahead of the read position.
  */
 namespace nz_register_delta {
 
@@ -645,12 +647,9 @@ __device__ __forceinline__ uint32_t stop_byte_count(uint64_t stop)
   return static_cast<uint32_t>(cuda::std::bit_width(stop & (0 - stop))) / byte_bits;
 }
 
-/**
- * @brief Returns the aligned word address containing `p`.
- */
 __device__ __forceinline__ uintptr_t aligned_word(uint8_t const* p)
 {
-  return reinterpret_cast<uintptr_t>(p) & ~uintptr_t{word_bytes - 1};
+  return reinterpret_cast<uintptr_t>(cuda::align_down(p, word_bytes));
 }
 
 /**
@@ -670,8 +669,9 @@ __device__ __forceinline__ uint64_t clear_past_end(uint64_t w, uintptr_t word, u
  * k+1 starts and copies the words holding its header into shared memory asynchronously. Entering
  * block k+1 then decodes the minimum delta and the bit widths from those words in registers, which
  * keeps the chain of dependent byte loads through each header off the critical path. Headers that
- * do not fit the staged words (a minimum delta longer than 10 bytes, more than 8 mini-blocks) are
- * parsed from global memory instead.
+ * were not staged, or whose minimum delta and bit widths together exceed the 16 bytes decoded from
+ * the staged words (always when there are more than 8 mini-blocks), are parsed from global memory
+ * instead.
  */
 struct walker {
   uint8_t const* end;
@@ -696,6 +696,12 @@ struct walker {
     return widths + m < end ? widths[m] : 0u;
   }
 
+  // Bytes of packed data in a mini-block of bit width `w`
+  [[nodiscard]] __device__ __forceinline__ size_t mb_bytes(uint32_t w) const
+  {
+    return static_cast<size_t>(w) * passes_per_mb * pass_bytes_per_bit;
+  }
+
   /**
    * @brief Enters mini-block `m`, which holds values.
    *
@@ -706,17 +712,13 @@ struct walker {
   __device__ __forceinline__ void set_bits(uint32_t m)
   {
     bits = width(m);
-    if (bits > word_bits || reinterpret_cast<uintptr_t>(mb_start) +
-                                static_cast<size_t>(bits) * passes_per_mb * pass_bytes_per_bit >
-                              reinterpret_cast<uintptr_t>(end)) {
+    if (bits > word_bits ||
+        reinterpret_cast<uintptr_t>(mb_start) + mb_bytes(bits) > reinterpret_cast<uintptr_t>(end)) {
       error = true;
       bits  = 0;
     }
   }
 
-  /**
-   * @brief Waits for the staged header copy, if any, to land in shared memory.
-   */
   __device__ __forceinline__ void wait_staged() { cuda::pipeline_consumer_wait_prior<0>(pipe); }
 
   /**
@@ -762,8 +764,7 @@ struct walker {
       uint64_t w[header_words];
       for (uint32_t i = 0; i < header_words; ++i) {
         auto const word = aligned + word_bytes * i;
-        // `clear_past_end` also checks `word < page_end`; repeating it here keeps the faster code
-        // generation of the general path.
+        // `clear_past_end` also checks `word < page_end`; repeating it here gives faster code.
         w[i] = word < page_end ? clear_past_end(staged[i], word, page_end) : 0;
       }
       // The `header_bytes` bytes starting at p; bytes past the end of the page read as zero, like
@@ -821,8 +822,7 @@ struct walker {
         width_sum += width(m);
       }
     }
-    auto const* next =
-      mb_start + static_cast<size_t>(width_sum) * passes_per_mb * pass_bytes_per_bit;
+    auto const* next = mb_start + mb_bytes(width_sum);
     if (next >= mb_start && next < end) {
       stage_header(next, warp);
     } else {
@@ -830,14 +830,11 @@ struct walker {
     }
   }
 
-  /**
-   * @brief Moves to the next 32-value pass.
-   */
   __device__ __forceinline__ void advance(warp_tile const& warp)
   {
     if (++pass == passes_per_mb) {
       pass = 0;
-      mb_start += static_cast<size_t>(bits) * passes_per_mb * pass_bytes_per_bit;
+      mb_start += mb_bytes(bits);
       if (++mb == mini_block_count) {
         enter_block(mb_start, warp);
       } else {
@@ -846,9 +843,6 @@ struct walker {
     }
   }
 
-  /**
-   * @brief Returns the packed data of the current pass.
-   */
   [[nodiscard]] __device__ __forceinline__ uint8_t const* pass_start() const
   {
     return mb_start + pass * bits * pass_bytes_per_bit;
@@ -973,11 +967,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
   auto const mini_block_count   = get_uleb128(p, end);
   auto const value_count        = get_uleb128(p, end);
   zigzag128_t const first_value = get_zz128(p, end);
-  // The same header checks as `delta_binary_decoder::init_binary_block`
-  constexpr uleb128_t max_count = cuda::std::numeric_limits<int32_t>::max();
-  if (mini_block_count == 0 or block_size == 0 or block_size > max_count or
-      value_count > max_count or (block_size % mini_block_count) != 0 or
-      ((block_size / mini_block_count) % delta_mini_block_size_multiple) != 0) {
+  if (not is_valid_delta_header(block_size, mini_block_count, value_count)) {
     return static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
   }
   walker wk{end,
@@ -1224,18 +1214,6 @@ struct rank_map_output {
 }  // namespace nz_register_delta
 
 /**
- * @brief Returns whether a page has a delta binary nz map
- *
- * @param page The page to check
- * @return True if the page has a delta binary nz map, false otherwise
- */
-CUDF_HOST_DEVICE inline bool has_delta_binary_nz_map(PageInfo const& page)
-{
-  return page.has_nz_map(nz_map_kind::DELTA_FLAT) &&
-         BitAnd(page.kernel_mask, decode_kernel_mask::DELTA_BINARY) != 0;
-}
-
-/**
  * @brief Decodes a mapped page through its rank map.
  *
  * @return 0 or the decode error
@@ -1307,20 +1285,10 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
   }
 }
 
-/**
- * @brief Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places
- * values using the nz map's rank map instead of decoding definition levels itself.
- *
- * One warp decodes each page with `nz_register_delta::decode_page`. The launch bounds ask for
- * only one resident block per SM, so the compiler does not limit registers to raise occupancy.
- *
- * @param pages The pages to decode
- * @param chunks Chunk descriptors
- * @param min_row The minimum row to decode
- * @param num_rows The number of rows to decode
- * @param page_mask The mask of pages to decode
- * @param error_code The error code to set
- */
+// Decodes flat DELTA_BINARY_PACKED pages, like `decode_delta_binary_kernel`, but places values
+// using the nz map's rank map instead of decoding definition levels itself. One warp decodes each
+// page. The launch bounds require only one resident block per SM, so the compiler does not limit
+// registers to raise occupancy.
 CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1)
   decode_delta_binary_kernel_with_nz_map(PageInfo* pages,
                                          device_span<ColumnChunkDesc const> chunks,
@@ -1334,8 +1302,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1
 
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
   auto& page = pages[page_idx];
-  // Pages without a map are decoded by the level-decoding kernel.
-  if (!has_delta_binary_nz_map(page)) { return; }
+  // Pages with a map are decoded here; the level-decoding kernel takes the rest.
+  if (not page.has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
   auto const error = decode_mapped_page(warp, page, chunks, min_row, num_rows);
   if (error != 0) {
     cg::invoke_one(warp, [&] { set_error(error, error_code); });
@@ -2021,6 +1989,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
   // `consumer_stream` is ordered after the producer by the caller. The level-decoding kernel below
   // needs no such ordering because it reads only fields set on the host.
   if (has_flat_nz_map) {
+    // Not templated on `level_t`: this kernel never reads levels.
     decode_delta_binary_kernel_with_nz_map<<<dim_grid,
                                              dim_block_nz_map,
                                              0,
@@ -2029,7 +1998,7 @@ void decode_delta_binary(cudf::detail::hostdevice_span<PageInfo> pages,
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 
-  // Skip the launch when every DELTA_BINARY page has a map, they have already been decoded.
+  // Skip the launch when every DELTA_BINARY page has a map, since every block would just return.
   if (not needs_level_decoder) { return; }
 
   if (level_type_size == 1) {

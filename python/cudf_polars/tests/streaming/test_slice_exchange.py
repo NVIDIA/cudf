@@ -14,7 +14,7 @@ from cudf_polars.streaming.actor_graph.collectives.slice_exchange import SparseE
 
 @pytest.mark.parametrize("start_early", [False, True])
 def test_sparse_exchange_close_survives_cancellation(
-    monkeypatch, timeout_seconds: int, *, start_early: bool
+    monkeypatch, pending_closes, timeout_seconds: int, *, start_early: bool
 ) -> None:
     """Finish before releasing the exchange despite repeated cancellation."""
 
@@ -62,3 +62,38 @@ def test_sparse_exchange_close_survives_cancellation(
             release.set()
 
     asyncio.run(run())
+    assert pending_closes == {}
+
+
+def test_sparse_exchange_cancellation_does_not_wait_for_peers(
+    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
+) -> None:
+    monkeypatch.setattr(
+        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
+    )
+    comm = Mock(rank=0, nranks=2)
+    entered = asyncio.Event()
+
+    async def body() -> None:
+        async with SparseExchange(Mock(), comm, 5, sources=(1,), destinations=()):
+            entered.set()
+            await asyncio.Event().wait()
+
+    cancel_when(body, entered)
+    assert_pending_then_released(comm, fake_collective, 5)
+
+
+def test_sparse_exchange_cancelled_release_is_pending(
+    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
+) -> None:
+    fake_collective.finish_waits = False
+    monkeypatch.setattr(
+        slice_exchange, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
+    )
+    comm = Mock(rank=0, nranks=2)
+
+    async def close() -> None:
+        await SparseExchange(Mock(), comm, 5, sources=(1,), destinations=()).aclose()
+
+    cancel_when(close, fake_collective.closing)
+    assert_pending_then_released(comm, fake_collective, 5)

@@ -60,16 +60,48 @@ async def _close_in_background(
     await asyncio.sleep(0)
 
 
-async def _aclose(
-    collective: Collective, comm: Communicator, op_id: int, *, body_failed: bool
+async def aclose_collective(
+    collective: Collective,
+    comm: Communicator,
+    op_id: int,
+    *,
+    error: BaseException | None = None,
 ) -> None:
+    """
+    Release a collective without letting cancellation wait for peers.
+
+    Without ``error``, wait for ``collective.aclose()``. With ``error``, a
+    ``RuntimeError`` from ``aclose()`` (for example, because
+    ``insert_finished()`` was skipped) is suppressed so that the caller can
+    raise ``error`` instead.
+
+    If ``error`` is a cancellation, or the close is cancelled, the close
+    continues in the background and the collective is recorded as pending on
+    ``comm``. Until that close completes, :func:`wait_for_pending_closes`
+    refuses new collectives on ``comm``, which keeps ``op_id`` from being
+    reused.
+
+    Parameters
+    ----------
+    collective
+        The collective to release.
+    comm
+        The communicator the collective is over.
+    op_id
+        The operation ID of the collective.
+    error
+        The exception that ended the use of the collective, if any.
+    """
+    if isinstance(error, asyncio.CancelledError):
+        await _close_in_background(collective, comm, op_id)
+        return
     try:
         await collective.aclose()
     except asyncio.CancelledError:
         await _close_in_background(collective, comm, op_id)
         raise
     except RuntimeError:
-        if not body_failed:
+        if error is None:
             raise
 
 
@@ -80,15 +112,7 @@ async def aclosing_collective[CollectiveT: Collective](
     """
     Release a collective on exit without letting cancellation wait for peers.
 
-    On normal exit, wait for ``collective.aclose()``. If the block raised, a
-    ``RuntimeError`` from ``aclose()`` (for example, because
-    ``insert_finished()`` was skipped) is suppressed so the original error
-    propagates.
-
-    If the block or the close is cancelled, the close continues in the
-    background and the collective is recorded as pending on ``comm``. Until
-    that close completes, :func:`wait_for_pending_closes` refuses new
-    collectives on ``comm``, which keeps ``op_id`` from being reused.
+    See :func:`aclose_collective` for how the collective is released.
 
     Parameters
     ----------
@@ -105,13 +129,10 @@ async def aclosing_collective[CollectiveT: Collective](
     """
     try:
         yield collective
-    except asyncio.CancelledError:
-        await _close_in_background(collective, comm, op_id)
+    except BaseException as exc:
+        await aclose_collective(collective, comm, op_id, error=exc)
         raise
-    except BaseException:
-        await _aclose(collective, comm, op_id, body_failed=True)
-        raise
-    await _aclose(collective, comm, op_id, body_failed=False)
+    await aclose_collective(collective, comm, op_id)
 
 
 async def _finish_all(

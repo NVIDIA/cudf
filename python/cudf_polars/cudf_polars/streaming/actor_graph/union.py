@@ -18,6 +18,7 @@ from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.ir import Union
+from cudf_polars.streaming.actor_graph.collectives.closing import aclosing_collective
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -262,8 +263,10 @@ async def _exchange_child(
     # Every rank exchanges with every other rank (possibly sending nothing),
     # which keeps the set of peers independent of the routing plan.
     peers = [r for r in range(comm.nranks) if r != rank]
-    async with SparseAlltoall(
-        context, comm, collective_id, srcs=peers, dsts=peers
+    async with aclosing_collective(
+        SparseAlltoall(context, comm, collective_id, srcs=peers, dsts=peers),
+        comm,
+        collective_id,
     ) as exchange:
         index = 0
         while (msg := await ch_in.recv(context)) is not None:

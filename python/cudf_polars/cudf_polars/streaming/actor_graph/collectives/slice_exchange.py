@@ -18,6 +18,7 @@ from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
+from cudf_polars.streaming.actor_graph.collectives.closing import aclose_collective
 from cudf_polars.streaming.actor_graph.utils import ChunkStore
 
 if TYPE_CHECKING:
@@ -56,6 +57,8 @@ class SparseExchange:
         sources = tuple(sources)
         destinations = tuple(destinations)
         self.context = context
+        self._comm = comm
+        self._collective_id = collective_id
         self.destinations = frozenset(destinations)
         self._pending_sources = set(sources)
         self._exchange = (
@@ -83,11 +86,19 @@ class SparseExchange:
         exc: object,
         _traceback: object,
     ) -> None:
-        """Close this exchange."""
+        """
+        Close this exchange.
+
+        If the block was cancelled, release the exchange without waiting for
+        peers to finish, as described in
+        :func:`~cudf_polars.streaming.actor_graph.collectives.closing.aclose_collective`.
+        """
         if exc is None:
             await self.aclose()
+        elif isinstance(exc, asyncio.CancelledError):
+            await self._release(error=exc)
         else:
-            with suppress(BaseException):
+            with suppress(Exception):
                 await self.aclose()
 
     async def insert_slices(
@@ -212,16 +223,16 @@ class SparseExchange:
             return
         try:
             await self.finish()
-        except BaseException:
-            exchange, self._exchange = self._exchange, None
-            if exchange is not None:
-                with suppress(BaseException):
-                    await exchange.aclose()
+        except BaseException as exc:
+            await self._release(error=exc)
             raise
-        else:
-            exchange, self._exchange = self._exchange, None
-            if exchange is not None:
-                await exchange.aclose()
-        finally:
-            self._closed = True
-            self._pending_sources.clear()
+        await self._release()
+
+    async def _release(self, *, error: BaseException | None = None) -> None:
+        exchange, self._exchange = self._exchange, None
+        self._closed = True
+        self._pending_sources.clear()
+        if exchange is not None:
+            await aclose_collective(
+                exchange, self._comm, self._collective_id, error=error
+            )

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -330,12 +331,12 @@ async def extract_orderscheme_partitioning(
                 br=context.br(),
             )
         )
-        allgather = AllGatherManager(context, comm, collective_id)
-        with allgather.inserting() as inserter:
-            await inserter.insert(comm.rank, local_chunk)
-        endpoint_table = await allgather.extract_concatenated(
-            stream, ordered=True, ir_context=ir_context
-        )
+        async with AllGatherManager(context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                await inserter.insert(comm.rank, local_chunk)
+            endpoint_table = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=ir_context
+            )
 
     # Return None if there are insufficient endpoints to process.
     if endpoint_table is None or (num_partitions := endpoint_table.num_rows() // 2) < 2:
@@ -962,16 +963,6 @@ async def _adjust_ordering_impl(
         output_ordering,
         input_rows_ordered=input_rows_ordered,
     )
-    exchange = None
-    if plan.remote_sources or plan.remote_destinations:
-        exchange = SparseAlltoall(
-            context,
-            comm,
-            collective_id,
-            srcs=plan.remote_sources,
-            dsts=plan.remote_destinations,
-        )
-
     first_blocked_pid = next(
         (
             pid
@@ -994,50 +985,59 @@ async def _adjust_ordering_impl(
     pieces_by_source: dict[int, dict[int, ChunkStore]] = {comm.rank: {}}
     local_pieces = pieces_by_source[comm.rank]
     owed_remote_pid_set = set(plan.owed_remote_pids)
-    for pid in range(pre_start, pre_stop):
-        piece = await buffer.collect_output_partition(pid)
-        owner = partition_owner(pid, comm.nranks, plan.npartitions)
-        if exchange is not None and pid in owed_remote_pid_set:
-            await _send_remote_partition(
-                context,
-                comm,
-                schema_ir,
-                ir_context,
-                exchange,
-                plan.npartitions,
-                pid,
-                piece,
-            )
-        elif owner == comm.rank and piece is not None:
-            local_pieces[pid] = piece
-        if plan.local_window[0] <= pid < first_blocked_pid:
-            await _emit_partition(
-                context,
-                schema_ir,
-                ir_context,
-                ch_out,
-                pid,
-                local_pieces.pop(pid, None),
-            )
+    async with (
+        SparseAlltoall(
+            context,
+            comm,
+            collective_id,
+            srcs=plan.remote_sources,
+            dsts=plan.remote_destinations,
+        )
+        if plan.remote_sources or plan.remote_destinations
+        else nullcontext()
+    ) as exchange:
+        for pid in range(pre_start, pre_stop):
+            piece = await buffer.collect_output_partition(pid)
+            owner = partition_owner(pid, comm.nranks, plan.npartitions)
+            if exchange is not None and pid in owed_remote_pid_set:
+                await _send_remote_partition(
+                    context,
+                    comm,
+                    schema_ir,
+                    ir_context,
+                    exchange,
+                    plan.npartitions,
+                    pid,
+                    piece,
+                )
+            elif owner == comm.rank and piece is not None:
+                local_pieces[pid] = piece
+            if plan.local_window[0] <= pid < first_blocked_pid:
+                await _emit_partition(
+                    context,
+                    schema_ir,
+                    ir_context,
+                    ch_out,
+                    pid,
+                    local_pieces.pop(pid, None),
+                )
 
-    if exchange is not None:
-        await exchange.insert_finished(context)
-
-    # Collect remote pieces from other ranks.
-    if exchange is not None:
-        for source_rank in plan.remote_sources:
-            remote_pieces: dict[int, ChunkStore] = {}
-            stream = context.br().stream_pool.get_stream()
-            expected_pids = _remote_pids_from_source(plan, source_rank, comm.rank)
-            for pid, packed in zip(
-                expected_pids,
-                exchange.extract(source_rank),
-                strict=True,
-            ):
-                chunk = await _unpack_remote_partition(context, packed, stream)
-                if chunk.table_view().num_rows() > 0:
-                    _store_chunk(context, remote_pieces, pid, chunk)
-            pieces_by_source[source_rank] = remote_pieces
+        if exchange is not None:
+            await exchange.insert_finished()
+            # Collect remote pieces from other ranks.
+            for source_rank in plan.remote_sources:
+                remote_pieces: dict[int, ChunkStore] = {}
+                stream = context.br().stream_pool.get_stream()
+                expected_pids = _remote_pids_from_source(plan, source_rank, comm.rank)
+                for pid, packed in zip(
+                    expected_pids,
+                    exchange.extract(source_rank),
+                    strict=True,
+                ):
+                    chunk = await _unpack_remote_partition(context, packed, stream)
+                    if chunk.table_view().num_rows() > 0:
+                        _store_chunk(context, remote_pieces, pid, chunk)
+                pieces_by_source[source_rank] = remote_pieces
 
     # Collect and emit the remaining output partitions for this rank.
     for pid in range(first_blocked_pid, plan.local_window[1]):

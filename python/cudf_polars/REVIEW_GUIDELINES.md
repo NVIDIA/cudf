@@ -214,9 +214,14 @@ errors and cancellation. Clear temporary `ChunkStore`s in `finally`.
 Release every collective when it is no longer needed. Otherwise its
 unextracted data stays alive until the Python garbage collector frees it,
 which can be long after the query ends. `ShuffleManager`,
-`LocalRepartitioner`, `AllGatherManager`, `ShufflerAsync`, and
-`SparseAlltoall` are async context managers that release on exit. Use
-`contextlib.aclosing` for a bare `AllGather`.
+`LocalRepartitioner`, and `AllGatherManager` are async context managers
+that release on exit. Wrap a bare `AllGather`, `ShufflerAsync`, or
+`SparseAlltoall` in `aclosing_collective(collective, comm, op_id)`. Do not
+use `contextlib.aclosing` or the collective's own `async with`. When the
+body is cancelled, they still wait for the peer ranks, and when the close is
+cancelled, `op_id` can be reused before the collective completes.
+`aclosing_collective` finishes a cancelled close in the background and
+blocks new collectives on `comm` until it completes.
 
 ```python
 # Bad: an exception in the loop skips insert_finished(), and the shuffler

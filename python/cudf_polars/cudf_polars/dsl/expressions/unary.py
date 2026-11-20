@@ -169,7 +169,9 @@ class Cast(Expr):
             in_range = _in_range_mask(column.obj, target, df.stream)
             if in_range is not None and self.strict:
                 in_range = plc.replace.replace_nulls(
-                    in_range, plc.Scalar.from_py(py_val=True, stream=df.stream)
+                    in_range,
+                    plc.Scalar.from_py(py_val=True, stream=df.stream),
+                    stream=df.stream,
                 )
                 if not plc.reduce.reduce(
                     in_range,

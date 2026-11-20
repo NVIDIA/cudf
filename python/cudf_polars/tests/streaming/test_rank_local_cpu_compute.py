@@ -414,9 +414,12 @@ def test_col_reads_regex_shaped_name():
     assert_frame_equal(got, pl.DataFrame({"^i$": [10, 20]}))
 
 
-def test_float_to_string_stays_on_gpu(edge_cases, streaming_engine_factory, cpu_calls):
+@pytest.mark.parametrize("wrap_numerical", [False, True])
+def test_float_to_string_stays_on_gpu(
+    edge_cases, streaming_engine_factory, cpu_calls, wrap_numerical
+):
     # libcudf formats floats with a fixed number of digits, unlike Polars.
-    q = edge_cases.select(pl.col("f").cast(pl.String))
+    q = edge_cases.select(pl.col("f").cast(pl.String, wrap_numerical=wrap_numerical))
     assert_frame_equal(
         _collect(q, streaming_engine_factory, "always"),
         _collect(q, streaming_engine_factory, "never"),

@@ -74,10 +74,9 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
   std::optional<size_type> unmatched_right_rows;
   // Release retrieval scratch before full-join finalization allocates its match flags.
   auto join_indices = [&] {
-    cuda::device_buffer<hash_graph_probe_state> states(
-      stream, temp_mr, left.num_rows(), cuda::no_init);
-    // Only the offsets and first matches are needed to emit the output. Keep counting scratch out
-    // of the output allocation's lifetime.
+    cuda::device_buffer<hash_value_type> hashes(stream, temp_mr, left.num_rows(), cuda::no_init);
+    // Only offsets and hashes are needed to emit the output. Keep counting scratch out of the
+    // output allocation's lifetime.
     auto [offsets, join_size] = [&] {
       cuda::device_buffer<size_type> match_counts(stream, temp_mr, left.num_rows(), cuda::no_init);
       // A full join appends the unmatched right rows, so track which build rows the probe matched
@@ -92,7 +91,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
       probe(Join,
             left,
             preprocessed_left,
-            states,
+            hashes,
             match_counts,
             nullptr,
             matched_rows,
@@ -116,7 +115,7 @@ hash_join<Hasher>::join_retrieve(cudf::table_view const& left,
     validate_output_size(join_size + extra_capacity);
 
     return retrieve(
-      Join, left, preprocessed_left, states, offsets, join_size, 0, extra_capacity, stream, mr);
+      Join, left, preprocessed_left, hashes, offsets, join_size, 0, extra_capacity, stream, mr);
   }();
 
   if constexpr (Join == join_kind::FULL_JOIN) {
@@ -141,7 +140,7 @@ hash_join<Hasher>::retrieve(
   join_kind join,
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
-  device_span<hash_graph_probe_state const> states,
+  device_span<hash_value_type const> hashes,
   device_span<cuda::std::int64_t const> offsets,
   std::size_t output_size,
   size_type left_index_offset,
@@ -149,9 +148,9 @@ hash_join<Hasher>::retrieve(
   cuda::stream_ref stream,
   cudf::memory_resources mr) const
 {
-  CUDF_EXPECTS(states.size() == static_cast<std::size_t>(left.num_rows()) &&
-                 offsets.size() == states.size() + 1,
-               "Need one state per probe row and one offset per probe row plus the end offset");
+  CUDF_EXPECTS(hashes.size() == static_cast<std::size_t>(left.num_rows()) &&
+                 offsets.size() == hashes.size() + 1,
+               "Need one hash per probe row and one offset per probe row plus the end offset");
   auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
     output_size + extra_capacity, stream, mr.get_output_mr());
   auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
@@ -165,9 +164,9 @@ hash_join<Hasher>::retrieve(
   auto emit = [&](auto equality, auto) {
     dispatch_bool(join != join_kind::INNER_JOIN, [&](auto is_outer) {
       launch_hash_graph_retrieve_kernel<decltype(is_outer)::value>(left.num_rows(),
-                                                                   states.data(),
+                                                                   hashes.data(),
                                                                    offsets.data(),
-                                                                   _impl->_records.data(),
+                                                                   _impl->hash_graph(),
                                                                    left_index_offset,
                                                                    left_indices->data(),
                                                                    right_indices->data(),
@@ -187,7 +186,7 @@ hash_join<hash_join_hasher>::retrieve(
   join_kind,
   cudf::table_view const&,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const&,
-  device_span<hash_graph_probe_state const>,
+  device_span<hash_value_type const>,
   device_span<cuda::std::int64_t const>,
   std::size_t,
   size_type,

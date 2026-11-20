@@ -203,7 +203,7 @@ class hash_join {
    * @param join Join kind; left and full joins count an unmatched left row as one match
    * @param left Probe table
    * @param preprocessed_left `left` preprocessed for row operators
-   * @param states First match of each left row, as the retrieve kernel reads it
+   * @param hashes Hash of each left row
    * @param counts Match count of each left row
    * @param total Sum of `counts`, added to the existing value
    * @param matched_rows Zero-initialized flag of each build row; full joins set the flags of
@@ -216,7 +216,7 @@ class hash_join {
     join_kind join,
     cudf::table_view const& left,
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
-    device_span<cuda::std::uint32_t> states,
+    device_span<hash_value_type> hashes,
     device_span<size_type> counts,
     cuda::std::uint64_t* total,
     device_span<cuda::std::uint32_t> matched_rows,
@@ -224,14 +224,14 @@ class hash_join {
     cuda::stream_ref stream) const;
 
   /**
-   * @brief Emits the row index pairs of `left` from the first match and output offset of each row
+   * @brief Emits the row index pairs of `left` from the hashes and output offsets of its rows
    *
    * Each output holds `output_size` pairs and has room for `extra_capacity` more elements.
    *
    * @param join Join kind; left and full joins emit an unmatched left row once
    * @param left Probe table
    * @param preprocessed_left `left` preprocessed for row operators
-   * @param states First match of each left row, as `probe` records it
+   * @param hashes Hash of each left row
    * @param offsets Output offset of each left row plus the end offset
    * @param output_size Total number of output pairs
    * @param left_index_offset Value added to every emitted left row index
@@ -245,7 +245,7 @@ class hash_join {
     join_kind join,
     cudf::table_view const& left,
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
-    device_span<cuda::std::uint32_t const> states,
+    device_span<hash_value_type const> hashes,
     device_span<cuda::std::int64_t const> offsets,
     std::size_t output_size,
     size_type left_index_offset,

@@ -73,7 +73,7 @@ CUDF_KERNEL void hash_graph_build_fill_kernel(size_type num_rows,
 template <bool IsOuter, bool ComputeSum, typename Equal, typename Hasher>
 CUDF_KERNEL void hash_graph_probe_count_kernel(size_type num_rows,
                                                bitmask_type const* valid_rows,
-                                               hash_graph_probe_state* probe_states,
+                                               hash_value_type* probe_hashes,
                                                size_type* match_counts,
                                                cuda::std::uint64_t* total_matches,
                                                cuda::std::uint32_t* matched_rows,
@@ -87,21 +87,11 @@ CUDF_KERNEL void hash_graph_probe_count_kernel(size_type num_rows,
   cuda::std::uint64_t thread_new_flags = 0;
   for (auto row = grid_1d::global_thread_id(); row < num_rows; row += stride) {
     auto const index = static_cast<size_type>(row);
+    auto hash        = hash_value_type{0};
     auto count       = size_type{0};
-    auto state       = hash_graph_no_match;
     if (valid_rows == nullptr || cudf::bit_is_set(valid_rows, index)) {
-      auto const key    = hash_graph_record{hasher(index), index};
-      auto const bucket = hash_graph_bucket(key.first, graph.num_buckets);
-      auto const end    = graph.offsets[bucket + 1];
-      auto other_key    = false;
-      for (auto position = graph.offsets[bucket]; position < end; ++position) {
-        auto const record = graph.records[position];
-        if (record.first != key.first) { continue; }
-        if (!equal(key, record)) {
-          other_key = true;
-          continue;
-        }
-        if (count == 0) { state = static_cast<hash_graph_probe_state>(position); }
+      hash = hasher(index);
+      graph.for_each_match({hash, index}, equal, [&](size_type build_row) {
         ++count;
         // Only full joins consume the matched-row tally, and `matched_rows` is null for every
         // other kind.
@@ -110,15 +100,14 @@ CUDF_KERNEL void hash_graph_probe_count_kernel(size_type num_rows,
             auto expected = cuda::std::uint32_t{0};
             thread_new_flags +=
               cuda::atomic_ref<cuda::std::uint32_t, cuda::thread_scope_device>{
-                matched_rows[record.second]}
+                matched_rows[build_row]}
                 .compare_exchange_strong(
                   expected, cuda::std::uint32_t{1}, cuda::memory_order_relaxed);
           }
         }
-      }
-      if (count != 0 && other_key) { state |= hash_graph_compare_rows; }
+      });
     }
-    if (probe_states != nullptr) { probe_states[index] = state; }
+    if (probe_hashes != nullptr) { probe_hashes[index] = hash; }
     auto const match_count = IsOuter ? cuda::std::max(count, size_type{1}) : count;
     if (match_counts != nullptr) { match_counts[index] = match_count; }
     if constexpr (ComputeSum) { thread_matches += static_cast<cuda::std::uint64_t>(match_count); }
@@ -144,9 +133,9 @@ CUDF_KERNEL void hash_graph_probe_count_kernel(size_type num_rows,
 
 template <bool IsOuter, typename Equal>
 CUDF_KERNEL void hash_graph_retrieve_kernel(size_type num_rows,
-                                            hash_graph_probe_state const* probe_states,
+                                            hash_value_type const* probe_hashes,
                                             cuda::std::int64_t const* output_offsets,
-                                            hash_graph_record const* records,
+                                            hash_graph_ref graph,
                                             size_type left_index_offset,
                                             size_type* left_indices,
                                             size_type* right_indices,
@@ -158,26 +147,17 @@ CUDF_KERNEL void hash_graph_retrieve_kernel(size_type num_rows,
     auto output           = output_offsets[index];
     auto const output_end = output_offsets[index + 1];
     if (output == output_end) { continue; }
-    auto const state = probe_states[index];
+    // The matches of a key are interleaved with the other keys of its bucket, so they can only
+    // be located by comparing every record again.
+    graph.for_each_match({probe_hashes[index], index}, equal, [&](size_type build_row) {
+      left_indices[output]  = index + left_index_offset;
+      right_indices[output] = build_row;
+      ++output;
+    });
     if constexpr (IsOuter) {
-      if (state == hash_graph_no_match) {
+      if (output != output_end) {
         left_indices[output]  = index + left_index_offset;
         right_indices[output] = JoinNoMatch;
-        continue;
-      }
-    }
-    // The matches of a key are interleaved with the other keys of its bucket. Resume at the
-    // first match and take the records with the same hash until every counted match is
-    // emitted. Rows are compared again only if the count pass saw another key with that hash.
-    auto position           = static_cast<size_type>(state & ~hash_graph_compare_rows);
-    auto const compare_rows = (state & hash_graph_compare_rows) != 0;
-    auto const key          = hash_graph_record{records[position].first, index};
-    for (; output < output_end; ++position) {
-      auto const record = records[position];
-      if (record.first == key.first && (!compare_rows || equal(key, record))) {
-        left_indices[output]  = index + left_index_offset;
-        right_indices[output] = record.second;
-        ++output;
       }
     }
   }
@@ -223,7 +203,7 @@ void launch_hash_graph_build_fill_kernel(size_type num_rows,
 template <bool IsOuter, typename Equal, typename Hasher>
 void launch_hash_graph_probe_count_kernel(size_type num_rows,
                                           bitmask_type const* valid_rows,
-                                          hash_graph_probe_state* probe_states,
+                                          hash_value_type* probe_hashes,
                                           size_type* match_counts,
                                           cuda::std::uint64_t* total_matches,
                                           cuda::std::uint32_t* matched_rows,
@@ -241,7 +221,7 @@ void launch_hash_graph_probe_count_kernel(size_type num_rows,
     hash_graph_probe_count_kernel<IsOuter, decltype(compute_sum)::value>
       <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(num_rows,
                                                                              valid_rows,
-                                                                             probe_states,
+                                                                             probe_hashes,
                                                                              match_counts,
                                                                              total_matches,
                                                                              matched_rows,
@@ -255,9 +235,9 @@ void launch_hash_graph_probe_count_kernel(size_type num_rows,
 
 template <bool IsOuter, typename Equal>
 void launch_hash_graph_retrieve_kernel(size_type num_rows,
-                                       hash_graph_probe_state const* probe_states,
+                                       hash_value_type const* probe_hashes,
                                        cuda::std::int64_t const* output_offsets,
-                                       hash_graph_record const* records,
+                                       hash_graph_ref graph,
                                        size_type left_index_offset,
                                        size_type* left_indices,
                                        size_type* right_indices,
@@ -267,9 +247,9 @@ void launch_hash_graph_retrieve_kernel(size_type num_rows,
   auto const config = grid_1d{num_rows, hash_graph_block_size};
   hash_graph_retrieve_kernel<IsOuter>
     <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(num_rows,
-                                                                           probe_states,
+                                                                           probe_hashes,
                                                                            output_offsets,
-                                                                           records,
+                                                                           graph,
                                                                            left_index_offset,
                                                                            left_indices,
                                                                            right_indices,

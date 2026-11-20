@@ -146,6 +146,40 @@ TEST_F(StringsFindallTests, FindTest)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
+TEST_F(StringsFindallTests, FindBytesTest)
+{
+  auto const valids = cudf::test::iterators::null_at(5);
+  cudf::test::strings_column_wrapper input(
+    {"3A", "Mäy4", "Jän2021", "Märch", "Ä9BC", "", "", "äbcdéf ghijklm 12345"}, valids);
+  auto sv = cudf::strings_column_view(input);
+
+  auto prog    = cudf::strings::regex_program::create("\\d+");
+  auto results = cudf::strings::find_re_bytes(sv, *prog);
+  auto expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 4, 4, -1, 2, 0, -1, 17}, valids);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // character positions for comparison
+  results = cudf::strings::find_re(sv, *prog);
+  expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 3, 3, -1, 1, 0, -1, 15}, valids);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // a match beginning with a multi-byte character
+  prog    = cudf::strings::regex_program::create("é[a-z]");
+  results = cudf::strings::find_re_bytes(sv, *prog);
+  expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({-1, -1, -1, -1, -1, 0, -1, 5}, valids);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // a zero-width match at the end of each string: its byte length
+  prog    = cudf::strings::regex_program::create("$");
+  results = cudf::strings::find_re_bytes(sv, *prog);
+  expected =
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>({2, 5, 8, 6, 5, 0, 0, 22}, valids);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+}
+
 TEST_F(StringsFindallTests, NoMatches)
 {
   cudf::test::strings_column_wrapper input({"abc\nfff\nabc", "fff\nabc\nlll", "abc", "", "abc\n"});

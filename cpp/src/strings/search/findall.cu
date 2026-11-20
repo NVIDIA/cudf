@@ -169,6 +169,12 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 }
 
 namespace {
+/**
+ * @brief Returns the position of the first match in each row
+ *
+ * @tparam as_bytes True returns the byte offset of the match instead of its character position
+ */
+template <bool as_bytes>
 struct find_re_fn {
   column_device_view d_strings;
 
@@ -181,15 +187,17 @@ struct find_re_fn {
     auto const d_str = d_strings.element<string_view>(idx);
 
     auto const result = prog.template find(thread_idx, d_str, d_str.begin());
-    return result.has_value() ? result.value().first : -1;
+    if (!result.has_value()) { return -1; }
+    auto const position = result.value().first;
+    return as_bytes ? d_str.byte_offset(position) : position;
   }
 };
-}  // namespace
 
-std::unique_ptr<column> find_re(strings_column_view const& input,
-                                regex_program const& prog,
-                                cuda::stream_ref stream,
-                                cudf::memory_resources mr)
+template <bool as_bytes>
+std::unique_ptr<column> find_re_impl(strings_column_view const& input,
+                                     regex_program const& prog,
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
                                      input.size(),
@@ -200,27 +208,44 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<size_type>();
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
     auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings},
+    launch_transform_kernel(find_re_fn<as_bytes>{*d_strings},
                             *d_prog,
                             d_results,
                             input.size(),
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   } else {
     auto d_prog = regex_device_builder::create_prog_device(prog, stream);
-    launch_transform_kernel(find_re_fn{*d_strings},
+    launch_transform_kernel(find_re_fn<as_bytes>{*d_strings},
                             *d_prog,
                             d_results,
                             input.size(),
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   }
 
   return results;
+}
+}  // namespace
+
+std::unique_ptr<column> find_re(strings_column_view const& input,
+                                regex_program const& prog,
+                                cuda::stream_ref stream,
+                                cudf::memory_resources mr)
+{
+  return find_re_impl<false>(input, prog, stream, mr);
+}
+
+std::unique_ptr<column> find_re_bytes(strings_column_view const& input,
+                                      regex_program const& prog,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
+{
+  return find_re_impl<true>(input, prog, stream, mr);
 }
 }  // namespace detail
 
@@ -242,6 +267,15 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 {
   CUDF_FUNC_RANGE();
   return detail::find_re(input, prog, stream, mr);
+}
+
+std::unique_ptr<column> find_re_bytes(strings_column_view const& input,
+                                      regex_program const& prog,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  return detail::find_re_bytes(input, prog, stream, mr);
 }
 
 }  // namespace strings

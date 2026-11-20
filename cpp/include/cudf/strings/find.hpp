@@ -82,6 +82,96 @@ std::unique_ptr<column> rfind(strings_column_view const& input,
                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
+ * @brief Returns a column of byte offsets where the target string is first found
+ * in each string of the provided column.
+ *
+ * This is the same as find() except that `start`, `stop` and the returned values
+ * are byte offsets into each string instead of character positions. No UTF-8
+ * decoding is required, so this is faster than find() for strings containing
+ * multi-byte characters.
+ *
+ * If `target` is not found, -1 is returned for that row entry in the output column.
+ *
+ * The target string is searched within each string in the byte range [start,stop).
+ * The entire target must lie within that range to match. If the stop parameter is -1,
+ * then the end of each string becomes the end of the range.
+ *
+ * An empty target returns `start` for each string with at least `start` bytes and
+ * -1 otherwise.
+ *
+ * Any null string entries return corresponding null output column entries.
+ *
+ * @code{.pseudo}
+ * Example:
+ * s = ["ÄbÇ", "日本b", "abc", "x"]
+ * r = find_bytes(s, "b")
+ * r is now [2, 6, 1, -1]
+ * @endcode
+ *
+ * @throw cudf::logic_error if start position is negative or greater than stop position.
+ *
+ * @param input Strings instance for this operation
+ * @param target UTF-8 encoded string to search for in each string
+ * @param start First byte offset to include in the search
+ * @param stop Last byte offset (exclusive) to include in the search.
+ *             Default of -1 will search to the end of the string.
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return New integer column with byte offset values
+ */
+std::unique_ptr<column> find_bytes(
+  strings_column_view const& input,
+  string_scalar const& target,
+  size_type start           = 0,
+  size_type stop            = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Returns a column of byte offsets where the target string is first found
+ * searching from the end of each string.
+ *
+ * This is the same as rfind() except that `start`, `stop` and the returned values
+ * are byte offsets into each string instead of character positions.
+ *
+ * If `target` is not found, -1 is returned for that row entry in the output column.
+ *
+ * The target string is searched within each string in the byte range [start,stop).
+ * The entire target must lie within that range to match. If the stop parameter is -1,
+ * then the end of each string becomes the end of the range.
+ *
+ * An empty target returns `stop` for each string when `0 <= stop <= size` and the
+ * string's size in bytes otherwise; -1 is returned if `start` is greater than the size.
+ *
+ * Any null string entries return corresponding null output column entries.
+ *
+ * @code{.pseudo}
+ * Example:
+ * s = ["ÄbÇb", "日本b", "abc", "x"]
+ * r = rfind_bytes(s, "b")
+ * r is now [5, 6, 1, -1]
+ * @endcode
+ *
+ * @throw cudf::logic_error if start position is negative or greater than stop position.
+ *
+ * @param input Strings instance for this operation
+ * @param target UTF-8 encoded string to search for in each string
+ * @param start First byte offset to include in the search
+ * @param stop Last byte offset (exclusive) to include in the search.
+ *             Default of -1 will search starting at the end of the string.
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return New integer column with byte offset values
+ */
+std::unique_ptr<column> rfind_bytes(
+  strings_column_view const& input,
+  string_scalar const& target,
+  size_type start           = 0,
+  size_type stop            = -1,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
  * @brief Returns a column of character position values where the target
  * string is first found in the corresponding string of the provided column
  *

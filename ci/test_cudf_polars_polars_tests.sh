@@ -68,8 +68,7 @@ if [[ "${1:-}" == --coverage-comparison ]]; then
     rapids-uv-pip install --constraint "${PIP_CONSTRAINT}" \
         --config-settings="rapidsai.disable-cuda=true" \
         --config-settings="rapidsai.matrix-entry=cuda=${CUDA_VERSION};cuda_suffixed=true;use_cuda_wheels=true" \
-        --editable \
-        "./python/cudf_polars[test,dask,ray]"
+        --editable "./python/cudf_polars[test,dask,ray]"
 
     exec ./ci/run_cudf_polars_coverage_comparison.sh
 fi

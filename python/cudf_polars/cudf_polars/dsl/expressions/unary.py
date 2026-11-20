@@ -1581,6 +1581,12 @@ class UnaryFunction(Expr):
                 )
             else:
                 evaluated = fill_value.evaluate(df, context=context)
+                if column.size == 1 and evaluated.size == 1:
+                    # replace_nulls has no kernel for nested scalars.
+                    if column.null_count == 0:
+                        return column
+                    if column.dtype == evaluated.dtype:
+                        return Column(evaluated.obj, dtype=self.dtype)
                 if evaluated.is_scalar:
                     arg = evaluated.obj_scalar(stream=df.stream)
                 else:

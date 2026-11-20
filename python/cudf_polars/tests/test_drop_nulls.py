@@ -157,6 +157,24 @@ def test_fill_null_null_list_receiver_column_fill(engine: pl.GPUEngine):
 
 
 @pytest.mark.parametrize(
+    "data",
+    [
+        [[3]],
+        [None],
+        [[3], None, [], [1, 2], [4], None, [5], [6], [7]],
+    ],
+)
+def test_fill_null_list_receiver_one_row_partition(engine: pl.GPUEngine, data):
+    dtype = pl.List(pl.Int64)
+    lf = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = lf.select(
+        pl.lit(None, dtype=dtype).fill_null(pl.col("a")).alias("null_recv"),
+        pl.col("a").head(1).fill_null(pl.col("a").head(1)).alias("valid_recv"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
     "strategy", ["forward", "backward", "min", "max", "mean", "zero", "one"]
 )
 def test_fill_null_with_strategy(engine: pl.GPUEngine, null_data, strategy):

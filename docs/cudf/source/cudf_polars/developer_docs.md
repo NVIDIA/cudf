@@ -621,6 +621,52 @@ The command exits nonzero for drift or incomplete evidence. Review the diff
 before committing a replacement. New Polars versions require full discovery
 and matching list entries before selected PR runs can use them.
 
+### Comparing local and upstream test coverage
+
+Use a GPU-enabled Linux environment with Git and the existing
+test runners' dependencies (including GNU coreutils and binutils). Build and
+install this checkout's cudf-polars in editable mode with its test dependencies,
+including pytest-cov and pytest-xdist. A devcontainer is optional. Use a supported
+Polars version and its matching `py-<version>` checkout in `polars/`, then run:
+
+```bash
+ci/run_cudf_polars_coverage_comparison.sh
+```
+
+This collects local coverage and upstream coverage with the in-memory and
+default-blocksize SPMD engines. GPU run-list selection is disabled; existing
+runner exclusions still apply. Set `POLARS_DIR` for another checkout or pass
+an output directory as the first argument.
+
+Outputs default to `coverage-results/cudf-polars-comparison/`. Keep
+`.coverage.local`, `.coverage.upstream-in-memory`, `.coverage.upstream-spmd`,
+and `coverage-comparison.json` together. The JSON classifies local-only,
+upstream-only, and shared lines with up to 20 context samples per line;
+the databases retain all contexts. The nightly `cudf-polars-coverage-collection-and-comparison`
+job runs this command on one configuration and uploads these files together as
+the `cudf-polars-coverage-comparison` GitHub artifact, including
+after suite failures. PR jobs do not run the comparison.
+
+To retrieve all local contexts, replace the filename and line below with
+exact values from the report:
+
+```bash
+python - coverage-results/cudf-polars-comparison/.coverage.local /absolute/source/filename.py 42 <<'PY'
+import sys
+
+from coverage import CoverageData
+
+data = CoverageData(basename=sys.argv[1])
+data.read()
+print(*sorted(data.contexts_by_lineno(sys.argv[2])[int(sys.argv[3])]), sep="\n")
+PY
+```
+
+Coverage differences identify investigation targets, not proven missing
+assertions or GPU execution. A failed suite makes the command exit nonzero;
+any resulting report is incomplete. To re-export saved databases, see
+`python ci/analyze_cudf_polars_coverage.py --help`.
+
 # Debugging
 
 If the callback execution fails during the polars `collect` call, we

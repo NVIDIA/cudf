@@ -169,6 +169,10 @@ class StringFunction(Expr):
     _ESCAPE_SEQUENCE: ClassVar[re.Pattern[str]] = re.compile(
         r"\\(?:x([0-9a-fA-F]{2})|.)", re.DOTALL
     )
+    _CLASS_HEX_ESCAPE: ClassVar[re.Pattern[str]] = re.compile(r"\\x[0-9a-fA-F]{2}")
+    _LONG_REPETITION_BOUND: ClassVar[re.Pattern[str]] = re.compile(
+        r"\{(?:\d{4,}(?:,\d*)?|\d*,\d{4,})\}"
+    )
     __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
@@ -245,7 +249,9 @@ class StringFunction(Expr):
             if self._has_unsupported_class_or_word_boundary(pattern):
                 raise NotImplementedError(
                     "extract_all does not support nested character classes, "
-                    r"character class set operations, or \< and \>"
+                    "character class set operations, escapes in character "
+                    "class ranges, letter escapes in character classes, "
+                    r"or \< and \>"
                 )
             if self._CASE_INSENSITIVE_FLAG.search(pattern):
                 raise NotImplementedError(
@@ -298,21 +304,10 @@ class StringFunction(Expr):
                 )
             # libcudf reads at most 3 digits of a repetition bound and treats
             # longer bounds as literal characters
-            repeats = {
-                re._constants.MAX_REPEAT,  # type: ignore[attr-defined]
-                re._constants.MIN_REPEAT,  # type: ignore[attr-defined]
-                re._constants.POSSESSIVE_REPEAT,  # type: ignore[attr-defined]
-            }
-            if any(
-                op in repeats
-                and any(
-                    bound is not re._constants.MAXREPEAT and bound > 999  # type: ignore[attr-defined]
-                    for bound in av[:2]
-                )
-                for op, av in tokens
-            ):
+            if self._LONG_REPETITION_BOUND.search(pattern):
                 raise NotImplementedError(
-                    "extract_all does not support repetition bounds above 999"
+                    "extract_all does not support repetition bounds with more "
+                    "than 3 digits"
                 )
             # libcudf stops parsing the pattern at a NUL character
             if "\x00" in pattern:
@@ -470,9 +465,25 @@ class StringFunction(Expr):
         while i < len(pattern):
             char = pattern[i]
             if char == "\\":
-                if pattern[i + 1 : i + 2] in {"<", ">"}:
+                escaped = pattern[i + 1 : i + 2]
+                if escaped in {"<", ">"}:
                     return True
-                i += 2
+                hex_escape = StringFunction._CLASS_HEX_ESCAPE.match(pattern, i)
+                end = hex_escape.end() if hex_escape else i + 2
+                if in_class and (
+                    pattern[i - 1] == "-"
+                    or (
+                        pattern[end : end + 1] == "-"
+                        and pattern[end + 1 : end + 2] != "]"
+                    )
+                    or (
+                        escaped.isalnum()
+                        and escaped not in {"n", "t"}
+                        and hex_escape is None
+                    )
+                ):
+                    return True
+                i = end
                 continue
             if in_class:
                 if char == "[" or pattern[i : i + 2] in {"&&", "--", "~~", "||"}:

@@ -62,6 +62,56 @@ def test_cast_unsupported(engine: pl.GPUEngine, tests):
     )
 
 
+@pytest.mark.parametrize("strict", [True, False])
+@pytest.mark.parametrize(
+    "then", [None, pl.Boolean(), pl.Int8()], ids=["null", "to_bool", "to_int8"]
+)
+@pytest.mark.parametrize(
+    "values",
+    [[1, 2, 3], [1, None, 3], [None, None, None], []],
+    ids=["valid", "mixed", "null", "empty"],
+)
+def test_cast_to_null(engine: pl.GPUEngine, values, strict, then):
+    # Null is stored as INT8, so neither the cast to Null nor a following cast
+    # back to Int8 may become a no-op INT8 -> INT8 cast.
+    expr = pl.col("a").cast(pl.Null, strict=strict)
+    if then is not None:
+        expr = expr.cast(then)
+    query = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Int8)}).select(expr)
+    if strict and any(value is not None for value in values):
+        message = "conversion from `i8` to `null` failed"
+        with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
+            query.collect()
+        if is_streaming_engine(engine):
+            with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+                query.collect(engine=engine)
+        else:
+            with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
+                query.collect(engine=engine)
+    else:
+        assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize("dtype", [pl.Int8(), pl.Int16(), pl.Boolean()])
+def test_cast_null_literal_column(engine: pl.GPUEngine, dtype):
+    query = pl.LazyFrame({"a": [1, 2, 3]}).select(pl.repeat(None, pl.len()).cast(dtype))
+    assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "from_dtype, to_dtype",
+    [
+        (pl.Datetime("us"), pl.Datetime("us", "UTC")),
+        (pl.Datetime("us", "UTC"), pl.Datetime("us")),
+        (pl.Datetime("us", "UTC"), pl.Datetime("us", "Asia/Tokyo")),
+    ],
+)
+def test_cast_datetime_time_zone(engine: pl.GPUEngine, from_dtype, to_dtype):
+    # Same physical type, so only the logical dtype changes.
+    df = pl.LazyFrame({"a": pl.Series([0, 10**6, None], dtype=from_dtype)})
+    assert_gpu_result_equal(df.select(pl.col("a").cast(to_dtype)), engine=engine)
+
+
 def test_allow_double_cast(engine: pl.GPUEngine):
     df = pl.LazyFrame({"c0": [1000]})
     query = df.select(pl.col("c0").cast(pl.Boolean).cast(pl.Int8))
@@ -74,13 +124,16 @@ def test_cast_strict_false_string_to_numeric(engine: pl.GPUEngine, dtype, strict
     df = pl.LazyFrame({"c0": ["1969-12-08 17:00:01", "1", None]})
     query = df.with_columns(pl.col("c0").cast(dtype, strict=strict))
     if strict:
-        with pytest.raises(pl.exceptions.InvalidOperationError):
+        message = f"conversion from `str` to `{dtype._string_repr()}` failed"
+        with pytest.raises(pl.exceptions.InvalidOperationError, match=message):
             query.collect()
         if is_streaming_engine(engine):
             with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
                 query.collect(engine=engine)
         else:
-            with pytest.raises(pl.exceptions.InvalidOperationError):
+            with pytest.raises(
+                pl.exceptions.InvalidOperationError, match=rf"^{message}$"
+            ):
                 query.collect(engine=engine)
     else:
         assert_gpu_result_equal(query, engine=engine)
@@ -129,6 +182,8 @@ def test_cast_integer_to_date(engine: pl.GPUEngine, dtype):
         (pl.Float64, pl.UInt64, [1.0, -1.0, 2.0**64, float("nan"), None]),
         (pl.Float64, pl.Int32, [2.0**31, -(2.0**31), 1.9, float("inf"), None]),
         (pl.Float32, pl.Int16, [40000.0, -40000.0, 3.5, None]),
+        (pl.Float32, pl.Int8, [-128.5, -129.0, 127.5, 128.0, None]),
+        (pl.Float64, pl.UInt8, [-0.5, -1.0, 255.5, 256.0, None]),
     ],
 )
 def test_non_strict_integer_narrowing_cast_overflow_is_null(
@@ -165,6 +220,8 @@ def _assert_collect_raises(q, engine, exception):
         (pl.Float64, pl.Int8, [float("nan")]),
         (pl.Float64, pl.Int64, [float("inf")]),
         (pl.Float32, pl.Int16, [40000.0]),
+        (pl.Float32, pl.Int8, [-129.0]),
+        (pl.Float64, pl.UInt8, [-1.0]),
     ],
 )
 def test_strict_integer_cast_out_of_range_raises(
@@ -186,6 +243,9 @@ def test_strict_integer_cast_out_of_range_raises(
         (pl.Float64, pl.UInt64, [0.0, 2.0**63, 1.0e19, None]),
         (pl.Float64, pl.Int64, [-(2.0**63), 9.0e18]),
         (pl.Float32, pl.Int16, [32767.0, -32768.0, None]),
+        (pl.Float32, pl.Int8, [-128.5, 127.5, None]),
+        (pl.Float64, pl.UInt8, [-0.5, 255.5, None]),
+        (pl.Float64, pl.Int32, [-2147483648.5, 2147483647.5]),
         (pl.Int64, pl.UInt8, []),
     ],
 )

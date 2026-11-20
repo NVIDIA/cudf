@@ -18,7 +18,7 @@ namespace detail {
 std::unique_ptr<cudf::scalar> mean(column_view const& col,
                                    cudf::data_type const output_dtype,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   auto col_type =
     cudf::is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();

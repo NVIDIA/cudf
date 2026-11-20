@@ -8,10 +8,11 @@
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
@@ -36,7 +37,8 @@ struct SetBitmaskTest : public cudf::test::BaseFixture {
                             thrust::host_vector<bool> const& expect,
                             cuda::stream_ref stream = cudf::get_default_stream())
   {
-    rmm::device_uvector<bool> result(expect.size(), stream);
+    cuda::device_buffer<bool> result(
+      stream, cudf::get_current_device_resource_ref(), expect.size(), cuda::no_init);
     auto counting_iter = cuda::counting_iterator<cudf::size_type>{0};
     thrust::transform(rmm::exec_policy_nosync(stream),
                       counting_iter + start_bit,

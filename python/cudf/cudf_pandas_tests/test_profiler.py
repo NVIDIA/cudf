@@ -1,10 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import os
 import subprocess
-
-import pytest
 
 from cudf.pandas import LOADED, Profiler
 
@@ -14,13 +12,7 @@ if not LOADED:
 import numpy as np
 import pandas as pd
 
-from cudf.core._compat import PANDAS_CURRENT_SUPPORTED_VERSION, PANDAS_VERSION
 
-
-@pytest.mark.skipif(
-    PANDAS_VERSION < PANDAS_CURRENT_SUPPORTED_VERSION,
-    reason="function names change across versions of pandas, so making sure it only runs on latest version of pandas",
-)
 def test_profiler():
     rng = np.random.default_rng(seed=42)
     with Profiler() as profiler:

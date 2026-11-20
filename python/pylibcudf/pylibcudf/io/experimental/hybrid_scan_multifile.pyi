@@ -98,7 +98,7 @@ class HybridScanMultiFile:
         options: ParquetReaderOptions,
         stream: CudaStreamLike | None = None,
     ) -> tuple[list[ByteRangeInfo], list[int]]: ...
-    def setup_chunking_for_payload_columns(
+    def setup_chunking_for_payload_pages(
         self,
         chunk_read_limit: int,
         pass_read_limit: int,

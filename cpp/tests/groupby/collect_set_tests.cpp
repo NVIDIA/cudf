@@ -145,7 +145,7 @@ TYPED_TEST(CollectSetTypedTest, TypicalInput)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(vals_expected, *out_lists, verbosity);
   }
 
-  // Expect the result keys to be sorted by sort-based groupby
+  // The comparison helper orders output groups by key.
   {
     keys_col keys{4, 1, 2, 4, 3, 3, 2, 1};
     vals_col vals{40, 10, 20, 40, 30, 30, 20, 11};
@@ -342,7 +342,7 @@ TYPED_TEST(CollectSetTypedTest, CollectWithNulls)
     }
   }
 
-  // Expect the result keys to be sorted by sort-based groupby
+  // The comparison helper orders output groups by key.
   {
     keys_col keys{4, 1, 2, 4, 3, 3, 3, 3, 2, 1};
     vals_col vals{{40, 10, 20, 40, null, null, null, null, 21, null},

@@ -82,11 +82,14 @@ def tpc_streaming_options(request: pytest.FixtureRequest) -> StreamingOptions:
     ref = argparse.ArgumentParser()
     StreamingOptions._add_cli_args(ref)
     _add_dataset_args(ref)
-    ns: dict[str, Any] = {"raise_on_fail": True}
+    ns: dict[str, Any] = {}
     for action in ref._actions:
         if not action.option_strings or action.dest == "help":
             continue
         ns[action.dest] = request.config.getoption(action.dest)
+    # Raise on fallback unless --no-raise-on-fail was given.
+    if ns["raise_on_fail"] is None:
+        ns["raise_on_fail"] = True
     return StreamingOptions._from_argparse(argparse.Namespace(**ns))
 
 

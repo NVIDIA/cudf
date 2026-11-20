@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -42,7 +43,7 @@ struct compute_reduction_fn {
   template <aggregation::Kind K>
   std::unique_ptr<column> operator()(cuda::stream_ref stream, cudf::memory_resources mr) const
   {
-    if constexpr (K == aggregation::SUM || K == aggregation::PRODUCT ||
+    if constexpr (K == aggregation::SUM || K == aggregation::MEAN || K == aggregation::PRODUCT ||
                   K == aggregation::SUM_OF_SQUARES || K == aggregation::MIN ||
                   K == aggregation::MAX || K == aggregation::ARGMIN || K == aggregation::ARGMAX ||
                   K == aggregation::SUM_OVERFLOW) {
@@ -61,8 +62,9 @@ struct compute_reductions_fn {
   std::vector<std::unique_ptr<column>> operator()(cuda::stream_ref stream,
                                                   cudf::memory_resources mr) const
   {
-    if constexpr (K == aggregation::SUM || K == aggregation::SUM_OF_SQUARES ||
-                  K == aggregation::PRODUCT || K == aggregation::MIN || K == aggregation::MAX) {
+    if constexpr (K == aggregation::SUM || K == aggregation::MEAN ||
+                  K == aggregation::SUM_OF_SQUARES || K == aggregation::PRODUCT ||
+                  K == aggregation::MIN || K == aggregation::MAX) {
       return compute_reductions<K>(contexts, is_intermediate, stream, mr);
     } else {
       CUDF_FAIL("Unsupported batched hash groupby aggregation");
@@ -87,7 +89,6 @@ std::unique_ptr<column> compute_aggregation(aggregation::Kind kind,
 
 bool is_single_pass_agg_supported(data_type values_type, aggregation::Kind kind)
 {
-  if (cudf::is_nested(values_type)) { return false; }
   if (kind == aggregation::COUNT_VALID || kind == aggregation::COUNT_ALL) { return true; }
   if (values_type.id() == type_id::EMPTY) { return false; }
   return type_dispatcher(values_type,
@@ -110,17 +111,56 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   auto const num_groups = static_cast<size_type>(grouped.offsets.size() - 1);
   auto const num_aggs   = agg_kinds.size();
 
+  std::vector<std::unique_ptr<column>> results(num_aggs);
+  // M2 owns its valid count even if a COUNT/MEAN request placed that count earlier in the
+  // extracted list. Resolve these pairs first so no request order causes a redundant reduction.
+  for (std::size_t i = 0; i < num_aggs; ++i) {
+    if (agg_kinds[i] != aggregation::M2) { continue; }
+    auto const& col  = values.column(i);
+    auto count_index = num_aggs;
+    for (std::size_t j = 0; j < num_aggs; ++j) {
+      if (agg_kinds[j] == aggregation::COUNT_VALID &&
+          cudf::detail::is_shallow_equivalent(col, values.column(j))) {
+        count_index = j;
+        break;
+      }
+    }
+    auto d_col = column_device_view::create(col, stream, mr.get_temporary_mr());
+    auto const type =
+      is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
+    auto const ctx = reduction_context{col, *d_col, type, grouped, num_groups, false};
+    // A prior aggregation may already have cached COUNT_VALID, so extraction can omit it.
+    auto [m2, count] =
+      compute_m2_and_count(ctx,
+                           is_agg_intermediate[i],
+                           count_index == num_aggs || is_agg_intermediate[count_index],
+                           stream,
+                           mr);
+    results[i] = std::move(m2);
+    if (count_index != num_aggs) { results[count_index] = std::move(count); }
+  }
+
   // Returns one past the last of the consecutive additive aggregations on the column of `begin`
-  // that can be computed together with the aggregation at `begin`.
+  // that can be computed together with the aggregation at `begin`. Fused sums share one
+  // accumulator type, e.g. a MEAN of integers sums in its double result type, unlike a SUM.
   auto const fused_end = [&](std::size_t begin, data_type values_type) {
     auto const& col = values.column(begin);
     if (!is_fusable_sum(agg_kinds[begin]) ||
         !is_single_pass_agg_supported(values_type, aggregation::SUM_OF_SQUARES)) {
       return begin + 1;
     }
+    std::optional<data_type> accumulator;
+    auto const shares_accumulator = [&](aggregation::Kind kind) {
+      if (kind == aggregation::COUNT_VALID) { return true; }
+      auto const type = cudf::detail::target_type(values_type, kind);
+      if (!accumulator.has_value()) { accumulator = type; }
+      return *accumulator == type;
+    };
+    shares_accumulator(agg_kinds[begin]);
     auto end = begin + 1;
-    while (end < num_aggs && is_fusable_sum(agg_kinds[end]) &&
+    while (end < num_aggs && !results[end] && is_fusable_sum(agg_kinds[end]) &&
            cudf::detail::is_shallow_equivalent(col, values.column(end)) &&
+           shares_accumulator(agg_kinds[end]) &&
            std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, agg_kinds[end]) ==
              agg_kinds.begin() + end) {
       ++end;
@@ -136,7 +176,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && is_fusable_minmax_sum(agg_kinds[end]) &&
+    while (end < num_aggs && !results[end] && is_fusable_minmax_sum(agg_kinds[end]) &&
            cudf::detail::is_shallow_equivalent(values.column(begin), values.column(end)) &&
            std::find(agg_kinds.begin() + begin, agg_kinds.begin() + end, agg_kinds[end]) ==
              agg_kinds.begin() + end) {
@@ -163,12 +203,13 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
   // Keep each same-input fused run intact; otherwise batch adjacent compatible reductions.
   auto const batch_end = [&](std::size_t begin, data_type values_type, bool nullable) {
     auto const kind = agg_kinds[begin];
-    if (kind != aggregation::SUM && kind != aggregation::SUM_OF_SQUARES &&
-        kind != aggregation::PRODUCT && kind != aggregation::MIN && kind != aggregation::MAX) {
+    if (kind != aggregation::SUM && kind != aggregation::MEAN &&
+        kind != aggregation::SUM_OF_SQUARES && kind != aggregation::PRODUCT &&
+        kind != aggregation::MIN && kind != aggregation::MAX) {
       return begin + 1;
     }
     auto end = begin + 1;
-    while (end < num_aggs && agg_kinds[end] == kind) {
+    while (end < num_aggs && !results[end] && agg_kinds[end] == kind) {
       auto const& col = values.column(end);
       auto const type =
         is_dictionary(col.type()) ? dictionary_column_view(col).keys().type() : col.type();
@@ -181,9 +222,11 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
     return end;
   };
 
-  std::vector<std::unique_ptr<column>> results;
-  results.reserve(num_aggs);
   for (std::size_t i = 0; i < num_aggs;) {
+    if (results[i]) {
+      ++i;
+      continue;
+    }
     auto const& col = values.column(i);
     auto d_col      = column_device_view::create(col, stream, mr.get_temporary_mr());
     auto const values_type =
@@ -205,7 +248,7 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
                                  is_agg_intermediate.subspan(i, end - i),
                                  stream,
                                  mr);
-      std::ranges::move(fused, std::back_inserter(results));
+      std::ranges::move(fused, results.begin() + i);
     } else if (end = batch_end(i, values_type, nullable); end > i + 1) {
       std::vector<decltype(d_col)> device_views;
       std::vector<reduction_context> contexts;
@@ -221,10 +264,10 @@ std::vector<std::unique_ptr<column>> compute_single_pass_aggs(
       }
       auto batch = cudf::detail::aggregation_dispatcher(
         kind, compute_reductions_fn{contexts, is_agg_intermediate.subspan(i, end - i)}, stream, mr);
-      std::ranges::move(batch, std::back_inserter(results));
+      std::ranges::move(batch, results.begin() + i);
     } else {
       auto const resources = is_agg_intermediate[i] ? mr.as_temporary() : mr;
-      results.push_back(compute_aggregation(kind, ctx, stream, resources));
+      results[i]           = compute_aggregation(kind, ctx, stream, resources);
     }
     i = end;
   }

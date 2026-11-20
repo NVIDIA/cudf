@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Utilities for reshaping Columns."""
 
@@ -71,9 +71,14 @@ def broadcast(
             )
     return [
         column
-        if column.size != 1
+        if column.size == nrows
         else Column(
-            plc.Column.from_scalar(
+            # Can be removed if https://github.com/NVIDIA/cudf/issues/24763 is addressed
+            plc.filling.repeat(plc.Table([column.obj]), nrows, stream=stream).columns()[
+                0
+            ]
+            if column.obj.type().id() == plc.TypeId.DICTIONARY32
+            else plc.Column.from_scalar(
                 column.obj_scalar(stream=stream), nrows, stream=stream
             ),
             is_sorted=plc.types.Sorted.YES,

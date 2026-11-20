@@ -13,6 +13,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -63,6 +64,22 @@ TEST_F(EmptyLikeStringTest, ColumnStringTest)
 
   auto got = cudf::empty_like(strings);
   check_empty_string_columns(got->view(), strings);
+}
+
+TEST_F(EmptyLikeStringTest, ColumnDictionaryTest)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b", "a"});
+
+  auto got = cudf::empty_like(input);
+
+  EXPECT_EQ(got->type(), cudf::data_type{cudf::type_id::DICTIONARY32});
+  EXPECT_EQ(got->size(), 0);
+  auto const view = cudf::dictionary_column_view(got->view());
+  ASSERT_EQ(view.parent().num_children(), 2);
+  EXPECT_EQ(view.indices().type(), cudf::dictionary_column_view(input).indices().type());
+  EXPECT_EQ(view.indices().size(), 0);
+  EXPECT_EQ(view.keys().type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(view.keys().size(), 0);
 }
 
 template <typename T>

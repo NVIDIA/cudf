@@ -8,6 +8,8 @@ reviews:
   poem: false
   auto_review:
     enabled: true
+    # Long-running PRs need review coverage after early revisions.
+    auto_pause_after_reviewed_commits: 0
     drafts: false
     base_branches:
       - "^main$"
@@ -35,11 +37,11 @@ reviews:
     - path: "docs/**/*"
       instructions: |
         For documentation changes, focus on:
-        - Accuracy: Verify code examples compile and run correctly
+        - Accuracy: Check examples against the current API; distinguish source inspection from execution
         - Completeness: Check if API changes (parameters, return values, errors) are documented
         - Clarity: Flag confusing explanations, missing prerequisites, or unclear examples
         - Consistency: Version numbers, parameter types, and terminology match code
-        - Missing docs: If PR changes public APIs without updating docs, flag as HIGH priority
+        - Missing docs: Flag undocumented public behavior changes according to their impact
 
     - path: "java/**/*"
       instructions: |
@@ -55,22 +57,29 @@ reviews:
         - Verify code examples match current API (parameter names, return types)
         - Flag outdated imports or deprecated API usage
 
-    - path: "ci/**/*"
+    - path: "{ci/**,.github/workflows/**,**/CMakeLists.txt,**/*.cmake}"
       instructions: |
         For CI/build scripts:
         - Check for proper conda environment handling
         - Verify GPU availability checks before tests
+        - Check that changed tests and examples are registered in the relevant CI path
+        - Check standalone consumers, exported targets, feature flags, and variable scope
         - Check for proper error handling and meaningful error messages
 
 knowledge_base:
   opt_out: false
   code_guidelines:
     filePatterns:
+      - "REVIEW_GUIDELINES.md"
       - "cpp/REVIEW_GUIDELINES.md"
       - "python/REVIEW_GUIDELINES.md"
       # Package-specific guidelines; each applies to its own directory tree
       - "python/pylibcudf/REVIEW_GUIDELINES.md"
       - "python/cudf_polars/REVIEW_GUIDELINES.md"
-      - "cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md"
-      - "cpp/doxygen/developer_guide/TESTING.md"
+      - files: "cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md"
+        applyTo: "cpp/**"
+      - files: "cpp/doxygen/developer_guide/TESTING.md"
+        applyTo: "cpp/tests/**"
+      - files: "cpp/doxygen/developer_guide/BENCHMARKING.md"
+        applyTo: "cpp/benchmarks/**"
       - "CONTRIBUTING.md"

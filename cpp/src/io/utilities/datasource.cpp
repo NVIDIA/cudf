@@ -18,7 +18,7 @@
 #include <kvikio/file_utils.hpp>
 #include <kvikio/mmap.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -116,10 +116,13 @@ class kvikio_source : public datasource {
                                                   size_t size,
                                                   cuda::stream_ref stream) override
   {
-    rmm::device_buffer out_data(size, stream);
-    size_t const read =
-      device_read(offset, size, reinterpret_cast<uint8_t*>(out_data.data()), stream);
-    out_data.resize(read, stream);
+    cuda::device_buffer<std::uint8_t> out_data(
+      stream, cudf::get_current_device_resource_ref(), size, cuda::no_init);
+    size_t const read = device_read(offset, size, out_data.data(), stream);
+    if (read != out_data.size()) {
+      out_data = cuda::device_buffer<std::uint8_t>{
+        stream, cudf::get_current_device_resource_ref(), out_data.data(), out_data.data() + read};
+    }
     return datasource::buffer::create(std::move(out_data));
   }
 
@@ -145,6 +148,12 @@ class file_source : public kvikio_source<kvikio::FileHandle> {
     CUDF_LOG_INFO(
       "Reading a file using kvikIO, with compatibility mode %s.",
       _kvikio_handle.get_compat_mode_manager().is_compat_mode_preferred() ? "on" : "off");
+  }
+
+  [[nodiscard]] bool is_device_read_direct(size_t size) const override
+  {
+    return !_kvikio_handle.get_compat_mode_manager().is_compat_mode_preferred() &&
+           size >= kvikio::defaults::gds_threshold();
   }
 
   std::future<size_t> device_read_async(size_t offset,
@@ -219,6 +228,8 @@ class device_buffer_source final : public datasource {
   }
 
   [[nodiscard]] bool supports_device_read() const override { return true; }
+
+  [[nodiscard]] bool is_device_read_direct(size_t) const override { return true; }
 
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
@@ -314,6 +325,11 @@ class user_datasource_wrapper : public datasource {
   [[nodiscard]] bool is_device_read_preferred(size_t size) const override
   {
     return source->is_device_read_preferred(size);
+  }
+
+  [[nodiscard]] bool is_device_read_direct(size_t size) const override
+  {
+    return source->is_device_read_direct(size);
   }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override

@@ -12,7 +12,7 @@ import cudf
 import pandas as pd
 
 s = cudf.Series([1, None, 3])
-print(s.dtype)   # Int64 (nullable), not float64 with NaN
+print(s.dtype)   # int64; nulls use a separate validity mask
 
 # Check for null
 s.isnull()       # works as expected
@@ -22,7 +22,7 @@ s.isna()         # equivalent
 s.fillna(0)      # works
 ```
 
-Difference: `pd.Series([1, None, 3])` → dtype `float64` with `NaN`; cuDF → nullable `Int64` with `<NA>`.
+Difference: `pd.Series([1, None, 3])` → dtype `float64` with `NaN`; cuDF → `int64` with a validity mask and `<NA>`; `to_pandas(nullable=True)` produces pandas `Int64`.
 
 For string columns in current releases, missing string values display as `None`
 rather than `<NA>`. Do not write tests that depend on the display repr; compare
@@ -55,31 +55,40 @@ aggregates, and any rows produced by sort/interpolation-sensitive code.
 
 ### Sort Stability
 
-cuDF sort is **not stable by default**:
+Python `sort_values` does not accept `stable=True`. Passing `kind="stable"`
+or `kind="mergesort"` currently emits a warning and falls back to quicksort.
+When the pandas reference requires stable ordering, use the original row
+position as the final sort key (choose a temporary name absent from the schema):
 
 ```python
-# Unstable (default) — faster
-df.sort_values("col")
+import cupy as cp
 
-# Stable — required when sort order must match pandas exactly
-df.sort_values("col", stable=True)
+# A unique final key preserves original order among equal primary keys.
+ordered = df.assign(_row_position=cp.arange(len(df)))
+ordered = ordered.sort_values(["col", "_row_position"]).drop(columns="_row_position")
 ```
 
-### String Operations — RE2 Regex
+Match the reference sort direction and null placement, then validate equal-key
+rows against pandas.
 
-cuDF uses RE2 (not Python's `re` / PCRE). Some patterns differ:
+### String Operations — GPU Regex
+
+cuDF uses libcudf's GPU regex engine, not Python's `re` or RE2. Check the
+[supported regex features](https://github.com/NVIDIA/cudf/blob/main/cpp/doxygen/regex.md)
+before porting a pattern. Replacement strings support backreferences to
+captured groups even though search-pattern backreferences are unsupported:
 
 ```python
-# RE2 does not support:
+# These constructs are unsupported by libcudf regex:
 # - Lookahead/lookbehind: (?=...), (?!...)
-# - Backreferences: \1
+# - Backreferences within the search pattern: \1
 # - Possessive quantifiers: ?+, *+
 
-# RE2-compatible (works):
+# Supported GPU patterns:
 df["col"].str.contains(r"\d+")
 df["col"].str.replace(r"[aeiou]", "", regex=True)
 
-# Not RE2-compatible (will fail or fall back):
+# Rewrite unsupported patterns or use a narrow CPU boundary:
 df["col"].str.contains(r"(?=.*foo)")   # lookahead — use different approach
 ```
 
@@ -181,7 +190,7 @@ df["new_col"] = cudf.Series(arr)     # back to cuDF
 
 ## Performance Tips
 
-1. **Cast to float32 early**: `df[numeric_cols] = df[numeric_cols].astype("float32")`
+1. **Use float32 when precision permits**: reduce memory use, preserve required accuracy, and benchmark throughput on the target GPU
 2. **Use `cudf.read_parquet()` not CSV**: Parquet is columnar and dramatically faster to read
 3. **Avoid `.apply()` with Python lambdas**: Use built-in cuDF ops instead
 4. **Use `persist()` with dask-cuDF**: keeps computed data on GPU workers to avoid recomputation

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,10 +8,10 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
 #include <thrust/scan.h>
@@ -111,7 +111,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
                                              cudf::column_view const& visibilities)
 {
   // all device memory operations and kernel functions will run on this stream
-  auto stream = rmm::cuda_stream_default;
+  cuda::stream_ref stream = cudf::get_default_stream();
 
   auto const d_names        = cudf::column_device_view::create(names, stream);
   auto const d_visibilities = cudf::column_device_view::create(visibilities, stream);
@@ -125,8 +125,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   auto offsets = rmm::device_uvector<cudf::size_type>(names.size() + 1, stream);
 
   // compute output sizes
-  sizes_kernel<<<blocks, block_size, 0, stream.value()>>>(
-    *d_names, *d_visibilities, offsets.data());
+  sizes_kernel<<<blocks, block_size, 0, stream.get()>>>(*d_names, *d_visibilities, offsets.data());
 
   // convert sizes to offsets (in place)
   thrust::exclusive_scan(
@@ -140,18 +139,22 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   auto chars = rmm::device_uvector<char>(output_size, stream);
 
   // build chars output
-  redact_kernel<<<blocks, block_size, 0, stream.value()>>>(
+  redact_kernel<<<blocks, block_size, 0, stream.get()>>>(
     *d_names, *d_visibilities, offsets.data(), chars.data());
 
   // create column from offsets vector (move only)
-  auto offsets_column = std::make_unique<cudf::column>(std::move(offsets), rmm::device_buffer{}, 0);
+  auto offsets_column = std::make_unique<cudf::column>(
+    std::move(offsets), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
 
   // create column for chars vector (no copy is performed)
-  auto result = cudf::make_strings_column(
-    names.size(), std::move(offsets_column), chars.release(), 0, rmm::device_buffer{});
+  auto result = cudf::make_strings_column(names.size(),
+                                          std::move(offsets_column),
+                                          chars.release(),
+                                          0,
+                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // wait for all of the above to finish
-  stream.synchronize();
+  stream.sync();
 
   nvtxRangePop();
   return result;

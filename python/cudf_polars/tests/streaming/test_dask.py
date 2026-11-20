@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -24,7 +25,7 @@ try:
 except ImportError:
     pytest.skip("distributed not installed", allow_module_level=True)
 
-from cudf_polars.engine.dask import DaskEngine
+from cudf_polars.engine.dask import DaskEngine, _shutdown_dask
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,6 +52,38 @@ def dask_client() -> Iterator[distributed.Client]:
         distributed.Client(cluster) as client,
     ):
         yield client
+
+
+def test_shutdown_dask_runs_all_steps_in_order() -> None:
+    """A failed cleanup step must not prevent later resources from closing."""
+    events: list[str] = []
+
+    def run(func: Any) -> None:
+        events.append(func.func.__name__)
+
+    client = SimpleNamespace(run=run)
+
+    def quent_close() -> None:
+        events.append("quent")
+        raise RuntimeError("Quent close failed")
+
+    owned_client = SimpleNamespace(close=lambda: events.append("client"))
+    owned_cluster = SimpleNamespace(close=lambda: events.append("cluster"))
+    with pytest.raises(ExceptionGroup, match="Dask engine shutdown failed"):
+        _shutdown_dask(
+            cast("Any", client),
+            "test",
+            quent_close,
+            cast("Any", owned_client),
+            cast("Any", owned_cluster),
+        )
+
+    assert events == [
+        "quent",
+        "_teardown_worker",
+        "client",
+        "cluster",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +156,7 @@ def reset_engine(dask_client: distributed.Client) -> Iterator[DaskEngine]:
     """
     with DaskEngine(
         executor_options={"max_rows_per_partition": 10},
+        engine_options={"allow_gpu_sharing": True},
         dask_client=dask_client,
     ) as e:
         yield e
@@ -142,6 +176,7 @@ def test_reset_keeps_workers_alive(reset_engine: DaskEngine) -> None:
     )
     pids_after = sorted(reset_engine._run(os.getpid))
 
+    assert reset_engine._allow_gpu_sharing is True
     # Same worker addresses …
     assert workers_before == workers_after
     # … and the workers are running in the same OS processes.

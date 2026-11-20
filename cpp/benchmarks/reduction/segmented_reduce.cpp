@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,8 +13,6 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/cuda_stream_view.hpp>
 
 #include <nvbench/nvbench.cuh>
 
@@ -115,7 +113,7 @@ void BM_Segmented_Reduction(nvbench::state& state,
   auto const offset_span  = cudf::device_span<cudf::size_type const>{
     offsets_view.template data<cudf::size_type>(), static_cast<std::size_t>(offsets_view.size())};
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(
     nvbench::exec_tag::sync, [input_view, output_type, offset_span, &agg](nvbench::launch& launch) {

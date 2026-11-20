@@ -8,8 +8,8 @@
 #include <cudf/context.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstddef>
 #include <memory>
-#include <mutex>
 #include <optional>
 
 namespace rtcx {
@@ -24,6 +24,9 @@ class program_cache;
 
 struct jit_bundle_t;
 
+/// Default NVRTC PCH heap size in bytes (512 MiB).
+inline constexpr std::size_t default_jit_pch_heap_size = std::size_t{512} * 1024 * 1024;
+
 struct [[nodiscard]] context_config {
   bool dump_codegen          : 1      = false;
   bool use_jit               : 1      = false;
@@ -34,9 +37,9 @@ struct [[nodiscard]] context_config {
   bool jit_verbose           : 1      = false;
   bool dump_jit_trace        : 1      = false;
   bool dump_jit_time_profile : 1      = false;
+  std::size_t jit_pch_heap_size       = default_jit_pch_heap_size;
   std::string rtcx_cache_dir          = {};
   std::string jit_bundle_dir          = {};
-  std::string jit_pch_dir             = {};
   std::string jit_tmp_dir             = {};
   uint32_t kernel_cache_limit_process = 0;
 };
@@ -54,7 +57,6 @@ class context {
 
  private:
   context_config _config;
-  std::once_flag _jit_cache_init_flag;
   std::unique_ptr<rtcx::cache_t> _rtcx_cache;
   std::unique_ptr<jit_bundle_t> _jit_bundle;
   device_properties _device_properties;
@@ -62,12 +64,14 @@ class context {
   std::optional<int32_t> _nvjitlink_version;
 
  private:
-  void ensure_nvcomp_loaded();
+  void preload_nvcomp();
 
-  void ensure_jit_cache_initialized();
+  void initialize_jit();
+
+  void initialize_components(detail::init_flags flags);
 
  public:
-  context(context_config cfg = {}, init_flags flags = init_flags::DEFAULT);
+  context(context_config cfg = {}, detail::init_flags flags = detail::init_flags::DEFAULT);
   context(context const&)            = delete;
   context& operator=(context const&) = delete;
   context(context&&)                 = delete;
@@ -84,20 +88,14 @@ class context {
 
   [[nodiscard]] context_config const& config() const;
 
-  [[nodiscard]] std::string const& get_jit_pch_dir() const;
-
   [[nodiscard]] device_properties const& get_device_properties() const;
 
   [[nodiscard]] std::optional<int32_t> nvrtc_version() const;
 
   [[nodiscard]] std::optional<int32_t> nvjitlink_version() const;
-
-  /// @brief Initialize additional components based on the provided flags
-  /// @param flags The initialization flags to process
-  void initialize_components(init_flags flags);
 };
 
 /// @brief Get the cuDF global context
-context& get_context();
+context& get_context(detail::init_flags flags = detail::init_flags::DEFAULT);
 
 }  // namespace cudf

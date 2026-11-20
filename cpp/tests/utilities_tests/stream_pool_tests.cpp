@@ -7,7 +7,7 @@
 
 #include <cudf/detail/utilities/stream_pool.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <algorithm>
 #include <cstddef>

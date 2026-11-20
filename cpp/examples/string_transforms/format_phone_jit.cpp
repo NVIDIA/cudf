@@ -8,8 +8,8 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
-#include <rmm/device_uvector.hpp>
+#include <cuda/buffer>
+#include <cuda/stream>
 
 #include <array>
 #include <utility>
@@ -17,7 +17,7 @@
 std::tuple<std::unique_ptr<cudf::column>, std::vector<int32_t>> transform(
   cudf::table_view const& table)
 {
-  auto stream = rmm::cuda_stream_default;
+  auto stream = cudf::get_default_stream();
   auto mr     = cudf::get_current_device_resource_ref();
 
   /// Convert a phone number to E.164 international phone format
@@ -104,7 +104,8 @@ __device__ void e164_format(void* scratch,
   constexpr cudf::size_type maximum_size = 20;
   auto const num_rows                    = table.num_rows();
 
-  rmm::device_uvector<char> scratch(maximum_size * static_cast<std::size_t>(num_rows), stream, mr);
+  cuda::device_buffer<char> scratch(
+    stream, mr, maximum_size * static_cast<std::size_t>(num_rows), cuda::no_init);
 
   auto size = cudf::make_column_from_scalar(
     cudf::numeric_scalar<int32_t>(maximum_size, true, stream, mr), 1, stream, mr);

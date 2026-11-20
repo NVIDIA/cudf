@@ -230,6 +230,35 @@ def test_groupby_namedagg_mean_decimal128_keeps_columns():
     assert_eq(out, expected, check_dtype=False)
 
 
+@pytest.mark.parametrize(
+    "decimal_dtype",
+    [
+        cudf.Decimal32Dtype(7, 2),
+        cudf.Decimal64Dtype(15, 2),
+        cudf.Decimal128Dtype(15, 2),
+    ],
+)
+def test_groupby_namedagg_size_decimal(decimal_dtype):
+    df = cudf.DataFrame(
+        {
+            "g": [0, 0, 1, 1, 1],
+            "qty": cudf.Series([1, 3, None, 5, 7], dtype=decimal_dtype),
+        }
+    )
+    out = df.groupby("g", as_index=False).agg(
+        sum_qty=cudf.NamedAgg(column="qty", aggfunc="sum"),
+        count_order=cudf.NamedAgg(column="qty", aggfunc="size"),
+    )
+    expected = cudf.DataFrame(
+        {
+            "g": [0, 1],
+            "sum_qty": cudf.Series([4, 12], dtype=cudf.Decimal128Dtype(38, 2)),
+            "count_order": [2, 3],
+        }
+    )
+    assert_eq(out, expected, check_dtype=False)
+
+
 def test_groupby_agg_decimal(groupby_reduction_methods, request):
     request.applymarker(
         pytest.mark.xfail(

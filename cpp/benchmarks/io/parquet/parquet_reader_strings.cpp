@@ -1,9 +1,9 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "reader_common.hpp"
+#include "parquet_common.hpp"
 
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
@@ -75,29 +75,19 @@ void BM_parquet_read_file_shape(nvbench::state& state)
     static_cast<cudf::size_type>(state.get_int64("pages_per_row_group"));
   auto const has_page_idx = static_cast<bool>(state.get_int64("has_page_idx"));
 
-  cuio_source_sink_pair source_sink(source_type);
-
-  auto const tbl =
-    create_random_table({d_type},
-                        row_count{num_rows},
-                        data_profile_builder().cardinality(num_rows / 10).avg_run_length(4));
-  auto const view = tbl->view();
-
-  cudf::io::parquet_writer_options write_opts =
-    cudf::io::parquet_writer_options::builder(source_sink.make_sink_info(), view)
-      .compression(cudf::io::compression_type::NONE)
-      .row_group_size_rows(num_rows / num_row_groups)
-      .max_page_size_rows(num_rows / (num_row_groups * num_pages_per_row_group))
-      // Write page index by setting stats_level to STATISTICS_COLUMN
-      .stats_level(has_page_idx ? cudf::io::statistics_freq::STATISTICS_COLUMN
-                                : cudf::io::statistics_freq::STATISTICS_ROWGROUP);
-  cudf::io::write_parquet(write_opts);
+  data_profile const profile = data_profile_builder().cardinality(num_rows / 10).avg_run_length(4);
+  auto source_sink           = write_file_shape_parquet_file(
+    create_random_table({d_type}, row_count{num_rows}, profile)->view(),
+    num_row_groups,
+    num_pages_per_row_group,
+    source_type,
+    has_page_idx);
 
   cudf::io::parquet_reader_options read_opts =
     cudf::io::parquet_reader_options::builder(source_sink.make_source_info());
 
   auto mem_stats_logger = cudf::memory_stats_logger();
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync | nvbench::exec_tag::timer,
              [&](nvbench::launch& launch, auto& timer) {
                drop_page_cache_if_enabled(read_opts.get_source().filepaths());

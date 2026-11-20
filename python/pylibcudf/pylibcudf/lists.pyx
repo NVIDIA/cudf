@@ -33,7 +33,7 @@ from pylibcudf.libcudf.lists.sorting cimport (
     stable_sort_lists as cpp_stable_sort_lists,
 )
 from pylibcudf.libcudf.lists.stream_compaction cimport (
-    apply_boolean_mask as cpp_apply_boolean_mask,
+    apply_retention_mask as cpp_apply_retention_mask,
     apply_deletion_mask as cpp_apply_deletion_mask,
     distinct as cpp_distinct,
 )
@@ -59,6 +59,8 @@ from .column cimport Column, ListsColumnView
 from .scalar cimport Scalar
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
+
+import warnings
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -70,6 +72,7 @@ __all__ = [
     "DuplicateFindOption",
     "apply_boolean_mask",
     "apply_deletion_mask",
+    "apply_retention_mask",
     "concatenate_list_elements",
     "concatenate_rows",
     "contains",
@@ -116,7 +119,7 @@ cpdef Table explode_outer(
     cdef unique_ptr[table] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()
@@ -152,7 +155,7 @@ cpdef Column concatenate_rows(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef table_view c_input = input.view()
@@ -189,7 +192,7 @@ cpdef Column concatenate_list_elements(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_input = input.view()
@@ -235,7 +238,7 @@ cpdef Column contains(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef lists_column_view c_list_view
     cdef column_view c_search_key_column
 
@@ -286,7 +289,7 @@ cpdef Column contains_nulls(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -333,7 +336,7 @@ cpdef Column index_of(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_search_key_column
 
     mr = _get_memory_resource(mr)
@@ -379,7 +382,7 @@ cpdef Column reverse(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -428,7 +431,7 @@ cpdef Column segmented_gather(
     cdef ListsColumnView list_view2 = gather_map_list.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view1 = list_view1.view()
@@ -470,7 +473,7 @@ cpdef Column extract_list_element(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_index_column
 
     mr = _get_memory_resource(mr)
@@ -515,7 +518,7 @@ cpdef Column count_elements(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -554,7 +557,7 @@ cpdef Column sequences(
     cdef unique_ptr[column] c_result
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     cdef column_view c_starts
     cdef column_view c_steps
     cdef column_view c_sizes
@@ -616,7 +619,7 @@ cpdef Column sort_lists(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -674,7 +677,7 @@ cpdef Column difference_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -724,7 +727,7 @@ cpdef Column have_overlap(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -774,7 +777,7 @@ cpdef Column intersect_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -825,7 +828,7 @@ cpdef Column union_distinct(
     cdef ListsColumnView rhs_view = rhs.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_lhs_view = lhs_view.view()
@@ -842,48 +845,63 @@ cpdef Column union_distinct(
     return Column.from_libcudf(move(c_result), _stream, mr)
 
 
-cpdef Column apply_boolean_mask(
+cpdef Column apply_retention_mask(
     Column input,
-    Column boolean_mask,
+    Column retention_mask,
     object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
-    """Filters elements in each row of the input lists column using a boolean mask
+    """Filters elements in each row of the input lists column using a retention mask.
 
-    For details, see :cpp:func:`apply_boolean_mask`.
+    For details, see :cpp:func:`apply_retention_mask`.
 
     Parameters
     ----------
     input : Column
         The input column.
-    boolean_mask : Column
-        The boolean mask.
+    retention_mask : Column
+        A lists-of-bools column used as a retention mask.
     stream : Stream | None
         CUDA stream on which to perform the operation.
 
     Returns
     -------
     Column
-        A Column of filtered elements based upon the boolean mask.
+        Lists column with elements kept where retention mask is valid and true.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()
-    cdef ListsColumnView mask_view = boolean_mask.list_view()
+    cdef ListsColumnView mask_view = retention_mask.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
     cdef lists_column_view c_mask_view = mask_view.view()
     with nogil:
-        c_result = cpp_apply_boolean_mask(
+        c_result = cpp_apply_retention_mask(
             c_list_view,
             c_mask_view,
             _cs,
             mr.get_mr(),
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
+
+
+cpdef Column apply_boolean_mask(
+    Column input,
+    Column boolean_mask,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """Deprecated alias for :func:`apply_retention_mask`."""
+    warnings.warn(
+        "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+        FutureWarning,
+        stacklevel=2,
+    )
+    return apply_retention_mask(input, boolean_mask, stream, mr)
 
 
 cpdef Column apply_deletion_mask(
@@ -906,14 +924,14 @@ cpdef Column apply_deletion_mask(
     Returns
     -------
     Column
-        Lists column with elements removed where deletion_mask is true.
+        Lists column with elements removed where deletion mask is valid and true.
     """
     cdef unique_ptr[column] c_result
     cdef ListsColumnView list_view = input.list_view()
     cdef ListsColumnView mask_view = deletion_mask.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()
@@ -957,7 +975,7 @@ cpdef Column distinct(
     cdef ListsColumnView list_view = input.list_view()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef lists_column_view c_list_view = list_view.view()

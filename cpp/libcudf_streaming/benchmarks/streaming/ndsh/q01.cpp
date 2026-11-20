@@ -264,8 +264,6 @@ int main(int argc, char** argv)
 {
   rapidsmpf::ndsh::FinalizeMPI finalize{};
   CUDF_CUDA_TRY(cudaFree(nullptr));
-  // work around https://github.com/NVIDIA/cudf/issues/20849
-  cudf::initialize();
   auto mr                 = rmm::mr::cuda_async_memory_resource{};
   auto arguments          = rapidsmpf::ndsh::parse_arguments(argc, argv);
   auto [ctx, comm]        = rapidsmpf::ndsh::create_context(arguments, std::move(mr));

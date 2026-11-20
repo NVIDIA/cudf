@@ -9,6 +9,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/dictionary.hpp>
 
 #include <cudf_streaming/utils.hpp>
@@ -24,17 +25,15 @@
 
 #include <numeric>
 #include <sstream>
-#include <type_traits>
 
 namespace cudf_streaming {
 
 namespace {
 struct str_cudf_column_scalar_fn {
-  template <typename T>
-    requires(cudf::is_numeric<T>())
+  template <cudf::concepts::arithmetic T>
   std::string operator()(cudf::column_view col,
                          cudf::size_type index,
-                         rmm::cuda_stream_view stream,
+                         cuda::stream_ref stream,
                          rmm::device_async_resource_ref mr)
   {
     std::unique_ptr<cudf::scalar> scalar = cudf::get_element(col, index, stream, mr);
@@ -45,10 +44,9 @@ struct str_cudf_column_scalar_fn {
   }
 
   template <typename T>
-    requires(!cudf::is_numeric<T>())
   std::string operator()(cudf::column_view /* col */,
                          cudf::size_type /* index */,
-                         rmm::cuda_stream_view /* stream */,
+                         cuda::stream_ref /* stream */,
                          rmm::device_async_resource_ref /* mr */
   )
   {
@@ -57,27 +55,25 @@ struct str_cudf_column_scalar_fn {
 };
 
 struct cudf_column_data_size_fn {
-  template <typename T>
-    requires(cudf::is_fixed_width<T>())
-  std::size_t operator()(cudf::column_view const& col, rmm::cuda_stream_view)
+  template <cudf::concepts::fixed_width T>
+  std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
   {
     return rapidsmpf::safe_cast<std::size_t>(col.size()) * cudf::size_of(col.type()) +
            bitmask_size(col);
   }
 
   // string type specialization
-  template <typename T>
-    requires(std::is_same_v<T, cudf::string_view>)
-  std::size_t operator()(cudf::column_view const& col, rmm::cuda_stream_view stream)
+  template <cudf::concepts::string_view T>
+  std::size_t operator()(cudf::column_view const& col, cuda::stream_ref stream)
   {
     cudf::strings_column_view sv(col);
     return rapidsmpf::safe_cast<std::size_t>(sv.chars_size(stream)) + bitmask_size(col);
   }
 
-  // compound type specialization except string
-  template <typename T>
-    requires(!std::is_same_v<T, cudf::string_view> && cudf::is_compound<T>())
-  std::size_t operator()(cudf::column_view const& col, rmm::cuda_stream_view)
+  // compound type specialization except string; `string_view` also satisfies `compound`, but
+  // the more constrained `string_view` overload above is selected for it
+  template <cudf::concepts::compound T>
+  std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
   {
     // compound types (except string) ie. list, dict, structs dont have a
     // content::data buffer. Data is stored in children columns. So, just return the
@@ -86,7 +82,7 @@ struct cudf_column_data_size_fn {
   }
 
   template <typename T>
-  std::size_t operator()(cudf::column_view const& col, rmm::cuda_stream_view)
+  std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
   {
     RAPIDSMPF_FAIL("not implemented for type: " + cudf::type_to_name(col.type()));
   }
@@ -101,15 +97,13 @@ struct cudf_column_data_size_fn {
 
 std::string str(cudf::column_view col,
                 cudf::size_type index,
-                rmm::cuda_stream_view stream,
+                cuda::stream_ref stream,
                 rmm::device_async_resource_ref mr)
 {
   return cudf::type_dispatcher(col.type(), str_cudf_column_scalar_fn{}, col, index, stream, mr);
 }
 
-std::string str(cudf::column_view col,
-                rmm::cuda_stream_view stream,
-                rmm::device_async_resource_ref mr)
+std::string str(cudf::column_view col, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   std::stringstream ss;
   ss << "Column([";
@@ -121,9 +115,7 @@ std::string str(cudf::column_view col,
   return ss.str();
 }
 
-std::string str(cudf::table_view tbl,
-                rmm::cuda_stream_view stream,
-                rmm::device_async_resource_ref mr)
+std::string str(cudf::table_view tbl, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
 {
   std::stringstream ss;
   ss << "Table([";
@@ -137,7 +129,7 @@ std::string str(cudf::table_view tbl,
   return ss.str();
 }
 
-std::size_t estimated_memory_usage(cudf::column_view const& col, rmm::cuda_stream_view stream)
+std::size_t estimated_memory_usage(cudf::column_view const& col, cuda::stream_ref stream)
 {
   return std::transform_reduce(
     col.child_begin(),
@@ -147,7 +139,7 @@ std::size_t estimated_memory_usage(cudf::column_view const& col, rmm::cuda_strea
     [&stream](cudf::column_view const& child) { return estimated_memory_usage(child, stream); });
 }
 
-std::size_t estimated_memory_usage(cudf::table_view const& tbl, rmm::cuda_stream_view stream)
+std::size_t estimated_memory_usage(cudf::table_view const& tbl, cuda::stream_ref stream)
 {
   return std::transform_reduce(
     tbl.begin(), tbl.end(), std::size_t{0}, std::plus{}, [&stream](cudf::column_view const& col) {

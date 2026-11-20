@@ -7,7 +7,7 @@
 
 #include <cudf/utilities/export.hpp>
 
-#include <cuda/stream_ref>
+#include <cuda/stream>
 
 #include <cstddef>
 #include <span>

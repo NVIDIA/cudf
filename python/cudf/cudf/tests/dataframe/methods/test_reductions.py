@@ -286,24 +286,34 @@ def test_dataframe_count_axis1(data, numeric_only):
     )
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        {
-            "x": [np.nan, 2, 3, 4, 100, np.nan],
-            "y": [4, 5, 6, 88, 99, np.nan],
-            "z": [7, 8, 9, 66, np.nan, 77],
-        },
-        {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]},
-        {
-            "x": [np.nan, np.nan, np.nan],
-            "y": [np.nan, np.nan, np.nan],
-            "z": [np.nan, np.nan, np.nan],
-        },
-        {"x": [], "y": [], "z": []},
-        {"x": []},
-    ],
+_DATAFRAME_REDUCTION_DATA = [
+    {
+        "x": [np.nan, 2, 3, 4, 100, np.nan],
+        "y": [4, 5, 6, 88, 99, np.nan],
+        "z": [7, 8, 9, 66, np.nan, 77],
+    },
+    {"x": [1, 2, 3], "y": [4, 5, 6], "z": [7, 8, 9]},
+    {
+        "x": [np.nan, np.nan, np.nan],
+        "y": [np.nan, np.nan, np.nan],
+        "z": [np.nan, np.nan, np.nan],
+    },
+    {"x": [], "y": [], "z": []},
+    {"x": []},
+]
+
+
+@pytest.fixture(
+    scope="module",
+    params=list(enumerate(_DATAFRAME_REDUCTION_DATA)),
+    ids=[f"data{i}" for i in range(len(_DATAFRAME_REDUCTION_DATA))],
 )
+def dataframe_reduction_inputs(request):
+    data_id, data = request.param
+    pdf = pd.DataFrame(data=data)
+    return data_id, pdf, cudf.DataFrame(pdf, nan_as_null=False)
+
+
 @pytest.mark.parametrize("axis", [0, 1])
 @pytest.mark.parametrize(
     "func",
@@ -328,14 +338,15 @@ def test_dataframe_count_axis1(data, numeric_only):
         "any",
     ],
 )
-def test_dataframe_reductions(request, data, axis, func, skipna):
-    pdf = pd.DataFrame(data=data)
-    gdf = cudf.DataFrame(pdf, nan_as_null=False)
+def test_dataframe_reductions(
+    request, dataframe_reduction_inputs, axis, func, skipna
+):
+    data_id, pdf, gdf = dataframe_reduction_inputs
 
-    if request.node.callspec.id in {
-        "True-cumsum-1-data0",
-        "True-cumprod-1-data0",
-        "True-any-1-data2",
+    if (skipna, func, axis, data_id) in {
+        (True, "cumsum", 1, 0),
+        (True, "cumprod", 1, 0),
+        (True, "any", 1, 2),
     }:
         request.applymarker(
             pytest.mark.xfail(

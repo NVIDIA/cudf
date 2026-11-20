@@ -80,8 +80,10 @@ jobs:
           g++ --version
 
           # Install and configure the sccache client
-          rapids-install-sccache
-          rapids-configure-sccache
+          # These helpers export the compiler launchers and sccache-dist settings,
+          # so they must run in this shell rather than in child processes.
+          source rapids-install-sccache
+          source rapids-configure-sccache
 
           # Align RAPIDS dependencies with the selected cudf branch
           scripts/update-cudf-deps.sh --branch "$(cat "${GITHUB_WORKSPACE}/cudf-local/RAPIDS_BRANCH")"

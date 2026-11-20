@@ -34,6 +34,14 @@ def assert_plots_equal(expect, got):
 pytestmark = pytest.mark.assert_eq(fn=assert_plots_equal)
 
 
+@pytest.fixture(autouse=True)
+def isolated_figures():
+    # Pandas plotting otherwise reuses axes from earlier tests on the same worker.
+    plt.close("all")
+    yield
+    plt.close("all")
+
+
 def test_line():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 6, 8, 10]})
     (_data,) = plt.plot(df["x"], df["y"], marker="o", linestyle="-")

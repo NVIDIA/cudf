@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import os
@@ -15,8 +15,9 @@ from cudf.testing._utils import NUMERIC_TYPES, UNSIGNED_TYPES
 pytest.importorskip("tables")
 
 
-@pytest.fixture(params=[0, 10])
+@pytest.fixture(scope="module", params=[0, 10])
 def pdf(request):
+    # Reader and writer tests only read this source dataframe.
     types = set([*NUMERIC_TYPES, "datetime64[ns]", "bool"]) - set(
         UNSIGNED_TYPES
     )
@@ -44,7 +45,7 @@ def pdf(request):
     return (test_pdf, nrows)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gdf(pdf):
     pdf, nrows = pdf
     return (cudf.DataFrame(pdf), nrows)

@@ -7,10 +7,21 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <cuda/buffer>
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
+#include <cuda/stream>
 
 #include <memory>
+#include <string>
+#include <utility>
 
 /**
  * @file
@@ -86,57 +97,55 @@ enum class binary_operator : int32_t {
                      ///< operands are true, returns true; otherwise returns null
   NULL_LOGICAL_OR,   ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
                      ///< operands are false, returns false; otherwise returns null
+  ADD_OVERFLOW,      ///< Addition with overflow detection
+  SUB_OVERFLOW,      ///< Subtraction with overflow detection
+  MUL_OVERFLOW,      ///< Multiplication with overflow detection
+  DIV_OVERFLOW,      ///< Division with overflow and divide-by-zero detection
+  MOD_OVERFLOW,      ///< Modulo with divide-by-zero detection
   INVALID_BINARY     ///< invalid operation
 };
 
-/// Binary operation common type default
+/**
+ * @brief Binary operation common type default
+ *
+ * The third template parameter is unused. It is deprecated and will be removed in a future
+ * release.
+ */
 template <typename L, typename R, typename = void>
 struct binary_op_common_type {};
 
-/// Binary operation common type specialization
+/// @cond
+// Doxygen merges partial specializations that share an argument list, which breaks the Sphinx build
 template <typename L, typename R>
-struct binary_op_common_type<L, R, std::enable_if_t<has_common_type_v<L, R>>> {
-  /// The common type of the template parameters
-  using type = std::common_type_t<L, R>;
+  requires(has_common_type_v<L, R>)
+struct binary_op_common_type<L, R> {
+  using type = cuda::std::common_type_t<L, R>;
 };
 
-/// Binary operation common type specialization
-template <typename L, typename R>
-struct binary_op_common_type<
-  L,
-  R,
-  std::enable_if_t<is_fixed_point<L>() && cuda::std::is_floating_point_v<R>>> {
-  /// The common type of the template parameters
+template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
+struct binary_op_common_type<L, R> {
   using type = L;
 };
 
-/// Binary operation common type specialization
-template <typename L, typename R>
-struct binary_op_common_type<
-  L,
-  R,
-  std::enable_if_t<is_fixed_point<R>() && cuda::std::is_floating_point_v<L>>> {
-  /// The common type of the template parameters
+template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
+struct binary_op_common_type<L, R> {
   using type = R;
 };
+/// @endcond
 
 /// Binary operation common type helper
 template <typename L, typename R>
 using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
 
 namespace detail {
-template <typename AlwaysVoid, typename L, typename R>
-struct binary_op_has_common_type_impl : std::false_type {};
-
+// Keeps the requires expression out of the documented declaration, which Sphinx cannot parse
 template <typename L, typename R>
-struct binary_op_has_common_type_impl<std::void_t<binary_op_common_type_t<L, R>>, L, R>
-  : std::true_type {};
+concept binary_op_has_common_type_impl = requires { typename binary_op_common_type_t<L, R>; };
 }  // namespace detail
 
 /// Checks if binary operation types have a common type
 template <typename L, typename R>
-constexpr inline bool binary_op_has_common_type_v =
-  detail::binary_op_has_common_type_impl<void, L, R>::value;
+constexpr inline bool binary_op_has_common_type_v = detail::binary_op_has_common_type_impl<L, R>;
 
 /**
  * @brief Performs a binary operation between a scalar and a column.
@@ -155,21 +164,22 @@ constexpr inline bool binary_op_has_common_type_v =
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p rhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   scalar const& lhs,
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between a column and a scalar.
@@ -188,21 +198,22 @@ std::unique_ptr<column> binary_operation(
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::logic_error if @p output_type dtype isn't boolean for comparison and logical
  * operations.
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   scalar const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns.
@@ -219,7 +230,7 @@ std::unique_ptr<column> binary_operation(
  * @param op          The binary operator
  * @param output_type The desired data type of the output column
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
@@ -227,18 +238,107 @@ std::unique_ptr<column> binary_operation(
  * operations.
  * @throw cudf::logic_error if @p output_type dtype isn't fixed-width
  * @throw cudf::data_type_error if the operation is not supported for the types of @p lhs and @p rhs
+ * @throw cudf::data_type_error if @p lhs, @p rhs, or @p output_type is a dictionary type
  */
 std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   binary_operator op,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between a scalar and a column.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand scalar
+ * @param rhs Right operand column
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ */
+std::unique_ptr<column> binary_operation(
+  scalar const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between a column and a scalar.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand column
+ * @param rhs Right operand scalar
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  scalar const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Performs a checked binary operation between two columns.
+ *
+ * `PROPAGATE` throws `cudf::evaluation_error` when any row fails; `NULLIFY` makes failing rows
+ * null.
+ *
+ * @param lhs Left operand column
+ * @param rhs Right operand column
+ * @param op Checked binary operator
+ * @param output_type Desired output type
+ * @param policy Error handling policy
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations and the returned column
+ * @return Output column
+ * @throws cudf::evaluation_error if @p policy is `error_policy::PROPAGATE` and any row fails
+ * @throws cudf::logic_error if @p op is not a checked arithmetic operator
+ * @throws cudf::data_type_error if the input and output types do not match, are not supported
+ * arithmetic or fixed-point types, or @p output_type has an invalid fixed-point scale
+ * @throws std::invalid_argument if @p lhs and @p rhs have different sizes
+ */
+std::unique_ptr<column> binary_operation(
+  column_view const& lhs,
+  column_view const& rhs,
+  binary_operator op,
+  data_type output_type,
+  error_policy policy,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Performs a binary operation between two columns using a
  * user-defined PTX function.
+ *
+ * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
+ * instead.
  *
  * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
  *
@@ -252,20 +352,20 @@ std::unique_ptr<column> binary_operation(
  *                    that output_type is compatible with the output data type
  *                    of the function in the PTX code
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Device memory resource used to allocate the returned column's device memory
+ * @param mr          Memory resources used for temporary allocations and the returned column
  * @return            Output column of `output_type` type containing the result of
  *                    the binary operation
  * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
  * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
  * @throw cudf::logic_error if @p output_type dtype isn't numeric
  */
-std::unique_ptr<column> binary_operation(
+[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
   column_view const& lhs,
   column_view const& rhs,
   std::string const& ptx,
   data_type output_type,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Computes the `scale` for a `fixed_point` number based on given binary operator `op`
@@ -311,14 +411,14 @@ bool is_supported_operation(data_type out, data_type lhs, data_type rhs, binary_
  * @param col     Column to compute the valid mask from
  * @param s       Scalar to compute the valid mask from
  * @param stream  CUDA stream used for device memory operations and kernel launches
- * @param mr      Device memory resource used to allocate the returned valid mask
+ * @param mr      Memory resources used for temporary allocations and the returned valid mask
  * @return        Computed validity mask
  */
-std::pair<rmm::device_buffer, size_type> scalar_col_valid_mask_and(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> scalar_col_valid_mask_and(
   column_view const& col,
   scalar const& s,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace binops
 

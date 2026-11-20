@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # If libcudf was installed as a wheel, we must request it to load the library symbols.
@@ -12,10 +12,8 @@ else:
     del libcudf
 
 import cupy
-from numba import cuda
 
 from rmm.allocators.cupy import rmm_cupy_allocator
-from rmm.allocators.numba import RMMNumbaManager
 
 from cudf import api, core, datasets, testing
 from cudf._version import __git_commit__, __version__
@@ -79,13 +77,10 @@ from cudf.options import (
     set_option,
 )
 
-cuda.set_memory_manager(RMMNumbaManager)
 cupy.cuda.set_allocator(rmm_cupy_allocator)
 
-del cuda
 del cupy
 del rmm_cupy_allocator
-del RMMNumbaManager
 
 __all__ = [
     "NA",

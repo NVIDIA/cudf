@@ -40,8 +40,8 @@ inline cudf::test::fixed_width_column_wrapper<T, int64_t> generate_timestamps(
   int32_t count,
   time_point_ms start,
   time_point_ms stop,
-  rmm::cuda_stream_view stream = cudf::test::get_default_stream(),
-  cudf::memory_resources mr    = cudf::get_current_device_resource_ref())
+  cuda::stream_ref stream   = cudf::test::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref())
 {
   using Rep        = typename T::rep;
   using Period     = typename T::period;

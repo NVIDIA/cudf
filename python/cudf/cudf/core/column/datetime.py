@@ -44,6 +44,7 @@ from cudf.utils.dtypes import (
     dtype_from_pylibcudf_column,
     dtype_to_pylibcudf_type,
     get_dtype_of_same_kind,
+    is_pandas_nullable_extension_dtype,
 )
 from cudf.utils.scalar import pa_scalar_to_plc_scalar
 from cudf.utils.temporal import (
@@ -333,12 +334,20 @@ class DatetimeColumn(TemporalBaseColumn):
     @functools.cached_property
     def is_quarter_end(self) -> ColumnBase:
         last_month = self.month.isin([3, 6, 9, 12])
-        return self._maybe_fillna_false(self.is_month_end & last_month)
+        result = self.is_month_end & last_month
+        # Rebuild the mask to account for nonzero offsets in sliced columns.
+        if self.null_count:
+            result = result.set_mask(*self.notnull().as_mask())
+        return self._maybe_fillna_false(result)
 
     @functools.cached_property
     def is_quarter_start(self) -> ColumnBase:
         first_month = self.month.isin([1, 4, 7, 10])
-        return self._maybe_fillna_false(self.is_month_start & first_month)
+        result = self.is_month_start & first_month
+        # Rebuild the mask to account for nonzero offsets in sliced columns.
+        if self.null_count:
+            result = result.set_mask(*self.notnull().as_mask())
+        return self._maybe_fillna_false(result)
 
     @functools.cached_property
     def is_year_end(self) -> ColumnBase:
@@ -834,18 +843,16 @@ class DatetimeColumn(TemporalBaseColumn):
                 other_col, bool_fill_value=fill_value
             )
             return result.fillna(fill_value)
-        if (
-            op
-            in {
-                "__ne__",
-                "__lt__",
-                "__gt__",
-                "__le__",
-                "__ge__",
-            }
-            and other_is_datetime64
-        ):
-            out_dtype = get_dtype_of_same_kind(self.dtype, np.dtype(np.bool_))
+        if op in _EQUALITY_OPS and other_is_datetime64:
+            # An Arrow timestamp on either side produces a nullable Arrow bool.
+            source_dtype = (
+                other_dtype
+                if isinstance(other_dtype, pd.ArrowDtype)
+                else self.dtype
+            )
+            out_dtype = get_dtype_of_same_kind(
+                source_dtype, np.dtype(np.bool_)
+            )
         elif op == "__add__" and (other_is_timedelta or other_is_null_scalar):
             # The only thing we can add to a datetime is a timedelta. This
             # operation is symmetric, i.e. we allow `datetime + timedelta` or
@@ -918,7 +925,11 @@ class DatetimeColumn(TemporalBaseColumn):
         result_col = binaryop.binaryop(lhs_binop, rhs_binop, op, out_dtype)
         if out_dtype.kind != "b" and op == "__add__":
             return result_col
-        elif out_dtype.kind == "b" and op in _EQUALITY_OPS:
+        elif (
+            out_dtype.kind == "b"
+            and op in _EQUALITY_OPS
+            and not is_pandas_nullable_extension_dtype(out_dtype)
+        ):
             return result_col.fillna(op == "__ne__")
         else:
             return result_col
@@ -958,11 +969,11 @@ class DatetimeColumn(TemporalBaseColumn):
         # At the start of an ambiguous time period, Clock 1 (which has
         # been turned back) reads less than Clock 2:
         cond = clock_1 < clock_2
-        ambiguous_begin = clock_1.apply_boolean_mask(cond)
+        ambiguous_begin = clock_1.apply_retention_mask(cond)
 
         # The end of an ambiguous time period is what Clock 2 reads at
         # the moment of transition:
-        ambiguous_end = clock_2.apply_boolean_mask(cond)
+        ambiguous_end = clock_2.apply_retention_mask(cond)
         ambiguous = self.label_bins(
             left_edge=ambiguous_begin,
             left_inclusive=True,
@@ -973,11 +984,11 @@ class DatetimeColumn(TemporalBaseColumn):
         # At the start of a non-existent time period, Clock 2 reads less
         # than Clock 1 (which has been turned forward):
         cond = clock_1 > clock_2
-        nonexistent_begin = clock_2.apply_boolean_mask(cond)
+        nonexistent_begin = clock_2.apply_retention_mask(cond)
 
         # The end of the non-existent time period is what Clock 1 reads
         # at the moment of transition:
-        nonexistent_end = clock_1.apply_boolean_mask(cond)
+        nonexistent_end = clock_1.apply_retention_mask(cond)
         nonexistent = self.label_bins(
             left_edge=nonexistent_begin,
             left_inclusive=True,

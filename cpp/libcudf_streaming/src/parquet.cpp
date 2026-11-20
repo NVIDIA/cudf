@@ -12,7 +12,7 @@
 #include <cudf_streaming/parquet.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
+#include <cuda/stream>
 
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/memory/memory_type.hpp>
@@ -144,7 +144,7 @@ class FileCache {
    * @brief Get the FileCache instance for a Context.
    *
    * Each Context has exactly one FileCache instance for the lifetime of the
-   * process. If the `unbounded_file_read_cache` option is disabled, this
+   * process. If the `experimental_unbounded_file_read_cache` option is disabled, this
    * function returns nullptr.
    *
    * @param ctx Context used to identify the cache instance. The same Context must
@@ -164,7 +164,8 @@ class FileCache {
 
     // Get the memory type of the file cache, if enabled.
     auto const mem_type = ctx->options().get<std::optional<rapidsmpf::MemoryType>>(
-      "unbounded_file_read_cache", [](auto const& s) -> std::optional<rapidsmpf::MemoryType> {
+      "experimental_unbounded_file_read_cache",
+      [](auto const& s) -> std::optional<rapidsmpf::MemoryType> {
         auto val = rapidsmpf::parse_optional(s);
         if (!val.has_value() || val->empty()) { return std::nullopt; }
         return rapidsmpf::parse_string<rapidsmpf::MemoryType>(s);
@@ -195,7 +196,7 @@ class FileCache {
  * @return Message representing the read chunk.
  */
 rapidsmpf::streaming::Message read_parquet_chunk(std::shared_ptr<rapidsmpf::streaming::Context> ctx,
-                                                 rmm::cuda_stream_view stream,
+                                                 cuda::stream_ref stream,
                                                  cudf::io::parquet_reader_options options,
                                                  std::uint64_t sequence_number)
 {

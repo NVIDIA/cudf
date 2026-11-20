@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 20."""
@@ -104,15 +104,13 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
             .agg([pl.col("cs_ext_sales_price").sum().alias("itemrevenue")])
             .with_columns(
                 [
-                    # Handle case where itemrevenue is 0 - should result in NULL like SQL
-                    pl.when(pl.col("itemrevenue") == 0.0)
-                    .then(None)
-                    .otherwise(
-                        pl.col("itemrevenue")
+                    # DuckDB SQL promotes Decimal/Decimal to Float64; Polars keeps it as
+                    # Decimal. Cast to Float64 to match DuckDB return type.
+                    (
+                        pl.col("itemrevenue").cast(pl.Float64)
                         * 100
-                        / pl.col("itemrevenue").sum().over("i_class")
-                    )
-                    .alias("revenueratio")
+                        / pl.col("itemrevenue").sum().over("i_class").cast(pl.Float64)
+                    ).alias("revenueratio")
                 ]
             )
             .sort(sort_by.keys(), nulls_last=True)

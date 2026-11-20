@@ -83,7 +83,7 @@ struct nvbench_base_fixture {
 
   nvbench_base_fixture(int argc, char const* const* argv)
   {
-    cudf::initialize(cudf::init_flags::ALL);
+    cudf::detail::initialize(cudf::detail::init_flags::ALL);
 
     for (int i = 1; i < argc - 1; ++i) {
       std::string arg = argv[i];

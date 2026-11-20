@@ -5,12 +5,14 @@
 
 #pragma once
 
+#include <cudf/column/column.hpp>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -49,12 +51,13 @@ struct preprocessed_table {
    *
    * @param table The table to preprocess
    * @param stream The cuda stream to use while preprocessing.
-   * @param temp_mr Device memory resource used for temporary allocations
+   * @param mr Device memory resources used for retained preprocessing data and temporary
+   * allocations
    * @return A preprocessed table as shared pointer
    */
   static std::shared_ptr<preprocessed_table> create(table_view const& table,
                                                     cuda::stream_ref stream,
-                                                    rmm::device_async_resource_ref temp_mr);
+                                                    cudf::memory_resources mr);
 
   /**
    * @brief Implicit conversion operator to a `table_device_view` of the preprocessed table.
@@ -78,7 +81,7 @@ struct preprocessed_table {
                                                        rmm::device_async_resource_ref>;
 
   preprocessed_table(table_device_view_owner&& table,
-                     std::vector<rmm::device_buffer>&& null_buffers,
+                     std::vector<cuda::device_buffer<cudf::bitmask_type>>&& null_buffers,
                      std::vector<std::unique_ptr<column>>&& tmp_columns)
     : _t(std::move(table)),
       _null_buffers(std::move(null_buffers)),
@@ -87,7 +90,7 @@ struct preprocessed_table {
   }
 
   table_device_view_owner _t;
-  std::vector<rmm::device_buffer> _null_buffers;
+  std::vector<cuda::device_buffer<cudf::bitmask_type>> _null_buffers;
   std::vector<std::unique_ptr<column>> _tmp_columns;
 };
 

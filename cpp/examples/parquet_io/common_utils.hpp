@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,12 +8,12 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <string>
 
@@ -64,7 +64,7 @@ cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resource(bool 
  */
 void check_tables_equal(cudf::table_view const& lhs_table,
                         cudf::table_view const& rhs_table,
-                        rmm::cuda_stream_view stream = cudf::get_default_stream());
+                        cuda::stream_ref stream = cudf::get_default_stream());
 
 /**
  * @brief Concatenate a vector of tables and return the resultant table
@@ -75,7 +75,7 @@ void check_tables_equal(cudf::table_view const& lhs_table,
  * @return Unique pointer to the resultant concatenated table.
  */
 std::unique_ptr<cudf::table> concatenate_tables(std::vector<std::unique_ptr<cudf::table>> tables,
-                                                rmm::cuda_stream_view stream);
+                                                cuda::stream_ref stream);
 
 /**
  * @brief Returns a string containing current date and time

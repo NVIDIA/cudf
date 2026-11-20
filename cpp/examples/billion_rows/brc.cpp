@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "common.hpp"
@@ -32,7 +32,7 @@ int main(int argc, char const** argv)
   auto const input_file = std::string{argv[1]};
   std::cout << "Input: " << input_file << std::endl;
 
-  auto const mr_name = std::string("pool");
+  auto const mr_name = std::string("async");
   auto resource      = create_memory_resource(mr_name);
   auto stats_mr      = rmm::mr::statistics_resource_adaptor{resource};
   rmm::mr::set_current_device_resource(stats_mr);
@@ -71,7 +71,7 @@ int main(int argc, char const** argv)
   //
   // result      = cudf::sort_by_key(result->view(), result->view().select({0}), {}, {}, stream);
 
-  stream.synchronize();
+  stream.sync();
 
   elapsed = std::chrono::steady_clock::now() - start;
   std::cout << "Number of keys: " << result->num_rows() << std::endl;

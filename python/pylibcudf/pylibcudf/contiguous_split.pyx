@@ -35,7 +35,7 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .gpumemoryview cimport gpumemoryview
 from .table cimport Table
-from .span import is_span
+from .span import Span, is_span
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -121,7 +121,7 @@ cdef class PackedColumns:
         out.mr = mr
         return out
 
-    cpdef tuple release(self):
+    cpdef tuple[memoryview, gpumemoryview] release(self):
         """Releases and returns the underlying serialized metadata and gpu data.
 
         The ownership of the memory are transferred to the returned buffers. After
@@ -171,7 +171,7 @@ cdef class ChunkedPack:
         size_t user_buffer_size,
         object stream: CudaStreamLike | None = None,
         DeviceMemoryResource temp_mr=None,
-    ):
+    ) -> ChunkedPack:
         """
         Create a chunked packer.
 
@@ -193,7 +193,7 @@ cdef class ChunkedPack:
         cdef Stream _stream = _get_stream(stream)
         temp_mr = _get_memory_resource(temp_mr)
         cdef unique_ptr[chunked_pack] obj = chunked_pack.create(
-            input.view(), user_buffer_size, _stream.view().value(), temp_mr.get_mr()
+            input.view(), user_buffer_size, _stream.view().get(), temp_mr.get_mr()
         )
 
         cdef ChunkedPack out = ChunkedPack.__new__(ChunkedPack)
@@ -225,7 +225,7 @@ cdef class ChunkedPack:
         with nogil:
             return dereference(self.c_obj).get_total_contiguous_size()
 
-    cpdef size_t next(self, object buf):
+    cpdef size_t next(self, object buf: Span):
         """
         Pack the next chunk into the provided device buffer.
 
@@ -263,7 +263,7 @@ cdef class ChunkedPack:
             metadata = move(dereference(self.c_obj).build_metadata())
         return memoryview(HostBuffer.from_unique_ptr(move(metadata)))
 
-    cpdef tuple pack_to_host(self, object buf):
+    cpdef tuple[memoryview, memoryview] pack_to_host(self, object buf: Span):
         """
         Pack the entire table into a host buffer.
 
@@ -299,7 +299,7 @@ cdef class ChunkedPack:
             )
         )
         cdef Stream py_stream = self.stream
-        cdef cudaStream_t stream = py_stream.view().value()
+        cdef cudaStream_t stream = py_stream.view().get()
         with nogil:
             while dereference(self.c_obj).has_next():
                 size = dereference(self.c_obj).next(d_span)
@@ -354,7 +354,7 @@ cpdef PackedColumns pack(Table input, object stream: CudaStreamLike | None = Non
     """
     cdef unique_ptr[packed_columns] pack
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
 
     mr = _get_memory_resource(mr)
     cdef table_view c_input = input.view()
@@ -393,7 +393,7 @@ cpdef Table unpack(PackedColumns input, object stream: CudaStreamLike | None = N
 
 cpdef Table unpack_from_memoryviews(
     memoryview metadata,
-    object gpu_data,
+    object gpu_data: Span,
     object stream: CudaStreamLike | None = None,
 ):
     """Deserialize the result of `pack`.

@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 DASK_CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python dask-cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
@@ -12,22 +13,20 @@ DASK_CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 # Download the cudf, libcudf, and pylibcudf built in the previous step
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 rapids-logger "Install dask_cudf, cudf, pylibcudf, and test requirements"
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
-rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}" constraints
+rapids-generate-pip-constraints py_test_dask_cudf "${PIP_CONSTRAINT}"
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test]` requires for pip
+#   * echo to expand wildcard before adding `[test]` requires for the installer
 #   * just providing --constraint="${PIP_CONSTRAINT}" to be explicit, and because
 #     that environment variable is ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-  -v \
-  --prefer-binary \
+rapids-uv-pip install \
   --constraint "${PIP_CONSTRAINT}" \
   "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
   "$(echo "${DASK_CUDF_WHEELHOUSE}"/dask_cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test]" \

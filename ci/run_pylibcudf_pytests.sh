@@ -43,6 +43,8 @@ cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../python/pylibcudf/
 echo "RAPIDS_CUDA_VERSION: $RAPIDS_CUDA_VERSION"
 if [ -n "$TESTING_LIB" ] && [ -f "$TESTING_LIB" ] && [ "$RAPIDS_CUDA_VERSION" != "12.2.2" ]; then
     # run the stream tests without xdist to ease the burden on the compute-sanitizer checks
-    LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" -p no:xdist tests
+    LD_PRELOAD="$TESTING_LIB" PYLIBCUDF_STREAM_TESTING=1 \
+        pytest --cache-clear -m "not uses_custom_stream" --ignore="benchmarks" \
+        -p no:xdist --durations=50 --durations-min=1 tests
 fi
 pytest --cache-clear --ignore="benchmarks" "$@" tests

@@ -15,6 +15,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <span>
 
 /**
  * @file
@@ -76,6 +77,13 @@ class datasource {
     {
       return cudf::host_span<uint8_t const>{data(), size()};
     }
+
+    /**
+     * @brief Implicit conversion operator to std::span<uint8_t const>
+     *
+     * @return A std::span view of the buffer's data
+     */
+    operator std::span<uint8_t const>() const { return {data(), size()}; }
 
     /**
      * @brief Factory to construct a datasource buffer object from a container.
@@ -235,6 +243,20 @@ class datasource {
   {
     return supports_device_read();
   }
+
+  /**
+   * @brief Returns whether a device read of the given size is issued as a direct transfer to device
+   * memory, rather than staged through host memory by cuDF or KvikIO.
+   *
+   * Returns `false` when `supports_device_read()` is `false`.
+   *
+   * @note For file sources, `true` means KvikIO hands the read to cuFile. cuFile may still stage
+   * it through host memory if it falls back to its own compatibility mode, which is not observable.
+   *
+   * @param size Number of bytes to read
+   * @return whether a device read of the given size is issued as a direct transfer
+   */
+  [[nodiscard]] virtual bool is_device_read_direct(size_t size) const { return false; }
 
   /**
    * @brief Returns a device buffer with a subset of data from the source.

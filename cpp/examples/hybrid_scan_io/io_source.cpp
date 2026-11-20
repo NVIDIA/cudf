@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,13 +8,14 @@
 #include <cudf/io/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/pinned_host_memory_resource.hpp>
 
+#include <cuda/stream>
 #include <thrust/host_vector.h>
 
 #include <filesystem>
 #include <fstream>
+#include <span>
 #include <string>
 
 rmm::host_async_resource_ref pinned_memory_resource()
@@ -41,8 +42,9 @@ io_source_type get_io_source_type(std::string name)
   }
 }
 
-io_source::io_source(std::string_view file_path, io_source_type type, rmm::cuda_stream_view stream)
-  : pinned_buffer({pinned_memory_resource(), stream}), d_buffer{0, stream}
+io_source::io_source(std::string_view file_path, io_source_type type, cuda::stream_ref stream)
+  : pinned_buffer({pinned_memory_resource(), stream}),
+    d_buffer{stream, cudf::get_current_device_resource_ref()}
 {
   std::string const file_name{file_path};
   auto const file_size = std::filesystem::file_size(file_name);
@@ -74,9 +76,8 @@ io_source::io_source(std::string_view file_path, io_source_type type, rmm::cuda_
     case io_source_type::DEVICE_BUFFER: {
       h_buffer.resize(file_size);
       file.read(h_buffer.data(), file_size);
-      d_buffer.resize(file_size, stream);
-      CUDF_CUDA_TRY(cudaMemcpyAsync(
-        d_buffer.data(), h_buffer.data(), file_size, cudaMemcpyDefault, stream.value()));
+      d_buffer = cuda::device_buffer<std::byte>(
+        stream, cudf::get_current_device_resource_ref(), std::as_bytes(std::span{h_buffer}));
 
       source_info = cudf::io::source_info(d_buffer);
       break;

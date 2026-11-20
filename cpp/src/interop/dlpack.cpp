@@ -7,12 +7,15 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/buffer>
+#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 #include <dlpack/dlpack.h>
@@ -22,13 +25,13 @@
 namespace cudf {
 namespace {
 struct get_column_data_impl {
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
+  template <typename T>
   void const* operator()(column_view const& col)
   {
     CUDF_FAIL("Unsupported type to convert to dlpack.");
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   void const* operator()(column_view const& col)
   {
     return col.data<T>();
@@ -78,15 +81,14 @@ data_type DLDataType_to_data_type(DLDataType type)
 }
 
 struct data_type_to_DLDataType_impl {
-  template <typename T>
+  template <cudf::concepts::arithmetic T>
   DLDataType operator()()
-    requires(is_numeric<T>())
   {
     uint8_t const bits{sizeof(T) * 8};
     uint16_t const lanes{1};
     if (std::is_floating_point_v<T>) {
       return DLDataType{kDLFloat, bits, lanes};
-    } else if (std::is_signed_v<T>) {
+    } else if (cuda::std::is_signed_v<T>) {
       return DLDataType{kDLInt, bits, lanes};
     } else {
       return DLDataType{kDLUInt, bits, lanes};
@@ -95,7 +97,6 @@ struct data_type_to_DLDataType_impl {
 
   template <typename T>
   DLDataType operator()()
-    requires(not is_numeric<T>())
   {
     CUDF_FAIL("Conversion of non-numeric types to DLPack is unsupported");
   }
@@ -110,7 +111,12 @@ DLDataType data_type_to_DLDataType(data_type type)
 struct dltensor_context {
   int64_t shape[2]{};    // NOLINT
   int64_t strides[2]{};  // NOLINT
-  rmm::device_buffer buffer;
+  cuda::device_buffer<std::byte> buffer;
+
+  dltensor_context(cuda::stream_ref stream, cudf::memory_resources mr)
+    : buffer(stream, mr.get_output_mr())
+  {
+  }
 
   static void deleter(DLManagedTensor* arg)
   {
@@ -125,7 +131,7 @@ struct dltensor_context {
 namespace detail {
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(nullptr != managed_tensor, "managed_tensor is null");
   auto const& tensor = managed_tensor->dl_tensor;
@@ -208,7 +214,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 
 DLManagedTensor* to_dlpack(table_view const& input,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   auto const num_rows = input.num_rows();
   auto const num_cols = input.num_columns();
@@ -224,12 +230,11 @@ DLManagedTensor* to_dlpack(table_view const& input,
                cudf::data_type_error);
 
   // Ensure none of the columns have nulls
-  CUDF_EXPECTS(
-    std::none_of(input.begin(), input.end(), [](auto const& col) { return col.has_nulls(); }),
-    "Input required to have null count zero");
+  CUDF_EXPECTS(std::ranges::none_of(input, [](auto const& col) { return col.has_nulls(); }),
+               "Input required to have null count zero");
 
   auto managed_tensor = std::make_unique<DLManagedTensor>();
-  auto context        = std::make_unique<dltensor_context>();
+  auto context        = std::make_unique<dltensor_context>(stream, mr);
 
   DLTensor& tensor = managed_tensor->dl_tensor;
   tensor.dtype     = dltype;
@@ -259,8 +264,9 @@ DLManagedTensor* to_dlpack(table_view const& input,
   size_t const stride_bytes = num_rows * size_of(type);
   size_t const total_bytes  = stride_bytes * num_cols;
 
-  context->buffer = rmm::device_buffer(total_bytes, stream, mr);
-  tensor.data     = context->buffer.data();
+  context->buffer =
+    cuda::device_buffer<std::byte>(stream, mr.get_output_mr(), total_bytes, cuda::no_init);
+  tensor.data = context->buffer.data();
 
   auto tensor_data = reinterpret_cast<uintptr_t>(tensor.data);
   for (auto const& col : input) {
@@ -284,7 +290,7 @@ DLManagedTensor* to_dlpack(table_view const& input,
 
 std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_dlpack(managed_tensor, stream, mr);
@@ -292,7 +298,7 @@ std::unique_ptr<table> from_dlpack(DLManagedTensor const* managed_tensor,
 
 DLManagedTensor* to_dlpack(table_view const& input,
                            cuda::stream_ref stream,
-                           rmm::device_async_resource_ref mr)
+                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::to_dlpack(input, stream, mr);

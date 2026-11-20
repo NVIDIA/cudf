@@ -10,10 +10,14 @@ import pytest
 
 from cudf_streaming.partition_utils import (
     partition_and_pack,
+    partition_and_pack_cost,
     split_and_pack,
+    split_and_pack_cost,
     unpack_and_concat,
+    unpack_and_concat_cost,
 )
 from cudf_streaming.testing import assert_eq
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
 from rapidsmpf.memory.spill import spill_partitions, unspill_partitions
 from rmm.pylibrmm.stream import DEFAULT_STREAM
@@ -137,3 +141,71 @@ def test_spill_unspill_roundtrip(
     )
     # Since the row order isn't preserved, we sort the rows by the first column.
     assert_eq(expect, got, sort_rows=0)
+
+
+def test_unpack_and_concat_cost_does_not_consume(
+    device_mr: rmm.mr.CudaMemoryResource,
+) -> None:
+    br = BufferResource(device_mr)
+    stream = DEFAULT_STREAM
+    expect = _make_table([[1, 2, 3, 4], [5, 6, 7, 8]])
+    packed = list(
+        partition_and_pack(
+            expect,
+            columns_to_hash=(0,),
+            num_partitions=2,
+            stream=stream,
+            br=br,
+        ).values()
+    )
+
+    # Calling it twice, and from a generator, must leave the partitions usable.
+    cost = unpack_and_concat_cost(packed)
+    assert cost > 0
+    assert unpack_and_concat_cost(p for p in packed) == cost
+
+    got = unpack_and_concat(packed, stream, br)
+    assert_eq(expect, got, sort_rows=0)
+
+    # They are consumed now, so using them again must raise rather than crash.
+    with pytest.raises(ValueError):
+        unpack_and_concat_cost(packed)
+    with pytest.raises(ValueError):
+        unpack_and_concat(packed, stream, br)
+
+
+def test_round_trip_with_reservations(
+    device_mr: rmm.mr.CudaMemoryResource,
+) -> None:
+    """Each function consumes a reservation sized by its cost function."""
+    br = BufferResource(device_mr)
+    stream = DEFAULT_STREAM
+    expect = _make_table([[1, 2, 3, 4], [5, 6, 7, 8]])
+
+    pack_res = br.reserve_or_fail(
+        partition_and_pack_cost(expect, stream, br), [MemoryType.DEVICE]
+    )
+    packed = partition_and_pack(
+        expect,
+        columns_to_hash=(0,),
+        num_partitions=2,
+        stream=stream,
+        br=br,
+        reservation=pack_res,
+    )
+    assert pack_res.size == 0
+
+    split_res = br.reserve_or_fail(
+        split_and_pack_cost(expect, stream, br), [MemoryType.DEVICE]
+    )
+    split = split_and_pack(expect, [2], stream, br, reservation=split_res)
+    assert split_res.size == 0
+
+    for chunks in (packed, split):
+        parts = list(chunks.values())
+        concat_res = br.reserve_or_fail(
+            unpack_and_concat_cost(parts), [MemoryType.DEVICE]
+        )
+        got = unpack_and_concat(parts, stream, br, reservation=concat_res)
+        assert concat_res.size == 0
+        assert_eq(expect, got, sort_rows=0)

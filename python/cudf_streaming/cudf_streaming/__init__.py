@@ -24,6 +24,8 @@ from cudf_streaming.channel_metadata import (
     OrderKey,
     OrderScheme,
     Partitioning,
+    RowOrdering,
+    RowOrderingScope,
 )
 from cudf_streaming.partition import (
     partition_and_pack as actor_partition_and_pack,
@@ -32,8 +34,11 @@ from cudf_streaming.partition import (
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
     partition_and_pack,
+    partition_and_pack_cost,
     split_and_pack,
+    split_and_pack_cost,
     unpack_and_concat,
+    unpack_and_concat_cost,
 )
 from cudf_streaming.table_chunk import (
     TableChunk,
@@ -50,12 +55,17 @@ __all__ = [
     "OrderScheme",
     "Ordering",
     "Partitioning",
+    "RowOrdering",
+    "RowOrderingScope",
     "TableChunk",
     "actor_partition_and_pack",
     "actor_unpack_and_concat",
     "make_table_chunks_available_or_wait",
     "packed_data_from_cudf_packed_columns",
     "partition_and_pack",
+    "partition_and_pack_cost",
     "split_and_pack",
+    "split_and_pack_cost",
     "unpack_and_concat",
+    "unpack_and_concat_cost",
 ]

@@ -149,6 +149,21 @@ TEST_F(TextReplaceTest, FilterTokensEmptyTest)
   EXPECT_EQ(results->size(), 0);
 }
 
+TEST_F(TextReplaceTest, AllNullInput)
+{
+  cudf::test::strings_column_wrapper strings({"", "", ""}, {false, false, false});
+  cudf::strings_column_view strings_view(strings);
+  cudf::test::strings_column_wrapper targets({"target"});
+  cudf::test::strings_column_wrapper replacements({"replacement"});
+
+  auto replaced = nvtext::replace_tokens(
+    strings_view, cudf::strings_column_view(targets), cudf::strings_column_view(replacements));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*replaced, strings);
+
+  auto filtered = nvtext::filter_tokens(strings_view, 7);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*filtered, strings);
+}
+
 TEST_F(TextReplaceTest, FilterTokensErrorTest)
 {
   auto strings = cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});

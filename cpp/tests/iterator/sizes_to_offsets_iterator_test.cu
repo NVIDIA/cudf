@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -10,10 +10,11 @@
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <thrust/host_vector.h>
 #include <thrust/scan.h>
 
@@ -39,7 +40,8 @@ TYPED_TEST(SizesToOffsetsIteratorTestTyped, ExclusiveScan)
   auto d_view = cudf::column_view(d_col);
 
   auto last   = cudf::detail::device_scalar<LastType>(0, stream);
-  auto result = rmm::device_uvector<T>(d_view.size(), stream);
+  auto result = cuda::device_buffer<T>(
+    stream, cudf::get_current_device_resource_ref(), d_view.size(), cuda::no_init);
   auto output_itr =
     cudf::detail::make_sizes_to_offsets_iterator(result.begin(), result.end(), last.data());
 
@@ -71,7 +73,8 @@ TEST_F(SizesToOffsetsIteratorTest, ScanWithOverflow)
   auto d_view = cudf::column_view(d_col);
 
   auto last   = cudf::detail::device_scalar<int64_t>(0, stream);
-  auto result = rmm::device_uvector<int32_t>(d_view.size(), stream);
+  auto result = cuda::device_buffer<int32_t>(
+    stream, cudf::get_current_device_resource_ref(), d_view.size(), cuda::no_init);
   auto output_itr =
     cudf::detail::make_sizes_to_offsets_iterator(result.begin(), result.end(), last.data());
 

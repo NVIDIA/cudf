@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 /**
@@ -120,6 +121,7 @@ struct [[nodiscard]] expression {
                                                table_view const& right,
                                                cuda::stream_ref stream) const = 0;
 
+  /// @brief Destroy the expression object
   virtual ~expression() {}
 };
 
@@ -696,7 +698,8 @@ class tree {
    * @returns a reference to the added expression
    */
   template <typename Expr, typename... Args>
-  std::enable_if_t<std::is_base_of_v<expression, Expr>, Expr const&> emplace(Args&&... args)
+    requires(std::is_base_of_v<expression, Expr>)
+  Expr const& emplace(Args&&... args)
   {
     auto expr            = std::make_unique<Expr>(std::forward<Args>(args)...);
     Expr const& expr_ref = *expr;

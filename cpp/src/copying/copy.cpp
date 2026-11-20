@@ -106,18 +106,19 @@ std::unique_ptr<column> allocate_like(column_view const& input,
                                       size_type size,
                                       mask_allocation_policy mask_alloc,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   CUDF_EXPECTS(
     is_fixed_width(input.type()), "Expects only fixed-width type column", cudf::data_type_error);
   mask_state const allocate_mask = should_allocate_mask(mask_alloc, input.nullable());
 
-  return std::make_unique<column>(input.type(),
-                                  size,
-                                  rmm::device_buffer(size * size_of(input.type()), stream, mr),
-                                  detail::create_null_mask(size, allocate_mask, stream, mr),
-                                  0);
+  return std::make_unique<column>(
+    input.type(),
+    size,
+    rmm::device_buffer(size * size_of(input.type()), stream, mr.get_output_mr()),
+    cudf::detail::create_null_mask(size, allocate_mask, stream, mr),
+    0);
 }
 
 }  // namespace detail
@@ -131,7 +132,8 @@ std::unique_ptr<column> empty_like(column_view const& input)
 
   // test_dataframe.py passes an EMPTY column type here;
   // this causes is_nested to throw an error since it uses the type-dispatcher
-  if ((input.type().id() == type_id::EMPTY) || !cudf::is_nested(input.type())) {
+  if ((input.type().id() == type_id::EMPTY) ||
+      (!cudf::is_nested(input.type()) && input.type().id() != type_id::DICTIONARY32)) {
     return make_empty_column(input.type());
   }
 
@@ -141,8 +143,12 @@ std::unique_ptr<column> empty_like(column_view const& input)
                  std::back_inserter(children),
                  [](column_view const& col) { return empty_like(col); });
 
-  return std::make_unique<cudf::column>(
-    input.type(), 0, rmm::device_buffer{}, rmm::device_buffer{}, 0, std::move(children));
+  return std::make_unique<cudf::column>(input.type(),
+                                        0,
+                                        rmm::device_buffer{},
+                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                        0,
+                                        std::move(children));
 }
 
 /*
@@ -161,16 +167,15 @@ std::unique_ptr<table> empty_like(table_view const& input_table)
 {
   CUDF_FUNC_RANGE();
   std::vector<std::unique_ptr<column>> columns(input_table.num_columns());
-  std::transform(input_table.begin(), input_table.end(), columns.begin(), [&](column_view in_col) {
-    return empty_like(in_col);
-  });
+  std::ranges::transform(
+    input_table, columns.begin(), [&](column_view in_col) { return empty_like(in_col); });
   return std::make_unique<table>(std::move(columns));
 }
 
 std::unique_ptr<column> allocate_like(column_view const& input,
                                       mask_allocation_policy mask_alloc,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::allocate_like(input, input.size(), mask_alloc, stream, mr);
@@ -180,7 +185,7 @@ std::unique_ptr<column> allocate_like(column_view const& input,
                                       size_type size,
                                       mask_allocation_policy mask_alloc,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::allocate_like(input, size, mask_alloc, stream, mr);

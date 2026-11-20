@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "cudf_jni_apis.hpp"
@@ -286,7 +286,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileDriver_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_driver*>(pointer);
+    cudf::jni::safe_delete<cufile_driver>(pointer);
   }
   JNI_CATCH(env, );
 }
@@ -324,7 +324,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileBuffer_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_buffer*>(pointer);
+    cudf::jni::safe_delete<cufile_buffer>(pointer);
   }
   JNI_CATCH(env, );
 }
@@ -445,7 +445,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_CuFileHandle_destroy(JNIEnv* env, jcl
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cufile_file*>(pointer);
+    cudf::jni::safe_delete<cufile_file>(pointer);
   }
   JNI_CATCH(env, );
 }

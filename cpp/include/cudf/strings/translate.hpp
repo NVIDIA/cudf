@@ -10,6 +10,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <span>
 #include <vector>
 
 /**
@@ -43,13 +44,40 @@ namespace strings {
  * @param chars_table Table of UTF-8 character mappings
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
- * @return New column with padded strings
+ * @return New column with translated strings
+ */
+[[deprecated("Use std::span version instead")]] std::unique_ptr<column> translate(
+  strings_column_view const& input,
+  std::vector<std::pair<char_utf8, char_utf8>> const& chars_table,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+/**
+ * @brief Translates individual characters within each string.
+ *
+ * This can also be used to remove a character by specifying 0 for the corresponding table entry.
+ *
+ * Null string entries result in null entries in the output column.
+ *
+ * @code{.pseudo}
+ * Example:
+ * s = ["aa","bbb","cccc","abcd"]
+ * t = [['a','A'],['b',''],['d':'Q']]
+ * r = translate(s,t)
+ * r is now ["AA", "", "cccc", "AcQ"]
+ * @endcode
+ *
+ * @param input Strings instance for this operation
+ * @param chars_table Table of UTF-8 character mappings
+ * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Device memory resource used to allocate the returned column's device memory
+ * @return New column with translated strings
  */
 std::unique_ptr<column> translate(
   strings_column_view const& input,
-  std::vector<std::pair<char_utf8, char_utf8>> const& chars_table,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  std::span<std::pair<char_utf8, char_utf8> const> chars_table,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Removes or keeps the specified character ranges in cudf::strings::filter_characters
@@ -93,10 +121,10 @@ enum class filter_type : bool {
 std::unique_ptr<column> filter_characters(
   strings_column_view const& input,
   std::vector<std::pair<cudf::char_utf8, cudf::char_utf8>> characters_to_filter,
-  filter_type keep_characters       = filter_type::KEEP,
-  string_scalar const& replacement  = string_scalar(""),
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  filter_type keep_characters      = filter_type::KEEP,
+  string_scalar const& replacement = string_scalar(""),
+  cuda::stream_ref stream          = cudf::get_default_stream(),
+  cudf::memory_resources mr        = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

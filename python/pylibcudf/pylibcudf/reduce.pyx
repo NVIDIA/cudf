@@ -90,7 +90,7 @@ cpdef Scalar reduce(
     cdef const scalar* c_init_ptr
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     if init is not None:
@@ -147,7 +147,7 @@ cpdef Column scan(
     cdef const scan_aggregation *c_agg = agg.view_underlying_as_scan()
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_col = col.view()
@@ -163,7 +163,11 @@ cpdef Column scan(
     return Column.from_libcudf(move(result), _stream, mr)
 
 
-cpdef tuple minmax(Column col, object stream: CudaStreamLike | None = None, DeviceMemoryResource mr=None):
+cpdef tuple[Scalar, Scalar] minmax(
+    Column col,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
     """Compute the minimum and maximum of a column
 
     For details, see ``cudf::minmax`` documentation.
@@ -188,7 +192,7 @@ cpdef tuple minmax(Column col, object stream: CudaStreamLike | None = None, Devi
     cdef Scalar max_scalar
 
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     cdef column_view c_col = col.view()
@@ -254,7 +258,7 @@ cpdef size_type unique_count(
 
     with nogil:
         return cpp_unique_count.unique_count(
-            c_source, null_handling, nan_handling, _stream.view().value()
+            c_source, null_handling, nan_handling, _stream.view().get()
         )
 
 
@@ -289,7 +293,7 @@ cpdef size_type distinct_count(
 
     with nogil:
         return cpp_distinct_count.distinct_count(
-            c_source, null_handling, nan_handling, _stream.view().value()
+            c_source, null_handling, nan_handling, _stream.view().get()
         )
 
 
@@ -323,7 +327,7 @@ cpdef size_type unique_count_table(
 
     with nogil:
         return cpp_unique_count.unique_count(
-            c_source, nulls_equal, _stream.view().value()
+            c_source, nulls_equal, _stream.view().get()
         )
 
 
@@ -357,7 +361,7 @@ cpdef size_type distinct_count_table(
 
     with nogil:
         return cpp_distinct_count.distinct_count(
-            c_source, nulls_equal, _stream.view().value()
+            c_source, nulls_equal, _stream.view().get()
         )
 
 
@@ -386,11 +390,11 @@ cdef class ApproxDistinctCount:
         int32_t precision=12,
         null_policy null_handling=null_policy.EXCLUDE,
         nan_policy nan_handling=nan_policy.NAN_IS_NULL,
-        object stream=None,
+        object stream: CudaStreamLike | None = None,
         DeviceMemoryResource mr=None,
     ):
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
         cdef table_view c_input = input.view()
         cdef any_resource[device_accessible] c_mr = any_resource[device_accessible](
@@ -403,7 +407,7 @@ cdef class ApproxDistinctCount:
                 )
             )
 
-    cpdef void add(self, Table input, object stream=None):
+    cpdef void add(self, Table input, object stream: CudaStreamLike | None = None):
         """Add rows from a table to the sketch.
 
         Parameters
@@ -414,12 +418,16 @@ cdef class ApproxDistinctCount:
             CUDA stream on which to perform the operation.
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef table_view c_input = input.view()
         with nogil:
             dereference(self.c_obj).add(c_input, _cs)
 
-    cpdef void merge(self, ApproxDistinctCount other, object stream=None):
+    cpdef void merge(
+        self,
+        ApproxDistinctCount other,
+        object stream: CudaStreamLike | None = None,
+    ):
         """Merge another sketch into this sketch.
 
         Parameters
@@ -430,11 +438,11 @@ cdef class ApproxDistinctCount:
             CUDA stream on which to perform the operation.
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         with nogil:
             dereference(self.c_obj).merge(dereference(other.c_obj), _cs)
 
-    cpdef size_t estimate(self, object stream=None):
+    cpdef size_t estimate(self, object stream: CudaStreamLike | None = None):
         """Estimate the approximate number of distinct rows in the sketch.
 
         Parameters
@@ -448,7 +456,7 @@ cdef class ApproxDistinctCount:
             The approximate number of distinct rows.
         """
         cdef Stream _stream = _get_stream(stream)
-        cdef cudaStream_t _cs = _stream.view().value()
+        cdef cudaStream_t _cs = _stream.view().get()
         cdef size_t result
         with nogil:
             result = dereference(self.c_obj).estimate(_cs)
@@ -471,7 +479,7 @@ cdef class ApproxDistinctCount:
         return dereference(self.c_obj).standard_error()
 
     @staticmethod
-    def sketch_bytes(int32_t precision):
+    def sketch_bytes(int32_t precision) -> int:
         """Return the bytes required for sketch storage at a given precision.
 
         Parameters
@@ -487,7 +495,7 @@ cdef class ApproxDistinctCount:
         return cpp_approx_distinct_count.sketch_bytes(precision)
 
     @staticmethod
-    def sketch_alignment():
+    def sketch_alignment() -> int:
         """Return the alignment required for sketch storage.
 
         Returns

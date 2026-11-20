@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -22,7 +22,7 @@ namespace ops {
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T cbrt(T a)
 {
   return cuda::std::cbrt(a);
@@ -34,7 +34,7 @@ __device__ T cbrt(T a)
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T ceil(T a)
 {
   return cuda::std::ceil(a);
@@ -81,7 +81,7 @@ __device__ numeric::decimal<R> ceil(numeric::decimal<R> a)
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T exp(T a)
 {
   return cuda::std::exp(a);
@@ -93,7 +93,7 @@ __device__ T exp(T a)
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T floor(T a)
 {
   return cuda::std::floor(a);
@@ -111,7 +111,7 @@ __device__ numeric::decimal<R> floor(numeric::decimal<R> a)
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T log(T a)
 {
   return cuda::std::log(a);
@@ -125,13 +125,13 @@ __device__ T log(T a)
  * @param a Base value.
  * @param b Exponent value.
  */
-template <floating_point A, floating_point B>
+template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ auto pow(A a, B b) -> decltype(cuda::std::pow(a, b))
 {
   return cuda::std::pow(a, b);
 }
 
-template <integer A, integer B>
+template <concepts::integral_not_bool A, concepts::integral_not_bool B>
 __device__ auto pow(A a, B b) -> decltype(cudf::detail::integral_pow(a, b))
 {
   return cudf::detail::integral_pow(a, b);
@@ -143,7 +143,7 @@ __device__ auto pow(A a, B b) -> decltype(cudf::detail::integral_pow(a, b))
  * @tparam T Value type.
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T rint(T a)
 {
   return cuda::std::rint(a);
@@ -154,7 +154,7 @@ __device__ T rint(T a)
  *
  * @param a Input value.
  */
-template <floating_point T>
+template <cuda::std::floating_point T>
 __device__ T sqrt(T a)
 {
   return cuda::std::sqrt(a);

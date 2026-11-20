@@ -11,6 +11,8 @@
 
 #include <cuda/stream>
 
+#include <concepts>
+
 namespace cudf::detail {
 
 template <typename T>
@@ -30,9 +32,8 @@ class hostdevice_span {
 
   // Copy construction to support const conversion
   /// @param other The span to copy
-  template <typename OtherT,
-            std::enable_if_t<std::is_convertible_v<OtherT (*)[], T (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename OtherT>
+    requires std::convertible_to<OtherT (*)[], T (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   constexpr hostdevice_span(hostdevice_span<OtherT> const& other) noexcept
     : _host_data{host_span<OtherT>{other}}, _device_data{other.device_ptr()}
   {
@@ -51,9 +52,8 @@ class hostdevice_span {
    * @tparam T The device span type.
    * @return A typed device span of the hostdevice view's data.
    */
-  template <typename U,
-            std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename U>
+    requires std::convertible_to<T (*)[], U (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   [[nodiscard]] operator cudf::device_span<U>() const noexcept
   {
     return cudf::device_span<U>(_device_data, size());
@@ -89,9 +89,8 @@ class hostdevice_span {
    * @tparam T The host span type.
    * @return A typed host span of the hostdevice_span's data.
    */
-  template <typename U,
-            std::enable_if_t<std::is_convertible_v<T (*)[], U (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename U>
+    requires std::convertible_to<T (*)[], U (*)[]>  // NOLINT(modernize-avoid-c-arrays)
   [[nodiscard]] operator host_span<U>() const noexcept
   {
     return {_host_data};

@@ -7,6 +7,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -30,7 +31,7 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief A container of nullable device data as a column of elements.
  *
- * @ingroup column_classes Column
+ * @ingroup column_classes
  * @{
  */
 
@@ -53,8 +54,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   column(column const& other,
-         cuda::stream_ref stream           = cudf::get_default_stream(),
-         rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+         cuda::stream_ref stream   = cudf::get_default_stream(),
+         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Move the contents from `other` to create a new column.
@@ -72,8 +73,11 @@ class column {
    * @param null_mask Column's null value indicator bitmask. May be empty if `null_count` is 0.
    * @param null_count The count of null elements.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
-  column(rmm::device_uvector<T>&& other, rmm::device_buffer&& null_mask, size_type null_count)
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
+  column(rmm::device_uvector<T>&& other,
+         cuda::device_buffer<cudf::bitmask_type>&& null_mask,
+         size_type null_count)
     : _type{cudf::data_type{cudf::type_to_id<T>()}},
       _size{[&]() {
         CUDF_EXPECTS(
@@ -103,7 +107,7 @@ class column {
    * @param null_count Optional, the count of null elements.
    * @param children Optional, vector of child columns
    */
-  template <typename B1, typename B2 = rmm::device_buffer>
+  template <typename B1, typename B2 = cuda::device_buffer<cudf::bitmask_type>>
   column(data_type dtype,
          size_type size,
          B1&& data,
@@ -131,8 +135,8 @@ class column {
    * @param mr Device memory resource to use for all device memory allocations
    */
   explicit column(column_view view,
-                  cuda::stream_ref stream           = cudf::get_default_stream(),
-                  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+                  cuda::stream_ref stream   = cudf::get_default_stream(),
+                  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the column's logical element type
@@ -166,7 +170,8 @@ class column {
    * `new_null_count` is 0.
    * @param new_null_count The count of null elements.
    */
-  void set_null_mask(rmm::device_buffer&& new_null_mask, size_type new_null_count);
+  void set_null_mask(cuda::device_buffer<cudf::bitmask_type>&& new_null_mask,
+                     size_type new_null_count);
 
   /**
    * @brief Sets the column's null value indicator bitmask to `new_null_mask`.
@@ -180,7 +185,7 @@ class column {
    * @param stream The stream on which to perform the allocation and copy. Uses the default CUDF
    * stream if none is specified.
    */
-  void set_null_mask(rmm::device_buffer const& new_null_mask,
+  void set_null_mask(cuda::device_buffer<cudf::bitmask_type> const& new_null_mask,
                      size_type new_null_count,
                      cuda::stream_ref stream = cudf::get_default_stream());
 
@@ -247,8 +252,9 @@ class column {
    * Returned by `column::release()`.
    */
   struct contents {
-    std::unique_ptr<rmm::device_buffer> data;       ///< data device memory buffer
-    std::unique_ptr<rmm::device_buffer> null_mask;  ///< null mask device memory buffer
+    std::unique_ptr<rmm::device_buffer> data;  ///< data device memory buffer
+    std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>
+      null_mask;                                    ///< null mask device memory buffer
     std::vector<std::unique_ptr<column>> children;  ///< child columns
   };
 
@@ -324,9 +330,10 @@ class column {
   cudf::size_type _size{};                ///< The number of elements in the column
   rmm::device_buffer _data{};             ///< Dense, contiguous, type erased device memory
                                           ///< buffer containing the column elements
-  rmm::device_buffer _null_mask{};        ///< Bitmask used to represent null values.
-                                          ///< May be empty if `null_count() == 0`
-  mutable cudf::size_type _null_count{};  ///< The number of null elements
+  cuda::device_buffer<cudf::bitmask_type> _null_mask = cudf::create_null_mask(
+    0, cudf::mask_state::UNALLOCATED);               ///< Bitmask used to represent null values.
+                                                     ///< May be empty if `null_count() == 0`
+  mutable cudf::size_type _null_count{};             ///< The number of null elements
   std::vector<std::unique_ptr<column>> _children{};  ///< Depending on element type, child
                                                      ///< columns may contain additional data
 };

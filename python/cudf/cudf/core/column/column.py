@@ -671,6 +671,20 @@ class _ColumnAccessContext:
         return False
 
 
+def _nan_is_missing_against(col: ColumnBase, other: ColumnBase) -> bool:
+    """Whether NaN values in ``col`` match missing values in ``other``.
+
+    The NaN-backed ``str`` dtype uses NaN as its missing value, so pandas
+    matches a float NaN and a missing string in ``isin``.
+    """
+    return (
+        col.dtype.kind == "f"
+        and isinstance(other.dtype, pd.StringDtype)
+        and other.dtype.na_value is np.nan
+        and col.nan_count > 0
+    )
+
+
 class ColumnBase(Serializable, BinaryOperand, Reducible):
     """
     A ColumnBase stores columnar data in device memory.
@@ -727,7 +741,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         return self.plc_column.size()
 
     @cached_property
-    def data(self) -> None | Buffer:
+    def data(self) -> Buffer | None:
         """Get data buffer from pylibcudf column."""
         return cast("Buffer | None", self.plc_column.data())
 
@@ -779,7 +793,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         )
 
     @cached_property
-    def mask(self) -> None | Buffer:
+    def mask(self) -> Buffer | None:
         """Get mask buffer from pylibcudf column."""
         return cast("Buffer | None", self.plc_column.null_mask())
 
@@ -852,7 +866,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
 
     def _mimic_inplace(
         self, other_col: Self, inplace: bool = False
-    ) -> None | Self:
+    ) -> Self | None:
         """
         Given another column, update the attributes of this column to mimic an
         inplace operation. This does not modify the memory of Buffers, but
@@ -1264,7 +1278,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         replaced = self
         if old_plc.null_count() == 1:
             old_isnull_plc = plc.unary.is_null(old_plc)
-            (filtered_column,) = plc.stream_compaction.apply_boolean_mask(
+            (filtered_column,) = plc.stream_compaction.apply_retention_mask(
                 plc.Table([new_plc]), old_isnull_plc
             ).columns()
             replacement_for_null = filtered_column.to_scalar().to_py()
@@ -1542,7 +1556,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             return ColumnBase.create(plc_column, np.dtype(np.bool_))
 
     @staticmethod
-    def _plc_memory_usage(col: plc.Column) -> int:
+    def _plc_memory_usage_buffers(col: plc.Column) -> int:
         n = 0
         if (data := col.data()) is not None:
             try:
@@ -1556,13 +1570,20 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 n += data.size
         if col.null_mask() is not None:
             n += plc.null_mask.bitmask_allocation_size_bytes(col.size())
+        return n
+
+    def _plc_memory_usage(self, col: plc.Column) -> int:
+        n = self._plc_memory_usage_buffers(col)
         for child in col.children():
-            n += ColumnBase._plc_memory_usage(child)
+            n += ColumnBase._plc_memory_usage(self, child)
         return n
 
     @cached_property
     def memory_usage(self) -> int:
-        return self._plc_memory_usage(self.plc_column)
+        # Sliced nested columns require reading their offsets from device memory, so the
+        # buffers must be spill locked.
+        with self.access(mode="read", scope="internal") as col:
+            return self._plc_memory_usage(col.plc_column)
 
     def _fill(
         self,
@@ -1837,7 +1858,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 # Both value and key are aligned to self. Thus, the values
                 # corresponding to the false values in key should be
                 # ignored.
-                value = value.apply_boolean_mask(key)
+                value = value.apply_retention_mask(key)
                 # After applying boolean mask, the length of value equals
                 # the number of elements to scatter, we can skip computing
                 # the sum of ``key`` below.
@@ -2039,8 +2060,8 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
             # Each point is evenly spaced, index values don't matter
             known_x = cp.flatnonzero(valid_locs.values)
         else:
-            known_x = index._column.apply_boolean_mask(valid_locs).values
-        known_y = col.apply_boolean_mask(valid_locs).values
+            known_x = index._column.apply_retention_mask(valid_locs).values
+        known_y = col.apply_retention_mask(valid_locs).values
 
         result = cp.interp(index.to_cupy(), known_x, known_y)
 
@@ -2069,7 +2090,7 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         return (
             ColumnBase.from_range(range(len(self)))  # type: ignore[return-value]
             .astype(SIZE_TYPE_DTYPE)
-            .apply_boolean_mask(mask)
+            .apply_retention_mask(mask)
         )
 
     def _find_first_and_last(self, value: ScalarLike) -> tuple[int, int]:
@@ -2178,7 +2199,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         """
         lhs, rhs = self._process_values_for_isin(values)
         if lhs.dtype != rhs.dtype:
-            if lhs.null_count and rhs.null_count:
+            if (
+                (lhs.null_count and rhs.null_count)
+                or (rhs.null_count and _nan_is_missing_against(lhs, rhs))
+                or (lhs.null_count and _nan_is_missing_against(rhs, lhs))
+            ):
                 return lhs.isnull()
             else:
                 return as_column(
@@ -2207,9 +2232,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         """
         lhs = self
         rhs = as_column(values, nan_as_null=False)
-        if lhs.is_all_null:
+        # Keep an all-null NaN-backed ``str`` column as is, so that its
+        # missing values can still match NaN in the other column.
+        if lhs.is_all_null and not _nan_is_missing_against(rhs, lhs):
             lhs = lhs.astype(rhs.dtype)
-        elif rhs.is_all_null:
+        elif rhs.is_all_null and not _nan_is_missing_against(lhs, rhs):
             rhs = rhs.astype(lhs.dtype)
         return lhs, rhs
 
@@ -2397,15 +2424,23 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
     def as_decimal_column(self, dtype: DecimalDtype) -> DecimalColumn:
         raise NotImplementedError()
 
-    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+    def apply_retention_mask(self, mask: ColumnBase) -> ColumnBase:
         if mask.dtype.kind != "b":
-            raise ValueError("boolean_mask is not boolean type.")
+            raise ValueError("retention_mask is not boolean type.")
 
         return PylibcudfFunction(
-            plc.stream_compaction.apply_boolean_mask,
+            plc.stream_compaction.apply_retention_mask,
             same_dtype_policy,
             result_index=0,
         ).execute_with_args(ColumnList(self), mask)
+
+    def apply_boolean_mask(self, mask: ColumnBase) -> ColumnBase:
+        warnings.warn(
+            "apply_boolean_mask is deprecated; use apply_retention_mask instead",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return self.apply_retention_mask(mask)
 
     def argsort(
         self,

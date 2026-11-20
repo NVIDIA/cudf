@@ -10,7 +10,9 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/interop.hpp>
+#include <cudf/null_mask.hpp>
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -31,7 +33,7 @@ namespace {
 
 std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
   ArrowSchemaView schema_view;
   NANOARROW_THROW_NOT_OK(ArrowSchemaViewInit(&schema_view, schema, nullptr));
@@ -39,15 +41,18 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
   auto const type{arrow_to_cudf_type(&schema_view)};
   switch (type.id()) {
     case type_id::EMPTY: {
-      return std::make_unique<column>(
-        data_type(type_id::EMPTY), 0, rmm::device_buffer{}, rmm::device_buffer{}, 0);
+      return std::make_unique<column>(data_type(type_id::EMPTY),
+                                      0,
+                                      rmm::device_buffer{},
+                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                      0);
     }
     case type_id::LIST: {
       return cudf::make_lists_column(0,
                                      cudf::make_empty_column(data_type{type_id::INT32}),
                                      make_empty_column_from_schema(schema->children[0], stream, mr),
                                      0,
-                                     {});
+                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     }
     case type_id::STRUCT: {
       std::vector<std::unique_ptr<column>> child_columns;
@@ -57,7 +62,12 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
         schema->children + schema->n_children,
         std::back_inserter(child_columns),
         [&](auto const& child) { return make_empty_column_from_schema(child, stream, mr); });
-      return cudf::make_structs_column(0, std::move(child_columns), 0, {}, stream, mr);
+      return cudf::make_structs_column(0,
+                                       std::move(child_columns),
+                                       0,
+                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                       stream,
+                                       mr);
     }
     default: {
       return cudf::make_empty_column(type);
@@ -69,7 +79,7 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
 
 std::unique_ptr<table> from_arrow_stream(ArrowArrayStream* input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(input != nullptr, "input ArrowArrayStream must not be NULL", std::invalid_argument);
 
@@ -130,7 +140,7 @@ std::unique_ptr<table> from_arrow_stream(ArrowArrayStream* input,
 
 std::unique_ptr<column> from_arrow_stream_column(ArrowArrayStream* input,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_EXPECTS(input != nullptr, "input ArrowArrayStream must not be NULL", std::invalid_argument);
 
@@ -181,7 +191,7 @@ std::unique_ptr<column> from_arrow_stream_column(ArrowArrayStream* input,
 
 std::unique_ptr<table> from_arrow_stream(ArrowArrayStream* input,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_arrow_stream(input, stream, mr);
@@ -189,7 +199,7 @@ std::unique_ptr<table> from_arrow_stream(ArrowArrayStream* input,
 
 std::unique_ptr<column> from_arrow_stream_column(ArrowArrayStream* input,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::from_arrow_stream_column(input, stream, mr);

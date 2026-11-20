@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -23,10 +23,10 @@ static void bench_join(nvbench::state& state)
   auto const table =
     create_random_table({cudf::type_id::STRING}, row_count{num_rows}, table_profile);
   cudf::strings_column_view input(table->view().column(0));
-  std::string_view separator(":");
-  std::string_view narep("null");
+  cudf::string_scalar separator(":");
+  cudf::string_scalar narep("null");
 
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().value()));
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   // gather some throughput statistics as well
   auto const data_size = table->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);

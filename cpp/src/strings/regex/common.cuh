@@ -4,7 +4,7 @@
  */
 #pragma once
 
-#include "regcomp.h"
+#include "regcomp.hpp"
 
 #include <cudf/strings/detail/char_tables.hpp>
 #include <cudf/strings/detail/utf8.hpp>

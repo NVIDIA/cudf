@@ -21,21 +21,19 @@ namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::gather(table_view const&,column_view const&,table_view
- * const&,cudf::out_of_bounds_policy,cudf::negative_index_policy,cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * @copydoc cudf::gather(table_view const&,column_view const&,out_of_bounds_policy,
+ * negative_index_policy,cuda::stream_ref,memory_resources)
  */
 std::unique_ptr<table> gather(table_view const& source_table,
                               column_view const& gather_map,
                               out_of_bounds_policy bounds_policy,
                               negative_index_policy neg_indices,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              memory_resources mr);
 
 /**
- * @copydoc cudf::detail::gather(table_view const&,column_view const&,table_view
- * const&,cudf::out_of_bounds_policy,cudf::negative_index_policy,cuda::stream_ref,
- * rmm::device_async_resource_ref)
+ * @copydoc cudf::detail::gather(table_view const&,column_view const&,out_of_bounds_policy,
+ * negative_index_policy,cuda::stream_ref,memory_resources)
  *
  * @throws cudf::logic_error if `gather_map` span size is larger than max of `size_type`.
  */
@@ -44,7 +42,7 @@ std::unique_ptr<table> gather(table_view const& source_table,
                               out_of_bounds_policy bounds_policy,
                               negative_index_policy neg_indices,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr);
+                              memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

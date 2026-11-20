@@ -44,20 +44,18 @@ def test_all_fields_unspecified_by_default(monkeypatch: pytest.MonkeyPatch) -> N
             monkeypatch.delenv(key, raising=False)
     opts = StreamingOptions()
     # Fields with no env var are always UNSPECIFIED.
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
     assert isinstance(opts.raise_on_fail, Unspecified)
     assert isinstance(opts.parquet_options, Unspecified)
     # Fields whose env vars were cleared are also UNSPECIFIED.
     assert isinstance(opts.fallback_mode, Unspecified)
     assert isinstance(opts.log, Unspecified)
+    assert opts.to_executor_options() == {}
 
 
 # ---------------------------------------------------------------------------
 # to_executor_options
 # ---------------------------------------------------------------------------
-
-
-def test_executor_options_empty_when_all_unspecified() -> None:
-    assert StreamingOptions().to_executor_options() == {}
 
 
 def test_executor_options_includes_set_fields() -> None:
@@ -73,9 +71,41 @@ def test_executor_options_num_py_executors() -> None:
     assert result["num_py_executors"] == 4
 
 
-def test_executor_options_max_concurrent_io_tasks() -> None:
-    result = StreamingOptions(max_concurrent_io_tasks=6).to_executor_options()
-    assert result["max_concurrent_io_tasks"] == 6
+@pytest.mark.parametrize(
+    "value",
+    [6, {"local": 3, "remote": 7}, {"remote": 7}, None],
+)
+def test_executor_options_max_concurrent_io_tasks(
+    value: int | dict[str, int] | None,
+) -> None:
+    result = StreamingOptions(max_concurrent_io_tasks=value).to_executor_options()
+    assert result["max_concurrent_io_tasks"] == value
+
+
+@pytest.mark.parametrize(
+    "env, expected",
+    [
+        ('{"local": 2, "remote": 7}', {"local": 2, "remote": 7}),
+        ('{"remote": 7}', {"remote": 7}),
+    ],
+)
+def test_executor_options_max_concurrent_io_tasks_env(
+    monkeypatch: pytest.MonkeyPatch,
+    env: str,
+    expected: dict[str, int],
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", env)
+    opts = StreamingOptions()
+    assert opts.max_concurrent_io_tasks == expected
+    assert opts.to_executor_options()["max_concurrent_io_tasks"] == expected
+
+
+def test_executor_options_max_concurrent_io_tasks_env_rejects_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__MAX_CONCURRENT_IO_TASKS", "auto")
+    with pytest.raises(json.JSONDecodeError):
+        StreamingOptions()
 
 
 def test_executor_options_kvikio_nthreads() -> None:
@@ -91,6 +121,19 @@ def test_executor_options_sink_to_directory(*, value: bool) -> None:
 
 def test_executor_options_sink_to_directory_absent_when_unspecified() -> None:
     assert "sink_to_directory" not in StreamingOptions().to_executor_options()
+
+
+def test_executor_options_parallel_sink_batches_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", "1")
+    assert StreamingOptions().to_executor_options()["parallel_sink_batches"] is True
+    assert (
+        StreamingOptions(parallel_sink_batches=False).to_executor_options()[
+            "parallel_sink_batches"
+        ]
+        is False
+    )
 
 
 def test_executor_options_join_filter_pushdown_disabled() -> None:
@@ -126,7 +169,7 @@ def test_rapidsmpf_options_serialized() -> None:
         ucxx_progress_mode="thread-polling",
         log="DEBUG",
         pinned_max_pool_size="4GiB",
-        unbounded_file_read_cache="host",
+        experimental_unbounded_file_read_cache="host",
     )
     strings = opts.to_rapidsmpf_options().get_strings()
     assert strings["statistics"] == "True"
@@ -135,7 +178,7 @@ def test_rapidsmpf_options_serialized() -> None:
     assert strings["ucxx_progress_mode"] == "thread-polling"
     assert strings["log"] == "DEBUG"
     assert strings["pinned_max_pool_size"] == "4GiB"
-    assert strings["unbounded_file_read_cache"] == "host"
+    assert strings["experimental_unbounded_file_read_cache"] == "host"
 
 
 def test_rapidsmpf_options_unspecified_fields_absent() -> None:
@@ -199,9 +242,9 @@ def test_pinned_max_pool_size_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_unbounded_file_read_cache_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAPIDSMPF_UNBOUNDED_FILE_READ_CACHE", "host")
+    monkeypatch.setenv("CUDF_POLARS__EXPERIMENTAL_UNBOUNDED_FILE_READ_CACHE", "host")
     strings = StreamingOptions().to_rapidsmpf_options().get_strings()
-    assert strings["unbounded_file_read_cache"] == "host"
+    assert strings["experimental_unbounded_file_read_cache"] == "host"
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +305,11 @@ def test_from_dict_maps_known_fields() -> None:
 
 
 def test_from_dict_none_value_is_unspecified() -> None:
-    opts = StreamingOptions.from_dict({"fallback_mode": None})
+    opts = StreamingOptions.from_dict(
+        {"fallback_mode": None, "max_concurrent_io_tasks": None}
+    )
     assert isinstance(opts.fallback_mode, Unspecified)
+    assert isinstance(opts.max_concurrent_io_tasks, Unspecified)
 
 
 def test_from_dict_unknown_key_raises() -> None:
@@ -347,7 +393,7 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
             "--raise-on-fail",
             "--pinned-max-pool-size",
             "4GiB",
-            "--unbounded-file-read-cache",
+            "--experimental-unbounded-file-read-cache",
             "host",
             "--max-concurrent-io-tasks",
             "6",
@@ -358,7 +404,7 @@ def test_add_cli_args_then_from_argparse_roundtrip() -> None:
     assert opts.log == "DEBUG"
     assert opts.raise_on_fail is True
     assert opts.pinned_max_pool_size == "4GiB"
-    assert opts.unbounded_file_read_cache == "host"
+    assert opts.experimental_unbounded_file_read_cache == "host"
     assert opts.max_concurrent_io_tasks == 6
     # Unprovided args default to None → UNSPECIFIED
     assert isinstance(opts.fallback_mode, Unspecified)
@@ -385,14 +431,17 @@ def test_from_argparse_omitted_flag_still_picks_up_env_var(
 # ---------------------------------------------------------------------------
 
 
-def test_to_dict_empty_when_all_unspecified() -> None:
-    assert StreamingOptions().to_dict() == {}
-
-
 def test_to_dict_contains_only_set_fields() -> None:
-    opts = StreamingOptions(fallback_mode="silent", num_streaming_threads=4)
-    d = opts.to_dict()
-    assert d == {"fallback_mode": "silent", "num_streaming_threads": 4}
+    opts = StreamingOptions(
+        fallback_mode="silent",
+        num_streaming_threads=4,
+        max_concurrent_io_tasks=6,
+    )
+    assert opts.to_dict() == {
+        "fallback_mode": "silent",
+        "num_streaming_threads": 4,
+        "max_concurrent_io_tasks": 6,
+    }
 
 
 def test_to_dict_roundtrip() -> None:
@@ -448,3 +497,57 @@ def test_hardware_binding_cli_disabled() -> None:
     args = parser.parse_args(["--hardware-binding", '{"enabled": false}'])
     opts = StreamingOptions._from_argparse(args)
     assert opts.hardware_binding == HardwareBindingPolicy(enabled=False)
+
+
+def test_rapidsmpf_options_disk_spill_dir(tmp_path) -> None:
+    opts = StreamingOptions(disk_spill_dir=str(tmp_path))
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_DISK_SPILL_DIR", str(tmp_path))
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["disk_spill_dir"] == str(tmp_path)
+
+
+def test_rapidsmpf_options_disk_spill_dir_cli(tmp_path) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--disk-spill-dir", str(tmp_path)])
+    )
+    assert opts.disk_spill_dir == str(tmp_path)
+
+
+def test_rapidsmpf_options_spill_host_limit() -> None:
+    opts = StreamingOptions(spill_host_limit="96GiB")
+    strings = opts.to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "96GiB"
+    assert (
+        "spill_host_limit"
+        not in StreamingOptions().to_rapidsmpf_options().get_strings()
+    )
+
+
+def test_rapidsmpf_options_spill_host_limit_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RAPIDSMPF_SPILL_HOST_LIMIT", "10%")
+    strings = StreamingOptions().to_rapidsmpf_options().get_strings()
+    assert strings["spill_host_limit"] == "10%"
+
+
+def test_rapidsmpf_options_spill_host_limit_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+    opts = StreamingOptions._from_argparse(
+        parser.parse_args(["--spill-host-limit", "64GiB"])
+    )
+    assert opts.spill_host_limit == "64GiB"

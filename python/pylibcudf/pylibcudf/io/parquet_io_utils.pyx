@@ -6,6 +6,7 @@ from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uintptr_t
 from libcpp.memory cimport make_unique, unique_ptr
 from libcpp.pair cimport pair
+from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
 from libcpp.vector cimport vector
 from cython.operator cimport dereference
@@ -15,28 +16,133 @@ from rmm.pylibrmm.device_buffer cimport DeviceBuffer
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
-from pylibcudf.gpumemoryview cimport gpumemoryview
+from pylibcudf.gpumemoryview cimport _from_cuda_byte_buffer, gpumemoryview
 from pylibcudf.io.text cimport ByteRangeInfo
 from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.datasource cimport datasource, make_datasources
 from pylibcudf.libcudf.io.parquet_io_utils cimport (
     const_byte_range_info,
     const_uint8_t,
+    cpp_fetch_bloom_filters_to_device,
     cpp_fetch_byte_ranges_to_device,
     fetch_page_index_to_host as cpp_fetch_page_index_to_host,
+    io_submission_policy as cpp_io_submission_policy,
 )
 
 from pylibcudf.libcudf.io.text cimport byte_range_info
-from pylibcudf.libcudf.utilities.span cimport device_span, host_span
+from pylibcudf.libcudf.utilities.device_buffer cimport (
+    device_buffer as cuda_device_buffer,
+)
+from pylibcudf.libcudf.utilities.span cimport device_span
 from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from typing import TYPE_CHECKING
 
-__all__ = ["fetch_byte_ranges_to_device", "fetch_page_index_to_host"]
+if TYPE_CHECKING:
+    from pylibcudf.typing import CudaStreamLike
+
+import pylibcudf.libcudf.io.parquet_io_utils
+
+IOSubmissionPolicy = pylibcudf.libcudf.io.parquet_io_utils.io_submission_policy
+
+__all__ = [
+    "IOSubmissionPolicy",
+    "fetch_bloom_filters_to_device",
+    "fetch_byte_ranges_to_device",
+    "fetch_page_index_to_host",
+]
+
+
+cpdef list fetch_bloom_filters_to_device(
+    SourceInfo source_info,
+    list byte_ranges,
+    cpp_io_submission_policy policy,
+    object stream: CudaStreamLike | None = None,
+    DeviceMemoryResource mr=None,
+):
+    """Fetch the bloom filter bitsets of Parquet column chunks into device memory.
+
+    Unlike :func:`fetch_byte_ranges_to_device`, the bloom filter headers are
+    removed and every bitset is aligned as required by
+    :meth:`~pylibcudf.io.experimental.HybridScanReader.filter_row_groups_with_bloom_filters`.
+
+    Parameters
+    ----------
+    source_info : SourceInfo
+        Source describing a single Parquet file.
+    byte_ranges : list[ByteRangeInfo]
+        Byte ranges of complete bloom filters, as returned by
+        :meth:`~pylibcudf.io.experimental.HybridScanReader.bloom_filters_byte_ranges`.
+    policy : IOSubmissionPolicy
+        Whether to serialize I/O submissions from callers.
+    stream : Stream, optional
+        CUDA stream.
+    mr : DeviceMemoryResource, optional
+        Device memory resource.
+
+    Returns
+    -------
+    list[gpumemoryview]
+        One view of the bitset per byte range, in the order of
+        ``byte_ranges``. Each view keeps the allocation that owns its memory
+        alive.
+
+    Raises
+    ------
+    ValueError
+        If ``source_info`` does not describe exactly one source.
+    """
+    cdef Stream _stream = _get_stream(stream)
+    cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
+    if source_info is None:
+        raise TypeError("source_info must not be None")
+    cdef vector[unique_ptr[datasource]] sources
+    with nogil:
+        sources = make_datasources(source_info.c_obj)
+    if sources.size() != 1:
+        raise ValueError(
+            f"fetch_bloom_filters_to_device requires exactly one source, "
+            f"got {sources.size()}"
+        )
+
+    cdef vector[byte_range_info] ranges_vec
+    cdef ByteRangeInfo bri
+    for bri in byte_ranges:
+        if bri is None:
+            raise TypeError("byte_ranges must not contain None")
+        ranges_vec.push_back(bri.c_obj)
+
+    cdef pair[
+        unique_ptr[cuda_device_buffer[uint8_t]], vector[device_span[const_uint8_t]]
+    ] fetched
+    with nogil:
+        fetched = cpp_fetch_bloom_filters_to_device(
+            dereference(sources[0]),
+            std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
+            policy,
+            _stream.view().get(),
+            _mr.get_mr(),
+        )
+
+    cdef gpumemoryview owner_gv = _from_cuda_byte_buffer(
+        move(fetched.first), _stream, _mr
+    )
+    cdef uintptr_t base = owner_gv.ptr
+    cdef uintptr_t start
+    cdef size_t n
+    result = []
+    for i in range(fetched.second.size()):
+        n = fetched.second[i].size()
+        # Absent or invalid bloom filters come back as empty spans with no data
+        start = <uintptr_t>fetched.second[i].data() - base if n else 0
+        result.append(owner_gv.byte_slice(slice(start, start + n)))
+    return result
 
 
 cpdef list fetch_byte_ranges_to_device(
     SourceInfo source_info,
     list byte_ranges,
-    object stream=None,
+    cpp_io_submission_policy policy,
+    object stream: CudaStreamLike | None = None,
     DeviceMemoryResource mr=None,
 ):
     """Fetch byte ranges from a Parquet source into device memory.
@@ -51,6 +157,8 @@ cpdef list fetch_byte_ranges_to_device(
         :meth:`~pylibcudf.io.experimental.HybridScanReader.payload_column_chunks_byte_ranges`,
         or
         :meth:`~pylibcudf.io.experimental.HybridScanReader.all_column_chunks_byte_ranges`.
+    policy : IOSubmissionPolicy
+        Whether to serialize I/O submissions from callers.
     stream : Stream, optional
         CUDA stream.
     mr : DeviceMemoryResource, optional
@@ -70,6 +178,8 @@ cpdef list fetch_byte_ranges_to_device(
     """
     cdef Stream _stream = _get_stream(stream)
     cdef DeviceMemoryResource _mr = _get_memory_resource(mr)
+    if source_info is None:
+        raise TypeError("source_info must not be None")
     cdef vector[unique_ptr[datasource]] sources = make_datasources(source_info.c_obj)
     if sources.size() != 1:
         raise ValueError(
@@ -80,14 +190,17 @@ cpdef list fetch_byte_ranges_to_device(
     cdef vector[byte_range_info] ranges_vec
     cdef ByteRangeInfo bri
     for bri in byte_ranges:
+        if bri is None:
+            raise TypeError("byte_ranges must not contain None")
         ranges_vec.push_back(bri.c_obj)
 
     cdef pair[vector[device_buffer], vector[device_span[const_uint8_t]]] fetched
     with nogil:
         fetched = cpp_fetch_byte_ranges_to_device(
             dereference(sources[0]),
-            host_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
-            _stream.view(),
+            std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
+            policy,
+            _stream.view().get(),
             _mr.get_mr(),
         )
 
@@ -136,6 +249,10 @@ cpdef bytes fetch_page_index_to_host(
     ValueError
         If ``source_info`` does not describe exactly one source.
     """
+    if source_info is None:
+        raise TypeError("source_info must not be None")
+    if page_index_range is None:
+        raise TypeError("page_index_range must not be None")
     cdef vector[unique_ptr[datasource]] sources = make_datasources(source_info.c_obj)
     if sources.size() != 1:
         raise ValueError(

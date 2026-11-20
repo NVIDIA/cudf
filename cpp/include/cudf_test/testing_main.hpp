@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -15,7 +15,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/aligned.hpp>
-#include <rmm/cuda_stream_view.hpp>
 #include <rmm/mr/arena_memory_resource.hpp>
 #include <rmm/mr/binning_memory_resource.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
@@ -28,6 +27,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/memory_resource>
+#include <cuda/stream>
 
 #include <iostream>
 
@@ -55,13 +55,13 @@ struct pinned_pool {
 
   void* allocate_sync(std::size_t bytes, std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT)
   {
-    return pool_mr.allocate(cuda::stream_ref{cudaStream_t{nullptr}}, bytes, alignment);
+    return pool_mr.allocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, bytes, alignment);
   }
   void deallocate_sync(void* p,
                        std::size_t bytes,
                        std::size_t alignment = rmm::CUDA_ALLOCATION_ALIGNMENT) noexcept
   {
-    pool_mr.deallocate(cuda::stream_ref{cudaStream_t{nullptr}}, p, bytes, alignment);
+    pool_mr.deallocate(cuda::stream_ref{cudaStream_t{cudaStreamDefault}}, p, bytes, alignment);
   }
   void* allocate(cuda::stream_ref s,
                  std::size_t bytes,
@@ -140,7 +140,7 @@ inline cuda::mr::any_resource<cuda::mr::device_accessible> create_memory_resourc
  * @brief Parses the cuDF test command line options.
  *
  * Currently only supports 'rmm_mode' string parameter, which set the rmm
- * allocation mode. The default value of the parameter is 'pool'.
+ * allocation mode. The default value of the parameter is 'async'.
  * Environment variable 'CUDF_TEST_RMM_MODE' can also be used to set the rmm
  * allocation mode. If both are set, the value of 'rmm_mode' string parameter
  * takes precedence.
@@ -156,7 +156,7 @@ inline auto parse_cudf_test_opts(int argc, char** argv)
       std::getenv("GTEST_CUDF_STREAM_MODE");  // Overridden by CLI options
     char const* env_stream_error_mode =
       std::getenv("GTEST_CUDF_STREAM_ERROR_MODE");  // Overridden by CLI options
-    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "pool";
+    auto default_rmm_mode          = env_rmm_mode ? env_rmm_mode : "async";
     auto default_stream_mode       = env_stream_mode ? env_stream_mode : "default";
     auto default_stream_error_mode = env_stream_error_mode ? env_stream_error_mode : "error";
     options.allow_unrecognised_options().add_options()(
@@ -252,7 +252,7 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
 #define CUDF_TEST_PROGRAM_MAIN()                                                                 \
   int main(int argc, char** argv)                                                                \
   {                                                                                              \
-    cudf::initialize();                                                                          \
+    cudf::detail::initialize();                                                                  \
     ::testing::InitGoogleTest(&argc, argv);                                                      \
     init_cudf_test(argc, argv);                                                                  \
     if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {                                                 \
@@ -260,12 +260,10 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
       cudf::set_current_device_resource(mr);                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
       std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl; \
-      cudf::teardown();                                                                          \
       rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     } else {                                                                                     \
       auto rc = RUN_ALL_TESTS();                                                                 \
-      cudf::teardown();                                                                          \
       rmm::mr::reset_current_device_resource();                                                  \
       return rc;                                                                                 \
     }                                                                                            \

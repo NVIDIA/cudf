@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2020-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -370,9 +370,13 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfListOfStructs)
   auto const struct_of_list_of_structs = [&] {
     auto numeric_column =
       numerics<TypeParam>{{5, 10, 15, 20, 25, 30, 35, 45, 50, 55, 60, 65, 70, 75}};
-    auto structs_column         = structs{{numeric_column}}.release();
-    auto list_of_structs_column = cudf::make_lists_column(
-      7, offsets{0, 2, 4, 6, 8, 10, 12, 14}.release(), std::move(structs_column), 0, {});
+    auto structs_column = structs{{numeric_column}}.release();
+    auto list_of_structs_column =
+      cudf::make_lists_column(7,
+                              offsets{0, 2, 4, 6, 8, 10, 12, 14}.release(),
+                              std::move(structs_column),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
     std::vector<std::unique_ptr<cudf::column>> vector_of_columns;
     vector_of_columns.push_back(std::move(list_of_structs_column));
@@ -388,8 +392,12 @@ TYPED_TEST(TypedStructGatherTest, TestGatherStructOfListOfStructs)
   auto expected_gather_result = [&] {
     auto expected_numeric_col = numerics<TypeParam>{{70, 75, 50, 55, 35, 45, 25, 30, 15, 20}};
     auto expected_struct_col  = structs{{expected_numeric_col}}.release();
-    auto expected_list_of_structs_column = cudf::make_lists_column(
-      5, offsets{0, 2, 4, 6, 8, 10}.release(), std::move(expected_struct_col), 0, {});
+    auto expected_list_of_structs_column =
+      cudf::make_lists_column(5,
+                              offsets{0, 2, 4, 6, 8, 10}.release(),
+                              std::move(expected_struct_col),
+                              0,
+                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
     std::vector<std::unique_ptr<cudf::column>> expected_vector_of_columns;
     expected_vector_of_columns.push_back(std::move(expected_list_of_structs_column));
     return structs{std::move(expected_vector_of_columns), {false, true, true, true, true}};

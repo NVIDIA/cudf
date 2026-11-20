@@ -13,7 +13,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <nanoarrow/nanoarrow.h>
@@ -24,13 +24,13 @@ namespace detail {
 namespace {
 
 struct dispatch_to_arrow_type {
-  template <typename T, CUDF_ENABLE_IF(not is_rep_layout_compatible<T>())>
+  template <typename T>
   int operator()(column_view, column_metadata const&, ArrowSchema*)
   {
     CUDF_FAIL("Unsupported type for to_arrow_schema", cudf::data_type_error);
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   int operator()(column_view input_view, column_metadata const& metadata, ArrowSchema* out)
   {
     cudf::type_id const id = input_view.type().id();
@@ -185,12 +185,13 @@ int dispatch_to_arrow_type::operator()<cudf::dictionary32>(column_view input,
                                                            ArrowSchema* out)
 {
   cudf::dictionary_column_view const dview{input};
+  auto const has_children = input.num_children() == 2;
 
   NANOARROW_RETURN_NOT_OK(ArrowSchemaSetType(
-    out, dview.is_empty() ? NANOARROW_TYPE_INT32 : id_to_arrow_type(dview.indices().type().id())));
+    out, has_children ? id_to_arrow_type(dview.indices().type().id()) : NANOARROW_TYPE_INT32));
   NANOARROW_RETURN_NOT_OK(ArrowSchemaAllocateDictionary(out));
   ArrowSchemaInit(out->dictionary);
-  if (dview.is_empty()) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
+  if (not has_children) { return ArrowSchemaSetType(out->dictionary, NANOARROW_TYPE_INT64); }
 
   auto dict_keys = dview.keys();
   return cudf::type_dispatcher(

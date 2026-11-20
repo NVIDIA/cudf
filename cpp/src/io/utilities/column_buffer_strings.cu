@@ -27,13 +27,17 @@ std::unique_ptr<column> cudf::io::detail::inline_column_buffer::make_string_colu
     auto d_offsets64 = offsets_col->mutable_view().template data<int64_t>();
     // it's safe to call with size + 1 because _data is also sized that large
     cudf::detail::sizes_to_offsets(
-      offsets_ptr, offsets_ptr + size + 1, d_offsets64, initial_string_offset, stream);
+      offsets_ptr, offsets_ptr + size + 1, d_offsets64, initial_string_offset, stream, _mr);
     return make_strings_column(
       size, std::move(offsets_col), std::move(_string_data), null_count(), std::move(_null_mask));
   } else {
     // no need for copies, just transfer ownership of the data_buffers to the columns
-    auto offsets_col = std::make_unique<column>(
-      data_type{type_id::INT32}, size + 1, std::move(_data), rmm::device_buffer{}, 0);
+    auto offsets_col =
+      std::make_unique<column>(data_type{type_id::INT32},
+                               size + 1,
+                               std::move(_data),
+                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                               0);
     return make_strings_column(
       size, std::move(offsets_col), std::move(_string_data), null_count(), std::move(_null_mask));
   }

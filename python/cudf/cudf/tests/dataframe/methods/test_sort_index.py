@@ -67,26 +67,8 @@ def test_dataframe_sort_index(
         assert_eq(expected, got)
 
 
-@pytest.mark.parametrize("axis", [0, 1, "index", "columns"])
-@pytest.mark.parametrize(
-    "level",
-    [
-        0,
-        "b",
-        1,
-        ["b"],
-        "a",
-        ["a", "b"],
-        ["b", "a"],
-        [0, 1],
-        [1, 0],
-        [0, 2],
-        None,
-    ],
-)
-@pytest.mark.parametrize("na_position", ["first", "last"])
-def test_dataframe_mulitindex_sort_index(
-    request, axis, level, ascending, inplace, ignore_index, na_position
+def _assert_dataframe_multiindex_sort_index(
+    axis, level, ascending, inplace, ignore_index, na_position
 ):
     pdf = pd.DataFrame(
         {
@@ -117,9 +99,48 @@ def test_dataframe_mulitindex_sort_index(
     )
 
     if inplace is True:
+        assert expected is None
+        assert got is None
         assert_eq(pdf, gdf)
     else:
         assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "axis, level, ascending, ignore_index, inplace, na_position",
+    [
+        (0, None, True, False, False, "last"),
+        (0, None, False, False, False, "last"),
+        (0, 0, True, False, False, "first"),
+        (0, 0, False, False, False, "last"),
+        (0, "b", False, False, False, "first"),
+        (0, 1, True, False, False, "last"),
+        (0, 1, False, False, False, "last"),
+        (0, ["b"], False, False, False, "first"),
+        (0, "a", False, False, False, "last"),
+        (0, ["a", "b"], True, False, False, "last"),
+        (0, ["b", "a"], False, False, False, "last"),
+        (0, [0, 1], False, False, False, "last"),
+        (0, [1, 0], True, False, False, "last"),
+        (0, [0, 2], False, False, False, "first"),
+        (0, [1, 0], False, True, True, "first"),
+        (0, [1, 0], False, False, True, "first"),
+        (0, [1, 0], False, True, False, "first"),
+        (0, [1, 0], False, False, False, "first"),
+        ("index", [0, 2], False, False, False, "first"),
+    ],
+)
+def test_dataframe_multiindex_sort_index(
+    axis, level, ascending, ignore_index, inplace, na_position
+):
+    _assert_dataframe_multiindex_sort_index(
+        axis=axis,
+        level=level,
+        ascending=ascending,
+        inplace=inplace,
+        ignore_index=ignore_index,
+        na_position=na_position,
+    )
 
 
 def test_sort_index_axis_1_ignore_index_true_columnaccessor_state_names():

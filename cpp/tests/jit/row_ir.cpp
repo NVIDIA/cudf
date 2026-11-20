@@ -10,6 +10,7 @@
 #include <cudf_test/debug_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
+#include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <functional>
 
 namespace row_ir = cudf::detail::row_ir;
@@ -237,11 +239,7 @@ TEST_F(RowIRCudaCodeGenTest, BinaryOperationOverflow)
 
     auto expected_code =
       R"***(int32_t tmp_0 = in_0;
-auto expected__tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
-if(!expected__tmp_1.has_value()) {
- return expected__tmp_1.error();
-}
-int32_t tmp_1 = expected__tmp_1.value();
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0));
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -350,6 +348,7 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
   auto transform_args =
     row_ir::ast_converter::compute_table(row_ir::target::CUDA,
                                          output_expressions,
+                                         {},
                                          cudf::table_view{{*column}},
                                          cudf::table_view{},
                                          "expression",
@@ -477,6 +476,55 @@ return cudf::errc::SUCCESS;
   EXPECT_EQ(code, expected_code);
   EXPECT_EQ(null_aware, cudf::null_aware::NO);
   EXPECT_EQ(nullability.size(), 2);
+}
+
+TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
+{
+  // An LTO callee is declared before the generated function, which keeps its own name. Equal calls
+  // of a pure callee share one evaluation; separate calls of an impure one are never merged, but
+  // one call referred to twice is evaluated once.
+  auto ref      = cudf::ast::column_reference{3};
+  auto code_for = [&](bool is_pure, bool one_call) {
+    auto const function = cudf::ast::jit::udf{
+      "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
+    auto tree = cudf::ast::tree{};
+    auto& one = cudf::ast::jit::call(tree, function, {ref});
+    auto& two = one_call ? one : cudf::ast::jit::call(tree, function, {ref});
+    auto& sum = tree.push(cudf::ast::operation{cudf::ast::ast_operator::ADD, one, two});
+    std::array<std::reference_wrapper<cudf::ast::expression const>, 1> expressions{sum};
+    row_ir::ast_converter converter{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
+    auto [code, null_aware, nullability] =
+      converter.generate_code(row_ir::target::CUDA, expressions, "compute_operation");
+    return code;
+  };
+
+  auto expected_pure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+{
+int32_t tmp_0 = in_0;
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_1);
+int32_t tmp_3 = tmp_2;
+*out_0 = tmp_3;
+return cudf::errc::SUCCESS;
+})***";
+
+  auto expected_impure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+{
+int32_t tmp_0 = in_0;
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_2, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+int32_t tmp_3 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_2);
+int32_t tmp_4 = tmp_3;
+*out_0 = tmp_4;
+return cudf::errc::SUCCESS;
+})***";
+
+  EXPECT_EQ(code_for(true, false), expected_pure);
+  EXPECT_EQ(code_for(false, false), expected_impure);
+  EXPECT_EQ(code_for(false, true), expected_pure);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

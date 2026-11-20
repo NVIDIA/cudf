@@ -48,7 +48,7 @@ cpdef Table make_timezone_transition_table(
     cdef string c_tzdir = tzif_dir.encode()
     cdef string c_tzname = timezone_name.encode()
     cdef Stream _stream = _get_stream(stream)
-    cdef cudaStream_t _cs = _stream.view().value()
+    cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
 
     with nogil:

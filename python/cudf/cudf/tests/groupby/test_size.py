@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -34,14 +35,18 @@ def test_size_series_masked_dtype(dtype):
     assert_groupby_results_equal(expect, got)
 
 
-def test_apply_sort_false_first_appearance_order():
+@pytest.mark.parametrize(
+    "keys",
+    [[3, 1, 3, 2, 1], np.random.default_rng(2026).integers(0, 32, 10000)],
+)
+def test_apply_sort_false_first_appearance_order(keys):
     # groups are processed in order of first appearance with sort=False,
     # like pandas
-    pdf = pd.DataFrame({"k": [3, 1, 3, 2, 1], "v": [1, 2, 3, 4, 5]})
+    pdf = pd.DataFrame({"k": keys, "v": range(len(keys))})
     gdf = cudf.from_pandas(pdf)
 
     expect = pdf.groupby("k", sort=False)["v"].apply(lambda s: s.sum())
     got = gdf.groupby("k", sort=False)["v"].apply(lambda s: s.sum())
 
-    assert list(got.index.to_pandas()) == [3, 1, 2]
+    assert list(got.index.to_pandas()) == list(pdf["k"].drop_duplicates())
     assert_groupby_results_equal(expect, got)

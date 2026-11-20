@@ -4746,9 +4746,27 @@ public class TableTest extends CudfTestBase {
          HashPartitionIndices indices =
              input.onColumns(0).hashPartitionIndices(HashType.MURMUR3, 3, true, 42);
          PartitionedTable expected = input.onColumns(0).hashPartition(HashType.MURMUR3, 3, 42);
-         Table gathered = input.gather(indices.getGatherMap())) {
-      assertArrayEquals(expected.getPartitions(), indices.getPartitionOffsets());
-      assertTablesAreEqual(expected.getTable(), gathered);
+         Table gathered = input.gather(indices.getGatherMap());
+         HostColumnVector mapHost = indices.getGatherMap().copyToHost();
+         HostColumnVector gatheredHost = gathered.getColumn(0).copyToHost();
+         HostColumnVector expectedHost = expected.getColumn(0).copyToHost()) {
+      int[] offsets = indices.getPartitionOffsets();
+      assertArrayEquals(expected.getPartitions(), offsets);
+      // hashPartition does not preserve row order within a partition, so compare value counts
+      for (int p = 0; p + 1 < offsets.length; p++) {
+        Map<Integer, Integer> expectedCounts = new HashMap<>();
+        Map<Integer, Integer> actualCounts = new HashMap<>();
+        for (int i = offsets[p]; i < offsets[p + 1]; i++) {
+          Integer expectedValue = expectedHost.isNull(i) ? null : expectedHost.getInt(i);
+          Integer actualValue = gatheredHost.isNull(i) ? null : gatheredHost.getInt(i);
+          expectedCounts.merge(expectedValue, 1, Integer::sum);
+          actualCounts.merge(actualValue, 1, Integer::sum);
+          if (i > offsets[p]) {
+            assertTrue(mapHost.getInt(i - 1) < mapHost.getInt(i));
+          }
+        }
+        assertEquals(expectedCounts, actualCounts, "partition " + p);
+      }
     }
   }
 

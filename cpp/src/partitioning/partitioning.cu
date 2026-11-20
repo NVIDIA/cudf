@@ -982,25 +982,25 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
     cudf::detail::make_zeroed_device_buffer_async<size_type>(num_partitions + 1, stream, temp_mr);
   {
     std::size_t temp_storage_bytes{};
-    cub::DeviceHistogram::HistogramEven(nullptr,
-                                        temp_storage_bytes,
-                                        row_partition_numbers.data(),
-                                        offsets.data(),
-                                        num_partitions + 1,
-                                        size_type{0},
-                                        num_partitions,
-                                        num_rows,
-                                        stream.get());
+    CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(nullptr,
+                                                      temp_storage_bytes,
+                                                      row_partition_numbers.data(),
+                                                      offsets.data(),
+                                                      num_partitions + 1,
+                                                      size_type{0},
+                                                      num_partitions,
+                                                      num_rows,
+                                                      stream.get()));
     cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
-    cub::DeviceHistogram::HistogramEven(temp_storage.data(),
-                                        temp_storage_bytes,
-                                        row_partition_numbers.data(),
-                                        offsets.data(),
-                                        num_partitions + 1,
-                                        size_type{0},
-                                        num_partitions,
-                                        num_rows,
-                                        stream.get());
+    CUDF_CUDA_TRY(cub::DeviceHistogram::HistogramEven(temp_storage.data(),
+                                                      temp_storage_bytes,
+                                                      row_partition_numbers.data(),
+                                                      offsets.data(),
+                                                      num_partitions + 1,
+                                                      size_type{0},
+                                                      num_partitions,
+                                                      num_rows,
+                                                      stream.get()));
   }
   thrust::exclusive_scan(
     rmm::exec_policy_nosync(stream, temp_mr), offsets.begin(), offsets.end(), offsets.begin());
@@ -1015,27 +1015,27 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
       rmm::exec_policy_nosync(stream, temp_mr), row_indices.begin(), row_indices.end());
     auto const end_bit = cuda::std::bit_width(static_cast<uint32_t>(num_partitions - 1));
     std::size_t temp_storage_bytes{};
-    cub::DeviceRadixSort::SortPairs(nullptr,
-                                    temp_storage_bytes,
-                                    row_partition_numbers.data(),
-                                    sorted_partition_numbers.data(),
-                                    row_indices.data(),
-                                    gather_map_ptr,
-                                    num_rows,
-                                    0,
-                                    end_bit,
-                                    stream.get());
+    CUDF_CUDA_TRY(cub::DeviceRadixSort::SortPairs(nullptr,
+                                                  temp_storage_bytes,
+                                                  row_partition_numbers.data(),
+                                                  sorted_partition_numbers.data(),
+                                                  row_indices.data(),
+                                                  gather_map_ptr,
+                                                  num_rows,
+                                                  0,
+                                                  end_bit,
+                                                  stream.get()));
     cuda::device_buffer<std::byte> temp_storage(stream, temp_mr, temp_storage_bytes, cuda::no_init);
-    cub::DeviceRadixSort::SortPairs(temp_storage.data(),
-                                    temp_storage_bytes,
-                                    row_partition_numbers.data(),
-                                    sorted_partition_numbers.data(),
-                                    row_indices.data(),
-                                    gather_map_ptr,
-                                    num_rows,
-                                    0,
-                                    end_bit,
-                                    stream.get());
+    CUDF_CUDA_TRY(cub::DeviceRadixSort::SortPairs(temp_storage.data(),
+                                                  temp_storage_bytes,
+                                                  row_partition_numbers.data(),
+                                                  sorted_partition_numbers.data(),
+                                                  row_indices.data(),
+                                                  gather_map_ptr,
+                                                  num_rows,
+                                                  0,
+                                                  end_bit,
+                                                  stream.get()));
   } else {
     cuda::device_buffer<size_type> partition_cursors(
       stream, temp_mr, num_partitions, cuda::no_init);
@@ -1244,6 +1244,9 @@ std::pair<std::unique_ptr<column>, std::vector<size_type>> hash_partition_indice
   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_partitions >= 0, "num_partitions must be non-negative", std::invalid_argument);
+  CUDF_EXPECTS(num_partitions < std::numeric_limits<size_type>::max(),
+               "num_partitions exceeds cudf's supported limit",
+               std::invalid_argument);
   if (num_partitions == 0 || keys.num_rows() == 0 || keys.num_columns() == 0) {
     return {make_empty_column(type_to_id<size_type>()),
             std::vector<size_type>(num_partitions + 1, 0)};

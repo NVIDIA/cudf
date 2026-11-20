@@ -27,6 +27,7 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <tuple>
 #include <vector>
@@ -642,6 +643,23 @@ TEST_F(HashPartitionIndices, ZeroPartitions)
   EXPECT_EQ(offsets, std::vector<cudf::size_type>({0}));
 }
 
+TEST_F(HashPartitionIndices, TooManyPartitions)
+{
+  fixed_width_column_wrapper<int32_t> col({1, 2, 3});
+  EXPECT_THROW(cudf::hash_partition_indices(cudf::table_view({col}),
+                                            std::numeric_limits<cudf::size_type>::max(),
+                                            cudf::partition_order::STABLE),
+               std::invalid_argument);
+}
+
+TEST_F(HashPartitionIndices, ZeroColumns)
+{
+  auto [map, offsets] = cudf::hash_partition_indices(
+    cudf::table_view(std::vector<cudf::column_view>{}), 3, cudf::partition_order::STABLE);
+  EXPECT_EQ(map->size(), 0);
+  EXPECT_EQ(offsets, std::vector<cudf::size_type>(4, 0));
+}
+
 TEST_F(HashPartitionIndices, ZeroRows)
 {
   fixed_width_column_wrapper<int32_t> col({});
@@ -677,12 +695,13 @@ TEST_P(HashPartitionIndicesParams, MatchesHashPartition)
 
 // Partition counts span the shared-memory tile path and the global-memory fallback; row counts
 // include partial tiles and partial warps
-INSTANTIATE_TEST_SUITE_P(HashPartitionIndices,
-                         HashPartitionIndicesParams,
-                         ::testing::Combine(::testing::Values(1, 2, 7, 64, 1000, 1024, 5000, 70000),
-                                            ::testing::Values(1, 33, 4097, 100003),
-                                            ::testing::Values(cudf::partition_order::STABLE,
-                                                              cudf::partition_order::UNSTABLE)));
+INSTANTIATE_TEST_SUITE_P(
+  HashPartitionIndices,
+  HashPartitionIndicesParams,
+  ::testing::Combine(::testing::Values(1, 2, 7, 64, 1000, 1024, 1536, 1537, 5000, 70000),
+                     ::testing::Values(1, 33, 4097, 100003),
+                     ::testing::Values(cudf::partition_order::STABLE,
+                                       cudf::partition_order::UNSTABLE)));
 
 TEST_F(HashPartitionIndices, SkewedKeys)
 {
@@ -706,6 +725,18 @@ TEST_F(HashPartitionIndices, StringsStructsAndNulls)
   auto const keys_view = cudf::table_view({strings, ints, structs});
   auto [map, offsets]  = cudf::hash_partition_indices(keys_view, 3, cudf::partition_order::STABLE);
   expect_valid_partition_indices(keys_view, map->view(), offsets, 3, true);
+}
+
+TEST_F(HashPartitionIndices, ListsWithNulls)
+{
+  using lcw = cudf::test::lists_column_wrapper<int32_t>;
+  lcw lists{{{1, 2}, {}, {3}, {1, 2}, {4, 5, 6}, {3}, {}}, null_at(4)};
+  auto const keys_view = cudf::table_view({lists});
+  for (auto const order : {cudf::partition_order::STABLE, cudf::partition_order::UNSTABLE}) {
+    auto [map, offsets] = cudf::hash_partition_indices(keys_view, 3, order);
+    expect_valid_partition_indices(
+      keys_view, map->view(), offsets, 3, order == cudf::partition_order::STABLE);
+  }
 }
 
 TEST_F(HashPartitionIndices, IdentityHashAndSeed)

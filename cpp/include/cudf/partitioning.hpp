@@ -163,6 +163,9 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
  * Unlike `cudf::hash_partition`, no table is materialized. Callers can gather any table with the
  * same number of rows as `keys`, either all at once or one partition at a time.
  *
+ * If `num_partitions` is zero, or `keys` has no rows or no columns, the gather map is empty and all
+ * `num_partitions + 1` offsets are zero.
+ *
  * If `order` is `partition_order::STABLE`, the row indices within each partition are in increasing
  * order. Otherwise their order within a partition is unspecified.
  *
@@ -172,7 +175,11 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
  * auto partitioned = cudf::gather(input, gather_map->view());
  * @endcode
  *
- * @throw std::invalid_argument if `num_partitions` is negative
+ * @throw std::invalid_argument if `num_partitions` is negative or not less than the maximum
+ * `size_type` value
+ * @throw cudf::logic_error if `hash_function` is `hash_id::HASH_IDENTITY` and `keys` has a
+ * non-numeric column
+ * @throw cudf::logic_error if `hash_function` is not supported
  *
  * @param keys The table whose rows are hashed to determine partitions
  * @param num_partitions The number of partitions to create

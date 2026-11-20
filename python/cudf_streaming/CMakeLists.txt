@@ -8,8 +8,6 @@
 cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
 
 include(../../cmake/rapids_config.cmake)
-include(rapids-cpm)
-rapids_cpm_init()
 include(rapids-find)
 
 project(

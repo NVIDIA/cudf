@@ -5,10 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from unittest.mock import Mock
 
 import pytest
@@ -21,74 +20,26 @@ from cudf_polars.streaming.actor_graph.collectives.closing import (
     wait_for_pending_closes,
 )
 
-
-class BlockedCollective:
-    """Collective whose ``aclose()`` waits until ``released`` is set."""
-
-    def __init__(self) -> None:
-        self.close_started = threading.Event()
-        self.released = threading.Event()
-        self.closed = threading.Event()
-
-    async def aclose(self) -> None:
-        self.close_started.set()
-        while not self.released.is_set():
-            await asyncio.sleep(0.001)
-        self.closed.set()
-
-
-@pytest.fixture
-def collective():
-    collective = BlockedCollective()
-    yield collective
-    collective.released.set()
-
-
-def cancel_inside(
-    collective: BlockedCollective, comm: object, op_id: int, timeout: float
-) -> None:
-    async def run() -> None:
-        entered = asyncio.Event()
-
-        async def body() -> None:
-            async with aclosing_collective(collective, comm, op_id):
-                entered.set()
-                await asyncio.Event().wait()
-
-        task = asyncio.create_task(body())
-        await asyncio.wait_for(entered.wait(), timeout=timeout)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=timeout)
-
-    asyncio.run(run())
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def test_cancelled_close_blocks_communicator_until_complete(
-    pending_closes, collective, timeout_seconds: int
+    fake_collective: Any,
+    leave_pending_close: Callable[[Any, int], None],
+    assert_pending_then_released: Callable[[Any, Any, int], None],
 ) -> None:
     comm = Mock()
-    cancel_inside(collective, comm, 7, timeout_seconds)
-    assert collective.close_started.is_set()
-    assert not collective.closed.is_set()
-    assert [close.op_id for close in pending_closes[comm]] == [7]
-
-    collective.released.set()
-    wait_for_pending_closes(comm, timeout=timeout_seconds)
-    assert collective.closed.is_set()
-    assert pending_closes == {}
+    leave_pending_close(comm, 7)
+    assert fake_collective.close_calls == 1
+    assert_pending_then_released(comm, fake_collective, 7)
 
 
 def test_gate_timeout_marks_communicator_unusable(
-    pending_closes, fake_collective, cancel_when
+    fake_collective: Any, leave_pending_close: Callable[[Any, int], None]
 ) -> None:
     comm = Mock()
-
-    async def body() -> None:
-        async with aclosing_collective(fake_collective, comm, 7):
-            await fake_collective.extract_all(ordered=True)
-
-    cancel_when(body, fake_collective.waiting)
+    leave_pending_close(comm, 7)
     close_calls = fake_collective.close_calls
     start = time.monotonic()
     with pytest.raises(RuntimeError, match=r"operation IDs \[7\].*every rank"):
@@ -103,15 +54,10 @@ def test_gate_timeout_marks_communicator_unusable(
 
 
 def test_discard_pending_closes_forgets_communicator(
-    pending_closes, fake_collective, cancel_when
+    pending_closes: dict[Any, Any], leave_pending_close: Callable[[Any, int], None]
 ) -> None:
     comm = Mock()
-
-    async def body() -> None:
-        async with aclosing_collective(fake_collective, comm, 7):
-            await fake_collective.extract_all(ordered=True)
-
-    cancel_when(body, fake_collective.waiting)
+    leave_pending_close(comm, 7)
     with pytest.raises(RuntimeError, match=r"operation IDs \[7\]"):
         wait_for_pending_closes(comm, timeout=0)
 
@@ -121,20 +67,20 @@ def test_discard_pending_closes_forgets_communicator(
 
 
 def test_background_close_failure_is_logged_and_blocks_communicator(
-    monkeypatch, caplog, pending_closes, fake_collective, cancel_when, timeout_seconds
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pending_closes: dict[Any, Any],
+    fake_collective: Any,
+    leave_pending_close: Callable[[Any, int], None],
+    timeout_seconds: int,
 ) -> None:
-    comm = Mock()
-
-    async def fail_close() -> None:
+    async def fail_close() -> NoReturn:
         raise ValueError("close failed")
 
-    async def body() -> None:
-        async with aclosing_collective(fake_collective, comm, 7):
-            await fake_collective.extract_all(ordered=True)
-
     monkeypatch.setattr(fake_collective, "aclose", fail_close)
+    comm = Mock()
     with caplog.at_level(logging.ERROR, logger=closing.__name__):
-        cancel_when(body, fake_collective.waiting)
+        leave_pending_close(comm, 7)
     assert "operation ID 7 failed" in caplog.text
     assert [close.op_id for close in pending_closes[comm]] == [7]
 
@@ -147,73 +93,66 @@ def test_background_close_failure_is_logged_and_blocks_communicator(
 
 
 def test_background_close_of_skipped_finish_is_released(
-    monkeypatch, caplog, pending_closes, fake_collective, cancel_when
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    pending_closes: dict[Any, Any],
+    fake_collective: Any,
+    leave_pending_close: Callable[[Any, int], None],
 ) -> None:
-    async def skipped_finish_close() -> None:
+    async def skipped_finish_close() -> NoReturn:
         raise RuntimeError("aclose() called before insert_finished()")
-
-    async def body() -> None:
-        async with aclosing_collective(fake_collective, Mock(), 7):
-            await fake_collective.extract_all(ordered=True)
 
     monkeypatch.setattr(fake_collective, "aclose", skipped_finish_close)
     with caplog.at_level(logging.ERROR, logger=closing.__name__):
-        cancel_when(body, fake_collective.waiting)
+        leave_pending_close(Mock(), 7)
     assert caplog.text == ""
     assert pending_closes == {}
 
 
 def test_cancelled_close_only_blocks_its_communicator(
-    pending_closes, collective, timeout_seconds: int
+    pending_closes: dict[Any, Any], leave_pending_close: Callable[[Any, int], None]
 ) -> None:
     comm = Mock()
-    cancel_inside(collective, comm, 7, timeout_seconds)
+    leave_pending_close(comm, 7)
     wait_for_pending_closes(Mock(), timeout=0)
     assert set(pending_closes) == {comm}
 
 
 def test_cancellation_while_closing_does_not_wait(
-    pending_closes, collective, timeout_seconds: int
+    pending_closes: dict[Any, Any],
+    fake_collective: Any,
+    cancel_when: Callable[..., None],
 ) -> None:
     comm = Mock()
 
-    async def run() -> None:
-        async def body() -> None:
-            async with aclosing_collective(collective, comm, 3):
-                pass
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, comm, 3):
+            pass
 
-        async def close_started() -> None:
-            while not collective.close_started.is_set():
-                await asyncio.sleep(0.001)
-
-        task = asyncio.create_task(body())
-        await asyncio.wait_for(close_started(), timeout=timeout_seconds)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=timeout_seconds)
-
-    asyncio.run(run())
+    cancel_when(body, fake_collective.closing)
     assert [close.op_id for close in pending_closes[comm]] == [3]
 
 
-def test_close_is_awaited_on_success(pending_closes, collective) -> None:
-    collective.released.set()
+def test_close_is_awaited_on_success(
+    pending_closes: dict[Any, Any], fake_collective: Any
+) -> None:
+    fake_collective.release()
 
-    async def run() -> None:
-        async with aclosing_collective(collective, Mock(), 0):
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, Mock(), 0):
             pass
 
-    asyncio.run(run())
-    assert collective.closed.is_set()
+    asyncio.run(body())
+    assert fake_collective.close_calls == 1
     assert pending_closes == {}
 
 
 class SkippedFinishCollective:
-    async def aclose(self) -> None:
+    async def aclose(self) -> NoReturn:
         raise RuntimeError("aclose() called before insert_finished()")
 
 
-def test_close_error_raises_on_success(pending_closes) -> None:
+def test_close_error_raises_on_success(pending_closes: dict[Any, Any]) -> None:
     async def run() -> None:
         async with aclosing_collective(SkippedFinishCollective(), Mock(), 0):
             pass
@@ -222,7 +161,7 @@ def test_close_error_raises_on_success(pending_closes) -> None:
         asyncio.run(run())
 
 
-def test_close_error_does_not_mask_body_error(pending_closes) -> None:
+def test_close_error_does_not_mask_body_error(pending_closes: dict[Any, Any]) -> None:
     async def run() -> None:
         async with aclosing_collective(SkippedFinishCollective(), Mock(), 0):
             raise ValueError("body failed")
@@ -232,12 +171,14 @@ def test_close_error_does_not_mask_body_error(pending_closes) -> None:
 
 
 def test_evaluate_on_rank_refuses_communicator_with_pending_close(
-    monkeypatch, pending_closes, collective, timeout_seconds: int
+    monkeypatch: pytest.MonkeyPatch,
+    pending_closes: dict[Any, Any],
+    leave_pending_close: Callable[[Any, int], None],
 ) -> None:
     comm = Mock()
-    cancel_inside(collective, comm, 5, timeout_seconds)
+    leave_pending_close(comm, 5)
 
-    def fail_evaluate_on_rank(*args, **kwargs):
+    def fail_evaluate_on_rank(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("the query must not start")
 
     monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)
@@ -252,12 +193,14 @@ def test_evaluate_on_rank_refuses_communicator_with_pending_close(
 
 
 def test_all_gather_host_data_refuses_communicator_with_pending_close(
-    monkeypatch, pending_closes, collective, timeout_seconds: int
+    monkeypatch: pytest.MonkeyPatch,
+    pending_closes: dict[Any, Any],
+    leave_pending_close: Callable[[Any, int], None],
 ) -> None:
     comm = Mock()
-    cancel_inside(collective, comm, 5, timeout_seconds)
+    leave_pending_close(comm, 5)
 
-    def fail_all_gather(*args, **kwargs):
+    def fail_all_gather(*args: object, **kwargs: object) -> NoReturn:
         pytest.fail("the collective must not start")
 
     monkeypatch.setattr(closing, "PENDING_CLOSE_TIMEOUT", 0)

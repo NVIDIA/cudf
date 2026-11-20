@@ -7,7 +7,6 @@ import asyncio
 import json
 import pickle
 import sys
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,9 +19,6 @@ import polars as pl
 from cudf_polars.dsl.ir import CallbackSink
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import io as streaming_io
-from cudf_polars.streaming.actor_graph.collectives.closing import (
-    wait_for_pending_closes,
-)
 from cudf_polars.testing.asserts import assert_sink_result_equal
 
 if TYPE_CHECKING:
@@ -369,26 +365,9 @@ def test_callback_sink_pickle_metadata():
 
 
 def test_callback_sink_cancellation_does_not_wait_for_peers(
-    monkeypatch, pending_closes, timeout_seconds: int
+    monkeypatch, fake_collective, cancel_when, assert_pending_then_released
 ) -> None:
-    finishing = threading.Event()
-    peers_finished = threading.Event()
     shutdown_errors: list[type[BaseException]] = []
-
-    class PendingExchange:
-        async def insert_finished(self) -> None:
-            finishing.set()
-            await asyncio.Event().wait()
-
-        async def aclose(self) -> None:
-            while not peers_finished.is_set():
-                await asyncio.sleep(0.001)
-
-        async def __aenter__(self) -> PendingExchange:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            await self.aclose()
 
     @asynccontextmanager
     async def record_shutdown(*args: object, **kwargs: object) -> AsyncIterator[None]:
@@ -405,38 +384,25 @@ def test_callback_sink_cancellation_does_not_wait_for_peers(
         pass
 
     monkeypatch.setattr(
-        streaming_io, "SparseAlltoall", lambda *_args, **_kwargs: PendingExchange()
+        streaming_io, "SparseAlltoall", lambda *_args, **_kwargs: fake_collective
     )
     monkeypatch.setattr(streaming_io, "shutdown_on_error", record_shutdown)
     monkeypatch.setattr(streaming_io, "recv_metadata", recv_metadata)
     monkeypatch.setattr(streaming_io, "send_metadata", send_metadata)
     comm = Mock(rank=1, nranks=2)
 
-    async def run() -> None:
-        async def started() -> None:
-            while not finishing.is_set():
-                await asyncio.sleep(0.001)
-
-        task = asyncio.create_task(
-            streaming_io.callback_sink_actor.__wrapped__(
-                Mock(),
-                comm,
-                Mock(),
-                Mock(),
-                Mock(recv=AsyncMock(return_value=None)),
-                Mock(),
-                8,
-                False,  # noqa: FBT003
-            )
-        )
-        await asyncio.wait_for(started(), timeout=timeout_seconds)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, timeout=timeout_seconds)
-
-    asyncio.run(run())
+    cancel_when(
+        lambda: streaming_io.callback_sink_actor.__wrapped__(
+            Mock(),
+            comm,
+            Mock(),
+            Mock(),
+            Mock(recv=AsyncMock(return_value=None)),
+            Mock(),
+            8,
+            False,  # noqa: FBT003
+        ),
+        fake_collective.waiting,
+    )
     assert shutdown_errors == [asyncio.CancelledError]
-    assert [close.op_id for close in pending_closes[comm]] == [8]
-    peers_finished.set()
-    wait_for_pending_closes(comm, timeout=timeout_seconds)
-    assert pending_closes == {}
+    assert_pending_then_released(comm, fake_collective, 8)

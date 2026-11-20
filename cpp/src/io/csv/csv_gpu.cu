@@ -403,6 +403,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
         // Match the same NA tokens as the equivalent quoted field without trailing padding.
         is_valid = !serialized_trie_contains(
           options.trie_na, {field_start, static_cast<size_t>(quote_end - field_start)});
+        if (not options.detect_whitespace_around_quotes) { field_end = quote_end; }
       }
       if (is_valid && dtypes[actual_col].id() != cudf::type_id::STRING) {
         auto const is_boolean_token =
@@ -420,13 +421,7 @@ CUDF_KERNEL void __launch_bounds__(csvparse_block_dim)
           auto end        = field_end;
           bool was_quoted = false;
           if (not options.keepquotes) {
-            if (use_scanned_quotes) {
-              if (quote_end != nullptr) {
-                ++field_start;
-                end        = quote_end - 1;
-                was_quoted = true;
-              }
-            } else if (not options.detect_whitespace_around_quotes) {
+            if (not options.detect_whitespace_around_quotes) {
               if (end - field_start >= 2 && *field_start == options.quotechar &&
                   *(end - 1) == options.quotechar) {
                 ++field_start;

@@ -225,19 +225,17 @@ __device__ __inline__ char const* skip_leading_delimiter_run(char const* begin,
  *
  * @return Pointer to the first delimiter or record terminator after the field, or `end`.
  */
-CUDF_HOST_DEVICE inline char const* seek_field_end(char const* begin,
-                                                   char const* end,
-                                                   parse_options_view const& opts,
-                                                   bool escape_char        = false,
-                                                   char const** quoted_end = nullptr)
+__device__ __inline__ char const* seek_field_end(char const* begin,
+                                                 char const* end,
+                                                 parse_options_view const& opts,
+                                                 bool escape_char        = false,
+                                                 char const** quoted_end = nullptr)
 {
   bool quotation        = false;
   auto current          = begin;
   bool escape_next      = false;
   char const* quote_end = nullptr;
 
-  auto const allow_quote_as_padding =
-    opts.detect_whitespace_after_quotes && is_whitespace(opts.quotechar);
   auto const field_starts_with_quote = (begin < end && *begin == opts.quotechar);
   while (current < end) {
     // Use simple logic to ignore control chars between any quote seq
@@ -245,16 +243,10 @@ CUDF_HOST_DEVICE inline char const* seek_field_end(char const* begin,
     // may not output exact failures as PANDAS for malformed fields.
     // Check for instances such as "a2\"bc" and "\\" if `escape_char` is true.
 
-    // An adjacent quote can escape the preceding quote. After padding has started, a
-    // space or tab is padding even when it is also the configured quote character.
-    auto const quote_is_padding =
-      allow_quote_as_padding && quote_end != nullptr && current != quote_end;
-    if (field_starts_with_quote && *current == opts.quotechar && !escape_next &&
-        !quote_is_padding) {
+    // Only process quotes if field started with a quote
+    if (field_starts_with_quote && *current == opts.quotechar && !escape_next) {
       quotation = !quotation;
-      if (quoted_end != nullptr || allow_quote_as_padding) {
-        quote_end = quotation ? nullptr : current + 1;
-      }
+      if (quoted_end != nullptr) { quote_end = quotation ? nullptr : current + 1; }
     } else if (!quotation) {
       if (*current == opts.delimiter) {
         break;

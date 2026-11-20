@@ -394,15 +394,9 @@ class csv_reader_options {
   /**
    * @brief Whether to detect closing quotes followed by spaces or tabs.
    *
-   * Only string fields beginning with a quote are affected. Whitespace inside quotes and
-   * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
-   * Detection around quotes takes precedence for trimming when both options are enabled;
-   * NA matching also considers the quoted field without trailing spaces or tabs.
-   * Padding removal and additional NA matching apply only during STRING conversion. Specify
-   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
-   * is disabled.
+   * @return `true` if trailing whitespace detection was requested
    *
-   * @return `true` if trailing whitespace detection is enabled
+   * @see enable_detect_whitespace_after_quotes
    */
   [[nodiscard]] bool is_enabled_detect_whitespace_after_quotes() const
   {
@@ -762,8 +756,8 @@ class csv_reader_options {
    * Detection around quotes takes precedence for trimming when both options are enabled;
    * NA matching also considers the quoted field without trailing spaces or tabs.
    * Padding removal and additional NA matching apply only during STRING conversion. Specify
-   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
-   * is disabled.
+   * STRING for columns requiring those behaviors. The option is disabled by default. It is
+   * ignored when quoting is disabled or the quote character is a space or tab.
    *
    * @param val Boolean value to enable/disable
    */
@@ -1215,16 +1209,10 @@ class csv_reader_options_builder {
   /**
    * @brief Sets whether to detect closing quotes followed by spaces or tabs.
    *
-   * Only string fields beginning with a quote are affected. Whitespace inside quotes and
-   * leading whitespace are preserved. Only spaces and tabs after closing quotes are recognized.
-   * Detection around quotes takes precedence for trimming when both options are enabled;
-   * NA matching also considers the quoted field without trailing spaces or tabs.
-   * Padding removal and additional NA matching apply only during STRING conversion. Specify
-   * STRING for columns requiring those behaviors. Disabled by default and ignored when quoting
-   * is disabled.
-   *
    * @param val Boolean value to enable/disable
    * @return this for chaining
+   *
+   * @see csv_reader_options::enable_detect_whitespace_after_quotes
    */
   csv_reader_options_builder& detect_whitespace_after_quotes(bool val)
   {

@@ -646,6 +646,12 @@ assert got["a"].flags["SORTED_ASC"]
 - Do not construct engines or communicators in tests, and do not call
   `shutdown()` on fixture engines. Use
   `streaming_engine_factory(StreamingOptions(...))` instead.
+- A test may construct its own engine when it tests the engine itself,
+  such as its constructor, `_reset` or `shutdown`. A test that needs an
+  option fixed when the engine is built, such as `memory_resource_config`,
+  may construct its own `SPMDEngine` in a `with` block. `SPMDEngine` is
+  cheap to create, unlike `RayEngine` and `DaskEngine`, which start worker
+  processes.
 - Use `warns_on_spmd` instead of `pytest.warns` for fallback warnings.
 - Use `timeout_seconds` instead of hard-coded timeouts.
 - Do not `pytest.skip` on setup errors; use `pytest.importorskip` for

@@ -333,6 +333,14 @@ def test_validate_rank_local_cpu_compute(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.ALWAYS
 
+    config = ConfigOptions.from_polars_engine(
+        pl.GPUEngine(
+            executor="streaming",
+            executor_options={"rank_local_cpu_compute": "on_oom"},
+        )
+    )
+    assert config.executor.rank_local_cpu_compute == RankLocalCPUComputeMode.ON_OOM
+
     with pytest.raises(
         ValueError, match="'foo' is not a valid RankLocalCPUComputeMode"
     ):

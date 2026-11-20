@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,8 +11,9 @@
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 
-#include <cuco/hash_functions.cuh>
+#include <cuda/functional>
 #include <cuda/std/cstddef>
+#include <cuda/std/span>
 
 namespace cudf::hashing::detail {
 
@@ -20,14 +21,18 @@ template <typename Key>
 struct XXHash_64 {
   using result_type = std::uint64_t;
 
-  CUDF_HOST_DEVICE constexpr XXHash_64(uint64_t seed = cudf::DEFAULT_HASH_SEED) : _impl{seed} {}
+  CUDF_HOST_DEVICE constexpr XXHash_64(uint64_t seed = cudf::DEFAULT_HASH_SEED) : _seed{seed} {}
 
-  __device__ constexpr result_type operator()(Key const& key) const { return this->_impl(key); }
+  __device__ constexpr result_type operator()(Key const& key) const
+  {
+    return cuda::hash<Key, cuda::hash_algorithm::xxhash_64>{_seed}(key);
+  }
 
   __device__ constexpr result_type compute_bytes(cuda::std::byte const* bytes,
                                                  std::uint64_t size) const
   {
-    return this->_impl.compute_hash(bytes, size);
+    return cuda::hash<cuda::std::byte const, cuda::hash_algorithm::xxhash_64>{_seed}(
+      cuda::std::span<cuda::std::byte const>{bytes, size});
   }
 
  private:
@@ -37,7 +42,7 @@ struct XXHash_64 {
     return this->compute_bytes(reinterpret_cast<cuda::std::byte const*>(&key), sizeof(T));
   }
 
-  cuco::xxhash_64<Key> _impl;
+  uint64_t _seed;
 };
 
 template <>

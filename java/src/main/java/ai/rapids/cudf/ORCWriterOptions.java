@@ -12,13 +12,27 @@ package ai.rapids.cudf;
  * that will be used by the ORC writer to write the file.
  */
 public class ORCWriterOptions extends CompressionMetadataWriterOptions {
+  /** Calendar recorded in the standard ORC file footer. */
+  public enum CalendarKind {
+    JULIAN_GREGORIAN(1),
+    PROLEPTIC_GREGORIAN(2);
+
+    final int nativeId;
+
+    CalendarKind(int nativeId) {
+      this.nativeId = nativeId;
+    }
+  }
+
   private int stripeSizeRows;
   private String writerTimezone;
+  private CalendarKind calendarKind;
 
   private ORCWriterOptions(Builder builder) {
     super(builder);
     this.stripeSizeRows = builder.stripeSizeRows;
     this.writerTimezone = builder.writerTimezone;
+    this.calendarKind = builder.calendarKind;
   }
 
   public static Builder builder() {
@@ -33,11 +47,16 @@ public class ORCWriterOptions extends CompressionMetadataWriterOptions {
     return writerTimezone;
   }
 
+  public CalendarKind getCalendarKind() {
+    return calendarKind;
+  }
+
   public static class Builder extends CompressionMetadataWriterOptions.Builder
           <Builder, ORCWriterOptions> {
     // < 1M rows default orc stripe rows, defined in cudf/cpp/include/cudf/io/orc.hpp
     private int stripeSizeRows = 1000000;
     private String writerTimezone = "UTC";
+    private CalendarKind calendarKind = CalendarKind.PROLEPTIC_GREGORIAN;
 
     public Builder withStripeSizeRows(int stripeSizeRows) {
       // maximum stripe size cannot be smaller than 512
@@ -66,6 +85,25 @@ public class ORCWriterOptions extends CompressionMetadataWriterOptions {
         throw new IllegalArgumentException("Writer timezone cannot be null or empty");
       }
       this.writerTimezone = writerTimezone;
+      return this;
+    }
+
+    /**
+     * Sets the calendar used for DATE encoding and recorded in the file footer.
+     * Legacy mode rebases nested and top-level DATE values. It rejects TIMESTAMP columns,
+     * dates in October 5-14, 1582, and dates outside the int32 hybrid domain.
+     * Use {@link ORCOptions.Builder#convertDatesToProleptic(boolean)} to read legacy output
+     * back as cuDF proleptic Gregorian dates.
+     *
+     * @param calendarKind calendar kind
+     * @throws IllegalArgumentException if the calendar is null
+     */
+    public Builder withCalendarKind(CalendarKind calendarKind) {
+      if (calendarKind == null) {
+        throw new IllegalArgumentException(
+            "ORC calendar must not be null");
+      }
+      this.calendarKind = calendarKind;
       return this;
     }
 

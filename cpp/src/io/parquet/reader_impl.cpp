@@ -6,7 +6,7 @@
 #include "reader_impl.hpp"
 
 #include "column_path_helpers.hpp"
-#include "error.hpp"
+#include "io/utilities/kernel_error.hpp"
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 

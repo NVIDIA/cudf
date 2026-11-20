@@ -13,7 +13,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-import zstandard as zstd
 from werkzeug import Response
 
 import polars as pl
@@ -880,9 +879,8 @@ def test_scan_compressed_file_raises(
         with path.open("wb") as f:
             f.write(zlib.compress(data))
     else:
-        cctx = zstd.ZstdCompressor()
         with path.open("wb") as f:
-            f.write(cctx.compress(data))
+            f.write(pa.compress(data, codec="zstd", asbytes=True))
 
     q = scan_fn(path)
     assert_ir_translation_raises(q, engine, NotImplementedError)

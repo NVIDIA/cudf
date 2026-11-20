@@ -13,6 +13,7 @@
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
+#include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -26,7 +27,8 @@
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuco/bucket_storage.cuh>
-#include <cuco/hash_functions.cuh>
+#include <cuco/extent.cuh>
+#include <cuco/probing_scheme.cuh>
 #include <cuco/static_set_ref.cuh>
 #include <cuda/atomic>
 #include <cuda/buffer>
@@ -59,7 +61,14 @@ constexpr int hash_bits = cuda::std::numeric_limits<hash_value_type>::digits;
 constexpr hash_value_type empty_hash = 0;
 
 // The hash values are already well distributed so they are used directly as the probe hash
-using probe_type       = cuco::linear_probing<1, cuco::identity_hash<hash_value_type>>;
+struct identity_hash {
+  CUDF_HOST_DEVICE constexpr hash_value_type operator()(hash_value_type hash) const noexcept
+  {
+    return hash;
+  }
+};
+
+using probe_type       = cuco::linear_probing<1, identity_hash>;
 using storage_ref_type = cuco::bucket_storage_ref<hash_value_type, 1, cuco::extent<int32_t>>;
 using set_ref_type     = cuco::static_set_ref<hash_value_type,
                                               cuda::thread_scope_block,

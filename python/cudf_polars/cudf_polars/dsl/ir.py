@@ -3302,7 +3302,7 @@ class ConditionalJoin(IR):
 
 
 def _check_asof_sorted(key: Column, *, stream: Stream) -> bool:
-    """Validate non-null key order and report whether nulls come first."""
+    """Validate ascending non-null keys. Return True only for nulls-first order."""
     if key.null_count:
         table = plc.Table([key.obj])
         if plc.sorting.is_sorted(

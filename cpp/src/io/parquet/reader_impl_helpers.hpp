@@ -145,6 +145,7 @@ struct row_group_size_info {
  * @brief Translates Parquet datatype to cuDF type enum
  */
 [[nodiscard]] type_id to_type_id(SchemaElement const& schema,
+                                 std::optional<type_id> arrow_type,
                                  bool strings_to_categorical,
                                  type_id timestamp_type_id,
                                  type_id decimal_type_id);
@@ -284,6 +285,7 @@ class aggregate_reader_metadata {
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
   std::unordered_set<int32_t> nullable_across_sources;
+  std::unordered_map<int, type_id> _arrow_types;  ///< arrow:schema types keyed by file-0 schema_idx
 
   int64_t num_rows;
   size_type num_row_groups;
@@ -329,10 +331,10 @@ class aggregate_reader_metadata {
   [[nodiscard]] arrow_schema_data_types collect_arrow_schema() const;
 
   /**
-   * @brief Co-walks the collected arrow and Parquet schema, updates
-   * dtypes and destroys the no longer needed arrow schema object(s).
+   * @brief Co-walks the collected arrow and Parquet schemas and records the arrow types
+   * keyed by file-0 schema index
    */
-  void apply_arrow_schema();
+  void collect_arrow_types();
 
   /**
    * @brief Decode an arrow:IPC message and returns an optional string_view of
@@ -733,6 +735,17 @@ class aggregate_reader_metadata {
       "Parquet reader encountered an invalid schema_idx or pfm_idx",
       std::out_of_range);
     return per_file_metadata[pfm_idx].schema[schema_idx];
+  }
+
+  /**
+   * @brief Returns the arrow:schema type of a column, if any
+   *
+   * @param schema_idx Schema index in the zeroth source
+   */
+  [[nodiscard]] std::optional<type_id> arrow_type(int schema_idx) const
+  {
+    auto const it = _arrow_types.find(schema_idx);
+    return it != _arrow_types.end() ? std::optional{it->second} : std::nullopt;
   }
 
   [[nodiscard]] auto const& get_schema_tree(int pfm_idx = 0) const

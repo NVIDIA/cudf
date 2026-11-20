@@ -35,7 +35,6 @@ from pylibcudf.libcudf.io.parquet_schema cimport (
     TimeType as cpp_TimeType,
 )
 from pylibcudf.libcudf.table.table cimport table as cpp_table
-from pylibcudf.libcudf.types cimport type_id
 from pylibcudf.libcudf.utilities.span cimport host_span
 from pylibcudf.table cimport Table
 from pylibcudf.types cimport DataType
@@ -51,7 +50,6 @@ from pylibcudf.libcudf.io.parquet_schema import (
     TimeUnit,  # no-cython-lint
     Type as PhysicalType,  # no-cython-lint
 )
-from pylibcudf.types import TypeId
 
 if TYPE_CHECKING:
     from typing_extensions import Buffer
@@ -517,14 +515,6 @@ cdef class SchemaElement:
     def output_as_byte_array(self) -> bool:
         """Whether the writer stores the column as a byte array."""
         return self.c_obj.output_as_byte_array
-
-    @property
-    def arrow_type(self) -> TypeId | None:
-        """cudf type recorded in the file's arrow schema, if any was applied."""
-        if not self.c_obj.arrow_type.has_value():
-            return None
-        cdef type_id arrow_type = self.c_obj.arrow_type.value()
-        return TypeId(<int>arrow_type)
 
     @property
     def max_definition_level(self) -> int:

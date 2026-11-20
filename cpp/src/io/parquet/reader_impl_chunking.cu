@@ -486,12 +486,15 @@ void reader_impl::create_global_chunk_info()
       auto& schema   = _metadata->get_schema(
         _metadata->map_schema_index(col.schema_idx, rg.source_index), rg.source_index);
 
-      auto [clock_rate, logical_type] = conversion_info(
-        to_type_id(
-          schema, _strings_to_categorical, _options.timestamp_type.id(), _options.decimal_width),
-        _options.timestamp_type.id(),
-        schema.type,
-        schema.logical_type);
+      auto [clock_rate, logical_type] =
+        conversion_info(to_type_id(schema,
+                                   _metadata->arrow_type(col.schema_idx),
+                                   _strings_to_categorical,
+                                   _options.timestamp_type.id(),
+                                   _options.decimal_width),
+                        _options.timestamp_type.id(),
+                        schema.type,
+                        schema.logical_type);
 
       // for lists, estimate the number of bytes per row. this is used by the subpass reader to
       // determine where to split the decompression boundaries

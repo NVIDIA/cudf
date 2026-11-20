@@ -112,9 +112,11 @@ namespace {
   return found.value();
 }
 
-[[nodiscard]] data_type statistics_dtype(SchemaElement const& schema)
+[[nodiscard]] data_type statistics_dtype(SchemaElement const& schema,
+                                         std::optional<type_id> arrow_type)
 {
   auto const dtype = to_data_type(to_type_id(schema,
+                                             arrow_type,
                                              false,           // strings_to_categorical
                                              type_id::EMPTY,  // timestamp_type_id
                                              type_id::EMPTY),
@@ -371,12 +373,12 @@ struct schema_child_lookup {
 }  // namespace
 
 type_id to_type_id(SchemaElement const& schema,
+                   std::optional<type_id> arrow_type,
                    bool strings_to_categorical,
                    type_id timestamp_type_id,
                    type_id decimal_type_id)
 {
   auto const physical_type = schema.type;
-  auto const arrow_type    = schema.arrow_type;
   auto logical_type        = schema.logical_type;
 
   // sanity check, but not worth failing over
@@ -1079,8 +1081,8 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     }
   }
 
-  // Collect and apply arrow:schema from Parquet's key value metadata section
-  if (use_arrow_schema) { apply_arrow_schema(); }
+  // Collect arrow:schema types from Parquet's key value metadata section
+  if (use_arrow_schema) { collect_arrow_types(); }
 
   // Erase ARROW_SCHEMA_KEY from the output pfm if exists
   std::ranges::for_each(keyval_maps, [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
@@ -1263,7 +1265,7 @@ arrow_schema_data_types aggregate_reader_metadata::collect_arrow_schema() const
   return schema;
 }
 
-void aggregate_reader_metadata::apply_arrow_schema()
+void aggregate_reader_metadata::collect_arrow_types()
 {
   // Collect the arrow schema from the key value section of Parquet metadata
   auto arrow_schema_root = collect_arrow_schema();
@@ -1276,7 +1278,7 @@ void aggregate_reader_metadata::apply_arrow_schema()
   // Function to verify equal num_children at each level in Parquet and arrow schemas.
   std::function<bool(arrow_schema_data_types const&, int const)> validate_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
-      auto& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
+      auto const& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
 
       // ensure equal number of children first to avoid any segfaults in children
       if (std::cmp_equal(pq_schema_elem.num_children, arrow_schema.children.size())) {
@@ -1297,7 +1299,7 @@ void aggregate_reader_metadata::apply_arrow_schema()
   // Function to co-walk arrow and parquet schemas
   std::function<void(arrow_schema_data_types const&, int const)> co_walk_schemas =
     [&](arrow_schema_data_types const& arrow_schema, int const schema_idx) {
-      auto& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
+      auto const& pq_schema_elem = per_file_metadata[0].schema[schema_idx];
       std::for_each(cuda::make_zip_iterator(cuda::std::make_tuple(
                       arrow_schema.children.begin(), pq_schema_elem.children_idx.begin())),
                     cuda::make_zip_iterator(cuda::std::make_tuple(
@@ -1308,7 +1310,7 @@ void aggregate_reader_metadata::apply_arrow_schema()
 
       // true for DurationType columns only for now.
       if (arrow_schema.type.id() != type_id::EMPTY) {
-        pq_schema_elem.arrow_type = arrow_schema.type.id();
+        _arrow_types[schema_idx] = arrow_schema.type.id();
       }
     };
 
@@ -1591,11 +1593,13 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   for (auto const& column_name : column_names) {
     auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());
     auto dtype                     = data_type{type_id::EMPTY};
+    auto col_arrow_type            = std::optional<type_id>{};
 
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
       auto const& schema_tree = get_schema_tree(src_idx);
       auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
-      auto const source_dtype = statistics_dtype(schema_tree[schema_idx]);
+      if (src_idx == 0) { col_arrow_type = arrow_type(schema_idx); }
+      auto const source_dtype = statistics_dtype(schema_tree[schema_idx], col_arrow_type);
 
       if (src_idx == 0) {
         dtype = source_dtype;
@@ -2150,11 +2154,13 @@ aggregate_reader_metadata::select_columns(
       auto const one_level_list = schema_elem.is_one_level_list(parent_schema);
 
       // if we're at the root, this is a new output column
-      auto const col_type =
-        one_level_list
-          ? type_id::LIST
-          : to_type_id(schema_elem, strings_to_categorical, timestamp_type_id, decimal_type_id);
-      auto const dtype = to_data_type(col_type, schema_elem);
+      auto const col_type = one_level_list ? type_id::LIST
+                                           : to_type_id(schema_elem,
+                                                        arrow_type(schema_idx),
+                                                        strings_to_categorical,
+                                                        timestamp_type_id,
+                                                        decimal_type_id);
+      auto const dtype    = to_data_type(col_type, schema_elem);
 
       cudf::io::detail::inline_column_buffer output_col(
         dtype,
@@ -2211,8 +2217,11 @@ aggregate_reader_metadata::select_columns(
         // set up child output column for one-level encoding list
         if (one_level_list) {
           // determine the element data type
-          auto const element_type =
-            to_type_id(schema_elem, strings_to_categorical, timestamp_type_id, decimal_type_id);
+          auto const element_type  = to_type_id(schema_elem,
+                                               arrow_type(schema_idx),
+                                               strings_to_categorical,
+                                               timestamp_type_id,
+                                               decimal_type_id);
           auto const element_dtype = to_data_type(element_type, schema_elem);
 
           cudf::io::detail::inline_column_buffer element_col(

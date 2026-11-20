@@ -68,9 +68,6 @@ from cudf_polars.quent._runtime import (
     QuentControllerRuntime,
     QuentWorkerRuntime,
 )
-from cudf_polars.streaming.actor_graph.collectives.closing import (
-    wait_for_pending_closes,
-)
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
@@ -345,7 +342,6 @@ def allgather_polars_dataframe(
         stream,
         ctx.br(),
     )
-    wait_for_pending_closes(comm)
     # Bulk AllGather: each rank contributes once (sequence_number=0)
     allgather = AllGather(comm, op_id, ctx.br())
     try:

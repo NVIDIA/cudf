@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
 import uuid
@@ -117,6 +118,49 @@ def test_discard_pending_closes_forgets_communicator(
     discard_pending_closes(comm)
     assert pending_closes == {}
     wait_for_pending_closes(comm, timeout=0)
+
+
+def test_background_close_failure_is_logged_and_blocks_communicator(
+    monkeypatch, caplog, pending_closes, fake_collective, cancel_when, timeout_seconds
+) -> None:
+    comm = Mock()
+
+    async def fail_close() -> None:
+        raise ValueError("close failed")
+
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, comm, 7):
+            await fake_collective.extract_all(ordered=True)
+
+    monkeypatch.setattr(fake_collective, "aclose", fail_close)
+    with caplog.at_level(logging.ERROR, logger=closing.__name__):
+        cancel_when(body, fake_collective.waiting)
+    assert "operation ID 7 failed" in caplog.text
+    assert [close.op_id for close in pending_closes[comm]] == [7]
+
+    with pytest.raises(
+        RuntimeError, match=r"operation IDs \[7\] was cancelled and failed"
+    ) as excinfo:
+        wait_for_pending_closes(comm, timeout=timeout_seconds)
+    assert isinstance(excinfo.value.__cause__, ExceptionGroup)
+    assert excinfo.value.__cause__.subgroup(ValueError) is not None
+
+
+def test_background_close_of_skipped_finish_is_released(
+    monkeypatch, caplog, pending_closes, fake_collective, cancel_when
+) -> None:
+    async def skipped_finish_close() -> None:
+        raise RuntimeError("aclose() called before insert_finished()")
+
+    async def body() -> None:
+        async with aclosing_collective(fake_collective, Mock(), 7):
+            await fake_collective.extract_all(ordered=True)
+
+    monkeypatch.setattr(fake_collective, "aclose", skipped_finish_close)
+    with caplog.at_level(logging.ERROR, logger=closing.__name__):
+        cancel_when(body, fake_collective.waiting)
+    assert caplog.text == ""
+    assert pending_closes == {}
 
 
 def test_cancelled_close_only_blocks_its_communicator(

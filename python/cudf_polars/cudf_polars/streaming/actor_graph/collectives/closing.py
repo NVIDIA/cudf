@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, suppress
@@ -36,7 +37,11 @@ class _PendingClose:
     op_id: int
 
 
+_SKIPPED_FINISH = "aclose() called before insert_finished()"
+
+_logger = logging.getLogger(__name__)
 _lock = threading.Lock()
+_gate_lock = threading.Lock()
 _pending: dict[Communicator, set[_PendingClose]] = {}
 _unusable: dict[Communicator, str] = {}
 _background_closes: set[asyncio.Task[None]] = set()
@@ -52,9 +57,22 @@ def _discard(comm: Communicator, pending: _PendingClose) -> None:
 
 
 async def _finish(comm: Communicator, pending: _PendingClose) -> None:
-    with suppress(RuntimeError):
+    try:
         await pending.collective.aclose()
+    except RuntimeError as exc:
+        if str(exc) != _SKIPPED_FINISH:
+            raise
     _discard(comm, pending)
+
+
+async def _finish_or_log(comm: Communicator, pending: _PendingClose) -> None:
+    try:
+        await _finish(comm, pending)
+    except Exception:
+        _logger.exception(
+            "The cancelled close of the collective with operation ID %d failed",
+            pending.op_id,
+        )
 
 
 async def _close_in_background(
@@ -63,7 +81,7 @@ async def _close_in_background(
     pending = _PendingClose(collective, op_id)
     with _lock:
         _pending.setdefault(comm, set()).add(pending)
-    task = asyncio.create_task(_finish(comm, pending))
+    task = asyncio.create_task(_finish_or_log(comm, pending))
     _background_closes.add(task)
     task.add_done_callback(_background_closes.discard)
     await asyncio.sleep(0)
@@ -180,8 +198,11 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     collectives on a communicator after a cancelled ``aclose()`` whose
     collective never completes.
 
-    If a pending close does not complete within ``timeout``, ``comm`` is
-    marked unusable, and every later call raises at once.
+    If a pending close fails or does not complete within ``timeout``,
+    ``comm`` is marked unusable, and every later call raises at once.
+
+    Calls that wait are serialized across all communicators, so that two
+    threads never close the same collective at the same time.
 
     The check is local to this rank. When it raises on one rank, the peer
     ranks do not know, and they can hang in their next collective while they
@@ -199,30 +220,47 @@ def wait_for_pending_closes(comm: Communicator, timeout: float | None = None) ->
     Raises
     ------
     RuntimeError
-        If a pending close on ``comm`` does not complete within ``timeout``,
-        or if ``comm`` was already marked unusable.
+        If a pending close on ``comm`` fails or does not complete within
+        ``timeout``, or if ``comm`` was already marked unusable.
     """
-    with _lock:
-        if (message := _unusable.get(comm)) is not None:
-            raise RuntimeError(message)
-        pending = tuple(_pending.get(comm, ()))
-    if not pending:
+    if not _pending_closes(comm):
         return
     if timeout is None:
         timeout = PENDING_CLOSE_TIMEOUT
-    with ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="cudf-polars-pending-close"
-    ) as executor:
-        executor.submit(asyncio.run, _finish_all(comm, pending, timeout)).result()
-    with _lock:
-        op_ids = sorted(close.op_id for close in _pending.get(comm, ()))
-        if not op_ids:
+    with _gate_lock:
+        pending = _pending_closes(comm)
+        if not pending:
             return
-        message = _unusable[comm] = (
-            f"The close of the collectives with operation IDs {op_ids} was "
-            f"cancelled and did not complete within {timeout} seconds, so "
-            "this communicator cannot run new collectives. Peer ranks may "
-            "hang in their next collective. Shut down the engine on every "
-            "rank and create a new one."
-        )
-    raise RuntimeError(message)
+        failure: Exception | None = None
+        try:
+            with ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="cudf-polars-pending-close"
+            ) as executor:
+                executor.submit(
+                    asyncio.run, _finish_all(comm, pending, timeout)
+                ).result()
+        except Exception as exc:
+            failure = exc
+        with _lock:
+            op_ids = sorted(close.op_id for close in _pending.get(comm, ()))
+            if not op_ids:
+                return
+            outcome = (
+                f"did not complete within {timeout} seconds"
+                if failure is None
+                else "failed"
+            )
+            message = _unusable[comm] = (
+                f"The close of the collectives with operation IDs {op_ids} was "
+                f"cancelled and {outcome}, so this communicator cannot run new "
+                "collectives. Peer ranks may hang in their next collective. "
+                "Shut down the engine on every rank and create a new one."
+            )
+    raise RuntimeError(message) from failure
+
+
+def _pending_closes(comm: Communicator) -> tuple[_PendingClose, ...]:
+    with _lock:
+        if (message := _unusable.get(comm)) is not None:
+            raise RuntimeError(message)
+        return tuple(_pending.get(comm, ()))

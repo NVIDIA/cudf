@@ -1747,7 +1747,7 @@ def _(
             order_by_expr, row_encode_flags = _translate_window_order_by(
                 translator, node.order_by, schema
             )
-            if row_encode_flags is not None:
+            if row_encode_flags is not None:  # pragma: no cover; needs row_encode
                 if descending or nulls_last:
                     raise NotImplementedError(
                         "over(order_by=...) with row_encode and sort flags on the window"
@@ -1809,6 +1809,30 @@ def _(
     assert_never(node.options)
 
 
+def _translate_row_encode(  # pragma: no cover; needs Polars with row_encode.
+    translator: Translator, node: Any, schema: Schema
+) -> tuple[expr.Expr, tuple[bool, bool]]:
+    """Translate a ``row_encode_ordered`` function node to a struct of its keys."""
+    _, descending, nulls_last, _, encode_nulls, propagate_nulls = node.function_data
+    if encode_nulls is not None or propagate_nulls:
+        raise NotImplementedError("row_encode with custom null handling")
+    if len(set(descending)) > 1 or len(set(nulls_last)) > 1:
+        raise NotImplementedError("row_encode with per-key sort options")
+    children = [translator.translate_expr(n=c, schema=schema) for c in node.input]
+    struct_dtype = DataType(
+        pl.Struct(
+            [
+                pl.Field(f"f{i}", child.dtype.polars_type)
+                for i, child in enumerate(children)
+            ]
+        )
+    )
+    return (
+        expr.UnaryFunction(struct_dtype, "as_struct", (), *children),
+        (descending[0], nulls_last[0]),
+    )
+
+
 def _translate_window_order_by(
     translator: Translator, n: int, schema: Schema
 ) -> tuple[expr.Expr, tuple[bool, bool] | None]:
@@ -1829,24 +1853,9 @@ def _translate_window_order_by(
         and node.function_data[0] == "row_encode_ordered"
     ):
         return translator.translate_expr(n=n, schema=schema), None
-    _, descending, nulls_last, _, encode_nulls, propagate_nulls = node.function_data
-    if encode_nulls is not None or propagate_nulls:
-        raise NotImplementedError("row_encode with custom null handling")
-    if len(set(descending)) > 1 or len(set(nulls_last)) > 1:
-        raise NotImplementedError("row_encode with per-key sort options")
-    children = [translator.translate_expr(n=c, schema=schema) for c in node.input]
-    struct_dtype = DataType(
-        pl.Struct(
-            [
-                pl.Field(f"f{i}", child.dtype.polars_type)
-                for i, child in enumerate(children)
-            ]
-        )
-    )
-    return (
-        expr.UnaryFunction(struct_dtype, "as_struct", (), *children),
-        (descending[0], nulls_last[0]),
-    )
+    return _translate_row_encode(
+        translator, node, schema
+    )  # pragma: no cover; needs row_encode
 
 
 def _translate_rolling(

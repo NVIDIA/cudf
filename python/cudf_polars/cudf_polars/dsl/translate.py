@@ -1479,6 +1479,8 @@ def _translate_function(
         if name == plrs._expr_nodes.StructFunction.RenameFields:
             (new_field_names,) = options
             options = (tuple(new_field_names),)
+        elif name == plrs._expr_nodes.StructFunction.MapFieldNames:
+            options = ()
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),
@@ -1502,6 +1504,14 @@ def _translate_function(
             expr.ListFunction.Name.from_polars(name),
             options,
             *list_inputs,
+        )
+    # Polars does not register BitwiseFunction in _expr_nodes (crates/polars-python/src/c_api/mod.rs)
+    elif type(name).__name__ == "BitwiseFunction":
+        return expr.BitwiseFunction(
+            dtype,
+            expr.BitwiseFunction.Name.from_polars(name),
+            options,
+            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )
     elif isinstance(name, plrs._expr_nodes.RollingFunction):
         window_size, min_periods, weights, center, fn_params = options

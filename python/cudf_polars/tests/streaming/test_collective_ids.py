@@ -38,14 +38,15 @@ def test_collective_id_allocation_order() -> None:
     with collective_id_scope(), ExitStack() as reservations:
         released = _reserved_ids(ir)
         assert len(released) > 1
+        assert released == list(range(len(released)))
 
-        # Rank agreement requires reusing released IDs in LIFO order before
-        # continuing through IDs that have never been reserved.
+        # Recycling must not advance the counter for IDs that have never
+        # been reserved.
         acquired = [
             reservations.enter_context(reserve_op_id())
             for _ in range(len(released) + 1)
         ]
-        assert acquired == [*reversed(released), min(released) - 1]
+        assert acquired == [*reversed(released), len(released)]
         assert len(set(acquired)) == len(acquired)
 
 

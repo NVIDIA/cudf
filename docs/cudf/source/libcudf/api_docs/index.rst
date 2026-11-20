@@ -20,4 +20,5 @@ libcudf documentation
    utility_apis
    labeling_apis
    expressions
+   udfs
    tdigest

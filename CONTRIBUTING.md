@@ -338,6 +338,19 @@ The [C++ Developer Guide](https://docs.nvidia.com/cudf/latest/libcudf/developer_
 
 The [Python Developer Guide](https://docs.nvidia.com/cudf/latest/developer_guide/) includes details on contributing to cuDF Python code.
 
+## Automated and AI-assisted contributions
+
+AI-assisted contributions are welcome and must meet the same requirements as other contributions.
+
+- **You are responsible:** Review and understand the change before submission. Be able to explain it. For submissions from a bot or agent account, identify the responsible human.
+- **Verify correctness:** AI-generated code may contain bugs or security issues. Run the applicable tests and review the diff carefully.
+- **Write and self-review with the contribution skill:** Have your AI assistant follow the repository's contribution skill (`/contribute-cudf`, defined in `.agents/skills/contribute-cudf`) before writing the change and again before opening or updating the pull request. It requires a self-review with the review skill (`/review-cudf`, defined in `.agents/skills/review-cudf`), which maintainers also use, so address its findings before requesting review.
+- **No AI-generated sensitive content:** Do not use AI to generate security policies, legal, or license text.
+- **Disclose AI assistance:** Note AI assistance in the pull request description.
+- **Own review responses:** Review AI-assisted replies before posting them. You remain responsible for their content and your review decisions.
+  - Do not submit issues, pull requests, or review responses through a fully autonomous process. A human contributor must remain available and engaged.
+
+Maintainers may close submissions without technical review when they appear unvetted, misleading, or otherwise impose disproportionate review cost. Repeated submissions of this kind may result in account blocking.
 
 ## Attribution
 

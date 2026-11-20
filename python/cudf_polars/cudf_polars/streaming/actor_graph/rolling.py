@@ -5,15 +5,16 @@
 from __future__ import annotations
 
 from collections import deque
+from contextlib import aclosing, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import TableChunk
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 from cudf_polars.dsl.ir import IR, Rolling
 from cudf_polars.streaming.actor_graph.collectives.overlap import (
@@ -73,9 +74,15 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         """Enter the rolling manager context."""
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self, exc_type: object, _exc_value: object, _traceback: object
+    ) -> None:
         """Release policy-owned resources."""
-        self.policy.close()
+        if exc_type is not None:
+            with suppress(BaseException):
+                self.policy.close()
+        else:
+            self.policy.close()
 
     @staticmethod
     def _latest_nonempty_chunk(
@@ -146,12 +153,13 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         if len(pieces) == 1:
             evaluation_chunk = pieces[0]
         else:
-            reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-                sum(piece.data_alloc_size() for piece in pieces),
-                net_memory_delta=0,
-            )
+            concat_bytes = sum(piece.data_alloc_size() for piece in pieces)
             with (
-                opaque_memory_usage(reservation),
+                opaque_memory_usage(
+                    await reserve_memory(
+                        self.context, size=concat_bytes, net_memory_delta=0
+                    )
+                ),
                 stream_ordered_after(
                     self.ir_context.get_cuda_stream,
                     [piece.stream for piece in pieces],
@@ -175,15 +183,17 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             ir_context=self.ir_context,
             already_available=True,
         )
+        del evaluation_chunk
         (table,) = plc.copying.slice(
             result.table_view(),
             [cursor.row_start - start, cursor.row_stop - start],
             stream=result.stream,
         )
-        reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-            result.data_alloc_size(), net_memory_delta=0
-        )
-        with opaque_memory_usage(reservation):
+        with opaque_memory_usage(
+            await reserve_memory(
+                self.context, size=result.data_alloc_size(), net_memory_delta=0
+            )
+        ):
             table = table.copy(result.stream, self.context.br().device_mr)
         return TableChunk.from_pylibcudf_table(
             table,
@@ -203,60 +213,63 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         future: deque[StagedChunk[BufferedChunkT]] = deque()
         input_exhausted = False
         output_sequence_number = 0
-        chunks = aiter(rolling_input)
-        staged = await anext(chunks, None)
-        while staged is not None:
-            chunk = staged.chunk
-            self.policy.validate_chunk(chunk)
-            if not staged.owned:
-                history.append(chunk)
-            elif chunk.num_rows == 0:
-                result = await evaluate_chunk(
-                    self.context,
-                    chunk.chunk,
-                    self.ir,
-                    ir_context=self.ir_context,
-                    already_available=True,
-                )
-                await send_chunk(
-                    self.context,
-                    ch_out,
-                    result,
-                    output_sequence_number,
-                    tracer=tracer,
-                )
-                output_sequence_number += 1
-            else:
-                cursor = chunk
-                history = self.policy.evict_history(history, cursor)
-                if not input_exhausted:
-                    input_exhausted = await self._fill_future(
-                        chunks,
-                        cursor,
-                        future,
+        async with aclosing(aiter(rolling_input)) as chunks:
+            staged = await anext(chunks, None)
+            while staged is not None:
+                chunk = staged.chunk
+                self.policy.validate_chunk(chunk)
+                if not staged.owned:
+                    history.append(chunk)
+                    del staged, chunk
+                elif chunk.num_rows == 0:
+                    result = await evaluate_chunk(
+                        self.context,
+                        chunk.chunk,
+                        self.ir,
+                        ir_context=self.ir_context,
+                        already_available=True,
                     )
-                result = await self._evaluate_cursor(
-                    cursor,
-                    [*history, cursor, *(item.chunk for item in future)],
-                )
-                retained = await self.policy.history_chunk(
-                    self.context,
-                    cursor,
-                )
-                if retained is not None:
-                    history.append(retained)
-                await send_chunk(
-                    self.context,
-                    ch_out,
-                    result,
-                    output_sequence_number,
-                    tracer=tracer,
-                )
-                output_sequence_number += 1
-            if future:
-                staged = future.popleft()
-            else:
-                staged = await anext(chunks, None)
+                    del staged, chunk
+                    await send_chunk(
+                        self.context,
+                        ch_out,
+                        result,
+                        output_sequence_number,
+                        tracer=tracer,
+                    )
+                    output_sequence_number += 1
+                else:
+                    cursor = chunk
+                    history = self.policy.evict_history(history, cursor)
+                    if not input_exhausted:
+                        input_exhausted = await self._fill_future(
+                            chunks,
+                            cursor,
+                            future,
+                        )
+                    result = await self._evaluate_cursor(
+                        cursor,
+                        [*history, cursor, *(item.chunk for item in future)],
+                    )
+                    retained = await self.policy.history_chunk(
+                        self.context,
+                        cursor,
+                    )
+                    if retained is not None:
+                        history.append(retained)
+                    del cursor, retained, staged, chunk
+                    await send_chunk(
+                        self.context,
+                        ch_out,
+                        result,
+                        output_sequence_number,
+                        tracer=tracer,
+                    )
+                    output_sequence_number += 1
+                if future:
+                    staged = future.popleft()
+                else:
+                    staged = await anext(chunks, None)
         await ch_out.drain(self.context)
 
 

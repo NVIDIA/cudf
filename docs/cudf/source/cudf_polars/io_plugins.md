@@ -168,6 +168,15 @@ to also work with the default Polars CPU engine must still handle `n_rows` corre
 
 Distributed support for a global row limit is tracked in [cudf#22918](https://github.com/NVIDIA/cudf/issues/22918).
 
+## Predicate and Batch Size
+
+GPU engines always call an IO source with `predicate=None` and `batch_size=None`.
+cudf-polars applies any pushed-down predicate on the GPU to the chunks the source
+yields. IO sources intended to also work with the default Polars CPU engine must
+still handle `predicate` and `batch_size` correctly.
+
+Forwarding the predicate to a `RankAwareSource` is tracked in [cudf#22917](https://github.com/NVIDIA/cudf/issues/22917).
+
 ## Threading
 
 Under a streaming engine, cudf-polars runs IO sources on a worker thread pool.

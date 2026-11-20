@@ -5,6 +5,7 @@
 set -eoxu pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${PWD}/test-results"}
 RAPIDS_COVERAGE_DIR=${RAPIDS_COVERAGE_DIR:-"${PWD}/coverage-results"}
@@ -19,19 +20,18 @@ RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 source rapids-prompt-local-repo-config
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 # generate constraints (possibly pinning to oldest support versions of dependencies)
 rapids-generate-pip-constraints test_python_cudf_pandas ./constraints.txt
 
 # notes:
 #
-#   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for pip
+#   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for the installer
 #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
 #     ignored if any other --constraint are passed via the CLI
 #
-rapids-pip-retry install \
-    -v \
+rapids-uv-pip install \
     --constraint ./constraints.txt \
     --constraint "${PIP_CONSTRAINT}" \
     "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \
@@ -97,18 +97,17 @@ for version in "${versions[@]}"; do
         > "${pandas_requirements_txt}"
 
     env_name="venv_pandas_${version}"
-    python -m venv --clear "${env_name}"
+    uv venv --python "$(command -v python)" --clear "${env_name}"
     # shellcheck disable=SC1090
     source "${env_name}/bin/activate"
 
     # notes:
     #
-    #   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for pip
+    #   * echo to expand wildcard before adding `[test,cudf-pandas-tests]` requires for the installer
     #   * need to provide --constraint="${PIP_CONSTRAINT}" because that environment variable is
     #     ignored if any other --constraint are passed via the CLI
     #
-    rapids-pip-retry install \
-        -v \
+    rapids-uv-pip install \
         --constraint ./constraints.txt \
         --constraint "${PIP_CONSTRAINT}" \
         "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,cudf-pandas-tests]" \

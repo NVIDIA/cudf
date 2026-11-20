@@ -21,6 +21,7 @@ class InvalidFsmTransitionError(QuentError): ...
 
 def now_v7() -> _uuid.UUID: ...
 def nil_uuid() -> _uuid.UUID: ...
+def timestamp() -> int: ...
 
 class DynamicValue:
     """An explicitly typed dynamic attribute value."""
@@ -96,6 +97,18 @@ class Collector:
     def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None: ...
 
 def start_collector(output: ExporterOptions, *, bind_address: str = "127.0.0.1:0", advertised_host: str | None = None) -> Collector: ...
+
+class BrowserBundleSummary(TypedDict):
+    engine_id: str
+    context_count: int
+    event_count: int
+    schema_digest: str
+    format_version: int
+
+def write_browser_bundle(
+    input: str | PathLike[str],
+    output: str | PathLike[str],
+) -> BrowserBundleSummary: ...
 
 class ImplementationDict(TypedDict):
     name: str

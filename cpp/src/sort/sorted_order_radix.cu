@@ -3,13 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "sort_radix.cuh"
 #include "sort_radix.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -17,6 +18,7 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/stream>
 #include <thrust/sequence.h>
 #include <thrust/transform.h>
@@ -26,27 +28,11 @@ namespace detail {
 namespace {
 
 template <typename F>
-struct float_pair {
-  size_type s;  // index bias for sorting nan
-  F f;          // actual float value to sort
-};
-
-template <typename F>
-struct float_decomposer {
-  __device__ cuda::std::tuple<size_type&, F&> operator()(float_pair<F>& key) const
-  {
-    return {key.s, key.f};
-  }
-};
-
-template <typename F>
 struct float_to_pair_and_seq {
-  F const* fs;
+  float_to_pair_fn<F> to_pair;
   __device__ cuda::std::pair<float_pair<F>, size_type> operator()(cudf::size_type idx) const
   {
-    auto const f = fs[idx];
-    auto const s = (isnan(f) * (idx + 1));  // multiplier helps keep the sort stable for NaNs
-    return {float_pair<F>{s, f}, idx};
+    return {to_pair(idx), idx};
   }
 };
 
@@ -94,9 +80,8 @@ struct sorted_order_radix_fn {
     }
   }
 
-  template <typename T>
+  template <cuda::std::floating_point T>
   void operator()()
-    requires(cudf::is_floating_point<T>())
   {
     auto pair_in = cuda::device_buffer<float_pair<T>>(stream, temp_mr, input.size(), cuda::no_init);
     auto d_in    = pair_in.data();
@@ -113,7 +98,7 @@ struct sorted_order_radix_fn {
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       zip_out,
-                      float_to_pair_and_seq<T>{input.begin<T>()});
+                      float_to_pair_and_seq<T>{{input.begin<T>(), input.size(), ascending}});
 
     auto const decomposer = float_decomposer<T>{};
     auto const end_bit    = sizeof(float_pair<T>) * 8;
@@ -136,24 +121,22 @@ struct sorted_order_radix_fn {
     }
   }
 
-  template <typename T>
+  template <cudf::concepts::chrono T>
   void operator()()
-    requires(cudf::is_chrono<T>())
   {
     using rep_type = typename T::rep;
     radix_sort<rep_type>();
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   void operator()()
-    requires(cudf::is_fixed_width<T>() and !cudf::is_chrono<T>() and !cudf::is_floating_point<T>())
+    requires(not cudf::concepts::chrono<T> and not cuda::std::floating_point<T>)
   {
     radix_sort<T>();
   }
 
   template <typename T>
   void operator()()
-    requires(not cudf::is_fixed_width<T>())
   {
     CUDF_UNREACHABLE("invalid type for radix sort");
   }

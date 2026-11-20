@@ -14,20 +14,26 @@
 
 namespace cudf::groupby::detail::hash {
 
+/// @brief Is the aggregation using HashCSR and hence grouped reductions, or streaming
+/// groupby that doesn't support updating "large" merged state.
+enum class aggregation_mode { GROUPED_REDUCTION, STREAMING_ATOMIC };
+
 /**
  * @brief Extract single pass aggregations from the given aggregation requests.
  *
  * During extraction, compound (i.e., multi-pass) aggregations will be replaced by their
  * corresponding single pass aggregations dependencies. For example, a MEAN aggregation will be
- * replaced by a SUM and a COUNT_VALID aggregation.
+ * replaced by a single-pass MEAN, which sums the values in the MEAN result type, and a COUNT_VALID
+ * aggregation. Dividing the sum by the count then finalizes the MEAN in place.
  *
  * For some single-pass aggregations, we also try to reduce overhead by forcing their results
  * columns to be non-nullable. For example, a SUM aggregation needed only as the intermediate result
- * for M2 aggregation will not need to have a nullmask to avoid the extra nullmask update and null
+ * for MEAN aggregation will not need to have a nullmask to avoid the extra nullmask update and null
  * count computation overhead.
  *
  * @param requests The aggregation requests
  * @param stream The CUDA stream
+ * @param mode Select dependencies for grouped reductions or streaming atomic accumulators
  *
  * @return A tuple containing:
  *         - A table_view containing the input values columns for the single-pass aggregations,
@@ -42,15 +48,20 @@ std::tuple<table_view,
            std::vector<std::unique_ptr<aggregation>>,
            std::vector<int8_t>,
            bool>
-extract_single_pass_aggs(std::span<aggregation_request const> requests, cuda::stream_ref stream);
+extract_single_pass_aggs(std::span<aggregation_request const> requests,
+                         cuda::stream_ref stream,
+                         aggregation_mode mode = aggregation_mode::GROUPED_REDUCTION);
 
 /**
  * @brief Get simple aggregations from groupby aggregation
  *
  * @param agg The groupby aggregation
  * @param values_type The data type for the aggregation
+ * @param mode Select dependencies for grouped reductions or streaming atomic accumulators
  * @return A vector of aggregation kinds
  */
-std::vector<aggregation::Kind> get_simple_aggregations(groupby_aggregation const& agg,
-                                                       data_type values_type);
+std::vector<aggregation::Kind> get_simple_aggregations(
+  groupby_aggregation const& agg,
+  data_type values_type,
+  aggregation_mode mode = aggregation_mode::GROUPED_REDUCTION);
 }  // namespace cudf::groupby::detail::hash

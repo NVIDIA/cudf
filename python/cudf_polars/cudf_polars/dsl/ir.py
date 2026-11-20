@@ -61,6 +61,7 @@ from cudf_polars.dsl.utils.windows import (
     range_window_bounds,
 )
 from cudf_polars.utils import dtypes, sorting
+from cudf_polars.utils.config import RankLocalCPUComputeMode
 from cudf_polars.utils.cuda_stream import (
     get_cuda_stream,
     stream_ordered_after,
@@ -148,6 +149,8 @@ class IRExecutionContext:
         Optional pre-actor Quent tracing context bound to a physical operator.
     tracer
         The actor tracer. Used to propagate statistics.
+    rank_local_cpu_compute
+        When the streaming executor evaluates IR nodes on the CPU with Polars.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
@@ -156,6 +159,7 @@ class IRExecutionContext:
     actor_bound_quent_ir_execution_state: ActorBoundQuentIRExecutionState | None = None
     unbound_quent_ir_execution_state: UnboundQuentIRExecutionState | None = None
     tracer: ActorTracer | None = None
+    rank_local_cpu_compute: RankLocalCPUComputeMode = RankLocalCPUComputeMode.NEVER
 
     async def to_thread[**P, T](
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -336,6 +340,14 @@ class IR(Node["IR"]):
     NotImplementedError
         If evaluation fails. Ideally this should not occur, since the
         translation phase should fail earlier.
+
+    Notes
+    -----
+    Implementations must not modify the device data of the input
+    dataframes, and must not add, remove or rename their columns. The
+    only permitted change to an input is recording sortedness metadata
+    that is true of the data, as :meth:`Column.check_sorted` does. The
+    result may share device memory with the inputs.
     """
 
     def evaluate(self, *, cache: CSECache, context: IRExecutionContext) -> DataFrame:
@@ -922,44 +934,6 @@ class Scan(IR):
             )
 
     @staticmethod
-    def _lake_partition_values(
-        lake_options: LakehouseScanOptions,
-        schema: Schema,
-        with_columns: list[str] | None,
-    ) -> PerPathValues | None:
-        """
-        Collect the partition fields of an Iceberg scan.
-
-        Parameters
-        ----------
-        lake_options
-            Options of the scan, holding one partition value per path for
-            each identity-partitioned field.
-        schema
-            Schema the scan must produce. Partition fields outside it are
-            skipped.
-        with_columns
-            Columns to project, or ``None`` for all of them. Partition fields
-            outside the projection are skipped.
-
-        Returns
-        -------
-        The value each path takes for each partition field in the schema and
-        projection, or ``None`` when there are no such fields.
-        """
-        assert lake_options.columns is not None
-        names = {column.physical_id: column.name for column in lake_options.columns}
-        frame = pl.DataFrame(
-            {
-                names[physical_id]: series
-                for physical_id, series in lake_options.partition_values.items()
-                if names[physical_id] in schema
-                and (with_columns is None or names[physical_id] in with_columns)
-            }
-        )
-        return None if frame.width == 0 else PerPathValues(frame)
-
-    @staticmethod
     def _validate_hive_parts_info(
         paths: list[str],
         hive_parts: PerPathValues | None,
@@ -1395,16 +1369,7 @@ class Scan(IR):
                 and n_rows == -1
                 and not lake_options.has_deletions
             )
-            per_path_parts = [
-                parts
-                for parts in (
-                    Scan._lake_partition_values(lake_options, file_schema, with_columns)
-                    if lake_options.partition_values
-                    else None,
-                    hive_parts,
-                )
-                if parts is not None
-            ]
+            per_path_parts = [hive_parts] if hive_parts is not None else []
             rows_per_path: list[int] | None
             df, rows_per_path, source_index, exact = read_lake_files(
                 paths,
@@ -3215,6 +3180,7 @@ class ConditionalJoin(IR):
             self.predicate = predicate
             stream = get_cuda_stream()
             ast_result = to_ast(predicate, stream=stream)
+            # The AST's literal scalars are later read on other streams.
             stream.synchronize()
             if ast_result is None:
                 raise NotImplementedError(
@@ -3638,11 +3604,25 @@ class Join(IR):
                         zlice
                     )
                 else:
+                    # cross_join is left-major, so for a right-primary order
+                    # swap the inputs and move the columns back.
+                    swap = maintain_order.startswith("right")
+                    major, minor = (right, left) if swap else (left, right)
                     columns = plc.join.cross_join(
-                        left.table, right.table, stream=stream
+                        major.table, minor.table, stream=stream
                     ).columns()
+                    if swap:
+                        columns = (
+                            *columns[major.num_columns :],
+                            *columns[: major.num_columns],
+                        )
+                    # Swapped, each left column repeats once per right row, so
+                    # its sortedness does not carry over.
                     left_cols = Join._build_columns(
-                        columns[: left.num_columns], left.columns, stream=stream
+                        columns[: left.num_columns],
+                        left.columns,
+                        left=not swap,
+                        stream=stream,
                     )
                     right_cols = Join._build_columns(
                         columns[left.num_columns :],
@@ -3956,10 +3936,9 @@ class Distinct(IR):
                 plc.types.NanEquality.ALL_EQUAL,
                 df.stream,
             )
-        # TODO: Is this sortedness setting correct
         result = DataFrame(
             [
-                Column(new, name=old.name, dtype=old.dtype).sorted_like(old)
+                Column(new, name=old.name, dtype=old.dtype)
                 for new, old in zip(table.columns(), df.columns, strict=True)
             ],
             stream=df.stream,

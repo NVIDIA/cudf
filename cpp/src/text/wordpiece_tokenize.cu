@@ -44,6 +44,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/functional>
@@ -286,7 +287,8 @@ wordpiece_vocabulary::wordpiece_vocabulary(cudf::strings_column_view const& inpu
                                          cuda::counting_iterator{vocabulary->size()},
                                          sub_map_indices.begin(),
                                          copy_pieces_fn{*d_vocabulary},
-                                         stream);
+                                         stream,
+                                         mr.as_temporary());
   auto const num_pieces = cuda::std::distance(sub_map_indices.begin(), end);
 
   // build a 2nd map with just the ## prefixed items
@@ -779,13 +781,13 @@ tokenized_words tokenize_words(WordsFn words,
     auto const is_deferred = [d_counts] __device__(cudf::size_type idx) -> bool {
       return d_counts[idx] == 0;
     };
-    auto const begin = cuda::counting_iterator<cudf::size_type>{0};
-    auto const end   = cuda::counting_iterator<cudf::size_type>{num_words};
-    auto const num_deferred =
-      static_cast<cudf::size_type>(cudf::detail::count_if(begin, end, is_deferred, stream));
+    auto const begin        = cuda::counting_iterator<cudf::size_type>{0};
+    auto const end          = cuda::counting_iterator<cudf::size_type>{num_words};
+    auto const num_deferred = static_cast<cudf::size_type>(
+      cudf::detail::count_if(begin, end, is_deferred, stream, mr.as_temporary()));
     auto d_deferred = cuda::device_buffer<cudf::size_type>{
       stream, temp_mr, static_cast<std::size_t>(num_deferred), cuda::no_init};
-    cudf::detail::copy_if(begin, end, d_deferred.begin(), is_deferred, stream);
+    cudf::detail::copy_if(begin, end, d_deferred.begin(), is_deferred, stream, mr.as_temporary());
 
     // the initial overflow size is a guess and is increased if needed
     auto overflow_capacity = static_cast<int64_t>(num_deferred) * 3;
@@ -819,12 +821,16 @@ tokenized_words tokenize_words(WordsFn words,
       // overflow is increased by overflow_size and reserved from the old capacity.
       auto const remaining_begin = d_deferred.begin();
       auto const remaining_end   = d_deferred.end();
-      auto const num_remaining   = static_cast<cudf::size_type>(
-        cudf::detail::count_if(remaining_begin, remaining_end, is_deferred, stream));
-      auto d_remaining = cuda::device_buffer<cudf::size_type>{
+      auto const num_remaining   = static_cast<cudf::size_type>(cudf::detail::count_if(
+        remaining_begin, remaining_end, is_deferred, stream, mr.as_temporary()));
+      auto d_remaining           = cuda::device_buffer<cudf::size_type>{
         stream, temp_mr, static_cast<std::size_t>(num_remaining), cuda::no_init};
-      cudf::detail::copy_if(
-        remaining_begin, remaining_end, d_remaining.begin(), is_deferred, stream);
+      cudf::detail::copy_if(remaining_begin,
+                            remaining_end,
+                            d_remaining.begin(),
+                            is_deferred,
+                            stream,
+                            mr.as_temporary());
       d_deferred = std::move(d_remaining);
 
       CUDF_EXPECTS(overflow_capacity + overflow_size < std::numeric_limits<cudf::size_type>::max(),
@@ -1013,16 +1019,17 @@ tokenized_words compute_all_tokens(
     return (d_input_chars[idx] != ' ') &&
            (is_row_start(d_row_starts, idx) || (d_input_chars[idx - 1] == ' '));
   };
-  auto const begin     = cuda::counting_iterator<int64_t>{0};
-  auto const end       = cuda::counting_iterator<int64_t>{chars_size};
-  auto const num_words = cudf::detail::count_if(begin, end, is_word_start, stream);
+  auto const begin = cuda::counting_iterator<int64_t>{0};
+  auto const end   = cuda::counting_iterator<int64_t>{chars_size};
+  auto const num_words =
+    cudf::detail::count_if(begin, end, is_word_start, stream, mr.as_temporary());
   CUDF_EXPECTS(num_words < static_cast<std::size_t>(std::numeric_limits<cudf::size_type>::max()),
                "words exceed internal limit",
                std::overflow_error);
 
   auto d_starts = cuda::device_buffer<int64_t>{
     stream, temp_mr, static_cast<std::size_t>(num_words), cuda::no_init};
-  cudf::detail::copy_if(begin, end, d_starts.begin(), is_word_start, stream);
+  cudf::detail::copy_if(begin, end, d_starts.begin(), is_word_start, stream, mr.as_temporary());
 
   return tokenize_words(
     all_words_fn{d_input_chars, chars_size, d_starts.data(), d_row_starts.data()},
@@ -1043,10 +1050,11 @@ tokenized_words compute_all_tokens(
  * A word begins with a non-space character that is either preceded by a space
  * or is the first character of the row.
  *
- * If `d_starts==nullptr` the number of words found (up to `max_words`) for each
+ * If `store_starts==false` the number of words found (up to `max_words`) for each
  * row is stored in `d_counts`. Otherwise, the position of each word is stored
  * in `d_starts` beginning at `d_offsets[row]`.
  *
+ * @tparam store_starts False to compute counts, true to store word positions
  * @param d_strings Input strings column
  * @param d_chars Beginning of the character data for d_strings adjusted for any sliced offset
  * @param max_words Maximum number of words to locate in each row
@@ -1054,6 +1062,7 @@ tokenized_words compute_all_tokens(
  * @param d_offsets Output offset for the words of each row
  * @param d_starts Position of each word within `d_chars`
  */
+template <bool store_starts>
 CUDF_KERNEL void find_row_words_kernel(cudf::column_device_view const d_strings,
                                        char const* d_chars,
                                        cudf::size_type max_words,
@@ -1078,13 +1087,17 @@ CUDF_KERNEL void find_row_words_kernel(cudf::column_device_view const d_strings,
       auto const is_start = (p < size) && (begin[p] != ' ') && ((p == 0) || (begin[p - 1] == ' '));
       auto const mask     = __ballot_sync(all_lanes, is_start);
       auto const word_idx = count + __popc(mask & ((1u << lane) - 1u));
-      if (is_start && (word_idx < max_words) && (d_starts != nullptr)) {
-        d_starts[d_offsets[row] + word_idx] = offset + p;
+      if constexpr (store_starts) {
+        if (is_start && (word_idx < max_words)) {
+          d_starts[d_offsets[row] + word_idx] = offset + p;
+        }
       }
       count += __popc(mask);
     }
   }
-  if ((lane == 0) && (d_starts == nullptr)) { d_counts[row] = cuda::std::min(count, max_words); }
+  if constexpr (!store_starts) {
+    if (lane == 0) { d_counts[row] = cuda::std::min(count, max_words); }
+  }
 }
 
 /**
@@ -1119,7 +1132,7 @@ tokenized_words compute_some_tokens(
     stream, temp_mr, static_cast<std::size_t>(input.size() + 1), cuda::no_init};
   cudf::detail::grid_1d grid{
     static_cast<cudf::thread_index_type>(input.size()) * cudf::detail::warp_size, block_size};
-  find_row_words_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+  find_row_words_kernel<false><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
     *d_strings, d_input_chars, max_words_per_row, d_offsets.data(), nullptr, nullptr);
   CUDF_CUDA_TRY(cudaGetLastError());
   auto const num_words = cudf::detail::sizes_to_offsets(
@@ -1131,9 +1144,11 @@ tokenized_words compute_some_tokens(
   // store the position of each word
   auto d_starts = cuda::device_buffer<int64_t>{
     stream, temp_mr, static_cast<std::size_t>(num_words), cuda::no_init};
-  find_row_words_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
-    *d_strings, d_input_chars, max_words_per_row, nullptr, d_offsets.data(), d_starts.data());
-  CUDF_CUDA_TRY(cudaGetLastError());
+  if (num_words > 0) {
+    find_row_words_kernel<true><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
+      *d_strings, d_input_chars, max_words_per_row, nullptr, d_offsets.data(), d_starts.data());
+    CUDF_CUDA_TRY(cudaGetLastError());
+  }
 
   return tokenize_words(
     all_words_fn{d_input_chars, chars_size, d_starts.data(), d_row_starts.data()},

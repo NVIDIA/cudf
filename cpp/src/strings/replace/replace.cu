@@ -262,8 +262,9 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    string_view const& d_replacement,
                                                    cudf::size_type maxrepl,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto const strings_count = input.size();
@@ -301,7 +302,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     copy_itr + chars_bytes,
     targets_positions_storage.begin(),
     [fn] __device__(int64_t idx) -> bool { return fn.is_target_within_row(idx); },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(std::distance(targets_positions_storage.begin(), copy_end), target_count);
@@ -358,7 +360,7 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
   // build the strings columns from the chars and offsets
   return make_strings_column(strings_count,
                              std::move(offsets),
-                             std::move(chars_data.release()[0]),
+                             std::move(*chars_data),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -457,7 +459,7 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 cudf::size_type maxrepl,
                                                 bitmask_type const* d_valid_mask,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   auto d_strings = column_device_view::create(input.parent(), stream);
 
@@ -481,7 +483,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
   if (maxrepl == 0) { return std::make_unique<cudf::column>(input.parent(), stream, mr); }
@@ -515,7 +517,7 @@ std::unique_ptr<column> replace(strings_column_view const& input,
                                 strings_column_view const& targets,
                                 strings_column_view const& repls,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_EXPECTS(targets.size() == input.size(),
                "targets column must have the same number of rows as input",
@@ -563,7 +565,7 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 string_scalar const& repl,
                                 cudf::size_type maxrepl,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace(strings, target, repl, maxrepl, stream, mr);
@@ -573,7 +575,7 @@ std::unique_ptr<column> replace(strings_column_view const& strings,
                                 strings_column_view const& targets,
                                 strings_column_view const& repls,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::replace(strings, targets, repls, stream, mr);

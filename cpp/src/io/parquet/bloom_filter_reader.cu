@@ -28,6 +28,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuco/bloom_filter_ref.cuh>
+#include <cuco/extent.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/bit>
@@ -115,15 +116,11 @@ __device__ bool probe_key(BloomFilter const& filter,
 
   // INT96 is the nanoseconds since midnight (8 bytes) followed by the Julian day (4 bytes)
   else if constexpr (physical_type == Type::INT96) {
-    using namespace cuda::std::chrono;
-    auto const nanos            = nanoseconds{literal.value<Rep>()};
-    auto const days_since_epoch = floor<days>(nanos);
-    int64_t const time_of_day   = (nanos - days_since_epoch).count();
-    uint32_t const julian_day   = days_since_epoch.count() + julian_day_unix_epoch;
-    char bytes[12];
+    auto const [time_of_day, julian_day] = duration_to_int96(duration_ns{literal.value<Rep>()});
+    char bytes[int96_size];
     cuda::std::memcpy(bytes, &time_of_day, sizeof(time_of_day));
     cuda::std::memcpy(bytes + sizeof(time_of_day), &julian_day, sizeof(julian_day));
-    return filter.contains(cudf::string_view{bytes, 12});
+    return filter.contains(cudf::string_view{bytes, int96_size});
   }
 
   // Decimals are big-endian two's complement, sign-extended to the column's `type_length`,
@@ -452,7 +449,7 @@ aggregate_reader_metadata::read_bloom_filters(
   std::span<int const> column_schemas,
   size_type total_row_groups,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr) const
+  cudf::memory_resources mr) const
 {
   // Descriptors for all the chunks that make up the selected columns
   auto const num_input_columns = column_schemas.size();
@@ -565,7 +562,8 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> bloom_filter_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Convert AST to BloomfilterAST expression with reference to bloom filter membership
   // in above `bloom_filter_membership_table`
@@ -589,7 +587,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
                          [&](auto const schema_idx) { return get_schema(schema_idx).type_length; });
 
   // The membership table is only used within this function
-  auto const mr = cudf::memory_resources{cudf::get_current_device_resource_ref()};
+  auto const temp_mr = mr.as_temporary();
 
   // Copy bloom filter bitset spans to device
   auto const device_bloom_filter_data =
@@ -619,7 +617,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
       // Add a column for all literals associated with an equality column
       for (auto const& literal : literals[input_col_idx]) {
         bloom_filter_membership_columns.emplace_back(cudf::type_dispatcher<dispatch_storage_type>(
-          dtype, bloom_filter_col, equality_col_idx, dtype, literal, stream, mr));
+          dtype, bloom_filter_col, equality_col_idx, dtype, literal, stream, temp_mr));
       }
       equality_col_idx++;
     });
@@ -630,7 +628,7 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
   // Filter bloom filter membership table with the BloomfilterAST expression and collect
   // filtered row group indices
   return collect_filtered_row_group_indices(
-    bloom_filter_membership_table, bloom_filter_expr.value(), input_row_group_indices, stream);
+    bloom_filter_membership_table, bloom_filter_expr.value(), input_row_group_indices, stream, mr);
 }
 
 equality_literals_collector::equality_literals_collector(

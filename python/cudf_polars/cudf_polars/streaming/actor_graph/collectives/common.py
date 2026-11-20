@@ -41,28 +41,31 @@ class _CollectiveIDPool:
     """Pool of vacant collective IDs."""
 
     def __init__(self) -> None:
-        # Since 3.7, dict.popitem() is guaranteed LIFO.
-        self.vacancy: dict[int, None] = dict.fromkeys(
-            range(Shuffler.max_concurrent_shuffles)
-        )
+        # Most queries need only a handful of IDs, so avoid materializing the
+        # million-entry range every time a query creates its own pool.
+        self._next_id = Shuffler.max_concurrent_shuffles
+        self.vacancy: dict[int, None] = {}
         self.lock = threading.Lock()
 
     def acquire_unsafe(self) -> int:
         # Not thread safe, must be called with self.lock held
-        try:
-            # All ranks must choose the same collective IDs during lowering.
+        # Preserve the original LIFO allocation order on every rank, including
+        # preferring released IDs over IDs that have never been allocated.
+        if self.vacancy:
             collective_id, _ = self.vacancy.popitem()
-        except KeyError:
+            return collective_id
+        if self._next_id == 0:
             raise ValueError(
                 f"Cannot shuffle more than {Shuffler.max_concurrent_shuffles} "
                 "times in a single query."
-            ) from None
-        return collective_id
+            )
+        self._next_id -= 1
+        return self._next_id
 
     def release_unsafe(self, collective_id: int) -> None:
         """Release a collective ID back to the vacancy set."""
         # Not thread safe, must be called with self.lock held
-        if collective_id in self.vacancy:
+        if collective_id < self._next_id or collective_id in self.vacancy:
             raise ValueError("Restoring ID that exists")
         self.vacancy[collective_id] = None
 

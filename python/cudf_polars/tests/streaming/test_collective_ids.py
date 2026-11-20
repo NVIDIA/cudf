@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import random
 import threading
 import uuid
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -18,6 +20,7 @@ from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.actor_graph.collectives import (
     ReserveOpIDs,
     collective_id_scope,
+    common,
     reserve_op_id,
 )
 
@@ -25,6 +28,43 @@ from cudf_polars.streaming.actor_graph.collectives import (
 def _sort_ir():
     q = pl.LazyFrame({"a": [3, 1, 2]}).sort("a")
     return Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+
+
+def test_collective_id_pool_allocation_order(monkeypatch) -> None:
+    monkeypatch.setattr(common, "Shuffler", SimpleNamespace(max_concurrent_shuffles=8))
+    pool = common._CollectiveIDPool()
+    reference = dict.fromkeys(range(8))
+    acquired: set[int] = set()
+    rng = random.Random(0)
+
+    # Rank agreement depends on retaining the old allocation order even when
+    # IDs are released out of order and then reserved again.
+    for _ in range(1000):
+        if acquired and (not reference or rng.random() < 0.5):
+            op_id = rng.choice(sorted(acquired))
+            acquired.remove(op_id)
+            reference[op_id] = None
+            pool.release_unsafe(op_id)
+        else:
+            expected, _ = reference.popitem()
+            actual = pool.acquire_unsafe()
+            assert actual == expected
+            assert actual not in acquired
+            acquired.add(actual)
+
+
+def test_collective_id_pool_exhaustion_and_release(monkeypatch) -> None:
+    monkeypatch.setattr(common, "Shuffler", SimpleNamespace(max_concurrent_shuffles=3))
+    pool = common._CollectiveIDPool()
+    with pytest.raises(ValueError, match="Restoring ID that exists"):
+        pool.release_unsafe(0)
+    assert [pool.acquire_unsafe() for _ in range(3)] == [2, 1, 0]
+    with pytest.raises(ValueError, match="Cannot shuffle more than 3 times"):
+        pool.acquire_unsafe()
+    pool.release_unsafe(1)
+    with pytest.raises(ValueError, match="Restoring ID that exists"):
+        pool.release_unsafe(1)
+    assert pool.acquire_unsafe() == 1
 
 
 def _reserved_ids(ir) -> list[int]:

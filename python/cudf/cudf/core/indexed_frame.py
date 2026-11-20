@@ -1276,6 +1276,14 @@ class IndexedFrame(Frame):
         np.int64(10)
         """
         # TODO: This function does not currently support nulls.
+        for obj in (self, other):
+            if isinstance(obj, (cudf.Series, cudf.DataFrame)) and any(
+                is_pandas_nullable_extension_dtype(dtype)
+                for _, dtype in obj._dtypes
+            ):
+                raise NotImplementedError(
+                    "dot does not support pandas nullable extension dtypes."
+                )
         lhs = self.values
         result_index = None
         result_cols = None

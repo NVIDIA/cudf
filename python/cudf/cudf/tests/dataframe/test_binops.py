@@ -692,3 +692,16 @@ def test_binop_dot_preserve_index():
     result = ser @ df
     expected = ser.to_pandas() @ df.to_pandas()
     assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("other_type", ["DataFrame", "Series"])
+def test_binop_dot_nullable_extension_dtype_not_supported(other_type):
+    df = cudf.DataFrame([[1, 2], [3, 4]], columns=["a", "b"], dtype="int32")
+    if other_type == "DataFrame":
+        other = cudf.DataFrame(
+            [[1, 0], [0, 1]], index=["a", "b"], dtype="Int32"
+        )
+    else:
+        other = cudf.Series([1, 0], index=["a", "b"], dtype="Int32")
+    with pytest.raises(NotImplementedError, match="nullable extension"):
+        df.dot(other)

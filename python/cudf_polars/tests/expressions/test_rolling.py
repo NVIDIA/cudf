@@ -602,13 +602,22 @@ def test_over_with_order_by(
     assert_gpu_result_equal(q, engine=engine)
 
 
-def _polars_exposes_row_encode() -> bool:
-    q = pl.LazyFrame({"g": [1], "x": [1], "y": [1]}).select(
+def _multi_key_over_ldf() -> pl.LazyFrame:
+    return pl.LazyFrame({"g": [1], "x": [1], "y": [1]}).select(
         pl.col("x").sum().over("g", order_by=["x", "y"])
     )
-    translator = Translator(q._ldf.visit(), pl.GPUEngine())
-    translator.translate_ir()
-    return not translator.errors
+
+
+def _polars_exposes_row_encode() -> bool:
+    # Ask the Polars visitor directly, so that a cudf-polars translation
+    # failure is not mistaken for a Polars version without row_encode.
+    visitor = _multi_key_over_ldf()._ldf.visit()
+    window = visitor.view_expression(visitor.get_exprs()[0].node)
+    try:
+        visitor.view_expression(window.order_by)
+    except NotImplementedError:
+        return False
+    return True
 
 
 MULTIPLE_ORDER_BY_KEYS = [
@@ -627,6 +636,16 @@ def test_over_with_multiple_order_by_keys_unsupported(
 ) -> None:
     q = df.select(pl.col("x").sum().over("g", order_by=order_by))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    not _polars_exposes_row_encode(),
+    reason="Polars does not expose row_encode in the IR visitor",
+)
+def test_over_with_multiple_order_by_keys_translates() -> None:
+    translator = Translator(_multi_key_over_ldf()._ldf.visit(), pl.GPUEngine())
+    translator.translate_ir()
+    assert not translator.errors
 
 
 @pytest.mark.skipif(

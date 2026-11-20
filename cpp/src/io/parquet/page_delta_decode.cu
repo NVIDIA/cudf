@@ -604,14 +604,6 @@ constexpr int32_t short_gap_rows = 8;
 using exchange_type = cub::WarpExchange<uint64_t, items_per_lane, warp_lanes>;
 
 /**
- * @brief Shared memory used by `decode_page`
- */
-struct shared_storage {
-  typename exchange_type::TempStorage exchange;
-  alignas(word_bytes) uint64_t header[header_words];
-};
-
-/**
  * @brief Returns `w[i]` for an index known to be below `K`.
  *
  * Selecting through a chain of conditional moves keeps `w` in registers; a dynamic index would
@@ -959,7 +951,8 @@ struct rank_map_output;
  * @param data Start of the DELTA_BINARY_PACKED stream
  * @param end End of the page data
  * @param nz_count Number of values to decode
- * @param storage Shared memory for this warp
+ * @param exchange Shared memory for the output transpose
+ * @param staged_header `header_words` words of shared memory for the staged block header
  * @param output Places the decoded values
  * @return 0, `DELTA_PARAMS_UNSUPPORTED` if the page header or a mini-block bit width is invalid,
  * or `DATA_STREAM_OVERRUN` if the page holds fewer than `nz_count` values
@@ -969,7 +962,8 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
                                                 uint8_t const* data,
                                                 uint8_t const* end,
                                                 uint32_t nz_count,
-                                                shared_storage& storage,
+                                                exchange_type::TempStorage& exchange,
+                                                uint64_t* staged_header,
                                                 rank_map_output<Width>& output)
 {
   uint32_t const lane = warp.thread_rank();
@@ -987,7 +981,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
     return static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
   }
   walker wk{end,
-            storage.header,
+            staged_header,
             static_cast<uint32_t>(mini_block_count),
             static_cast<uint32_t>((block_size / mini_block_count) / warp_lanes)};
   uint32_t const value_limit = cuda::std::min(nz_count, static_cast<uint32_t>(value_count));
@@ -1056,7 +1050,7 @@ __device__ kernel_error::value_type decode_page(warp_tile const& warp,
       values[item] += offset;
     }
     // The values are blocked; transpose them once for coalesced output stores.
-    exchange_type(storage.exchange).BlockedToStriped(values, values);
+    exchange_type(exchange).BlockedToStriped(values, values);
     output.place(position, values, value_limit);
     // The next tile's exchange reuses the storage.
     warp.sync();
@@ -1251,10 +1245,11 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
   PageInfo& page,
   device_span<ColumnChunkDesc const> chunks,
   size_t min_row,
-  size_t num_rows,
-  nz_register_delta::shared_storage& storage)
+  size_t num_rows)
 {
   __shared__ __align__(16) full_page_decode_state state_g;
+  __shared__ nz_register_delta::exchange_type::TempStorage exchange;
+  __shared__ uint64_t staged_header[nz_register_delta::header_words];
   auto* const s = &state_g;
 
   [[maybe_unused]] null_count_back_copier _{s, static_cast<int32_t>(warp.thread_rank())};
@@ -1299,7 +1294,8 @@ __device__ __forceinline__ kernel_error::value_type decode_mapped_page(
                                                       s->stream.data_start,
                                                       s->stream.data_end,
                                                       static_cast<uint32_t>(nz_count),
-                                                      storage,
+                                                      exchange,
+                                                      staged_header,
                                                       output);
     if (error == 0) { output.fill_tail(static_cast<uint32_t>(nz_count)); }
     return error;
@@ -1333,8 +1329,6 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1
                                          cudf::device_span<bool const> page_mask,
                                          kernel_error::pointer error_code)
 {
-  __shared__ nz_register_delta::shared_storage decode_storage;
-
   auto const warp     = cg::tiled_partition<cudf::detail::warp_size>(cg::this_thread_block());
   auto const page_idx = cg::this_grid().block_rank();
 
@@ -1342,7 +1336,7 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size, 1
   auto& page = pages[page_idx];
   // Pages without a map are decoded by the level-decoding kernel.
   if (!has_delta_binary_nz_map(page)) { return; }
-  auto const error = decode_mapped_page(warp, page, chunks, min_row, num_rows, decode_storage);
+  auto const error = decode_mapped_page(warp, page, chunks, min_row, num_rows);
   if (error != 0) {
     cg::invoke_one(warp, [&] { set_error(error, error_code); });
   }

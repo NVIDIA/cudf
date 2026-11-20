@@ -30,7 +30,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/std/optional>
@@ -644,10 +643,11 @@ class path_state : private parser {
  *
  * @param json_path The incoming json path
  * @param stream Cuda stream to perform any gpu actions on
+ * @param mr Memory resources used to allocate the returned command buffer's device memory
  * @returns A pair containing the command buffer, and maximum stack depth required.
  */
 std::pair<cuda::std::optional<cuda::device_buffer<path_operator>>, int> build_command_buffer(
-  cudf::string_scalar const& json_path, cuda::stream_ref stream)
+  cudf::string_scalar const& json_path, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   std::string h_json_path = json_path.to_string(stream);
   path_state p_state(h_json_path.data(), static_cast<size_type>(h_json_path.size()));
@@ -682,7 +682,7 @@ std::pair<cuda::std::optional<cuda::device_buffer<path_operator>>, int> build_co
   auto const is_empty = h_operators.size() == 1 && h_operators[0].type == path_operator_type::END;
   return is_empty ? std::pair(cuda::std::nullopt, 0)
                   : std::pair(cuda::std::make_optional(cudf::detail::make_device_buffer(
-                                h_operators, stream, cudf::get_current_device_resource_ref())),
+                                h_operators, stream, mr.get_output_mr())),
                               max_stack_depth);
 }
 
@@ -968,10 +968,11 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   // preprocess the json_path into a command buffer
-  auto preprocess = build_command_buffer(json_path, stream);
+  auto preprocess =
+    build_command_buffer(json_path, stream, cudf::get_current_device_resource_ref());
   CUDF_EXPECTS(std::get<1>(preprocess) <= max_command_stack_depth,
                "Encountered JSONPath string that is too complex");
 
@@ -989,8 +990,8 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
     return make_strings_column(
       col.size(),
       std::move(offsets),
-      rmm::device_buffer{0, stream, mr},  // empty chars
-      col.size(),                         // null_count
+      rmm::device_buffer{0, stream, mr.get_output_mr()},  // empty chars
+      col.size(),                                         // null_count
       cudf::detail::create_null_mask(col.size(), mask_state::ALL_NULL, stream, mr));
   }
 
@@ -1020,7 +1021,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // allocate output string column
-  rmm::device_uvector<char> chars(output_size, stream, mr);
+  rmm::device_uvector<char> chars(output_size, stream, mr.get_output_mr());
 
   // potential optimization : if we know that all outputs are valid, we could skip creating
   // the validity mask altogether
@@ -1062,7 +1063,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cudf::string_scalar const& json_path,
                                               get_json_object_options options,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::get_json_object(col, json_path, options, stream, mr);

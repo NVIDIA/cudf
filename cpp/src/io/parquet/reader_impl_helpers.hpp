@@ -14,12 +14,12 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
 #include <thrust/host_vector.h>
 
 #include <algorithm>
-#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -64,27 +64,18 @@ template <typename T, typename UnaryOp>
   }
 
   std::vector<std::future<result_type>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   tasks.reserve(inputs.size());
 
-  auto pending_exception = std::exception_ptr{};
-  try {
-    std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
-      return cudf::detail::host_worker_pool().submit_task(
-        [&op, input_ptr = &input] { return op(*input_ptr); });
-    });
-  } catch (...) {
-    pending_exception = std::current_exception();
-  }
+  std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
+    return cudf::detail::host_worker_pool().submit_task(
+      [&op, input_ptr = &input] { return op(*input_ptr); });
+  });
 
+  // Rethrows the first task failure; the guard waits for the remaining tasks on unwinding
   for (auto& task : tasks) {
-    try {
-      results.emplace_back(task.get());
-    } catch (...) {
-      if (not pending_exception) { pending_exception = std::current_exception(); }
-    }
+    results.emplace_back(task.get());
   }
-
-  if (pending_exception) { std::rethrow_exception(pending_exception); }
 
   return results;
 }
@@ -389,7 +380,7 @@ class aggregate_reader_metadata {
                      std::span<int const> column_schemas,
                      size_type num_row_groups,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const;
+                     cudf::memory_resources mr) const;
 
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
@@ -635,7 +626,7 @@ class aggregate_reader_metadata {
   [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
     std::span<std::string const> column_names,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Get total number of rows across all files

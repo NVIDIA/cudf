@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
@@ -22,6 +23,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
@@ -62,7 +64,9 @@ struct chars_size_transform {
   }
 };
 
-auto create_strings_device_views(host_span<column_view const> views, cuda::stream_ref stream)
+auto create_strings_device_views(host_span<column_view const> views,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   // Assemble contiguous array of device views
@@ -78,23 +82,29 @@ auto create_strings_device_views(host_span<column_view const> views, cuda::strea
       return static_cast<size_t>(col.size());
     });
   thrust::inclusive_scan(thrust::host, offset_it, input_offsets.end(), offset_it);
-  auto d_input_offsets = cudf::detail::make_device_uvector_async(
-    input_offsets, stream, cudf::get_current_device_resource_ref());
+  auto d_input_offsets =
+    cudf::detail::make_device_buffer_async(input_offsets, stream, mr.get_output_mr());
   auto const output_size = input_offsets.back();
 
   // Compute the partition offsets and size of chars column
   // Note: Using 64-bit size_t so we can detect overflow of 32-bit size_type
-  auto d_partition_offsets = rmm::device_uvector<size_t>(views.size() + 1, stream);
-  d_partition_offsets.set_element_to_zero_async(0, stream);  // zero first element
+  auto d_partition_offsets =
+    cuda::device_buffer<size_t>(stream, mr.get_output_mr(), views.size() + 1, cuda::no_init);
+  CUDF_CUDA_TRY(cudaMemsetAsync(
+    d_partition_offsets.data(), 0, sizeof(size_t), stream.get()));  // zero first element
 
-  thrust::transform_inclusive_scan(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    device_views_ptr,
-    device_views_ptr + views.size(),
-    std::next(d_partition_offsets.begin()),
-    chars_size_transform{},
-    cuda::std::plus{});
-  auto const output_chars_size = d_partition_offsets.back_element(stream);
+  thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                                   device_views_ptr,
+                                   device_views_ptr + views.size(),
+                                   std::next(d_partition_offsets.begin()),
+                                   chars_size_transform{},
+                                   cuda::std::plus{});
+  size_t output_chars_size;
+  CUDF_CUDA_TRY(
+    cudf::detail::memcpy_async(&output_chars_size,
+                               d_partition_offsets.data() + d_partition_offsets.size() - 1,
+                               sizeof(output_chars_size),
+                               stream));
   stream.sync();  // ensure copy of output_chars_size is complete before returning
 
   return std::make_tuple(std::move(device_view_owners),
@@ -168,7 +178,7 @@ CUDF_KERNEL void fused_concatenate_string_offset_kernel(
 CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const* input_views,
                                                        size_t const* partition_offsets,
                                                        size_type const num_input_views,
-                                                       size_type const output_size,
+                                                       int64_t const output_size,
                                                        char* output_data)
 {
   auto output_index = cudf::detail::grid_1d::global_thread_id();
@@ -197,11 +207,12 @@ CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const*
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   // Compute output sizes
-  auto const device_views         = create_strings_device_views(columns, stream);
+  auto const device_views =
+    create_strings_device_views(columns, stream, cudf::get_current_device_resource_ref());
   auto const& d_views             = std::get<1>(device_views);
   auto const& d_input_offsets     = std::get<2>(device_views);
   auto const& d_partition_offsets = std::get<3>(device_views);
@@ -219,7 +230,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     std::any_of(columns.begin(), columns.end(), [](auto const& col) { return col.has_nulls(); });
 
   // create output chars column
-  rmm::device_uvector<char> output_chars(total_bytes, stream, mr);
+  rmm::device_uvector<char> output_chars(total_bytes, stream, mr.get_output_mr());
   auto d_new_chars = output_chars.data();
 
   // create output offsets column
@@ -262,12 +273,12 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       // Use single kernel launch to copy chars columns
       constexpr size_t block_size{256};
       // cudf::detail::grid_1d limited to size_type elements
-      auto const num_blocks = util::div_rounding_up_safe(total_bytes, block_size);
+      auto const num_blocks = cudf::detail::div_rounding_up_safe(total_bytes, block_size);
       auto const kernel     = fused_concatenate_string_chars_kernel;
       kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_views,
                                                           d_partition_offsets.data(),
                                                           static_cast<size_type>(columns.size()),
-                                                          total_bytes,
+                                                          static_cast<int64_t>(total_bytes),
                                                           d_new_chars);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {

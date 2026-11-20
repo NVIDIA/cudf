@@ -150,6 +150,12 @@ class file_source : public kvikio_source<kvikio::FileHandle> {
       _kvikio_handle.get_compat_mode_manager().is_compat_mode_preferred() ? "on" : "off");
   }
 
+  [[nodiscard]] bool is_device_read_direct(size_t size) const override
+  {
+    return !_kvikio_handle.get_compat_mode_manager().is_compat_mode_preferred() &&
+           size >= kvikio::defaults::gds_threshold();
+  }
+
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
                                         uint8_t* dst,
@@ -222,6 +228,8 @@ class device_buffer_source final : public datasource {
   }
 
   [[nodiscard]] bool supports_device_read() const override { return true; }
+
+  [[nodiscard]] bool is_device_read_direct(size_t) const override { return true; }
 
   std::future<size_t> device_read_async(size_t offset,
                                         size_t size,
@@ -317,6 +325,11 @@ class user_datasource_wrapper : public datasource {
   [[nodiscard]] bool is_device_read_preferred(size_t size) const override
   {
     return source->is_device_read_preferred(size);
+  }
+
+  [[nodiscard]] bool is_device_read_direct(size_t size) const override
+  {
+    return source->is_device_read_direct(size);
   }
 
   size_t device_read(size_t offset, size_t size, uint8_t* dst, cuda::stream_ref stream) override

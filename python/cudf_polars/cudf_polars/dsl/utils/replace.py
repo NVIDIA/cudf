@@ -33,21 +33,14 @@ class State[N: Node[Any]](TypedDict):
     replacements: Mapping[N, N]
 
 
-def _replace(
-    node: NodeT, fn: GenericTransformer[NodeT, NodeT, State]
-) -> NodeT:  # pragma: no cover
-    # only called in Window node dispatch function
-    # in translate.py, which also skips code coverage
-    # See the TODO there for more details.
+def _replace(node: NodeT, fn: GenericTransformer[NodeT, NodeT, State]) -> NodeT:
     try:
         return fn.state["replacements"][node]
     except KeyError:
         return reuse_if_unchanged(node, fn)
 
 
-def replace(
-    nodes: Sequence[NodeT], replacements: Mapping[NodeT, NodeT]
-) -> list[NodeT]:  # pragma: no cover
+def replace(nodes: Sequence[NodeT], replacements: Mapping[NodeT, NodeT]) -> list[NodeT]:
     """
     Replace nodes in expressions.
 

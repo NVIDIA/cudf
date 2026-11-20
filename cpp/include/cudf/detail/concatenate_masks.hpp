@@ -52,13 +52,13 @@ size_type concatenate_masks(host_span<column_view const> views,
                             cuda::stream_ref stream);
 
 /**
- * @copydoc cudf::concatenate_masks(std::span<column_view const>, rmm::device_async_resource_ref)
+ * @copydoc cudf::concatenate_masks(std::span<column_view const>, cudf::memory_resources)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
 cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
                                                           cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr);
+                                                          cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

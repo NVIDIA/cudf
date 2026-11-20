@@ -276,7 +276,7 @@ inline bool md5_leaf_type_check(data_type dt)
 
 std::unique_ptr<column> md5(table_view const& input,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   if (input.num_columns() == 0 || input.num_rows() == 0) {
     // Return the MD5 hash of a zero-length input.
@@ -304,7 +304,7 @@ std::unique_ptr<column> md5(table_view const& input,
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
-  rmm::device_uvector<char> chars(bytes, stream, mr);
+  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
 
   auto const device_input = table_device_view::create(input, stream);
@@ -347,7 +347,7 @@ std::unique_ptr<column> md5(table_view const& input,
 
 std::unique_ptr<column> md5(table_view const& input,
                             cuda::stream_ref stream,
-                            rmm::device_async_resource_ref mr)
+                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::md5(input, stream, mr);

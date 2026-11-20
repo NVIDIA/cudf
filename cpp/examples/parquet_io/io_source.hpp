@@ -7,9 +7,9 @@
 
 #include <cudf/io/types.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <thrust/host_vector.h>
 
@@ -86,5 +86,5 @@ class io_source {
   cudf::io::source_info source_info;
   std::vector<char> h_buffer;
   pinned_vector<char> pinned_buffer;
-  rmm::device_uvector<std::byte> d_buffer;
+  cuda::device_buffer<std::byte> d_buffer;
 };

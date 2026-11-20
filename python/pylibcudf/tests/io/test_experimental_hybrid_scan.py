@@ -5,6 +5,7 @@ import io
 import struct
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 from utils import (
@@ -46,15 +47,15 @@ def _filter_row_groups_with_dictionary_pages(
     dictionary_ranges = reader.dictionary_pages_byte_ranges(
         all_row_groups, options
     )
-    # Keep source bytes alive until synchronize_stream() runs
+    # Keep the host slices alive until synchronize_stream() runs
+    dictionary_bytes = [
+        parquet_bytes[r.offset : r.offset + r.size] for r in dictionary_ranges
+    ]
     dictionary_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
         )
-        for r in dictionary_ranges
+        for src in dictionary_bytes
     ]
     synchronize_stream()
     return reader.filter_row_groups_with_dictionary_pages(
@@ -125,6 +126,22 @@ def simple_hybrid_scan_reader(
     """
     footer_mv = extract_parquet_footer(simple_parquet_bytes)
     return HybridScanReader(footer_mv, simple_parquet_options)
+
+
+def _row_mask_with_exclusions(
+    col0: pa.Array, filter_threshold: int
+) -> tuple[pa.Array, pa.Array]:
+    """Row mask excluding every third (false) and fifth (null) row, and the
+    expected surviving rows for `col0 >= filter_threshold`.
+    """
+    row_mask = pa.array(
+        [None if i % 5 == 0 else i % 3 != 0 for i in range(len(col0))],
+        type=pa.bool_(),
+    )
+    keep = pc.and_(
+        pc.greater_equal(col0, filter_threshold), pc.fill_null(row_mask, False)
+    )
+    return row_mask, keep
 
 
 def test_hybrid_scan_reader_basic(
@@ -304,6 +321,99 @@ def test_hybrid_scan_bloom_filter_byte_ranges_discarded_or(
     assert bloom_ranges(filter_expression) == bloom_ranges(survivor)
 
 
+@requires_pyarrow_bloom_filters
+@pytest.mark.parametrize("stream", [None, Stream()])
+def test_hybrid_scan_filter_row_groups_with_bloom_filters(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+    stream: Stream | None,
+) -> None:
+    """Bitsets fetched with `fetch_bloom_filters_to_device` prune row groups."""
+    buf = io.BytesIO()
+    pq.write_table(
+        simple_parquet_table,
+        buf,
+        row_group_size=row_group_size,
+        bloom_filter_options={"col1": BLOOM_FILTER_OPTIONS},
+    )
+    options = plc.io.parquet.ParquetReaderOptions()
+    reader = HybridScanReader(extract_parquet_footer(buf.getvalue()), options)
+    row_groups = reader.all_row_groups(options)
+
+    for value, expected in [("str_7", [0]), ("str_990", [3]), ("absent", [])]:
+        options.set_filter(
+            Operation(
+                ASTOperator.EQUAL,
+                ColumnNameReference("col1"),
+                Literal(plc.Scalar.from_arrow(pa.scalar(value))),
+            )
+        )
+        bitsets = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+            plc.io.SourceInfo([buf]),
+            reader.bloom_filters_byte_ranges(row_groups, options),
+            plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+            stream,
+        )
+        assert len(bitsets) == len(row_groups)
+        assert (
+            reader.filter_row_groups_with_bloom_filters(
+                bitsets, row_groups, options, stream
+            )
+            == expected
+        )
+
+
+@requires_pyarrow_bloom_filters
+def test_fetch_bloom_filters_to_device_all_empty(
+    simple_parquet_table: pa.Table,
+    row_group_size: int,
+) -> None:
+    """Empty bloom filter ranges give empty views and prune no row groups."""
+    buf = io.BytesIO()
+    pq.write_table(
+        simple_parquet_table,
+        buf,
+        row_group_size=row_group_size,
+        bloom_filter_options={"col1": BLOOM_FILTER_OPTIONS},
+    )
+    options = plc.io.parquet.ParquetReaderOptions()
+    reader = HybridScanReader(extract_parquet_footer(buf.getvalue()), options)
+    row_groups = reader.all_row_groups(options)
+    options.set_filter(
+        Operation(
+            ASTOperator.EQUAL,
+            ColumnNameReference("col1"),
+            Literal(plc.Scalar.from_arrow(pa.scalar("absent"))),
+        )
+    )
+    byte_ranges = [
+        plc.io.text.ByteRangeInfo(r.offset, 0)
+        for r in reader.bloom_filters_byte_ranges(row_groups, options)
+    ]
+    bitsets = plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+        plc.io.SourceInfo([buf]),
+        byte_ranges,
+        plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE,
+    )
+    assert [b.nbytes for b in bitsets] == [0] * len(row_groups)
+    assert (
+        reader.filter_row_groups_with_bloom_filters(
+            bitsets, row_groups, options
+        )
+        == row_groups
+    )
+
+
+def test_fetch_bloom_filters_to_device_rejects_none() -> None:
+    policy = plc.io.parquet_io_utils.IOSubmissionPolicy.SERIALIZE
+    with pytest.raises(TypeError, match="source_info"):
+        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(None, [], policy)
+    with pytest.raises(TypeError, match="byte_ranges"):
+        plc.io.parquet_io_utils.fetch_bloom_filters_to_device(
+            plc.io.SourceInfo([io.BytesIO(b"")]), [None], policy
+        )
+
+
 def test_hybrid_scan_column_chunk_byte_ranges(
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
@@ -358,6 +468,7 @@ def test_hybrid_scan_materialize_columns(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    simple_parquet_table: pa.Table,
     num_rows: int,
     stream: Stream | None,
     use_data_page_mask: UseDataPageMask,
@@ -391,21 +502,26 @@ def test_hybrid_scan_materialize_columns(
     total_rows = simple_hybrid_scan_reader.total_rows_in_row_groups(
         filtered_row_groups
     )
-    row_mask_array = pa.array([True] * total_rows, type=pa.bool_())
+    assert total_rows == num_rows
+    row_mask_array, keep = _row_mask_with_exclusions(
+        simple_parquet_table["col0"].combine_chunks(), filter_threshold
+    )
     row_mask = plc.Column.from_arrow(row_mask_array)
 
     # Get filter column data
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream(stream)
@@ -422,8 +538,11 @@ def test_hybrid_scan_materialize_columns(
 
     synchronize_stream(stream)
 
-    # Filter column should have 1 column, with rows passing the filter
-    expected_result_rows = num_rows - filter_threshold
+    # Filter column should have 1 column, with rows passing the filter and
+    # the input row mask, and the row mask is updated to exactly those rows
+    expected_result_rows = pc.sum(keep).as_py()
+    assert row_mask.null_count() == 0
+    assert row_mask.to_arrow().equals(keep)
     assert filter_result.tbl.num_columns() == 1
     assert filter_result.tbl.num_rows() == expected_result_rows
 
@@ -433,14 +552,16 @@ def test_hybrid_scan_materialize_columns(
             filtered_row_groups, simple_parquet_options
         )
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    payload_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in payload_ranges
+    ]
     payload_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in payload_ranges
+        for src in payload_bytes
     ]
 
     synchronize_stream(stream)
@@ -467,7 +588,6 @@ def test_hybrid_scan_materialize_columns(
     comparison_options = plc.io.parquet.ParquetReaderOptions.builder(
         comparison_source
     ).build()
-    comparison_options.set_filter(filter_expression)
     expected_result = plc.io.parquet.read_parquet(comparison_options, stream)
 
     synchronize_stream(stream)
@@ -477,7 +597,7 @@ def test_hybrid_scan_materialize_columns(
     hybrid_table = plc.Table(hybrid_columns)
 
     # Compare just the table data (metadata structures are complex)
-    expected_arrow = expected_result.tbl.to_arrow()
+    expected_arrow = expected_result.tbl.to_arrow().filter(keep)
     hybrid_arrow = hybrid_table.to_arrow()
 
     assert expected_arrow.equals(hybrid_arrow)
@@ -490,7 +610,9 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     simple_parquet_table: pa.Table,
     num_rows: int,
 ) -> None:
-    """Test payload page pruning without a page index set up on the reader."""
+    """Test payload page pruning without a page index set up on the reader,
+    then page-level (sparse) I/O once the page index is set up.
+    """
     reader = simple_hybrid_scan_reader
     row_groups = reader.all_row_groups(simple_parquet_options)
 
@@ -557,6 +679,55 @@ def test_hybrid_scan_payload_page_mask_without_page_index(
     synchronize_stream()
     assert chunked_rows == expected_rows
 
+    # Page-level (sparse) I/O requires the offset index from the page index
+    with pytest.raises(RuntimeError):
+        reader.payload_pages_byte_ranges(
+            row_groups, row_mask, simple_parquet_options
+        )
+    page_index = reader.page_index_byte_range()
+    reader.setup_page_index(
+        memoryview(simple_parquet_bytes)[
+            page_index.offset : page_index.offset + page_index.size
+        ]
+    )
+
+    # Fetch only the surviving pages, passing None for pruned ones
+    page_ranges = reader.payload_pages_byte_ranges(
+        row_groups, row_mask, simple_parquet_options
+    )
+    assert any(r.size == 0 for r in page_ranges)
+    # Caller is responsible for keeping the source bytes alive until
+    # synchronize_stream() is called below.
+    # See https://github.com/rapidsai/rmm/issues/2521
+    page_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size] if r.size else None
+        for r in page_ranges
+    ]
+    page_data = [
+        None
+        if src is None
+        else plc.gpumemoryview(
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
+        )
+        for src in page_bytes
+    ]
+    synchronize_stream()
+
+    reader.setup_chunking_for_payload_pages(
+        256,
+        0,
+        row_groups,
+        row_mask,
+        page_data,
+        simple_parquet_options,
+    )
+    sparse_rows = []
+    while reader.has_next_table_chunk():
+        chunk = reader.materialize_payload_columns_chunk(row_mask)
+        sparse_rows.extend(to_rows(chunk.tbl))
+    synchronize_stream()
+    assert sparse_rows == expected_rows
+
 
 @pytest.mark.parametrize("stream", [None, Stream()])
 def test_hybrid_scan_single_step_materialize(
@@ -599,14 +770,16 @@ def test_hybrid_scan_single_step_materialize(
         )
     )
 
+    # Keep the host slices alive until synchronize_stream() runs
+    all_columns_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in all_columns_ranges
+    ]
     all_columns_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in all_columns_ranges
+        for src in all_columns_bytes
     ]
 
     synchronize_stream(stream)
@@ -681,14 +854,16 @@ def test_hybrid_scan_has_next_table_chunk(
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream())
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream()
@@ -714,6 +889,7 @@ def test_hybrid_scan_chunked_reading(
     simple_parquet_bytes: bytes,
     simple_hybrid_scan_reader: HybridScanReader,
     simple_parquet_options: plc.io.parquet.ParquetReaderOptions,
+    simple_parquet_table: pa.Table,
     num_rows: int,
     stream: Stream | None,
 ) -> None:
@@ -744,21 +920,32 @@ def test_hybrid_scan_chunked_reading(
     total_rows = simple_hybrid_scan_reader.total_rows_in_row_groups(
         filtered_row_groups
     )
-    row_mask_array = pa.array([True] * total_rows, type=pa.bool_())
-    row_mask = plc.Column.from_arrow(row_mask_array)
+    assert total_rows == num_rows
+    col0 = simple_parquet_table["col0"].combine_chunks()
+    row_mask_array, keep = _row_mask_with_exclusions(col0, filter_threshold)
+    # Slice the row mask so that it has a non-zero offset
+    offset = 3
+    row_mask = plc.copying.slice(
+        plc.Column.from_arrow(
+            pa.concat_arrays([pa.nulls(offset, pa.bool_()), row_mask_array])
+        ),
+        [offset, offset + total_rows],
+    )[0]
 
     # Get column data
     filter_ranges = simple_hybrid_scan_reader.filter_column_chunks_byte_ranges(
         filtered_row_groups, simple_parquet_options
     )
+    # Keep the host slices alive until synchronize_stream() runs
+    filter_bytes = [
+        simple_parquet_bytes[r.offset : r.offset + r.size]
+        for r in filter_ranges
+    ]
     filter_data = [
         plc.gpumemoryview(
-            rmm.DeviceBuffer.to_device(
-                memoryview(simple_parquet_bytes)[r.offset : r.offset + r.size],
-                plc.utils._get_stream(stream),
-            )
+            rmm.DeviceBuffer.to_device(src, plc.utils._get_stream(stream))
         )
-        for r in filter_ranges
+        for src in filter_bytes
     ]
 
     synchronize_stream(stream)
@@ -779,7 +966,7 @@ def test_hybrid_scan_chunked_reading(
     )
 
     # Read chunks
-    chunks_read = 0
+    chunks = []
     while simple_hybrid_scan_reader.has_next_table_chunk():
         chunk_result = (
             simple_hybrid_scan_reader.materialize_filter_columns_chunk(
@@ -787,13 +974,20 @@ def test_hybrid_scan_chunked_reading(
             )
         )
         assert isinstance(chunk_result, plc.io.types.TableWithMetadata)
-        chunks_read += 1
+        chunks.append(chunk_result.tbl.to_arrow())
         # Limit iterations to avoid infinite loop if something goes wrong
-        if chunks_read > 100:
+        if len(chunks) > 100:
             break
 
-    # We should have read at least one chunk
-    assert chunks_read > 0
+    # The chunk read limit is small enough to split the output
+    assert len(chunks) > 1
+
+    # Chunks hold rows passing the filter and the input row mask, and the row
+    # mask is updated to exactly those rows
+    result = pa.concat_tables(chunks).column(0)
+    assert result.to_pylist() == col0.filter(keep).to_pylist()
+    assert row_mask.null_count() == 0
+    assert row_mask.to_arrow().equals(keep)
 
 
 def test_hybrid_scan_construct_row_group_passes(

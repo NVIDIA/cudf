@@ -32,6 +32,21 @@ TEST_F(DictionaryGatherTest, Gather)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, decoded->view());
 }
 
+TEST_F(DictionaryGatherTest, EmptyGatherMap)
+{
+  cudf::test::strings_column_wrapper strings{"eee", "aaa", "ddd"};
+  auto dictionary = cudf::dictionary::encode(strings);
+
+  cudf::test::fixed_width_column_wrapper<int32_t> gather_map{};
+  auto table_result = cudf::gather(cudf::table_view{{dictionary->view()}}, gather_map)->release();
+  auto result       = cudf::dictionary_column_view(table_result.front()->view());
+
+  EXPECT_EQ(result.size(), 0);
+  ASSERT_EQ(result.parent().num_children(), 2);
+  EXPECT_EQ(result.keys().type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(result.keys_type().id(), cudf::type_id::STRING);
+}
+
 TEST_F(DictionaryGatherTest, GatherWithNulls)
 {
   cudf::test::fixed_width_column_wrapper<int64_t> data{{1, 5, 5, 3, 7, 1},

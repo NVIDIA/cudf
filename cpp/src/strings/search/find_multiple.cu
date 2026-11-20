@@ -27,7 +27,7 @@ namespace detail {
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   auto const strings_count = input.size();
   auto const targets_count = targets.size();
@@ -91,7 +91,7 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
 std::unique_ptr<column> find_multiple(strings_column_view const& input,
                                       strings_column_view const& targets,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find_multiple(input, targets, stream, mr);

@@ -9,9 +9,12 @@
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/cmath>
 #include <cuda/numeric>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/cassert>
 #include <cuda/std/cmath>
+#include <cuda/std/concepts>
 #include <cuda/std/functional>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -75,30 +78,14 @@ namespace detail {
  * @param exponent The exponent to be used for exponentiation
  * @return Result of `Base` to the power of `exponent` of type `Rep`
  */
-template <typename Rep,
-          Radix Base,
-          typename T,
-          typename cuda::std::enable_if_t<(cuda::std::is_same_v<int32_t, T> &&
-                                           cuda::std::is_integral_v<Rep>)>* = nullptr>
+template <cuda::std::integral Rep, Radix Base, cuda::std::same_as<int32_t> T>
 CUDF_HOST_DEVICE inline constexpr Rep ipow(T exponent)
 {
   cudf_assert(exponent >= 0 && "integer exponentiation with negative exponent is not possible.");
-
+  // cuda::ipow returns 0 when a power-of-two base yields exactly the top bit (NVIDIA/cccl#12322)
   if constexpr (Base == numeric::Radix::BASE_2) { return static_cast<Rep>(1) << exponent; }
 
-  // Note: Including an array here introduces too much register pressure
-  // https://simple.wikipedia.org/wiki/Exponentiation_by_squaring
-  // This is the iterative equivalent of the recursive definition (faster)
-  // Quick-bench for squaring: https://quick-bench.com:443/q/Wg7o7HYQC9FW5M0CO0wQAjSwP_Y
-  if (exponent == 0) { return static_cast<Rep>(1); }
-  auto extra  = static_cast<Rep>(1);
-  auto square = static_cast<Rep>(Base);
-  while (exponent > 1) {
-    if (exponent & 1) { extra *= square; }
-    exponent >>= 1;
-    square *= square;
-  }
-  return square * extra;
+  return cuda::ipow(static_cast<Rep>(Base), exponent);
 }
 
 /** @brief Function that performs a `right shift` scale "times" on the `val`
@@ -174,8 +161,8 @@ CUDF_HOST_DEVICE inline constexpr T shift(T const& val, scale_type const& scale)
  *
  * @tparam Rep The representation type (either `int32_t` or `int64_t`)
  */
-template <typename Rep,
-          typename cuda::std::enable_if_t<is_supported_representation_type<Rep>()>* = nullptr>
+template <typename Rep>
+  requires(is_supported_representation_type<Rep>())
 struct scaled_integer {
   Rep value;         ///< The value of the fixed point number
   scale_type scale;  ///< The scale of the value
@@ -214,9 +201,8 @@ class fixed_point {
    * @param value The value that will be constructed from
    * @param scale The exponent that is applied to Rad to perform shifting
    */
-  template <typename T,
-            typename cuda::std::enable_if_t<cuda::std::is_integral_v<T> &&
-                                            is_supported_representation_type<Rep>()>* = nullptr>
+  template <cuda::std::integral T>
+    requires(is_supported_representation_type<Rep>())
   CUDF_HOST_DEVICE inline explicit fixed_point(T const& value, scale_type const& scale)
     // `value` is cast to `Rep` to avoid overflow in cases where
     // constructing to `Rep` that is wider than `T`
@@ -241,7 +227,7 @@ class fixed_point {
    * @tparam T The value type being constructing from
    * @param value The value that will be constructed from
    */
-  template <typename T, typename cuda::std::enable_if_t<cuda::std::is_integral_v<T>>* = nullptr>
+  template <cuda::std::integral T>
   CUDF_HOST_DEVICE inline fixed_point(T const& value)
     : _value{static_cast<Rep>(value)}, _scale{scale_type{0}}
   {
@@ -259,7 +245,7 @@ class fixed_point {
    * @tparam U The integral type that is being explicitly converted to
    * @return The `fixed_point` number in base 10 (aka human readable format)
    */
-  template <typename U, typename cuda::std::enable_if_t<cuda::std::is_integral_v<U>>* = nullptr>
+  template <cuda::std::integral U>
   CUDF_HOST_DEVICE explicit constexpr operator U() const
   {
     // Cast to the larger of the two types (of U and Rep) before converting to Rep because in

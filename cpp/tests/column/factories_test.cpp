@@ -11,6 +11,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -389,6 +390,16 @@ TEST_F(ColumnFactoryTest, DictionaryFromStringScalar)
   EXPECT_FALSE(column->has_nulls());
 }
 
+TEST_F(ColumnFactoryTest, EmptyDictionaryFromStringScalar)
+{
+  cudf::string_scalar value("hello");
+  auto column = cudf::make_dictionary_from_scalar(value, 0);
+  EXPECT_EQ(0, column->size());
+  EXPECT_EQ(column->type(), cudf::data_type{cudf::type_id::DICTIONARY32});
+  ASSERT_EQ(2, column->num_children());
+  EXPECT_EQ(cudf::dictionary_column_view(column->view()).keys().type(), value.type());
+}
+
 TEST_F(ColumnFactoryTest, DictionaryFromStringScalarError)
 {
   cudf::string_scalar value("hello", false);
@@ -750,6 +761,24 @@ void struct_from_scalar(bool is_valid)
 TEST_F(ColumnFactoryTest, FromStructScalar) { struct_from_scalar(true); }
 
 TEST_F(ColumnFactoryTest, FromStructScalarNull) { struct_from_scalar(false); }
+
+void struct_from_scalar_zero_size(bool is_valid)
+{
+  cudf::test::fixed_width_column_wrapper<int> col0{1};
+  cudf::test::strings_column_wrapper col1{"abc"};
+  cudf::test::lists_column_wrapper<int> col2{{1, 2, 3}};
+
+  std::vector<cudf::column_view> src_children({col0, col1, col2});
+  auto value  = cudf::struct_scalar(src_children, is_valid);
+  auto result = cudf::make_column_from_scalar(value, 0);
+
+  auto const expected = cudf::empty_like(cudf::make_column_from_scalar(value, 1)->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, *expected);
+}
+
+TEST_F(ColumnFactoryTest, FromStructScalarWithZeroSize) { struct_from_scalar_zero_size(true); }
+
+TEST_F(ColumnFactoryTest, FromStructScalarNullWithZeroSize) { struct_from_scalar_zero_size(false); }
 
 TEST_F(ColumnFactoryTest, FromScalarErrors)
 {

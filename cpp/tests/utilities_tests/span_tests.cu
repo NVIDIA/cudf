@@ -10,7 +10,8 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -28,6 +29,7 @@
 #include <cstring>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using cudf::device_span;
@@ -221,6 +223,21 @@ TEST(SpanTest, CanConstructFromHostContainers)
   (void)host_span<int const>(h_vector_c);
 }
 
+TEST(SpanTest, HostSpanContainerConstraints)
+{
+  static_assert(std::is_constructible_v<host_span<int>, std::vector<int>&>);
+  static_assert(std::is_constructible_v<host_span<int const>, std::vector<int>&>);
+  static_assert(std::is_constructible_v<host_span<int const>, std::vector<int> const&>);
+  static_assert(std::is_constructible_v<host_span<int const>, thrust::host_vector<int> const&>);
+  static_assert(std::is_constructible_v<host_span<char const>, std::string const&>);
+
+  static_assert(not std::is_constructible_v<host_span<int>, std::vector<int> const&>);
+  static_assert(not std::is_constructible_v<host_span<int>, thrust::host_vector<int> const&>);
+  static_assert(not std::is_constructible_v<host_span<int>, std::vector<int>&&>);
+  static_assert(not std::is_constructible_v<host_span<long>, std::vector<int>&>);
+  static_assert(not std::is_constructible_v<host_span<int>, thrust::device_vector<int>&>);
+}
+
 TEST(SpanTest, CanUseStdSpan)
 {
   auto message            = create_hello_world_message();
@@ -244,19 +261,22 @@ CUDF_KERNEL void simple_device_kernel(device_span<bool> result) { result[0] = tr
 
 TEST(SpanTest, CanUseDeviceSpan)
 {
-  auto d_message = cudf::detail::make_zeroed_device_uvector_async<bool>(
+  auto d_message = cudf::detail::make_zeroed_device_buffer_async<bool>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto d_span = device_span<bool>(d_message.data(), d_message.size());
 
   simple_device_kernel<<<1, 1, 0, cudf::get_default_stream().get()>>>(d_span);
 
-  ASSERT_TRUE(d_message.element(0, cudf::get_default_stream()));
+  bool message{};
+  cudf::detail::cuda_memcpy<bool>(
+    cudf::host_span<bool>{&message, 1}, d_message, cudf::get_default_stream());
+  ASSERT_TRUE(message);
 }
 
 TEST(SpanTest, CanUseCudaStdSpan)
 {
-  auto d_message = cudf::detail::make_zeroed_device_uvector_async<int>(
+  auto d_message = cudf::detail::make_zeroed_device_buffer_async<int>(
     1, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
 
   auto const d_span = device_span<int const>(d_message.data(), d_message.size());

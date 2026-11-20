@@ -251,6 +251,7 @@ There are a few known limitations that you should be aware of:
 
   ```python
   import torch
+
   x = torch.from_numpy(arr)
   ```
 

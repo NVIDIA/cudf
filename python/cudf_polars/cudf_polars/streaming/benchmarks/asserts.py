@@ -43,7 +43,7 @@ def assert_tpch_result_equal(
     rel_tol: float = 1e-05,
     abs_tol: float = 1e-08,
     categorical_as_str: bool = False,
-    sort_by: list[tuple[str, bool]],
+    sort_by: list[tuple[str, bool]] | None,
     nulls_last: bool = True,
     sort_keys: list[tuple[pl.Expr, bool]] | None = None,
     limit: int | None = None,
@@ -59,9 +59,13 @@ def assert_tpch_result_equal(
         The expected answer to validate against.
     check_row_order, check_column_order, check_dtypes, check_exact, categorical_as_str, rel_tol, abs_tol
         Same meaning as in polars.
-    sort_by : list[tuple[str, bool]]
+    sort_by : list[tuple[str, bool]] | None
         The columns to sort by, and the sort order. This *must* be the same
-        as the ``sort_by`` and ``descending`` required by the query
+        as the ``sort_by`` and ``descending`` required by the query.
+        An empty list means the query's row order is not significant.
+        ``None`` means the query's sort order is unknown (e.g. queries defined
+        as SQL text), so rows are compared in the order they were returned,
+        without the sortedness, ties, or ``limit`` handling described below.
     nulls_last : bool, optional
         Whether NULLs should be placed last when checking sortedness.
         Must match the NULL placement used by the query's ``ORDER BY``.
@@ -237,7 +241,19 @@ def assert_tpch_result_equal(
             else df
         )
 
-    if sort_by:
+    if sort_by is None:
+        try:
+            polars.testing.assert_frame_equal(
+                left,
+                right,
+                **polars_kwargs,  # type: ignore[arg-type]
+            )
+        except AssertionError as e:
+            raise ValidationError(
+                message="Result mismatch", details={"error": str(e)}
+            ) from e
+
+    elif sort_by:
         by, descending = list(zip(*sort_by, strict=True))
 
         # First, validate the sortedness. We can do this independently for each dataframe.

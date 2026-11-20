@@ -55,6 +55,7 @@
 #include <arrow/ipc/api.h>
 
 #include <algorithm>
+#include <span>
 
 namespace cudf {
 namespace jni {
@@ -4452,7 +4453,8 @@ JNIEXPORT jobjectArray JNICALL Java_ai_rapids_cudf_Table_contiguousSplit(JNIEnv*
     std::vector<cudf::size_type> indices(n_split_indices.data(),
                                          n_split_indices.data() + n_split_indices.size());
 
-    std::vector<cudf::packed_table> result = cudf::contiguous_split(*n_table, indices);
+    std::vector<cudf::packed_table> result =
+      cudf::contiguous_split(*n_table, std::span<cudf::size_type const>{indices});
     cudf::jni::native_jobjectArray<jobject> n_result =
       cudf::jni::contiguous_table_array(env, result.size());
     for (size_t i = 0; i < result.size(); i++) {
@@ -5025,7 +5027,8 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
     if (!split_indices.empty()) { split_indices.erase(split_indices.begin()); }
 
     // 2) Splits the groups.
-    std::vector<cudf::packed_table> result = cudf::contiguous_split(grouped_view, split_indices);
+    std::vector<cudf::packed_table> result =
+      cudf::contiguous_split(grouped_view, std::span<cudf::size_type const>{split_indices});
     // Release the grouped table right away after split done.
     groups.keys.reset(nullptr);
     groups.values.reset(nullptr);

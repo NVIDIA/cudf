@@ -8,9 +8,11 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/sorting.hpp>
 
 template <typename T>
 struct groupby_shift_fixed_width_test : public cudf::test::BaseFixture {};
@@ -27,8 +29,10 @@ void test_groupby_shift_fixed_width_single(
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
   std::vector<cudf::size_type> offsets{offset};
-  auto got = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL((*got.second).view().column(0), expected);
+  auto got                  = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered_values->get_column(0), expected);
 }
 
 TYPED_TEST(groupby_shift_fixed_width_test, ForwardShiftWithoutNull_NullScalar)
@@ -215,6 +219,27 @@ TYPED_TEST(groupby_shift_fixed_width_test, VeryLargeBackwardOffset)
   test_groupby_shift_fixed_width_single<K, V>(key, val, offset, *slr, expected);
 }
 
+TYPED_TEST(groupby_shift_fixed_width_test, PresortedSlicedKeys)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  cudf::test::fixed_width_column_wrapper<K> key{0, 1, 1, 1, 2, 2, 2, 2, 3};
+  cudf::test::fixed_width_column_wrapper<V> val({0, 3, 4, 5, 6, 7, 8, 9, 0},
+                                                {1, 1, 0, 1, 1, 0, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<V> expected({42, 3, -1, 42, 6, -1, 8, 42},
+                                                     {1, 1, 0, 1, 1, 0, 1, 1});
+  auto const sliced_key = cudf::slice(key, {1, 9})[0];
+  auto const sliced_val = cudf::slice(val, {1, 9})[0];
+  auto slr              = cudf::scalar_type_t<V>(cudf::test::make_type_param_scalar<V>(42), true);
+
+  cudf::groupby::groupby gb_obj(
+    cudf::table_view({sliced_key}), cudf::null_policy::EXCLUDE, cudf::sorted::YES);
+  std::vector<cudf::size_type> offsets{1};
+  auto got = gb_obj.shift(cudf::table_view{{sliced_val}}, offsets, {slr});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(got.second->get_column(0), expected);
+}
+
 struct groupby_shift_string_test : public cudf::test::BaseFixture {};
 
 template <typename K>
@@ -226,8 +251,10 @@ void test_groupby_shift_string_single(cudf::test::fixed_width_column_wrapper<K> 
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
   std::vector<cudf::size_type> offsets{offset};
-  auto got = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL((*got.second).view().column(0), expected);
+  auto got                  = gb_obj.shift(cudf::table_view{{value}}, offsets, {fill_value});
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(ordered_values->get_column(0), expected);
 }
 
 TEST_F(groupby_shift_string_test, ForwardShiftWithoutNull_NullScalar)
@@ -407,8 +434,10 @@ void test_groupby_shift_multi(cudf::test::fixed_width_column_wrapper<K> const& k
                               cudf::table_view const& expected)
 {
   cudf::groupby::groupby gb_obj(cudf::table_view({key}));
-  auto got = gb_obj.shift(value, offsets, fill_values);
-  CUDF_TEST_EXPECT_TABLES_EQUAL((*got.second).view(), expected);
+  auto got                  = gb_obj.shift(value, offsets, fill_values);
+  auto const order          = cudf::stable_sorted_order(got.first->view());
+  auto const ordered_values = cudf::gather(got.second->view(), *order);
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*ordered_values, expected);
 }
 
 TYPED_TEST(groupby_shift_mixed_test, NoFill)

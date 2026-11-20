@@ -6,7 +6,10 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, cast
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
+from packaging.version import parse
 
 import polars as pl
 
@@ -60,6 +63,8 @@ if TYPE_CHECKING:
 
     import cudf_polars.engine.core
     from cudf_polars.engine.core import StreamingEngine
+
+PYARROW_VERSION_LT_24 = parse(pa.__version__) < parse("24")
 
 
 @pytest.fixture(scope="module")
@@ -750,6 +755,28 @@ def test_split_scan_hybrid(
     assert_gpu_result_equal(q, engine=streaming_engine)
 
 
+@pytest.mark.skipif(
+    PYARROW_VERSION_LT_24, reason="pyarrow writes Parquet bloom filters from 24.0"
+)
+def test_hybrid_scan_bloom_filters(
+    tmp_path: Path, streaming_engine_factory: Callable[..., StreamingEngine]
+) -> None:
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(parquet_options={"use_hybrid_scan": True})
+    )
+    source = tmp_path / "bloom.parquet"
+    pq.write_table(
+        pa.table({"y": [f"v{i}" for i in range(1_000)]}),
+        source,
+        row_group_size=250,
+        bloom_filter_options={"y": {"ndv": 1_000, "fpp": 0.0001}},
+    )
+    # Stats keep only the last row group, which holds "v990". A misread bloom
+    # filter would prune it too and return no rows.
+    q = pl.scan_parquet(source).filter(pl.col("y") == "v990")
+    assert_gpu_result_equal(q, engine=streaming_engine)
+
+
 def test_scan_path_mismatch_raises() -> None:
     # This isn't reachable by polars' public API, so we test it directly.
     scan = _make_parquet_scan(
@@ -775,6 +802,7 @@ def test_scan_path_mismatch_raises() -> None:
             scan.parquet_options,
             scan.hive_parts,
             [],
+            None,
             context=ctx,
         )
 
@@ -812,6 +840,7 @@ def test_parquet_split_task_fetches_missing_metadata(tmp_path: Path) -> None:
         2,
         scan.parquet_options,
         scan.hive_parts,
+        scan.lake_options,
         context=IRExecutionContext(),
     )
 

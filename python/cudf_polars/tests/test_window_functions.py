@@ -204,8 +204,19 @@ def test_over_series_literal_raises(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_over_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
-    expr = (pl.col("j") + pl.lit(pl.Series([7]))).sum()
+@pytest.mark.parametrize(
+    "expr",
+    [
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum() + pl.col("j").max(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).count(),
+        pl.col("j").fill_null(pl.lit(pl.Series([7]))).sum(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).cum_sum(),
+    ],
+)
+def test_over_series_literal_in_aggregation(
+    engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, None, 3]})
     q = df.select(expr.over("g"))
     assert_gpu_result_equal(q, engine=engine)

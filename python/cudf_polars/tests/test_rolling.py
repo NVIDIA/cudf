@@ -246,18 +246,24 @@ def test_rolling_expr_series_literal_raises(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_rolling_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
-    q = df.rolling("orderby", period="2i").agg(
-        (pl.col("values") + pl.lit(pl.Series([7]))).sum()
-    )
-    assert_gpu_result_equal(q, engine=engine)
-
-
-def test_rolling_expr_series_literal_in_aggregation(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
-    expr = (pl.col("values") + pl.lit(pl.Series([7]))).sum()
-    q = df.select(expr.rolling("orderby", period="2i"))
+@pytest.mark.parametrize(
+    "expr",
+    [
+        (pl.col("values") + pl.lit(pl.Series([7]))).sum(),
+        (pl.col("values") + pl.lit(pl.Series([7]))).sum() + pl.col("values").max(),
+        (pl.col("values") + pl.lit(pl.Series([7]))).count(),
+        pl.col("values").fill_null(pl.lit(pl.Series([7]))).sum(),
+    ],
+)
+@pytest.mark.parametrize("form", ["agg", "expr"])
+def test_rolling_series_literal_in_aggregation(
+    engine: pl.GPUEngine, form: str, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, None, 3]})
+    if form == "agg":
+        q = df.rolling("orderby", period="2i").agg(expr)
+    else:
+        q = df.select(expr.rolling("orderby", period="2i"))
     assert_gpu_result_equal(q, engine=engine)
 
 

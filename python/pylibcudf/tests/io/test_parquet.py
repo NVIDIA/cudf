@@ -1545,6 +1545,34 @@ def test_write_parquet(
     assert isinstance(result, memoryview)
 
 
+@pytest.mark.parametrize("utc_timestamps", [True, False])
+def test_chunked_parquet_writer_utc_timestamps(utc_timestamps):
+    pa_table = pa.table(
+        {"ts": pa.array([0, 1_000_000, None], type=pa.timestamp("us"))}
+    )
+    plc_table = plc.Table.from_arrow(pa_table)
+    table_meta = plc.io.types.TableInputMetadata(plc_table)
+    table_meta.column_metadata[0].set_name("ts")
+    buf = io.BytesIO()
+    options = (
+        plc.io.parquet.ChunkedParquetWriterOptions.builder(
+            plc.io.SinkInfo([buf])
+        )
+        .metadata(table_meta)
+        .utc_timestamps(utc_timestamps)
+        .build()
+    )
+    writer = plc.io.parquet.ChunkedParquetWriter.from_options(options)
+    writer.write(plc_table)
+    writer.write(plc_table)
+    writer.close([])
+
+    logical_type = json.loads(
+        pq.ParquetFile(buf).schema.column(0).logical_type.to_json()
+    )
+    assert logical_type["isAdjustedToUTC"] is utc_timestamps
+
+
 # cupy allocates on its own stream, so this cannot honor the injected default
 # stream used by the stream-validation test pass.
 @pytest.mark.uses_custom_stream

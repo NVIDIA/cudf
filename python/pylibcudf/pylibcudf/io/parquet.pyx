@@ -1123,6 +1123,30 @@ cdef class ChunkedParquetWriterOptionsBuilder:
         self.c_obj.max_dictionary_size(val)
         return self
 
+    cpdef ChunkedParquetWriterOptionsBuilder utc_timestamps(self, bool enabled):
+        """
+        Set to true if timestamps are to be annotated as UTC
+        (``isAdjustedToUTC=true``).
+
+        The same flag applies to durations written with the Parquet ``TIME``
+        logical type. When the arrow schema is written, it also sets the
+        timestamp timezone in that schema (``"UTC"`` or none); durations other
+        than days are then written as unannotated ``INT64`` and are unaffected.
+        Only the metadata is affected; values are written as-is and are not
+        converted.
+
+        Parameters
+        ----------
+        enabled : bool
+            Boolean value to enable/disable annotating timestamps as UTC.
+
+        Returns
+        -------
+        ChunkedParquetWriterOptionsBuilder
+        """
+        self.c_obj.utc_timestamps(enabled)
+        return self
+
     cpdef ChunkedParquetWriterOptionsBuilder write_arrow_schema(self, bool enabled):
         """
         Set to true if arrow schema is to be written.

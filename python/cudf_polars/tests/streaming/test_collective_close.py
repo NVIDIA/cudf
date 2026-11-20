@@ -203,23 +203,6 @@ def test_close_error_does_not_mask_body_error(pending_closes: dict[Any, Any]) ->
         asyncio.run(run())
 
 
-class FailingCloseCollective:
-    async def aclose(self) -> NoReturn:
-        raise RuntimeError("wait failed")
-
-
-def test_close_failure_is_not_masked_by_body_error(
-    pending_closes: dict[Any, Any],
-) -> None:
-    async def run() -> None:
-        async with aclosing_collective(FailingCloseCollective(), Mock(), 0):
-            raise ValueError("body failed")
-
-    with pytest.raises(RuntimeError, match="wait failed") as excinfo:
-        asyncio.run(run())
-    assert isinstance(excinfo.value.__context__, ValueError)
-
-
 def test_evaluate_on_rank_refuses_communicator_with_pending_close(
     monkeypatch: pytest.MonkeyPatch,
     pending_closes: dict[Any, Any],

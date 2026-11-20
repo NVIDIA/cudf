@@ -952,25 +952,52 @@ void load_nvcomp_library()
 
 namespace {
 
-nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(type_id value_type)
+nvcompCascadedCommonOpts_t cascaded_common_options(cascaded_format format)
 {
-  auto options    = nvcompBatchedCascadedCompressDefaultOpts;
-  auto& data_type = options.common_opts.data_type;
-  switch (value_type) {
-    case type_id::INT8: data_type = NVCOMP_TYPE_CHAR; break;
-    case type_id::UINT8: data_type = NVCOMP_TYPE_UCHAR; break;
-    case type_id::INT16: data_type = NVCOMP_TYPE_SHORT; break;
-    case type_id::UINT16: data_type = NVCOMP_TYPE_USHORT; break;
-    case type_id::INT32: data_type = NVCOMP_TYPE_INT; break;
-    case type_id::UINT32: data_type = NVCOMP_TYPE_UINT; break;
-    case type_id::INT64: data_type = NVCOMP_TYPE_LONGLONG; break;
-    case type_id::UINT64: data_type = NVCOMP_TYPE_ULONGLONG; break;
+  auto options = nvcompBatchedCascadedCompressDefaultOpts.common_opts;
+  auto& type   = options.data_type;
+  switch (format.value_type) {
+    case type_id::INT8: type = NVCOMP_TYPE_CHAR; break;
+    case type_id::UINT8: type = NVCOMP_TYPE_UCHAR; break;
+    case type_id::INT16: type = NVCOMP_TYPE_SHORT; break;
+    case type_id::UINT16: type = NVCOMP_TYPE_USHORT; break;
+    case type_id::INT32: type = NVCOMP_TYPE_INT; break;
+    case type_id::UINT32: type = NVCOMP_TYPE_UINT; break;
+    case type_id::INT64: type = NVCOMP_TYPE_LONGLONG; break;
+    case type_id::UINT64: type = NVCOMP_TYPE_ULONGLONG; break;
     default: CUDF_FAIL("Cascaded compression supports only integral value types");
+  }
+  if (format.mode == cascaded_mode::SYMMETRIC) {
+    CUDF_EXPECTS(is_cascaded_symmetric_supported(format.value_type),
+                 "Symmetric Cascaded supports only 32- and 64-bit integral value types");
+    options.mode = NVCOMP_CASCADED_MODE_SYMMETRIC;
+  } else {
+    options.mode = NVCOMP_CASCADED_MODE_ASYMMETRIC;
   }
   return options;
 }
 
+nvcompBatchedCascadedCompressOpts_t cascaded_compress_options(cascaded_format format)
+{
+  auto options        = nvcompBatchedCascadedCompressDefaultOpts;
+  options.common_opts = cascaded_common_options(format);
+  return options;
+}
+
+nvcompBatchedCascadedDecompressOpts_t cascaded_decompress_options(cascaded_format format)
+{
+  auto options        = nvcompBatchedCascadedDecompressDefaultOpts;
+  options.common_opts = cascaded_common_options(format);
+  return options;
+}
+
 }  // namespace
+
+bool is_cascaded_symmetric_supported(type_id value_type)
+{
+  return value_type == type_id::INT32 || value_type == type_id::UINT32 ||
+         value_type == type_id::INT64 || value_type == type_id::UINT64;
+}
 
 std::optional<std::string> is_cascaded_disabled(feature_status_parameters params)
 {
@@ -1005,16 +1032,16 @@ size_t cascaded_compress_max_allowed_chunk_size()
 
 size_t cascaded_compress_required_alignment() { return nvcompCascadedRequiredCompressionAlignment; }
 
-size_t cascaded_compress_max_output_chunk_size(type_id value_type, size_t max_uncomp_chunk_size)
+size_t cascaded_compress_max_output_chunk_size(cascaded_format format, size_t max_uncomp_chunk_size)
 {
   size_t max_comp_chunk_size = 0;
   auto const status          = nvcompBatchedCascadedCompressGetMaxOutputChunkSize(
-    max_uncomp_chunk_size, cascaded_compress_options(value_type), &max_comp_chunk_size);
+    max_uncomp_chunk_size, cascaded_compress_options(format), &max_comp_chunk_size);
   CHECK_NVCOMP_STATUS(status);
   return max_comp_chunk_size;
 }
 
-void batched_cascaded_compress(type_id value_type,
+void batched_cascaded_compress(cascaded_format format,
                                device_span<device_span<uint8_t const> const> inputs,
                                device_span<device_span<uint8_t> const> outputs,
                                device_span<codec_exec_result> results,
@@ -1034,7 +1061,7 @@ void batched_cascaded_compress(type_id value_type,
                                                          0,
                                                          args.output_data_ptrs.data(),
                                                          args.output_data_sizes.data(),
-                                                         cascaded_compress_options(value_type),
+                                                         cascaded_compress_options(format),
                                                          statuses.data(),
                                                          stream.get());
   CHECK_NVCOMP_STATUS(status);
@@ -1045,6 +1072,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                  device_span<device_span<uint8_t> const> outputs,
                                  device_span<codec_exec_result> results,
                                  std::span<size_t const> group_offsets,
+                                 std::span<cascaded_format const> group_formats,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
@@ -1053,6 +1081,8 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
   CUDF_EXPECTS(
     !group_offsets.empty() && group_offsets.front() == 0 && group_offsets.back() == inputs.size(),
     "group offsets must cover all chunks");
+  CUDF_EXPECTS(group_formats.size() + 1 == group_offsets.size(),
+               "every chunk group must have a format");
   if (inputs.empty()) { return; }
   if (auto const reason = is_cascaded_disabled()) { CUDF_FAIL("Decompression error: " + *reason); }
 
@@ -1076,7 +1106,7 @@ void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> i
                                                   nullptr,
                                                   0,
                                                   args.output_data_ptrs.data() + begin,
-                                                  nvcompBatchedCascadedDecompressDefaultOpts,
+                                                  cascaded_decompress_options(group_formats[i]),
                                                   statuses.data() + begin,
                                                   streams[i].get());
   }

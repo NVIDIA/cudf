@@ -781,9 +781,6 @@ dependencies:
       - output_types: conda
         packages:
           - boost
-          # cuda_profiler_api.h is used by the JNI layer (CudaJni.cpp) but is
-          # not pulled in by the base `cuda` dev packages.
-          - cuda-profiler-api
           - make
           - maven
           - openjdk=8.*

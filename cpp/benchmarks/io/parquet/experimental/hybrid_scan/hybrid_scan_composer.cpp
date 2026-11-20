@@ -11,8 +11,6 @@
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/mr/aligned_resource_adaptor.hpp>
-
 #include <unordered_set>
 #include <vector>
 
@@ -101,17 +99,14 @@ std::vector<cudf::size_type> apply_row_group_filters(
       reader.bloom_filters_byte_ranges(current_row_group_indices, options);
 
     if (not bloom_filter_byte_ranges.empty()) {
-      // Fetch 32-byte aligned bloom filter data buffers from the input file buffer
-      auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
-      auto aligned_mr = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
-      auto [bloom_filter_buffers, bloom_filter_data, bloom_read_tasks] =
-        cudf::io::parquet::fetch_byte_ranges_to_device_async(
+      // Fetch the header-stripped, 32-byte aligned bloom filter bitsets from the input file
+      auto [bloom_filter_buffers, bloom_filter_data] =
+        cudf::io::parquet::fetch_bloom_filters_to_device(
           datasource,
           bloom_filter_byte_ranges,
           cudf::io::parquet::io_submission_policy::SERIALIZE,
           stream,
-          aligned_mr);
-      bloom_read_tasks.get();
+          mr);
 
       bloom_filtered_row_groups = reader.filter_row_groups_with_bloom_filters(
         bloom_filter_data, current_row_group_indices, options, stream);

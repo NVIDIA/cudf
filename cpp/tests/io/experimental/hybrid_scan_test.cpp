@@ -34,9 +34,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/aligned.hpp>
-#include <rmm/mr/aligned_resource_adaptor.hpp>
-
 #include <cuda/iterator>
 
 #include <src/io/parquet/timestamp_utils.cuh>
@@ -104,22 +101,20 @@ void test_hybrid_scan(std::vector<cudf::column_view> const& columns,
   auto filter_expression =
     cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref_0, literal);
 
-  auto stream     = cudf::get_default_stream();
-  auto mr         = cudf::get_current_device_resource_ref();
-  auto aligned_mr = rmm::mr::aligned_resource_adaptor(cudf::get_current_device_resource_ref(),
-                                                      bloom_filter_alignment);
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
 
   auto datasource     = cudf::io::datasource::create(cudf::host_span<std::byte const>(
     reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
   auto datasource_ref = std::ref(*datasource);
 
   // Read parquet using the hybrid scan reader
-  auto const [read_filter_table, read_payload_table] = hybrid_scan(
-    datasource_ref, filter_expression, {}, case_sensitive_names, false, stream, mr, aligned_mr);
+  auto const [read_filter_table, read_payload_table] =
+    hybrid_scan(datasource_ref, filter_expression, {}, case_sensitive_names, false, stream, mr);
 
   // Read parquet using the chunked hybrid scan reader
-  auto const [read_filter_table_chunked, read_payload_table_chunked] = chunked_hybrid_scan(
-    datasource_ref, filter_expression, {}, case_sensitive_names, stream, mr, aligned_mr);
+  auto const [read_filter_table_chunked, read_payload_table_chunked] =
+    chunked_hybrid_scan(datasource_ref, filter_expression, {}, case_sensitive_names, stream, mr);
 
   // Check equivalence (equal without checking nullability) with the parquet file read with the
   // original reader
@@ -174,7 +169,6 @@ void test_hybrid_scan(std::vector<cudf::column_view> const& columns,
  * @param case_sensitive_names Whether column names are case sensitive
  * @param stream CUDA stream
  * @param mr Device memory resource
- * @param aligned_mr Aligned memory resource
  *
  * @return Read table
  */
@@ -186,30 +180,22 @@ std::unique_ptr<cudf::table> test_hybrid_scan_column_selection(
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr)
+  rmm::device_async_resource_ref mr)
 {
   auto datasource     = cudf::io::datasource::create(cudf::host_span<std::byte const>(
     reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
   auto datasource_ref = std::ref(*datasource);
 
   {
-    auto const [read_filter_table, read_payload_table] = hybrid_scan(datasource_ref,
+    auto const [read_filter_table, read_payload_table]                 = hybrid_scan(datasource_ref,
                                                                      filter_expression,
                                                                      payload_column_names,
                                                                      case_sensitive_names,
                                                                      false,
                                                                      stream,
-                                                                     mr,
-                                                                     aligned_mr);
-    auto const [read_filter_table_chunked, read_payload_table_chunked] =
-      chunked_hybrid_scan(datasource_ref,
-                          filter_expression,
-                          payload_column_names,
-                          case_sensitive_names,
-                          stream,
-                          mr,
-                          aligned_mr);
+                                                                     mr);
+    auto const [read_filter_table_chunked, read_payload_table_chunked] = chunked_hybrid_scan(
+      datasource_ref, filter_expression, payload_column_names, case_sensitive_names, stream, mr);
 
     // Read parquet using the main reader
     cudf::io::parquet_reader_options const options =
@@ -325,10 +311,8 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
   auto col_ref_0         = cudf::ast::column_name_reference("Col0");
   auto filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, literal);
 
-  auto stream     = cudf::get_default_stream();
-  auto mr         = cudf::get_current_device_resource_ref();
-  auto aligned_mr = rmm::mr::aligned_resource_adaptor(cudf::get_current_device_resource_ref(),
-                                                      bloom_filter_alignment);
+  auto stream                         = cudf::get_default_stream();
+  auto mr                             = cudf::get_current_device_resource_ref();
   auto constexpr case_sensitive_names = false;
 
   // No column selection (all columns)
@@ -341,8 +325,7 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
                                                                           {},
                                                     case_sensitive_names,
                                                     stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                    mr);
   }
 
   // Columns: col0, col2
@@ -356,8 +339,7 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
                                                     payload_column_names,
                                                     case_sensitive_names,
                                                     stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                    mr);
   }
 
   // Columns: col2, col1
@@ -371,8 +353,7 @@ TEST_F(HybridScanTest, FilterRowGroupsOnlyAndScanSelectColumns)
                                                     payload_column_names,
                                                     case_sensitive_names,
                                                     stream,
-                                                    mr,
-                                                    aligned_mr);
+                                                    mr);
   }
 }
 
@@ -393,22 +374,13 @@ TEST_F(HybridScanTest, FilterDataPagesOnlyAndScanAllColumns)
   auto col_ref_0         = cudf::ast::column_name_reference("Col0");
   auto filter_expression = cudf::ast::operation(cudf::ast::ast_operator::LESS, col_ref_0, literal);
 
-  auto stream     = cudf::get_default_stream();
-  auto mr         = cudf::get_current_device_resource_ref();
-  auto aligned_mr = rmm::mr::aligned_resource_adaptor(cudf::get_current_device_resource_ref(),
-                                                      bloom_filter_alignment);
+  auto stream                         = cudf::get_default_stream();
+  auto mr                             = cudf::get_current_device_resource_ref();
   auto constexpr case_sensitive_names = false;
 
   auto const payload_column_indices = std::vector<cudf::size_type>{1, 2};
-  auto read_table                   = test_hybrid_scan_column_selection(parquet_buffer,
-                                                      filter_expression,
-                                                      "col0",
-                                                                        {1, 2},
-                                                                        {},
-                                                      case_sensitive_names,
-                                                      stream,
-                                                      mr,
-                                                      aligned_mr);
+  auto read_table                   = test_hybrid_scan_column_selection(
+    parquet_buffer, filter_expression, "col0", {1, 2}, {}, case_sensitive_names, stream, mr);
 
   // Check equivalence (equal without checking nullability) with the original table with the
   // applied boolean mask
@@ -886,7 +858,6 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
 
   auto const stream = cudf::get_default_stream();
   auto const mr     = cudf::get_current_device_resource_ref();
-  auto aligned_mr   = rmm::mr::aligned_resource_adaptor(mr, bloom_filter_alignment);
 
   // Helper to validate monotonic string and list offsets
   auto const expect_monotonic_offsets = [](auto& self, cudf::column_view const& column) -> void {
@@ -920,7 +891,7 @@ TEST_F(HybridScanTest, ConsecutivePrunedPageOffsets)
     auto const expected = cudf::concatenate(cudf::slice(input, expected_slices));
     // Read with column chunk-level and page-level payload I/O
     auto const results =
-      std::array{hybrid_scan(*datasource, filter, {}, true, false, stream, mr, aligned_mr),
+      std::array{hybrid_scan(*datasource, filter, {}, true, false, stream, mr),
                  chunked_sparse_hybrid_scan_multifile(
                    cudf::io::source_info{filepath}, filter, {}, true, stream, mr)};
 
@@ -1344,10 +1315,8 @@ void extended_filter_expressions_test()
   auto constexpr num_concat            = 1;
   auto [written_table, parquet_buffer] = create_parquet_with_stats<T, num_concat>();
 
-  auto stream     = cudf::get_default_stream();
-  auto mr         = cudf::get_current_device_resource_ref();
-  auto aligned_mr = rmm::mr::aligned_resource_adaptor(cudf::get_current_device_resource_ref(),
-                                                      bloom_filter_alignment);
+  auto stream = cudf::get_default_stream();
+  auto mr     = cudf::get_current_device_resource_ref();
 
   // Create datasource from buffer
   auto const datasource     = cudf::io::datasource::create(cudf::host_span<std::byte const>(
@@ -1368,14 +1337,8 @@ void extended_filter_expressions_test()
     auto filter =
       cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, col0_lt_100, col0_lt_col1);
 
-    auto [filter_table, payload_table] = hybrid_scan(datasource_ref,
-                                                     filter,
-                                                     std::nullopt,
-                                                     case_sensitive_names,
-                                                     use_jit_filter,
-                                                     stream,
-                                                     mr,
-                                                     aligned_mr);
+    auto [filter_table, payload_table] = hybrid_scan(
+      datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);
 
     auto read_single_step = hybrid_scan_single_step(
       datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);
@@ -1408,14 +1371,8 @@ void extended_filter_expressions_test()
     auto filter = cudf::ast::operation(
       cudf::ast::ast_operator::LOGICAL_OR, col0_lt_10, col0_plus_col1_gt_0_expr);
 
-    auto [filter_table, payload_table] = hybrid_scan(datasource_ref,
-                                                     filter,
-                                                     std::nullopt,
-                                                     case_sensitive_names,
-                                                     use_jit_filter,
-                                                     stream,
-                                                     mr,
-                                                     aligned_mr);
+    auto [filter_table, payload_table] = hybrid_scan(
+      datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);
 
     auto read_single_step = hybrid_scan_single_step(
       datasource_ref, filter, std::nullopt, case_sensitive_names, use_jit_filter, stream, mr);

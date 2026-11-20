@@ -183,7 +183,7 @@ fetch_byte_ranges_to_device_async(
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
- * range
+ * range. Each span is a header-stripped, 32-byte aligned bitset.
  */
 std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<cudf::device_span<uint8_t const>>>
 fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
@@ -205,7 +205,7 @@ fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
- * one inner vector per datasource
+ * one inner vector per datasource. Each span is a header-stripped, 32-byte aligned bitset.
  */
 std::pair<std::vector<cuda::device_buffer<uint8_t>>,
           std::vector<std::vector<cudf::device_span<uint8_t const>>>>
@@ -289,7 +289,7 @@ fetch_byte_ranges_to_device_async(
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
- * range
+ * range. Each span is a header-stripped, 32-byte aligned bitset.
  */
 [[deprecated("Use the overload that takes io_submission_policy.")]]
 std::pair<std::vector<cuda::device_buffer<uint8_t>>, std::vector<cudf::device_span<uint8_t const>>>
@@ -315,7 +315,7 @@ fetch_bloom_filters_to_device(cudf::io::datasource& datasource,
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
- * one inner vector per datasource
+ * one inner vector per datasource. Each span is a header-stripped, 32-byte aligned bitset.
  */
 [[deprecated("Use the overload that takes io_submission_policy.")]]
 std::pair<std::vector<cuda::device_buffer<uint8_t>>,
@@ -412,7 +412,7 @@ fetch_byte_ranges_to_device_async(
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and one device span per input byte
- * range
+ * range. Each span is a header-stripped, 32-byte aligned bitset.
  */
 template <typename = void>
 [[deprecated("Use the overload that takes std::span.")]] std::
@@ -445,7 +445,7 @@ template <typename = void>
  * @param mr Memory resources used to allocate the returned device buffers
  *
  * @return A pair containing buffers that own the fetched bitsets and per-source device spans, with
- * one inner vector per datasource
+ * one inner vector per datasource. Each span is a header-stripped, 32-byte aligned bitset.
  */
 template <typename = void>
 [[deprecated("Use the overload that takes std::span.")]] std::pair<

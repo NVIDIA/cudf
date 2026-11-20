@@ -10,10 +10,6 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/mr/aligned_resource_adaptor.hpp>
-
-auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
-
 /**
  * @brief Read parquet file with the hybrid scan reader
  *
@@ -24,7 +20,6 @@ auto constexpr bloom_filter_alignment = rmm::CUDA_ALLOCATION_ALIGNMENT;
  * @param use_jit_filter Whether to evaluate the filter expression with JIT
  * @param stream CUDA stream for hybrid scan reader
  * @param mr Device memory resource
- * @param aligned_mr Device memory resource to allocate aligned memory for bloom filters
  *
  * @return Tuple of filter and payload tables
  */
@@ -35,8 +30,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
   bool case_sensitive_names,
   bool use_jit_filter,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr);
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Read parquet file with the hybrid scan reader
@@ -47,7 +41,6 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> hybrid_sc
  * @param case_sensitive_names Whether column names are case sensitive
  * @param stream CUDA stream for hybrid scan reader
  * @param mr Device memory resource
- * @param aligned_mr Device memory resource to allocate aligned memory for bloom filters
  *
  * @return Tuple of filter and payload tables
  */
@@ -57,8 +50,7 @@ std::tuple<std::unique_ptr<cudf::table>, std::unique_ptr<cudf::table>> chunked_h
   std::optional<std::vector<std::string>> const& payload_column_names,
   bool case_sensitive_names,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr,
-  rmm::mr::aligned_resource_adaptor& aligned_mr);
+  rmm::device_async_resource_ref mr);
 
 /**
  * @brief Read parquet file with the hybrid scan reader in a single step

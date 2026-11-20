@@ -224,7 +224,7 @@ struct metadata : public FileMetaData {
    *
    * Resets all previously set arrow types first so it is safe to call more than once.
    */
-  void fill_arrow_types();
+  void apply_arrow_schema();
 
  private:
   bool is_page_index_setup_ = false;

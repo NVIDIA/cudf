@@ -608,7 +608,7 @@ metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
     });
   });
 
-  fill_arrow_types();
+  apply_arrow_schema();
 }
 
 metadata::metadata(datasource* source, bool read_page_indexes)
@@ -652,7 +652,7 @@ metadata::metadata(datasource* source, bool read_page_indexes)
   }
 
   sanitize_schema();
-  fill_arrow_types();
+  apply_arrow_schema();
 }
 
 text::byte_range_info metadata::page_index_byte_range() const
@@ -1353,7 +1353,7 @@ arrow_schema_data_types decode_arrow_schema(std::string_view serialized_schema)
 
 }  // namespace
 
-void metadata::fill_arrow_types()
+void metadata::apply_arrow_schema()
 {
   // Reset any previously filled arrow types so this is idempotent
   std::ranges::for_each(schema, [](auto& schema_elem) { schema_elem.arrow_type.reset(); });

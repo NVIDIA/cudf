@@ -22,9 +22,8 @@ quent-browser-bundle.workspace = true
 quent-browser-bundle-build = { workspace = true, optional = true }
 quent-events = { workspace = true, features = ["serde"] }
 quent-query-engine-analyzer.workspace = true
-quent-query-engine-browser.workspace = true
-wasm-bindgen = "=0.2.128"
-wasm-bindgen-futures = "=0.4.78"
+quent-query-engine-browser = { workspace = true, features = ["wasm"] }
+wasm-bindgen-futures = "=0.4.80"
 
 [build-dependencies]
 quent-build-info.workspace = true

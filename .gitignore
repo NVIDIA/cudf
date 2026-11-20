@@ -64,6 +64,7 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+/coverage-results/
 junit-cudf.xml
 *.cover
 .hypothesis/

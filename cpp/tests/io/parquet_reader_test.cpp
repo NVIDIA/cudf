@@ -882,6 +882,53 @@ TEST_F(ParquetReaderTest, ByteStreamSplitNestedListFloat)
   }
 }
 
+TEST_F(ParquetReaderTest, ByteStreamSplitAllNullPages)
+{
+  // Only the first page has non-null values, so the other pages have no BYTE_STREAM_SPLIT data
+  constexpr cudf::size_type num_rows  = 100;
+  constexpr cudf::size_type list_size = 2;
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i; });
+  auto const valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i < 10; });
+  cudf::test::fixed_width_column_wrapper<int32_t> col(values, values + num_rows, valids);
+
+  auto const offsets = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return static_cast<cudf::size_type>(i * list_size); });
+  auto const leaf_valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i < 10 * list_size; });
+  auto list_col = cudf::make_lists_column(
+    num_rows,
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(offsets, offsets + num_rows + 1)
+      .release(),
+    cudf::test::fixed_width_column_wrapper<int32_t>(
+      values, values + num_rows * list_size, leaf_valids)
+      .release(),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  cudf::table_view const expected{{col, list_col->view()}};
+
+  cudf::io::table_input_metadata metadata(expected);
+  metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  metadata.column_metadata[1].child(1).set_encoding(cudf::io::column_encoding::BYTE_STREAM_SPLIT);
+  auto const filepath = temp_env->get_temp_filepath("ByteStreamSplitAllNullPages.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .metadata(std::move(metadata))
+      .max_page_size_rows(10)
+      .max_page_fragment_size(10));
+
+  // Read the whole file, a range that starts in the non-null page, and one inside all-null pages
+  for (auto const [skip_rows, num_rows_to_read] :
+       std::vector<std::pair<cudf::size_type, cudf::size_type>>{{0, num_rows}, {5, 10}, {15, 10}}) {
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .skip_rows(skip_rows)
+        .num_rows(num_rows_to_read));
+    auto const sliced = cudf::slice(expected, {skip_rows, skip_rows + num_rows_to_read});
+    CUDF_TEST_EXPECT_TABLES_EQUAL(sliced.front(), result.tbl->view());
+  }
+}
+
 TEST_F(ParquetReaderTest, UserBoundsWithNullsMixedTypes)
 {
   constexpr int num_rows = 32 * 1024;

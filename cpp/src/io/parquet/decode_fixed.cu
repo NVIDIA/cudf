@@ -254,15 +254,18 @@ __device__ inline void decode_fixed_width_split_values(
   Type const dtype    = s->setup.col.physical_type;
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
-  // Check malformed BYTE_STREAM_SPLIT pages
-  if (s->output_cvt.dtype_len_in <= 0 or data_len <= 0) {
+  int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
+
+  // Check malformed BYTE_STREAM_SPLIT pages. Values decoded in this batch must be within the data
+  // stream, which is empty for pages without non-null values.
+  auto const end_value_pos = end + (has_lists_t ? skipped_leaf_values : 0);
+  if (s->output_cvt.dtype_len_in <= 0 or
+      (start < end and end_value_pos > data_len / s->output_cvt.dtype_len_in)) {
     if (t == 0) { s->set_error_code(decode_error::INVALID_BYTE_STREAM_SPLIT_SIZE); }
     return;
   }
 
   auto const num_values = data_len / s->output_cvt.dtype_len_in;
-
-  int const skipped_leaf_values = s->setup.page.skipped_leaf_values;
 
   // decode values
   int thread_pos = start + t;

@@ -22,6 +22,7 @@ def test_sparse_exchange_close_survives_cancellation(
         started = asyncio.Event()
         release = asyncio.Event()
         finished = asyncio.Event()
+        closed = asyncio.Event()
 
         class DelayedExchange:
             async def insert_finished(self) -> None:
@@ -30,7 +31,7 @@ def test_sparse_exchange_close_survives_cancellation(
                 finished.set()
 
             async def aclose(self) -> None:
-                pass
+                closed.set()
 
         monkeypatch.setattr(
             slice_exchange,
@@ -55,6 +56,7 @@ def test_sparse_exchange_close_survives_cancellation(
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert finished.is_set()
+            assert closed.is_set()
             await exchange.aclose()
         finally:
             release.set()

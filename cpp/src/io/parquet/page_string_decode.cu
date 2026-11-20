@@ -24,7 +24,6 @@
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
 #include <cuda/std/cstring>
-#include <cuda/std/memory>
 #include <cuda/std/utility>
 #include <cuda/warp>
 #include <thrust/transform_scan.h>
@@ -450,7 +449,11 @@ __device__ cuda::std::pair<size_t, size_t> totalDeltaByteArraySize(uint8_t const
     if (lane_id == 0 && start_value == 0) { total_bytes = db.last_value; }
 
     uleb128_t lane_sum = 0;
-    uleb128_t lane_max = 0;
+    // The decode kernel copies every string before start_value into the temp buffer. The stream
+    // stores the first value in the header (`db.last_value`), not a mini-block, so we must account
+    // for that to ensure that we allocate temp buffer space inclusive of what is needed for the
+    // first string.
+    uleb128_t lane_max = lane_id == 0 ? static_cast<uleb128_t>(db.last_value) : 0;
     while (db.current_value_idx < end_value && db.current_value_idx < db.num_encoded_values(true)) {
       if (not db.advance_past_first_value(warp)) { break; }
 
@@ -1175,22 +1178,13 @@ __device__ void prefetch_string_data(string_offset_page const& page,
     }
     pipeline.producer_commit();
 
-    // page.data + base is `alignment`-aligned, so every word fully inside the page is word-aligned.
-    static_assert(alignment % word_bytes == 0);
     auto const copy_word = [&](int32_t word_index) {
-      int64_t const first = int64_t{base} + word_index * word_bytes;
-      uint32_t word       = 0;
-      if (first >= 0 && first + word_bytes <= page.bytes) {
-        cuda::std::memcpy(
-          &word, cuda::std::assume_aligned<word_bytes>(page.data + first), word_bytes);
-      } else {
-        // Only the words straddling the page start or end take the bounded byte loads.
+      uint32_t word = 0;
 #pragma unroll
-        for (int32_t byte = 0; byte < word_bytes; ++byte) {
-          int64_t const index = first + byte;
-          if (index >= 0 && index < page.bytes) {
-            word |= uint32_t{page.data[index]} << (CHAR_BIT * byte);
-          }
+      for (int32_t byte = 0; byte < word_bytes; ++byte) {
+        int64_t const index = int64_t{base} + word_index * word_bytes + byte;
+        if (index >= 0 && index < page.bytes) {
+          word |= uint32_t{page.data[index]} << (CHAR_BIT * byte);
         }
       }
       window.data[word_index] = word;

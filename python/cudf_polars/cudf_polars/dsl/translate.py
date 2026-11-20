@@ -47,6 +47,26 @@ if TYPE_CHECKING:
     from cudf_polars.typing import NodeTraverser, Slice as Zlice
 
 _ARRAY_PASSTHROUGH_ERROR = "Only pass-through of Array columns is supported"
+_NULL_PASSTHROUGH_ERROR = "Only pass-through of Null columns is supported"
+# IR nodes that may carry a Time or Null column without computing on it.
+_PASSTHROUGH_NODES = (
+    plrs._ir_nodes.Select,
+    plrs._ir_nodes.HStack,
+    plrs._ir_nodes.Filter,
+    plrs._ir_nodes.Slice,
+    plrs._ir_nodes.Sort,
+    plrs._ir_nodes.Cache,
+    plrs._ir_nodes.SimpleProjection,
+    plrs._ir_nodes.Union,
+    plrs._ir_nodes.HConcat,
+    plrs._ir_nodes.Join,
+    plrs._ir_nodes.GroupBy,
+)
+_NULL_PASSTHROUGH_NODES = (
+    *_PASSTHROUGH_NODES,
+    plrs._ir_nodes.DataFrameScan,
+    plrs._ir_nodes.Distinct,
+)
 
 __all__ = ["Translator", "translate_named_expr"]
 
@@ -81,6 +101,14 @@ def _contains_array_input(expression: expr.Expr) -> bool:
     """Return whether an expression consumes an Array-typed input."""
     return any(
         _contains_dtype(node.dtype.polars_type, (pl.Array,))
+        for node in traversal([expression])
+    )
+
+
+def _contains_null_column_input(expression: expr.Expr) -> bool:
+    """Return whether an expression reads a column of the Null dtype."""
+    return any(
+        isinstance(node, expr.Col) and isinstance(node.dtype.polars_type, pl.Null)
         for node in traversal([expression])
     )
 
@@ -198,6 +226,7 @@ class Translator:
         self._expr_context: ExecutionContext = ExecutionContext.FRAME
         self._internal_name_gen: Generator[str, None, None] | None = None
         self._list_literals_as_elements: bool = False
+        self._num_unwrapped_implodes: int = 0
 
     def translate_ir(self, *, n: int | None = None) -> ir.IR:
         """
@@ -257,22 +286,7 @@ class Translator:
             except Exception as e:
                 self.errors.append(e)
                 return ir.ErrorNode(schema, str(e))
-            if not isinstance(
-                node,
-                (
-                    plrs._ir_nodes.Select,
-                    plrs._ir_nodes.HStack,
-                    plrs._ir_nodes.Filter,
-                    plrs._ir_nodes.Slice,
-                    plrs._ir_nodes.Sort,
-                    plrs._ir_nodes.Cache,
-                    plrs._ir_nodes.SimpleProjection,
-                    plrs._ir_nodes.Union,
-                    plrs._ir_nodes.HConcat,
-                    plrs._ir_nodes.Join,
-                    plrs._ir_nodes.GroupBy,
-                ),
-            ) and any(
+            if not isinstance(node, _PASSTHROUGH_NODES) and any(
                 _contains_dtype(dtype.polars_type, (pl.Time,))
                 for ir_node in (result, *result.children)
                 for dtype in ir_node.schema.values()
@@ -283,12 +297,19 @@ class Translator:
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
-            if any(
-                isinstance(dtype, pl.Null)
-                for dtype in pl.datatypes.unpack_dtypes(*polars_schema.values())
+            # A Null column may pass through, but not be nested in another dtype.
+            null_dtypes = [
+                dtype.polars_type
+                for ir_node in (result, *result.children)
+                for dtype in ir_node.schema.values()
+                if _contains_dtype(dtype.polars_type, (pl.Null,))
+            ]
+            if null_dtypes and not (
+                isinstance(node, _NULL_PASSTHROUGH_NODES)
+                and all(isinstance(dtype, pl.Null) for dtype in null_dtypes)
             ):
                 error = NotImplementedError(
-                    f"No GPU support for {result} with Null column dtype."
+                    f"{_NULL_PASSTHROUGH_ERROR}; unsupported node {type(node).__name__}"
                 )
                 self.errors.append(error)
                 return ir.ErrorNode(schema, str(error))
@@ -332,7 +353,8 @@ class Translator:
         schema
             Schema of the IR node this expression uses as evaluation context.
         allow_passthrough
-            Whether a direct Array or Time column, or a ``dt.time()`` result, may be returned.
+            Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
+            returned.
 
         Returns
         -------
@@ -409,6 +431,11 @@ class Translator:
                 "Only dt.time(), dt.combine() and pass-through of Time columns "
                 "are supported"
             )
+            self.errors.append(error)
+            return expr.ErrorExpr(dtype, str(error))
+        is_null_passthrough = allow_passthrough and isinstance(translated, expr.Col)
+        if not is_null_passthrough and _contains_null_column_input(translated):
+            error = NotImplementedError(_NULL_PASSTHROUGH_ERROR)
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
         return translated
@@ -1113,11 +1140,38 @@ def _(
 
 @_translate_ir.register
 def _(node: plrs._ir_nodes.Union, translator: Translator, schema: Schema) -> ir.IR:
+    children = tuple(translator.translate_ir(n=n) for n in node.inputs)
+    # polars supports pl.concat(tables) with mixed dtypes when one of the dtypes is
+    # Null. We support that by inserting a Cast node to cast the Null column to
+    # the non-null, output dtype.
+    normalized_children: list[ir.IR] = []
+    for child in children:
+        exprs: list[expr.NamedExpr] = []
+        needs_normalization = False
+        for (name, dtype), (child_name, child_dtype) in zip(
+            schema.items(), child.schema.items(), strict=True
+        ):
+            value: expr.Expr = expr.Col(child_dtype, child_name)
+            if isinstance(child_dtype.polars_type, pl.Null) and not isinstance(
+                dtype.polars_type, pl.Null
+            ):
+                if plc.traits.is_nested(dtype.plc_type):
+                    raise NotImplementedError(
+                        "Concatenating a Null column with a nested dtype is not supported"
+                    )
+                value = expr.Cast(dtype, True, value)  # noqa: FBT003
+                needs_normalization = True
+            exprs.append(expr.NamedExpr(name, value))
+        normalized_children.append(
+            ir.Select(schema, exprs, False, child)  # noqa: FBT003
+            if needs_normalization
+            else child
+        )
     return ir.Union(
         schema,
         node.slice,
         node.maintain_order,
-        *(translator.translate_ir(n=n) for n in node.inputs),
+        *normalized_children,
     )
 
 
@@ -1216,7 +1270,8 @@ def translate_named_expr(
     schema
         Schema of the IR node this expression uses as evaluation context.
     allow_passthrough
-        Whether a direct Array or Time column, or a ``dt.time()`` result, may be returned.
+        Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
+        returned.
 
     Returns
     -------
@@ -1424,9 +1479,44 @@ def _translate_function(
         if name == plrs._expr_nodes.StructFunction.RenameFields:
             (new_field_names,) = options
             options = (tuple(new_field_names),)
+        elif name == plrs._expr_nodes.StructFunction.MapFieldNames:
+            options = ()
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),
+            options,
+            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
+        )
+    elif isinstance(name, plrs._expr_nodes.ListFunction):
+        # Unwrapping an implode in group_by or rolling turns its list input
+        # into the element-wise column, so list functions above it would
+        # operate on the wrong values.
+        num_unwrapped_implodes = translator._num_unwrapped_implodes
+        list_inputs = [
+            translator.translate_expr(n=n, schema=schema) for n in node.input
+        ]
+        if translator._num_unwrapped_implodes != num_unwrapped_implodes:
+            raise NotImplementedError(
+                f"{name} is not supported for implode in group_by or rolling"
+            )
+        if translator._expr_context in (
+            ExecutionContext.GROUPBY,
+            ExecutionContext.ROLLING,
+        ) and any(isinstance(e, expr.LiteralColumn) for e in traversal(list_inputs)):
+            raise NotImplementedError(
+                f"{name} is not supported for list literals in group_by or rolling"
+            )
+        return expr.ListFunction(
+            dtype,
+            expr.ListFunction.Name.from_polars(name),
+            options,
+            *list_inputs,
+        )
+    # Polars does not register BitwiseFunction in _expr_nodes (crates/polars-python/src/c_api/mod.rs)
+    elif type(name).__name__ == "BitwiseFunction":
+        return expr.BitwiseFunction(
+            dtype,
+            expr.BitwiseFunction.Name.from_polars(name),
             options,
             *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )
@@ -1922,7 +2012,9 @@ def _(
         )
 
     # Push casts into literals so we can handle Cast(Literal(Null))
-    if isinstance(inner, expr.Literal):
+    if isinstance(inner, expr.Literal) and not (
+        isinstance(dtype.polars_type, pl.Null) and inner.value is not None
+    ):
         if dtype.id() == plc.TypeId.LIST:
             # TODO: Remove once pylibcudf.Scalar supports lists
             if inner.value is not None:  # pragma: no cover; polars rejects this cast
@@ -1958,6 +2050,7 @@ def _(
         # wrapped in an explicit ``implode`` node. Unwrap it so the existing
         # pointwise-collect path handles it.
         (child,) = args
+        translator._num_unwrapped_implodes += 1
         return child
 
     # libcudf does not support std/var on decimal types; cast to float first.

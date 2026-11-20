@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from libc.stddef cimport size_t
@@ -17,6 +17,7 @@ from cuda.bindings.cyruntime cimport cudaStream_t
 from rmm.librmm.memory_resource cimport device_async_resource_ref
 
 from rmm.librmm.device_uvector cimport device_uvector
+from rmm.librmm.memory_resource cimport any_resource, device_accessible
 from pylibcudf.libcudf.utilities.span cimport device_span
 
 ctypedef unique_ptr[device_uvector[size_type]] gather_map_type
@@ -78,6 +79,45 @@ cdef extern from "cudf/join/join.hpp" namespace "cudf" nogil:
         cudaStream_t stream,
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
+
+    cpdef enum class nullable_join(bool):
+        NO
+        YES
+
+cdef extern from "cudf/join/hash_join.hpp" namespace "cudf" nogil:
+    cdef cppclass hash_join:
+        hash_join(
+            const table_view& right,
+            null_equality compare_nulls,
+            cudaStream_t stream,
+            any_resource[device_accessible] mr,
+        ) except +libcudf_exception_handler
+        hash_join(
+            const table_view& right,
+            nullable_join has_nulls,
+            null_equality compare_nulls,
+            double load_factor,
+            cudaStream_t stream,
+            any_resource[device_accessible] mr,
+        ) except +libcudf_exception_handler
+        gather_map_pair_type inner_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+        gather_map_pair_type left_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
+        gather_map_pair_type full_join(
+            const table_view&,
+            optional[size_t],
+            cudaStream_t stream,
+            device_async_resource_ref mr
+        ) except +libcudf_exception_handler
 
 cdef extern from "cudf/join/conditional_join.hpp" namespace "cudf" nogil:
     cdef gather_map_pair_type conditional_inner_join(
@@ -217,17 +257,18 @@ cdef extern from "cudf/join/mixed_join.hpp" namespace "cudf" nogil:
 
 cdef extern from "cudf/join/filtered_join.hpp" namespace "cudf" nogil:
     cdef cppclass filtered_join:
-        filtered_join() except +
-        filtered_join(
-            const table_view right,
-            null_equality compare_nulls,
-            cudaStream_t stream
-        ) except +libcudf_exception_handler
         filtered_join(
             const table_view right,
             null_equality compare_nulls,
             double load_factor,
-            cudaStream_t stream
+            cudaStream_t stream,
+            any_resource[device_accessible] mr,
+        ) except +libcudf_exception_handler
+        filtered_join(
+            const table_view right,
+            null_equality compare_nulls,
+            cudaStream_t stream,
+            any_resource[device_accessible] mr,
         ) except +libcudf_exception_handler
         gather_map_type semi_join(
             const table_view left,

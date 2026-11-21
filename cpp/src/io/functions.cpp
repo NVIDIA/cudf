@@ -274,7 +274,9 @@ json_reader_result_with_row_diagnostics read_json_with_row_diagnostics(json_read
   return json::detail::read_json_with_row_diagnostics(datasources, options, stream, mr);
 }
 
-void write_json(json_writer_options const& options, cuda::stream_ref stream)
+void write_json(json_writer_options const& options,
+                cuda::stream_ref stream,
+                cudf::memory_resources mr)
 {
   auto sinks = make_datasinks(options.get_sink());
   CUDF_EXPECTS(sinks.size() == 1, "Multiple sinks not supported for JSON writing");
@@ -283,7 +285,8 @@ void write_json(json_writer_options const& options, cuda::stream_ref stream)
     sinks[0].get(),
     options.get_table(),
     options,
-    stream);
+    stream,
+    mr);
 }
 
 table_with_metadata read_csv(csv_reader_options options,
@@ -308,7 +311,9 @@ table_with_metadata read_csv(csv_reader_options options,
 }
 
 // Freeform API wraps the detail writer class API
-void write_csv(csv_writer_options const& options, cuda::stream_ref stream)
+void write_csv(csv_writer_options const& options,
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
 {
   using namespace cudf::io::detail;
 
@@ -320,7 +325,8 @@ void write_csv(csv_writer_options const& options, cuda::stream_ref stream)
     options.get_table(),
     options.get_names(),
     options,
-    stream);
+    stream,
+    mr);
 }
 
 bool is_supported_read_orc(compression_type compression)
@@ -496,7 +502,9 @@ table_with_metadata read_orc(orc_reader_options const& options,
 /**
  * @copydoc cudf::io::write_orc
  */
-void write_orc(orc_writer_options const& options, cuda::stream_ref stream)
+void write_orc(orc_writer_options const& options,
+               cuda::stream_ref stream,
+               cudf::memory_resources mr)
 {
   namespace io_detail = cudf::io::detail;
 
@@ -506,7 +514,7 @@ void write_orc(orc_writer_options const& options, cuda::stream_ref stream)
   CUDF_EXPECTS(sinks.size() == 1, "Multiple sinks not supported for ORC writing");
 
   auto writer = std::make_unique<orc::detail::writer>(
-    std::move(sinks[0]), options, io_detail::single_write_mode::YES, stream);
+    std::move(sinks[0]), options, io_detail::single_write_mode::YES, stream, mr);
   writer->write(options.get_table());
 }
 
@@ -578,7 +586,8 @@ orc_chunked_writer::~orc_chunked_writer() = default;
  * @copydoc cudf::io::orc_chunked_writer::orc_chunked_writer
  */
 orc_chunked_writer::orc_chunked_writer(chunked_orc_writer_options const& options,
-                                       cuda::stream_ref stream)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   namespace io_detail = cudf::io::detail;
 
@@ -586,7 +595,7 @@ orc_chunked_writer::orc_chunked_writer(chunked_orc_writer_options const& options
   CUDF_EXPECTS(sinks.size() == 1, "Multiple sinks not supported for ORC writing");
 
   writer = std::make_unique<orc::detail::writer>(
-    std::move(sinks[0]), options, io_detail::single_write_mode::NO, stream);
+    std::move(sinks[0]), options, io_detail::single_write_mode::NO, stream, mr);
 }
 
 /**
@@ -741,7 +750,8 @@ table_input_metadata::table_input_metadata(table_metadata const& metadata)
  * @copydoc cudf::io::write_parquet
  */
 std::unique_ptr<std::vector<uint8_t>> write_parquet(parquet_writer_options const& options,
-                                                    cuda::stream_ref stream)
+                                                    cuda::stream_ref stream,
+                                                    cudf::memory_resources mr)
 {
   namespace io_detail = cudf::io::detail;
 
@@ -749,7 +759,7 @@ std::unique_ptr<std::vector<uint8_t>> write_parquet(parquet_writer_options const
 
   auto sinks  = make_datasinks(options.get_sink());
   auto writer = std::make_unique<detail_parquet::writer>(
-    std::move(sinks), options, io_detail::single_write_mode::YES, stream);
+    std::move(sinks), options, io_detail::single_write_mode::YES, stream, mr);
 
   writer->write(options.get_table(), options.get_partitions());
 
@@ -867,14 +877,15 @@ chunked_parquet_writer::chunked_parquet_writer() = default;
  * @copydoc cudf::io::chunked_parquet_writer::chunked_parquet_writer
  */
 chunked_parquet_writer::chunked_parquet_writer(chunked_parquet_writer_options const& options,
-                                               cuda::stream_ref stream)
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr)
 {
   namespace io_detail = cudf::io::detail;
 
   auto sinks = make_datasinks(options.get_sink());
 
   writer = std::make_unique<detail_parquet::writer>(
-    std::move(sinks), options, io_detail::single_write_mode::NO, stream);
+    std::move(sinks), options, io_detail::single_write_mode::NO, stream, mr);
 }
 
 chunked_parquet_writer::~chunked_parquet_writer() = default;
@@ -1292,21 +1303,26 @@ namespace experimental {
 
 // Forward declarations for detail functions
 namespace detail {
-void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref stream);
+void write_cudftable(data_sink* sink,
+                     table_view const& input,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr);
 packed_table read_cudftable(datasource* source, cuda::stream_ref stream, cudf::memory_resources mr);
 }  // namespace detail
 
 /**
  * @copydoc cudf::io::experimental::write_cudftable
  */
-void write_cudftable(cudftable_writer_options const& options, cuda::stream_ref stream)
+void write_cudftable(cudftable_writer_options const& options,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
   auto sinks = make_datasinks(options.get_sink());
   CUDF_EXPECTS(sinks.size() == 1, "CudfTable format only supports single sink");
 
-  detail::write_cudftable(sinks[0].get(), options.get_table(), stream);
+  detail::write_cudftable(sinks[0].get(), options.get_table(), stream, mr);
 }
 
 /**

@@ -5,9 +5,8 @@
 
 #include "compression.hpp"
 
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -19,11 +18,12 @@ namespace cudf::io::detail {
 writer_compression_statistics collect_compression_statistics(
   device_span<device_span<uint8_t const> const> inputs,
   device_span<codec_exec_result const> results,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // bytes_written on success
   auto const output_size_successful = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     results.begin(),
     results.end(),
     cuda::proclaim_return_type<size_t>([] __device__(codec_exec_result const& res) {
@@ -32,13 +32,13 @@ writer_compression_statistics collect_compression_statistics(
     0ul,
     cuda::std::plus<size_t>());
 
-  auto input_size_with_status = [inputs, results, stream](codec_status status) {
+  auto input_size_with_status = [inputs, results, stream, mr](codec_status status) {
     auto const zipped_begin =
       cuda::make_zip_iterator(cuda::std::make_tuple(inputs.begin(), results.begin()));
     auto const zipped_end = zipped_begin + inputs.size();
 
     return thrust::transform_reduce(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       zipped_begin,
       zipped_end,
       cuda::proclaim_return_type<size_t>([status] __device__(auto tup) {

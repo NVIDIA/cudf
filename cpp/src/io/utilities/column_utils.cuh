@@ -8,13 +8,12 @@
 #include "io/statistics/statistics.cuh"
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -36,6 +35,7 @@ namespace io {
  * @param col_desc Column description array
  * @param parent_table_device_view Table device view containing parent columns
  * @param stream CUDA stream to use
+ * @param mr Memory resources used to allocate the returned device array and temporaries
  *
  * @return Device array containing leaf column device views
  */
@@ -43,18 +43,19 @@ template <typename ColumnDescriptor>
 cuda::device_buffer<column_device_view> create_leaf_column_device_views(
   typename cudf::device_span<ColumnDescriptor> col_desc,
   table_device_view const& parent_table_device_view,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto leaf_column_views = cuda::device_buffer<column_device_view>{
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_output_mr(),
     static_cast<std::size_t>(parent_table_device_view.num_columns()),
     cuda::no_init};
   auto leaf_columns = cudf::device_span<column_device_view>{leaf_column_views};
 
   auto iter = cuda::counting_iterator<size_type>{0};
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     iter,
     iter + parent_table_device_view.num_columns(),
     [col_desc, parent_col_view = parent_table_device_view, leaf_columns] __device__(

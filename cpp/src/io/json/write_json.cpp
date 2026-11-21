@@ -355,7 +355,8 @@ void write_chunked(data_sink* out_sink,
 void write_json_uncompressed(data_sink* out_sink,
                              table_view const& table,
                              json_writer_options const& options,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   std::vector<column_name_info> user_column_names = [&]() {
@@ -374,12 +375,10 @@ void write_json_uncompressed(data_sink* out_sink,
 
   auto const line_terminator = std::string(options.is_enabled_lines() ? "\n" : ",");
   string_scalar const d_line_terminator_with_row_end{
-    "}" + line_terminator, true, stream, cudf::get_current_device_resource_ref()};
-  string_scalar const d_line_terminator{
-    line_terminator, true, stream, cudf::get_current_device_resource_ref()};
+    "}" + line_terminator, true, stream, mr.as_temporary()};
+  string_scalar const d_line_terminator{line_terminator, true, stream, mr.as_temporary()};
   std::string const list_braces{"[]"};
-  string_scalar const d_list_braces{
-    list_braces, true, stream, cudf::get_current_device_resource_ref()};
+  string_scalar const d_list_braces{list_braces, true, stream, mr.as_temporary()};
 
   if (!options.is_enabled_lines()) {
     if (out_sink->is_device_write_preferred(1)) {
@@ -409,7 +408,7 @@ void write_json_uncompressed(data_sink* out_sink,
       vector_views = cudf::detail::split(table, splits, stream);
     }
 
-    column_to_strings_fn converter{options, stream, cudf::get_current_device_resource_ref()};
+    column_to_strings_fn converter{options, stream, mr.as_temporary()};
 
     for (auto&& sub_view : vector_views) {
       if (sub_view.num_rows() == 0) continue;
@@ -445,12 +444,13 @@ void write_json_uncompressed(data_sink* out_sink,
 void write_json(data_sink* out_sink,
                 table_view const& table,
                 json_writer_options const& options,
-                cuda::stream_ref stream)
+                cuda::stream_ref stream,
+                cudf::memory_resources mr)
 {
   if (options.get_compression() != compression_type::NONE) {
     std::vector<char> hbuf;
     auto hbuf_sink_ptr = data_sink::create(&hbuf);
-    write_json_uncompressed(hbuf_sink_ptr.get(), table, options, stream);
+    write_json_uncompressed(hbuf_sink_ptr.get(), table, options, stream, mr);
     stream.sync();
     auto comp_hbuf = cudf::io::detail::compress(
       options.get_compression(),
@@ -459,7 +459,7 @@ void write_json(data_sink* out_sink,
     return;
   }
 
-  write_json_uncompressed(out_sink, table, options, stream);
+  write_json_uncompressed(out_sink, table, options, stream, mr);
 }
 
 }  // namespace cudf::io::json::detail

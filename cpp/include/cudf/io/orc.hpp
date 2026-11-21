@@ -1123,11 +1123,13 @@ class orc_writer_options_builder {
  *
  * @param options Settings for controlling reading behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  *
  * @throw cudf::logic_error if the writer timezone is empty or does not resolve to a timezone file
  */
 void write_orc(orc_writer_options const& options,
-               cuda::stream_ref stream = cudf::get_default_stream());
+               cuda::stream_ref stream   = cudf::get_default_stream(),
+               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Builds settings to use for `write_orc_chunked()`.
@@ -1586,12 +1588,15 @@ class orc_chunked_writer {
    *
    * @param[in] options options used to write table
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
+   * @param[in] mr Memory resources used for temporary allocations by this constructor and by
+   * `write()` and `close()`
    *
    * @throw cudf::logic_error if the writer timezone is empty or does not resolve to a timezone
    * file
    */
   orc_chunked_writer(chunked_orc_writer_options const& options,
-                     cuda::stream_ref stream = cudf::get_default_stream());
+                     cuda::stream_ref stream   = cudf::get_default_stream(),
+                     cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Writes table to output.

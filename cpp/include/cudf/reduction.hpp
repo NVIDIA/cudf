@@ -38,8 +38,10 @@ enum class scan_type : bool { INCLUSIVE, EXCLUSIVE };
  *
  * The `SUM_OVERFLOW` aggregation is a special case that detects integer
  * overflow during summation of signed integer or decimal values and returns a struct
- * containing both the sum result and an overflow flag. On overflow the sum value
- * is unspecified; the boolean flag is the source of truth.
+ * containing both the sum result and an overflow field. With `sum_overflow_output::FLAG` the
+ * overflow field is a boolean flag and the sum value is unspecified on overflow. With
+ * `sum_overflow_output::COUNT` the overflow field is the INT64 net number of 2^W wraps and the sum
+ * is the true sum modulo 2^W, so the exact total is `overflow * 2^W + sum`.
  *
  * Only `min` and `max` ops are supported for reduction of non-arithmetic
  * types (e.g. timestamp or string).
@@ -58,7 +60,7 @@ enum class scan_type : bool { INCLUSIVE, EXCLUSIVE };
  * | Aggregation | Output Type | Init Value | Empty Input | Comments |
  * | :---------: | ----------- | :--------: | ----------- | -------- |
  * | SUM/PRODUCT | output_type | yes | NA | Input accumulated into output_type variable |
- * | SUM_OVERFLOW | STRUCT{col.type,BOOL8} | yes | {null,false} | {sum, overflow_flag}, input must be signed integer or decimal |
+ * | SUM_OVERFLOW | STRUCT{col.type,BOOL8} or STRUCT{col.type,INT64} | yes | {null,false} or {null,0} | {sum, overflow_flag} with FLAG, {sum mod 2^W, net wrap count} with COUNT, input must be signed integer or decimal |
  * | SUM_OF_SQUARES | output_type | no | NA | Input accumulated into output_type variable |
  * | MIN/MAX | col.type | yes | NA | Supports arithmetic, timestamp, duration, string types only |
  * | ANY/ALL | BOOL8 | yes | True for ALL only | Checks for non-zero elements |

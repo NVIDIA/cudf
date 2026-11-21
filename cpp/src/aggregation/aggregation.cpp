@@ -38,19 +38,20 @@ make_sum_aggregation<segmented_reduce_aggregation>();
 
 /// Factory to create a SUM_OVERFLOW aggregation
 template <typename Base>
-std::unique_ptr<Base> make_sum_overflow_aggregation()
+std::unique_ptr<Base> make_sum_overflow_aggregation(sum_overflow_output output)
 {
-  return std::make_unique<detail::sum_overflow_aggregation>();
+  return std::make_unique<detail::sum_overflow_aggregation>(output);
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_sum_overflow_aggregation<aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_sum_overflow_aggregation<aggregation>(
+  sum_overflow_output);
 template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_sum_overflow_aggregation<groupby_aggregation>();
+  make_sum_overflow_aggregation<groupby_aggregation>(sum_overflow_output);
 template CUDF_EXPORT std::unique_ptr<groupby_scan_aggregation>
-make_sum_overflow_aggregation<groupby_scan_aggregation>();
+  make_sum_overflow_aggregation<groupby_scan_aggregation>(sum_overflow_output);
 template CUDF_EXPORT std::unique_ptr<reduce_aggregation>
-make_sum_overflow_aggregation<reduce_aggregation>();
+  make_sum_overflow_aggregation<reduce_aggregation>(sum_overflow_output);
 template CUDF_EXPORT std::unique_ptr<segmented_reduce_aggregation>
-make_sum_overflow_aggregation<segmented_reduce_aggregation>();
+  make_sum_overflow_aggregation<segmented_reduce_aggregation>(sum_overflow_output);
 
 /// Factory to create a PRODUCT aggregation
 template <typename Base>

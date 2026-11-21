@@ -1,8 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from enum import IntEnum
 
 from pylibcudf.scalar import Scalar
+from pylibcudf.types import NanSemantics
 
 class TableReference(IntEnum):
     LEFT = ...
@@ -59,6 +60,10 @@ class ASTOperator(IntEnum):
 
 class Expression:
     def __init__(self): ...
+    @property
+    def nan_semantics(self) -> NanSemantics: ...
+    @nan_semantics.setter
+    def nan_semantics(self, semantics: NanSemantics) -> None: ...
 
 class Literal(Expression):
     def __init__(self, value: Scalar): ...

@@ -165,7 +165,8 @@ std::unique_ptr<column> rescale(column_view input,
   auto const type    = cudf::data_type{cudf::type_to_id<T>(), scale};
   if (input.type().scale() >= scale) {
     auto const scalar = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, temp_mr);
-    return detail::binary_operation(input, *scalar, binary_operator::ADD, type, stream, mr);
+    return detail::binary_operation(
+      input, *scalar, binary_operator::ADD, type, nan_semantics::DEFAULT, stream, mr);
   } else {
     auto const diff = input.type().scale() - scale;
     // The value of fixed point scalar will overflow if the scale difference is larger than the
@@ -187,7 +188,8 @@ std::unique_ptr<column> rescale(column_view input,
     }
 
     auto const scalar = make_fixed_point_scalar<T>(scalar_value, scale_type{diff}, stream, temp_mr);
-    return detail::binary_operation(input, *scalar, binary_operator::DIV, type, stream, mr);
+    return detail::binary_operation(
+      input, *scalar, binary_operator::DIV, type, nan_semantics::DEFAULT, stream, mr);
   }
 };
 

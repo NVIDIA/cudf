@@ -79,6 +79,7 @@ struct expression_device_view {
   device_span<cudf::size_type const> operator_arities;
   device_span<cudf::size_type const> operator_source_indices;
   cudf::size_type num_intermediates;
+  nan_semantics semantics{nan_semantics::UNORDERED};  ///< How NaN values compare (never DEFAULT)
 };
 
 /**

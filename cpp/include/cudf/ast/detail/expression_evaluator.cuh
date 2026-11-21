@@ -434,7 +434,7 @@ struct expression_evaluator {
     auto const typed_rhs =
       resolve_input<RHS>(rhs, thread_intermediate_storage, left_row_index, right_row_index);
     ast_operator_dispatcher(op,
-                            binary_expression_output_handler<LHS, RHS>{},
+                            binary_expression_output_handler<LHS, RHS>{plan.semantics},
                             output_object,
                             output_row_index,
                             typed_lhs,
@@ -742,7 +742,17 @@ struct expression_evaluator {
    */
   template <typename LHS, typename RHS>
   struct binary_expression_output_handler : public expression_output_handler {
-    __device__ inline binary_expression_output_handler() {}
+    /**
+     * @brief Construct a binary handler
+     *
+     * @param semantics How NaN values compare
+     */
+    __device__ inline binary_expression_output_handler(nan_semantics semantics)
+      : semantics{semantics}
+    {
+    }
+
+    nan_semantics semantics;  ///< How NaN values compare
 
     /**
      * @brief Callable to perform a binary operation.
@@ -775,7 +785,7 @@ struct expression_evaluator {
                                          output,
                                          output_row_index,
                                          thread_intermediate_storage,
-                                         detail::operator_functor<op>{}(lhs, rhs));
+                                         detail::operator_functor<op>{semantics}(lhs, rhs));
     }
 
     template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>

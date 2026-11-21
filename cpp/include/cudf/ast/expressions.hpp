@@ -121,8 +121,30 @@ struct [[nodiscard]] expression {
                                                table_view const& right,
                                                cuda::stream_ref stream) const = 0;
 
+  /**
+   * @brief Sets how NaN values compare in the floating-point comparisons of the expression tree
+   *
+   * Only the setting of the root expression passed to an API (for example `compute_column`, a
+   * mixed or conditional join, or a Parquet reader filter) is used. It applies to the `EQUAL`,
+   * `NOT_EQUAL`, `LESS`, `GREATER`, `LESS_EQUAL`, `GREATER_EQUAL`, and `NULL_EQUAL` operations
+   * on floating-point operands throughout the tree. The settings of sub-expressions are ignored.
+   *
+   * @param semantics How NaN values compare
+   */
+  void set_nan_semantics(nan_semantics semantics) { _nan_semantics = semantics; }
+
+  /**
+   * @brief Returns how NaN values compare in the floating-point comparisons of the expression tree
+   *
+   * @return The value set with `set_nan_semantics`, or `nan_semantics::DEFAULT` if it was not set
+   */
+  [[nodiscard]] nan_semantics get_nan_semantics() const { return _nan_semantics; }
+
   /// @brief Destroy the expression object
   virtual ~expression() {}
+
+ private:
+  nan_semantics _nan_semantics{nan_semantics::DEFAULT};  ///< How NaN values compare
 };
 
 /**
@@ -581,7 +603,10 @@ class predicate : public expression {
    * @brief Construct a new filter predicate object
    * @param source The source expression from which the predicate value is taken
    */
-  predicate(expression const& source) : source_{source} {}
+  predicate(expression const& source) : source_{source}
+  {
+    set_nan_semantics(source.get_nan_semantics());
+  }
 
   /**
    * @copydoc expression::accept

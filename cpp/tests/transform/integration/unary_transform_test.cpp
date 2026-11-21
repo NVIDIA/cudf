@@ -1210,7 +1210,7 @@ TEST_F(StringOperationTest, OutputOffsetted)
   auto c = cudf::test::strings_column_wrapper{"1", "2", "3", "4", "5", "6"};
 
   std::string cuda = R"***(
-    __device__ void concat(cuda::std::span<char> * out, cudf::string_view a, cudf::string_view b, cudf::string_view c){
+    __device__ void concat(cudf::mutable_string_view * out, cudf::string_view a, cudf::string_view b, cudf::string_view c){
       auto iter = out->data();
       memcpy(iter, a.data(), a.size_bytes());
       iter += a.size_bytes();
@@ -1268,7 +1268,7 @@ TEST_F(StringOperationTest, OutputOffsettedMixed)
   auto c = cudf::test::strings_column_wrapper{"1", "2", "3", "4", "5", "67"};
 
   std::string cuda = R"***(
-    __device__ void concat(int32_t * ab_size, cuda::std::span<char> * out, bool * is_odd, cudf::string_view a, cudf::string_view b, cudf::string_view c){
+    __device__ void concat(int32_t * ab_size, cudf::mutable_string_view * out, bool * is_odd, cudf::string_view a, cudf::string_view b, cudf::string_view c){
       auto iter = out->data();
       auto begin = iter;
       memcpy(iter, a.data(), a.size_bytes());

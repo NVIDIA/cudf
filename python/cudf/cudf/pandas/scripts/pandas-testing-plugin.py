@@ -12475,13 +12475,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isdecimal-expected1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_len[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_len[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
 }
 
 # Keep keys in alphabetical order

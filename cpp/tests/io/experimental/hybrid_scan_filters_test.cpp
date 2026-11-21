@@ -11,6 +11,7 @@
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/parquet.hpp>
@@ -30,6 +31,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -38,6 +40,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -2079,6 +2082,89 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionaryInt96AndBool)
     EXPECT_EQ(filter_row_groups_with_dictionaries(datasource_ref, reader_ref, options, stream, mr),
               expected_row_groups);
   }
+}
+
+template <typename T>
+struct DecimalWidthFiltering : public HybridScanFiltersTest {};
+
+using DecimalWidthTypes = cudf::test::Types<numeric::decimal32, numeric::decimal128>;
+TYPED_TEST_SUITE(DecimalWidthFiltering, DecimalWidthTypes);
+
+// DECIMAL64 data read with a narrower or wider `decimal_width` and filtered with literals of it
+TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
+{
+  using DecimalType = TypeParam;
+  using RepType     = typename DecimalType::rep;
+
+  auto constexpr is_narrowed = sizeof(RepType) < sizeof(int64_t);
+  auto const scale           = numeric::scale_type{-2};
+  auto const dtype           = cudf::data_type{cudf::type_to_id<DecimalType>(), scale};
+  auto const stream          = cudf::get_default_stream();
+  auto const mr              = cudf::get_current_device_resource_ref();
+
+  // Four row groups of INT64 decimals, each value repeated so that they are dictionary encoded. The
+  // last value truncates to 5 when read as DECIMAL32
+  auto constexpr num_repeats = 4;
+  auto const distinct_values = std::vector<int64_t>{
+    -300, -100, 200, -50, 100, 300, -600, -400, -500, 7, (int64_t{1} << 32) + 5};
+  std::vector<int64_t> values;
+  for (auto const value : distinct_values) {
+    values.insert(values.end(), num_repeats, value);
+  }
+  auto const col =
+    cudf::test::fixed_point_column_wrapper<int64_t>(values.begin(), values.end(), scale);
+  auto const table = cudf::table_view{{col}};
+
+  auto const filepath = temp_env->get_temp_filepath("DecimalWidthFiltering.parquet");
+  {
+    cudf::io::chunked_parquet_writer writer(
+      cudf::io::chunked_parquet_writer_options::builder(cudf::io::sink_info{filepath})
+        .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
+        .build());
+    for (auto const& row_group : cudf::slice(table, {0, 12, 12, 24, 24, 36, 36, 44})) {
+      writer.write(row_group);
+    }
+    writer.close();
+  }
+
+  auto const datasource    = cudf::io::datasource::create(filepath);
+  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
+  auto options = cudf::io::parquet_reader_options::builder().decimal_width(dtype.id()).build();
+  auto const reader =
+    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
+  auto const row_groups = reader->all_row_groups(options);
+  ASSERT_EQ(row_groups.size(), 4);
+  ASSERT_TRUE(std::ranges::all_of(reader->parquet_metadata().row_groups, [](auto const& row_group) {
+    return std::ranges::any_of(row_group.columns.front().meta_data.encodings,
+                               [](auto const encoding) {
+                                 return encoding == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+                                        encoding == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+                               });
+  }));
+
+  auto const col_ref     = cudf::ast::column_reference(0);
+  auto const test_filter = [&](cudf::ast::ast_operator op,
+                               RepType value,
+                               std::size_t expected_stats_row_groups,
+                               std::optional<std::size_t> expected_dict_row_groups) {
+    auto literal_value = cudf::fixed_point_scalar<DecimalType>(value, scale, true, stream);
+    auto const literal = cudf::ast::literal(literal_value);
+    auto const filter  = cudf::ast::operation(op, col_ref, literal);
+    options.set_filter(filter);
+
+    EXPECT_EQ(reader->filter_row_groups_with_stats(row_groups, options, stream).size(),
+              expected_stats_row_groups);
+    if (expected_dict_row_groups.has_value()) {
+      EXPECT_EQ(
+        filter_row_groups_with_dictionaries(*datasource, *reader, options, stream, mr).size(),
+        expected_dict_row_groups.value());
+    }
+  };
+
+  // Stats of the last row group are ignored when narrowed as its max does not fit
+  test_filter(cudf::ast::ast_operator::GREATER_EQUAL, -150, 3, std::nullopt);
+  test_filter(cudf::ast::ast_operator::EQUAL, -400, is_narrowed ? 2 : 1, 1);
+  test_filter(cudf::ast::ast_operator::EQUAL, 5, is_narrowed ? 3 : 2, is_narrowed ? 1 : 0);
 }
 
 TEST_F(HybridScanFiltersTest, RowGroupPasses)

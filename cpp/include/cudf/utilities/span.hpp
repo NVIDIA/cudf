@@ -54,6 +54,16 @@ template <typename T, typename Alloc>
 struct is_host_span_supported_container<  //
   std::basic_string<T, std::char_traits<T>, Alloc>> : std::true_type {};
 
+namespace detail {
+// Supported containers whose data, accessed through `C&`, can be viewed as a span of `T`
+template <typename C, typename T>
+concept host_span_compatible_container_impl =
+  is_host_span_supported_container<std::remove_cv_t<C>>::value and
+  std::is_constructible_v<cuda::std::span<T>,
+                          decltype(thrust::raw_pointer_cast(std::declval<C&>().data())),
+                          std::size_t>;
+}  // namespace detail
+
 /**
  * @brief Host span, a non-owning view over a contiguous sequence of host-accessible elements.
  *
@@ -108,39 +118,25 @@ struct host_span {
 
   /// Constructor from container
   /// @param in The container to construct the span from
-  template <
-    typename C,
-    // Only supported containers of types convertible to T
-    std::enable_if_t<
-      is_host_span_supported_container<C>::value &&
-      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>>* = nullptr>                  // NOLINT
+  template <typename C>
+    requires(detail::host_span_compatible_container_impl<C, T>)
   constexpr host_span(C& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   /// Constructor from const container
   /// @param in The container to construct the span from
-  template <
-    typename C,
-    // Only supported containers of types convertible to T
-    std::enable_if_t<
-      is_host_span_supported_container<C>::value &&
-      std::is_convertible_v<std::remove_pointer_t<decltype(thrust::raw_pointer_cast(  // NOLINT
-                              std::declval<C&>().data()))> (*)[],  // NOLINT(modernize-type-traits)
-                            T (*)[]>>* = nullptr>                  // NOLINT
+  template <typename C>
+    requires(detail::host_span_compatible_container_impl<C const, T>)
   constexpr host_span(C const& in) : _span{thrust::raw_pointer_cast(in.data()), in.size()}
   {
   }
 
   // Copy construction to support const conversion
   /// @param other The span to copy
-  template <typename OtherT,
-            std::size_t OtherExtent,
-            std::enable_if_t<(Extent == OtherExtent || Extent == dynamic_extent) &&
-                               std::is_convertible_v<OtherT (*)[], T (*)[]>,  // NOLINT
-                             void>* = nullptr>
+  template <typename OtherT, std::size_t OtherExtent>
+    requires((Extent == OtherExtent or Extent == dynamic_extent) and
+             std::is_convertible_v<OtherT (*)[], T (*)[]>)  // NOLINT
   constexpr host_span(host_span<OtherT, OtherExtent> const& other) noexcept
     : _span{other.data(), other.size()}, _is_device_accessible{other.is_device_accessible()}
   {
@@ -313,8 +309,8 @@ namespace detail {
 template <typename T, template <typename, std::size_t> typename RowType>
 class base_2dspan {
  public:
-  using size_type =
-    std::pair<size_t, size_t>;  ///< Type used to represent the dimension of the span
+  /// Type used to represent the dimension of the span
+  using size_type = std::pair<size_t, size_t>;
 
   constexpr base_2dspan() noexcept = default;
   /**
@@ -390,11 +386,9 @@ class base_2dspan {
    * @tparam OtherRowType Type of the row of the other 2D span
    * @param other The other 2D span
    */
-  template <typename OtherT,
-            template <typename, size_t> typename OtherRowType,
-            std::enable_if_t<std::is_convertible_v<OtherRowType<OtherT, dynamic_extent>,
-                                                   RowType<T, dynamic_extent>>,
-                             void>* = nullptr>
+  template <typename OtherT, template <typename, size_t> typename OtherRowType>
+    requires(std::is_convertible_v<OtherRowType<OtherT, dynamic_extent>,
+                                   RowType<T, dynamic_extent>>)
   constexpr base_2dspan(base_2dspan<OtherT, OtherRowType> const& other) noexcept
     : _flat{other.flat_view()}, _size{other.size()}
   {

@@ -13,7 +13,7 @@ DASK_CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel
 # Download the cudf, libcudf, and pylibcudf built in the previous step
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
 rapids-logger "Install dask_cudf, cudf, pylibcudf, and test requirements"
 

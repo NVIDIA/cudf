@@ -103,6 +103,7 @@ files:
     output: none
     includes:
       - depends_on_cuml
+      - test_cuml
   test_python_pylibcudf:
     output: none
     includes:
@@ -224,24 +225,7 @@ files:
     extras:
       table: build-system
     includes:
-      - rapids_build_skbuild
-  py_rapids_build_cudf:
-    output: pyproject
-    matrix:
-      use_cuda_wheels: ["true"]
-      cuda_suffixed: ["false"]
-    pyproject_dir: python/cudf
-    extras:
-      table: tool.rapids-build-backend
-      key: requires
-    includes:
-      - build_base
-      - build_python_common
-      - depends_on_numba_cuda_mlir
-      - depends_on_pylibcudf
-      - depends_on_libcudf
-      - depends_on_librmm
-      - depends_on_rmm
+      - rapids_build_setuptools
   py_run_cudf:
     output: pyproject
     matrix:
@@ -1055,16 +1039,10 @@ dependencies:
           - *doxygen
           - make
           - myst-nb
-          - nbsphinx
           - numpydoc
-          - pandoc
-          - scipy
           - sphinx>=8.1.0
-          - sphinx-autobuild
           - sphinx-copybutton
-          - sphinx-markdown-tables
           - sphinx-remove-toctrees
-          - sphinxcontrib-websupport
           - pip:
               - nvidia-sphinx-theme
   notebooks:
@@ -1073,7 +1051,6 @@ dependencies:
         packages:
           - ipython
           - notebook
-          - scipy
   py_version:
     specific:
       - output_types: conda
@@ -1158,8 +1135,6 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - cachetools
-          - &numba numba>=0.60.0,<0.65.0
           - nvtx>=0.2.1
           - packaging
           - rich
@@ -1171,7 +1146,6 @@ dependencies:
           - &nvidia_ml_py nvidia-ml-py>=12
           - packaging
           - polars>=2.0,<2.2
-          - typing_extensions>=4.0.0
   run_cudf_polars_dask:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1224,7 +1198,6 @@ dependencies:
         matrices:
           - matrix: {dependencies: "oldest"}
             packages:
-              - numba==0.60.0
               - *pandas
           - matrix: {dependencies: "latest"}
             packages:
@@ -1297,7 +1270,6 @@ dependencies:
           - &fastavro fastavro>=0.22.9
           - mmh3
           - nanoarrow
-          - *numba
           - *pandas
       - output_types: conda
         packages:
@@ -1309,11 +1281,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          # Upper bound on aiobotocore to avoid build issues in CI
-          # https://github.com/NVIDIA/cudf/issues/20843
-          - aiobotocore>=2.2.0,<3
           - boto3>=1.21.21
-          - botocore>=1.24.21
           - s3fs>=2022.3.0
       - output_types: conda
         packages:
@@ -1324,7 +1292,6 @@ dependencies:
         packages:
           - cramjam
           - *fastavro
-          - hypothesis>=6.131.7
           - pytest-benchmark
           - pytest-cases>=3.8.2
           - rapids-cli
@@ -1354,7 +1321,6 @@ dependencies:
         packages:
           - rich
           - pytest-httpserver
-          - zstandard
           # Used by ci/timeout_with_stack.py utility
           - psutil
           - *pandas
@@ -1386,11 +1352,18 @@ dependencies:
           # added lower bound pinning to get pytest-subtests for free
           - pytest>=9
           - tpchgen-cli>=3.0.0
+  test_cuml:
+    common:
+      - output_types: conda
+        packages:
+          # Imported by cuml's tests/conftest.py
+          - hypothesis>=6.131.7
   test_python_narwhals:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
           # https://github.com/narwhals-dev/narwhals/blob/main/pyproject.toml#L67
+          - hypothesis>=6.131.7
           - pytest-env
           # narwhals uses the uv_build backend, so its editable install needs
           # uv and uv-build available (with --no-build-isolation)
@@ -1419,10 +1392,6 @@ dependencies:
             packages: [*libcudf_unsuffixed]
   depends_on_numba_cuda_mlir:
     common:
-      - output_types: [conda, requirements, pyproject]
-        packages:
-          # TODO: Remove after https://github.com/rapidsai/build-planning/issues/301 is resolved.
-          - numba>=0.60.0,<0.65.0
       - output_types: [conda]
         packages:
           - &numba_cuda_mlir numba-cuda-mlir>=0.3.0
@@ -1842,7 +1811,7 @@ dependencies:
           - jinja2
           - lxml
           - matplotlib-base
-          - *numba
+          - numba
           - numexpr
           - odfpy
           - openpyxl
@@ -1870,6 +1839,7 @@ dependencies:
           - jupyter_client
           - nbconvert
           - nbformat
+          - numba
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0

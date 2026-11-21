@@ -287,12 +287,13 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // Each consumer gets a stream forked from the producer's, so it runs after the producer while the
   // consumers overlap with each other and with the level-decoding kernels.
-  constexpr std::size_t num_consumers = 2;
+  constexpr std::size_t num_consumers = 3;
   auto const consumer_streams         = has_flat_nz_map
                                           ? cudf::detail::fork_streams(nz_map_stream, num_consumers)
                                           : std::vector<cuda::stream_ref>(num_consumers, _stream);
   auto const dlba_consumer_stream     = consumer_streams[0];
   auto const delta_consumer_stream    = consumer_streams[1];
+  auto const dba_consumer_stream      = consumer_streams[2];
 
   int s_idx = 0;
 
@@ -362,15 +363,22 @@ void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_
 
   // launch delta byte array decoder
   if (BitAnd(kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0) {
+    auto const dba_stream = streams[s_idx++];
+    auto const needs_levels =
+      BitAnd(unmapped_kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0;
+    auto const has_map = BitAnd(mapped_kernel_mask, decode_kernel_mask::DELTA_BYTE_ARRAY) != 0;
     decode_delta_byte_array(subpass.pages,
                             pass.chunks,
                             num_rows,
                             skip_rows,
                             level_type_size,
                             subpass_page_mask_span(),
+                            has_map,
+                            needs_levels,
                             initial_str_offsets,
                             error_code.data(),
-                            streams[s_idx++]);
+                            dba_stream,
+                            dba_consumer_stream);
   }
 
   // launch delta length byte array decoder

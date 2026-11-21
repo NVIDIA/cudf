@@ -43,9 +43,8 @@ data_type const output_types[]{state_types[0], state_types[1], data_type{type_id
 
 cudf::lto_fragments lto_fragments()
 {
-  auto range = cudf_reduce_test_embed::file_ranges[cudf_reduce_test_embed::fragment];
-  auto bytes = cudf_reduce_test_embed::files.subspan(range[0], range[1]);
-  static cudf::lto_fragment const fragments[]{{cudf::lto_binary_type::FATBIN, bytes}};
+  static cudf::lto_fragment const fragments[]{
+    {cudf::lto_binary_type::FATBIN, cudf_reduce_test_embed::get(cudf_reduce_test_embed::fragment)}};
   return fragments;
 }
 

@@ -668,8 +668,9 @@ class _OrderedGroupCursor:
         exchange: SparseExchange,
         destination: int,
     ) -> None:
+        rest: TableChunk | None = chunk
         if self.send_first:
-            first, chunk = await _split_key_run(
+            first, rest = await _split_key_run(
                 groupby.context,
                 groupby.ir_context,
                 chunk,
@@ -680,7 +681,7 @@ class _OrderedGroupCursor:
             await exchange.insert_chunk(destination, first)
             self.send_first = False
             exchange.start_finish()
-        await self.emit(groupby, chunk)
+        await self.emit(groupby, rest)
 
 
 @dataclass(frozen=True)

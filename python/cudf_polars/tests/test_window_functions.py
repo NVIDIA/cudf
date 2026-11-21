@@ -138,6 +138,17 @@ def test_over_unsupported_mapping_strategy(
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "dtype", [pl.Date(), pl.Datetime("ms"), pl.Datetime("us"), pl.Datetime("ns")]
+)
+def test_over_temporal_mean_unsupported(
+    in_memory_engine, df: pl.LazyFrame, dtype: pl.DataType
+):
+    """Mean of temporal data fails while translating the window expression."""
+    q = df.with_columns(pl.col("date").cast(dtype).mean().over("a"))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 @pytest.mark.parametrize("period", ["2d", "3d"])
 def test_rolling(
     engine: pl.GPUEngine, request, df: pl.LazyFrame, agg_expr, period: str

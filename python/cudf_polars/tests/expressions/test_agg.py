@@ -315,15 +315,18 @@ def test_groupby_max_min_by_group_length_unsupported(
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "value",
+    [pl.lit(pl.Series("s", [7, 3, 1, 9])), pl.col("a") + pl.lit(pl.Series("s", [7]))],
+    ids=["literal", "column_with_literal"],
+)
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])
 def test_groupby_max_min_by_literal_column_value_unsupported(
-    engine: pl.GPUEngine, agg: str
+    in_memory_engine: pl.GPUEngine, agg: str, value: pl.Expr
 ) -> None:
     df = pl.LazyFrame({"g": [1, 1, 2, 2], "a": [10, 20, 30, 40], "b": [1, 5, 2, 1]})
-    q = df.group_by("g").agg(
-        getattr(pl.lit(pl.Series("s", [7, 3, 1, 9])), agg)(pl.col("b"))
-    )
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    q = df.group_by("g").agg(getattr(value, agg)(pl.col("b")))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("agg", ["max_by", "min_by"])

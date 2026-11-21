@@ -796,8 +796,7 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @param element_index Position of the desired string element
    * @return A mutable view of the string's preallocated character storage
    */
-  template <typename T>
-    requires(cuda::std::same_as<cuda::std::remove_cv_t<T>, mutable_string_view>)
+  template <cudf::concepts::mutable_string_view T>
   [[nodiscard]] __device__ T element(size_type element_index) const noexcept
   {
     auto const index   = element_index + offset();

@@ -492,6 +492,20 @@ examples.
 - Integer overflow
 - Ensuring that outputs will not exceed the [`size_type`](#cudfsize_type) row count limit for a
   given set of inputs
+- Ensuring that the bytes in a `STRING` column are valid [UTF-8](#utf-8)
+
+Passing data that does not satisfy the requirements of its declared type results in
+**undefined behavior**. libcudf makes no guarantees about the results of any API given such input:
+it may produce incorrect results, produce different results across libcudf versions, raise an
+error, or behave in other unspecified ways. This applies to every API that accepts the data, not
+only APIs specific to that type.
+
+For example, a `STRING` column must contain only valid UTF-8 encoded data. Storing arbitrary binary
+(non-UTF-8) bytes in a `STRING` column is not supported, even though libcudf does not prevent
+constructing such a column. Using that column with any libcudf API, including the `cudf::strings`
+APIs as well as general APIs such as sort, groupby, join, hashing, or I/O, is undefined behavior.
+Any of these APIs may assume or rely on valid UTF-8 now or in the future. Applications that need to
+store arbitrary binary data should use a `LIST` column of `UINT8` elements instead.
 
 This policy describes libcudf's default behavior. Some APIs offer opt-in overflow-aware variants for
 callers that need strict semantics, such as the `SUM_OVERFLOW` aggregation, which reports
@@ -1708,6 +1722,13 @@ most operations.
 The `cudf/strings/detail/utf8.hpp` header also includes some utility methods for reading and writing
 (`to_char_utf8/from_char_utf8`) individual UTF-8 characters to/from byte arrays.
 
+See [Unicode Limitations](../unicode.md) for limits on the Unicode support in libcudf strings
+functions such as character type testing and case conversion.
+
+libcudf does not validate that the data in a strings column is valid UTF-8. Passing a strings column
+containing invalid UTF-8 (for example, arbitrary binary data) to any libcudf API is undefined
+behavior. See [libcudf does not introspect data](#libcudf-does-not-introspect-data) for details.
+
 ### cudf::lists_column_view and cudf::lists_view
 
 `cudf::lists_column_view` is a view of a lists column. `cudf::list_view` is a view of a single list,
@@ -1737,6 +1758,13 @@ Use `cudf::empty_like()` to create an empty column from an existing `cudf::colum
 
 cuIO is a component of libcudf that provides GPU-accelerated reading and writing of data file
 formats commonly used in data analytics, including CSV, Parquet, ORC, Avro, and JSON_Lines.
+
+libcudf does not have a binary data type, so as a convenience the Parquet and ORC readers read
+`BINARY` columns, and the Avro reader reads `bytes` columns, as `STRING` columns but the result
+could be [undefined behavior when calling other libcudf APIs](#libcudf-does-not-introspect-data).
+The Parquet reader can instead read these columns as `LIST<UINT8>` by setting
+`cudf::io::reader_column_schema::set_convert_binary_to_strings(false)`, subject to the
+[`size_type`](#cudfsize_type) limit on total bytes.
 
 // TODO: add more detail and move to a separate file.
 

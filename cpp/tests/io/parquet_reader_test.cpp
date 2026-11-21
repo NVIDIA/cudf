@@ -4118,6 +4118,54 @@ TEST_F(ParquetReaderTest, FilterNoStats)
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result);
 }
 
+TEST_F(ParquetReaderTest, FilterInexactStats)
+{
+  // Row groups: {"abcX", "abcY"}, {"abc", "abc"}, {"x", "y"}
+  auto const col   = cudf::test::strings_column_wrapper{"abcX", "abcY", "abc", "abc", "x", "y"};
+  auto const table = table_view{{col}};
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .row_group_size_rows(2)
+      .max_page_size_rows(2)
+      .max_page_fragment_size(2)
+      .build());
+
+  // Mimic a non-compliant writer that truncates both bounds of row group 0 to the same prefix,
+  // and mark row group 2 inexact without changing its (still valid) bounds
+  edit_footer(buffer, [](cudf::io::parquet::FileMetaData& fmd) {
+    ASSERT_EQ(fmd.row_groups.size(), 3);
+    auto& rg0_stats     = fmd.row_groups[0].columns[0].meta_data.statistics;
+    rg0_stats.min_value = rg0_stats.max_value = std::vector<uint8_t>{'a', 'b', 'c'};
+    for (auto const rg : {0, 2}) {
+      auto& stats              = fmd.row_groups[rg].columns[0].meta_data.statistics;
+      stats.is_min_value_exact = false;
+      stats.is_max_value_exact = false;
+    }
+  });
+
+  auto const test_filter =
+    [&](cudf::ast::ast_operator op, std::string const& value, cudf::size_type expected_row_groups) {
+      auto scalar       = cudf::string_scalar(value);
+      auto const lit    = cudf::ast::literal(scalar);
+      auto const ref    = cudf::ast::column_reference(0);
+      auto const expr   = cudf::ast::operation(op, ref, lit);
+      auto const result = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+          .filter(expr)
+          .build());
+      auto const expected = cudf::apply_retention_mask(table, *cudf::compute_column(table, expr));
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), expected_row_groups);
+    };
+
+  // Inexact min == max is not a constant, so row group 0 is kept. Exact min == max of row group 1
+  // still prunes for `!=`, and the valid inexact bounds of row group 2 still prune for `==`
+  test_filter(cudf::ast::ast_operator::NOT_EQUAL, "abc", 2);
+  test_filter(cudf::ast::ast_operator::EQUAL, "abcX", 1);
+}
+
 TEST_F(ParquetReaderTest, FilterNullableStats)
 {
   // Filter on a column whose row groups differ in nullability, which is what makes a statistic
@@ -5322,6 +5370,16 @@ TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBounds)
   auto expected_max    = column_wrapper<int64_t>({2, 4}, all_valid);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds->view().column(2));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds->view().column(3));
+
+  // Exactness flags are not interpreted: inexact min == max is returned as stored
+  auto& stats              = metadatas[0].row_groups[0].columns[0].meta_data.statistics;
+  stats.max_value          = stats.min_value;
+  stats.is_max_value_exact = false;
+  bounds                   = cudf::io::read_parquet_column_chunk_bounds(
+    metadatas, column_names, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds->view().column(2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<int64_t>({1, 4}, all_valid),
+                                 bounds->view().column(3));
 }
 
 TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBoundsEmptyMetadata)

@@ -6,6 +6,7 @@ import decimal
 import os
 import random
 from io import BytesIO
+from itertools import pairwise
 from string import ascii_letters, ascii_lowercase
 
 import numpy as np
@@ -720,11 +721,6 @@ def _assert_orc_write_statistics(gdf, fname, stats_freq):
 @pytest.mark.parametrize("nrows", [1, 100, 100000])
 def test_orc_write_statistics(tmp_path, nrows):
     supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 100000:
-        supported_stat_types.remove("bool")
-
     gdf = cudf.DataFrame(
         {
             "col_" + str(dtype): gen_rand_series(dtype, nrows, has_nulls=True)
@@ -741,11 +737,6 @@ def test_orc_write_statistics(tmp_path, nrows):
 @pytest.mark.parametrize("nrows", [2, 100, 1024])
 def test_orc_chunked_write_statistics(tmp_path, datadir, nrows, stats_freq):
     supported_stat_types = [*supported_numpy_dtypes, "str"]
-    # Writing bool columns to multiple row groups is disabled
-    # until #6763 is fixed
-    if nrows == 1024:
-        supported_stat_types.remove("bool")
-
     gdf_fname = tmp_path / "chunked_stats.orc"
     with ORCWriter(
         gdf_fname, statistics=stats_freq, stripe_size_rows=512
@@ -904,29 +895,142 @@ def test_orc_reader_gmt_timestamps(datadir):
     assert_eq(pdf, gdf)
 
 
-def test_orc_bool_encode_fail():
+@pytest.mark.parametrize("null_row", [5000, 15000])
+def test_orc_bool_encode(null_row):
     buffer = BytesIO()
 
-    # Generate a boolean column longer than a single row group
-    fail_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
-    # Invalidate a row in the first row group
-    fail_df["col"][5000] = None
+    # Exercise a partial boolean byte in either the first or last row group.
+    expected = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
+    expected.loc[null_row, "col"] = None
+    expected.to_orc(buffer)
 
-    # Should throw instead of generating a file that is incompatible
-    # with other readers (see issue #6763)
-    with pytest.raises(RuntimeError):
-        fail_df.to_orc(buffer)
+    # Validate interoperability with the external PyArrow reader used by pandas.
+    got = pd.read_orc(buffer)
+    assert_eq(expected.to_pandas(nullable=True), got)
 
-    # Generate a boolean column longer than a single row group
-    okay_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
-    okay_df["col"][15000] = None
-    # Invalid row is in the last row group; encoding is assumed to be correct
-    okay_df.to_orc(buffer)
 
-    # Also validate data
-    pdf = pd.read_orc(buffer)
+@pytest.mark.parametrize("offset", [0, 3])
+def test_orc_nested_boolean_present_index(offset):
+    # cuDF's nested null decoder reads by stripe, even with use_index=True.
+    # Check the emitted positions against PRESENT itself instead. This fixture
+    # uses NONE compression, following https://orc.apache.org/specification/ORCv1/.
+    def read_varint(stream):
+        value = 0
+        for shift in range(0, 70, 7):
+            byte = stream.read(1)
+            assert byte, "Truncated ORC protobuf varint"
+            value |= (byte[0] & 0x7F) << shift
+            if byte[0] < 0x80:
+                return value
+        raise AssertionError("Invalid ORC protobuf varint")
 
-    assert_eq(okay_df.to_pandas(nullable=True), pdf)
+    def read_fields(data, wanted):
+        stream = BytesIO(data)
+        fields = {}
+        while stream.tell() < len(data):
+            tag = read_varint(stream)
+            field, wire_type = tag >> 3, tag & 7
+            assert field > 0, "Invalid ORC protobuf field number"
+            if wire_type == 0:
+                value = read_varint(stream)
+            else:
+                if wire_type == 2:
+                    size = read_varint(stream)
+                else:
+                    assert wire_type in (1, 5), (
+                        "Unsupported protobuf wire type"
+                    )
+                    size = 8 if wire_type == 1 else 4
+                value = stream.read(size)
+                assert len(value) == size, "Truncated ORC protobuf field"
+            if field in wanted:
+                fields.setdefault(field, []).append(value)
+        return fields
+
+    def decode_byte_rle(data):
+        stream = BytesIO(data)
+        decoded = bytearray()
+        while header := stream.read(1):
+            count = header[0]
+            if count < 128:
+                value = stream.read(1)
+                assert value, "Truncated ORC byte-RLE repeat"
+                decoded.extend(value * (count + 3))
+            else:
+                literal = stream.read(256 - count)
+                assert len(literal) == 256 - count, (
+                    "Truncated ORC byte-RLE literal"
+                )
+                decoded.extend(literal)
+        return np.unpackbits(np.frombuffer(decoded, dtype=np.uint8))
+
+    stride = 512
+    rows = 3 * stride + 1
+    child_offsets = [i + i // 7 for i in range(rows + offset + 1)]
+    children = [
+        None if (i * 13 + i // 11) % 17 < 3 else (i // 3) % 5 == 1
+        for i in range(child_offsets[-1])
+    ]
+    nested = [children[begin:end] for begin, end in pairwise(child_offsets)]
+    source = pa.table({"col": pa.array(nested, type=pa.list_(pa.bool_()))})
+    frame = cudf.DataFrame.from_arrow(source).iloc[offset:]
+    buffer = BytesIO()
+    frame.to_orc(
+        buffer, index=False, compression=None, row_index_stride=stride
+    )
+    data = buffer.getvalue()
+    assert orc.ORCFile(BytesIO(data)).read().equals(source.slice(offset))
+
+    postscript_start = len(data) - 1 - data[-1]
+    postscript = read_fields(data[postscript_start:-1], {1, 2})
+    assert postscript[2] == [0]  # CompressionKind.NONE
+    footer_start = postscript_start - postscript[1][0]
+    footer = read_fields(data[footer_start:postscript_start], {3, 8})
+    assert footer[8] == [stride]
+    assert len(footer[3]) == 1
+    stripe = read_fields(footer[3][0], {1, 2, 3, 4})
+    stripe_footer_start = stripe[1][0] + stripe[2][0] + stripe[3][0]
+    stripe_footer = read_fields(
+        data[stripe_footer_start : stripe_footer_start + stripe[4][0]], {1}
+    )
+    stream_start = stripe[1][0]
+    streams = {}
+    for description in stripe_footer[1]:
+        stream = read_fields(description, {1, 2, 3})
+        stream_end = stream_start + stream[3][0]
+        assert stream_end <= stripe_footer_start
+        streams[stream[2][0], stream[1][0]] = data[stream_start:stream_end]
+        stream_start = stream_end
+    assert stream_start == stripe_footer_start
+
+    # Preorder type IDs: root=0, LIST=1, BOOLEAN child=2.
+    # Stream kinds: PRESENT=0, ROW_INDEX=6.
+    present = streams[2, 0]
+    entries = read_fields(streams[2, 6], {1})[1]
+    assert len(entries) == (rows + stride - 1) // stride
+    nested = nested[offset:]
+    expected = np.array([value is not None for row in nested for value in row])
+    np.testing.assert_array_equal(
+        decode_byte_rle(present)[: len(expected)], expected
+    )
+    bit_offsets = []
+    for rowgroup, entry in enumerate(entries):
+        packed = read_fields(entry, {1})[1][0]
+        positions = BytesIO(packed)
+        byte_offset, run_offset, bit_offset = (
+            read_varint(positions) for _ in range(3)
+        )
+        assert 0 <= byte_offset < len(present)
+        assert 0 <= bit_offset < 8
+        bit_offsets.append(bit_offset)
+        begin = sum(map(len, nested[: rowgroup * stride]))
+        end = sum(map(len, nested[: (rowgroup + 1) * stride]))
+        decoded = decode_byte_rle(present[byte_offset:])
+        start_bit = run_offset * 8 + bit_offset
+        np.testing.assert_array_equal(
+            decoded[start_bit : start_bit + end - begin], expected[begin:end]
+        )
+    assert any(bit_offsets), "The fixture must exercise a partial PRESENT byte"
 
 
 def test_nanoseconds_overflow():

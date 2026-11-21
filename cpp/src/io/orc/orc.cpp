@@ -238,6 +238,8 @@ void protobuf_writer::put_row_index_entry(int32_t present_blk,
                                           int32_t data2_blk,
                                           int32_t data2_ofs,
                                           TypeKind kind,
+                                          uint8_t present_bit_offset,
+                                          uint8_t data_bit_offset,
                                           col_stats_blob const* stats)
 {
   protobuf_writer position_writer;
@@ -249,7 +251,7 @@ void protobuf_writer::put_row_index_entry(int32_t present_blk,
   if (present_ofs >= 0) {
     positions_size += position_writer.put_uint(present_ofs);
     positions_size += position_writer.put_byte(0);  // run pos = 0
-    positions_size += position_writer.put_byte(0);  // bit pos = 0
+    positions_size += position_writer.put_byte(present_bit_offset);
   }
   if (data_blk >= 0) { positions_size += position_writer.put_uint(data_blk); }
   if (data_ofs >= 0) {
@@ -257,10 +259,7 @@ void protobuf_writer::put_row_index_entry(int32_t present_blk,
     if (kind != STRING && kind != FLOAT && kind != DOUBLE && kind != DECIMAL) {
       // RLE run pos always zero (assumes RLE aligned with row index boundaries)
       positions_size += position_writer.put_byte(0);
-      if (kind == BOOLEAN) {
-        // bit position in byte, always zero
-        positions_size += position_writer.put_byte(0);
-      }
+      if (kind == BOOLEAN) { positions_size += position_writer.put_byte(data_bit_offset); }
     }
   }
   // INT kind can be passed in to bypass 2nd stream index (dictionary length streams)

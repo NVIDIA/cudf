@@ -19,7 +19,8 @@ template <typename T>
 std::vector<T> split(T const& input,
                      size_type column_size,
                      std::span<size_type const> splits,
-                     cuda::stream_ref stream)
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
   if (splits.empty() or column_size == 0) { return std::vector<T>{input}; }
   CUDF_EXPECTS(
@@ -34,73 +35,83 @@ std::vector<T> split(T const& input,
 
   indices.push_back(column_size);  // This to include rest of the elements
 
-  return detail::slice(input, indices, stream);
+  return detail::slice(input, indices, stream, mr);
 }
 
 };  // anonymous namespace
 
 std::vector<cudf::column_view> split(cudf::column_view const& input,
                                      std::span<size_type const> splits,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
-  return split(input, input.size(), splits, stream);
+  return split(input, input.size(), splits, stream, mr);
 }
 
 std::vector<cudf::table_view> split(cudf::table_view const& input,
                                     std::span<size_type const> splits,
-                                    cuda::stream_ref stream)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   // A genuinely empty table (no columns and no rows) has nothing to split.
   if (input.num_columns() == 0 && input.num_rows() == 0) { return {}; }
-  return split(input, input.num_rows(), splits, stream);
+  return split(input, input.num_rows(), splits, stream, mr);
 }
 
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
-  return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
+  return detail::split(
+    input, std::span<size_type const>(splits.begin(), splits.size()), stream, mr);
 }
 
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
-  return detail::split(input, std::span<size_type const>(splits.begin(), splits.size()), stream);
+  return detail::split(
+    input, std::span<size_type const>(splits.begin(), splits.size()), stream, mr);
 }
 
 }  // namespace detail
 
 std::vector<cudf::column_view> split(cudf::column_view const& input,
                                      std::span<size_type const> splits,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::split(input, splits, stream);
+  return detail::split(input, splits, stream, mr);
 }
 
 std::vector<cudf::table_view> split(cudf::table_view const& input,
                                     std::span<size_type const> splits,
-                                    cuda::stream_ref stream)
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::split(input, splits, stream);
+  return detail::split(input, splits, stream, mr);
 }
 
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::split(input, splits, stream);
+  return detail::split(input, splits, stream, mr);
 }
 
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              cuda::stream_ref stream)
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::split(input, splits, stream);
+  return detail::split(input, splits, stream, mr);
 }
 
 }  // namespace cudf

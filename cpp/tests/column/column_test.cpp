@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -30,6 +31,7 @@
 
 #include <numeric>
 #include <random>
+#include <utility>
 #include <vector>
 
 template <typename T>
@@ -192,6 +194,32 @@ TYPED_TEST(TypedColumnTest, SetInvalidSizeNullMaskNonZeroNullCount)
   EXPECT_THROW(
     col.set_null_mask(invalid_size_null_mask, this->num_elements(), cudf::get_default_stream()),
     cudf::logic_error);
+}
+
+TYPED_TEST(TypedColumnTest, NullCountRangeMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::column col{this->type(),
+                   this->num_elements(),
+                   std::move(this->data),
+                   std::move(this->all_null_mask),
+                   this->num_elements()};
+  auto const view = col.view();
+
+  auto const [null_count, has_nulls] = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result        = std::pair{view.null_count(1, 3, stream, harness.resources()),
+                            view.has_nulls(1, 3, stream, harness.resources())};
+    harness.synchronize(stream);
+    return result;
+  }();
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+  EXPECT_EQ(null_count, 2);
+  EXPECT_TRUE(has_nulls);
 }
 
 TYPED_TEST(TypedColumnTest, MoveNullMask)

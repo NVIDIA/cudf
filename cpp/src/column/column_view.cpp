@@ -135,12 +135,13 @@ column_view_base::column_view_base(data_type type,
 
 size_type column_view_base::null_count(size_type begin,
                                        size_type end,
-                                       cuda::stream_ref stream) const
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr) const
 {
   CUDF_EXPECTS((begin >= 0) && (end <= size()) && (begin <= end), "Range is out of bounds.");
   return (null_count() == 0)
            ? 0
-           : cudf::detail::null_count(null_mask(), offset() + begin, offset() + end, stream);
+           : cudf::detail::null_count(null_mask(), offset() + begin, offset() + end, stream, mr);
 }
 
 bool is_shallow_equivalent(column_view const& lhs, column_view const& rhs)

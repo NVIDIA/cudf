@@ -7,6 +7,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
 
@@ -97,9 +98,12 @@ class lists_column_view : private column_view {
    *
    * @throw cudf::logic_error if this is an empty column
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return A sliced child column view
    */
-  [[nodiscard]] column_view get_sliced_child(cuda::stream_ref stream) const;
+  [[nodiscard]] column_view get_sliced_child(
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * @brief Return first offset (accounting for column offset)

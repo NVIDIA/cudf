@@ -7,6 +7,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
 
@@ -82,10 +83,13 @@ class structs_column_view : public column_view {
    * @param index The index of the child column to return
    * @param stream The stream on which to perform the operation. Uses the default CUDF
    *        stream if none is specified.
+   * @param mr Memory resources used for temporary allocations
    * @return The child column sliced relative to the parent's offset and size
    */
   [[nodiscard]] column_view get_sliced_child(
-    int index, cuda::stream_ref stream = cudf::get_default_stream()) const;
+    int index,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 };  // class structs_column_view;
 /** @} */  // end of group
 }  // namespace CUDF_EXPORT cudf

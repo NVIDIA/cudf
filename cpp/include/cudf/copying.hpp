@@ -487,18 +487,22 @@ std::unique_ptr<column> shift(column_view const& input,
  * @param input View of column to slice
  * @param indices Indices used to take slices of `input`
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations to compute null counts
  * @return Vector of views of `input` indicated by the ranges in `indices`
  */
 std::vector<column_view> slice(column_view const& input,
                                std::span<size_type const> indices,
-                               cuda::stream_ref stream = cudf::get_default_stream());
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(column_view const&, std::span<size_type const>, cuda::stream_ref)
+ * @copydoc cudf::slice(column_view const&, std::span<size_type const>, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 std::vector<column_view> slice(column_view const& input,
                                std::initializer_list<size_type> indices,
-                               cuda::stream_ref stream = cudf::get_default_stream());
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Slices a `table_view` into a set of `table_view`s according to a set of indices.
@@ -531,18 +535,22 @@ std::vector<column_view> slice(column_view const& input,
  * @param input View of table to slice
  * @param indices Indices used to take slices of `input`
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations to compute null counts
  * @return Vector of views of `input` indicated by the ranges in `indices`
  */
 std::vector<table_view> slice(table_view const& input,
                               std::span<size_type const> indices,
-                              cuda::stream_ref stream = cudf::get_default_stream());
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @ingroup copy_slice
- * @copydoc cudf::slice(table_view const&, std::span<size_type const>, cuda::stream_ref stream)
+ * @copydoc cudf::slice(table_view const&, std::span<size_type const>, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 std::vector<table_view> slice(table_view const& input,
                               std::initializer_list<size_type> indices,
-                              cuda::stream_ref stream = cudf::get_default_stream());
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits a `column_view` into a set of `column_view`s according to a set of indices
@@ -575,18 +583,22 @@ std::vector<table_view> slice(table_view const& input,
  * @param input View of column to split
  * @param splits Indices where the view will be split
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations to compute null counts
  * @return The set of requested views of `input` indicated by the `splits`
  */
 std::vector<column_view> split(column_view const& input,
                                std::span<size_type const> splits,
-                               cuda::stream_ref stream = cudf::get_default_stream());
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(column_view const&, std::span<size_type const>, cuda::stream_ref)
+ * @copydoc cudf::split(column_view const&, std::span<size_type const>, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 std::vector<column_view> split(column_view const& input,
                                std::initializer_list<size_type> splits,
-                               cuda::stream_ref stream = cudf::get_default_stream());
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Splits a `table_view` into a set of `table_view`s according to a set of indices
@@ -621,18 +633,22 @@ std::vector<column_view> split(column_view const& input,
  * @param input View of a table to split
  * @param splits Indices where the view will be split
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations to compute null counts
  * @return The set of requested views of `input` indicated by the `splits`
  */
 std::vector<table_view> split(table_view const& input,
                               std::span<size_type const> splits,
-                              cuda::stream_ref stream = cudf::get_default_stream());
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 /**
  * @ingroup copy_split
- * @copydoc cudf::split(table_view const&, std::span<size_type const>, cuda::stream_ref)
+ * @copydoc cudf::split(table_view const&, std::span<size_type const>, cuda::stream_ref,
+ * cudf::memory_resources)
  */
 std::vector<table_view> split(table_view const& input,
                               std::initializer_list<size_type> splits,
-                              cuda::stream_ref stream = cudf::get_default_stream());
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief   Returns a new column, where each element is selected from either @p lhs or

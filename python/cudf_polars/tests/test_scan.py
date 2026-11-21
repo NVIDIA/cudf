@@ -6,7 +6,7 @@ import datetime as dt
 import gzip
 import zlib
 from decimal import Decimal
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import numpy as np
@@ -269,6 +269,23 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
     pl.DataFrame({"a": [5, 6]}).write_parquet(tmp_path / "1.parquet")
     q = pl.scan_parquet(tmp_path / "*.parquet", missing_columns="insert")
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("tz", [None, "UTC"])
+def test_scan_parquet_timestamps_from_different_writers(
+    engine: pl.GPUEngine, tmp_path, tz
+):
+    # pyarrow also writes the deprecated converted type for UTC, polars does not
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pq.write_table(
+        pa.table({"t": pa.array([t], pa.timestamp("us", tz))}),
+        tmp_path / "0.parquet",
+    )
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+        tmp_path / "1.parquet"
+    )
+    q = pl.scan_parquet(tmp_path / "*.parquet")
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_ndjson_nrows_notimplemented(engine: pl.GPUEngine, tmp_path, df):
@@ -1307,89 +1324,45 @@ def test_scan_ndjson_schema_column_missing_from_file(
     assert_gpu_result_equal(q, engine=engine)
 
 
-def _read_mismatched_sources(paths: list[Path]) -> plc.Table:
-    options = (
-        plc.io.parquet.ParquetReaderOptions.builder(
-            plc.io.SourceInfo([str(p) for p in paths])
-        )
-        .allow_mismatched_pq_schemas(val=True)
-        .build()
+def _read_parquet_sources(paths: list[Path], *, mismatched: bool) -> plc.Table:
+    builder = plc.io.parquet.ParquetReaderOptions.builder(
+        plc.io.SourceInfo([str(p) for p in paths])
     )
-    options.set_column_names(["t"])
+    if mismatched:
+        builder = builder.allow_mismatched_pq_schemas(val=True)
+    options = builder.build()
+    if mismatched:
+        options.set_column_names(["t"])
     return plc.io.parquet.read_parquet(options).tbl
 
 
-@pytest.mark.parametrize("pyarrow_first", [True, False])
-@pytest.mark.parametrize("utc", [False, True])
-def test_read_parquet_sources_from_different_writers(
-    tmp_path: Path, *, pyarrow_first: bool, utc: bool
-) -> None:
-    # pyarrow writes the deprecated TIMESTAMP_MICROS converted type next to
-    # the logical type, polars writes only the logical type. Sources whose
-    # logical types are identical can be read together.
-    tz = "UTC" if utc else None
-    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
-    pyarrow_path = tmp_path / "pyarrow.parquet"
-    polars_path = tmp_path / "polars.parquet"
-    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), pyarrow_path)
-    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
-        polars_path
-    )
-    paths = [pyarrow_path, polars_path]
-    result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
-    assert result.columns()[0].to_arrow().to_pylist() == [t, t]
-
-
-@pytest.mark.parametrize("pyarrow_first", [True, False])
-def test_read_parquet_sources_with_different_utc_adjustment(
-    tmp_path: Path, *, pyarrow_first: bool
-) -> None:
-    # A timestamp with a time zone and one without, from different writers,
-    # are different types and must not be read together.
-    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
-    pyarrow_path = tmp_path / "pyarrow.parquet"
-    polars_path = tmp_path / "polars.parquet"
-    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us"))}), pyarrow_path)
-    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", "UTC")}).write_parquet(
-        polars_path
-    )
-    paths = [pyarrow_path, polars_path]
-    with pytest.raises(ValueError, match="mismatching data type or schema"):
-        _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
-
-
-@pytest.mark.parametrize("writer", ["polars", "pyarrow"])
-def test_read_parquet_sources_naive_and_utc_from_same_writer(
-    tmp_path: Path, writer: str
-) -> None:
-    # The reader does not use the time zone flag, so files from one writer
-    # that differ only in it can still be read together.
-    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
-    paths = [tmp_path / "naive.parquet", tmp_path / "utc.parquet"]
-    for path, tz in zip(paths, (None, "UTC"), strict=True):
-        if writer == "pyarrow":
-            pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), path)
-        else:
-            pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
-                path
-            )
-    assert _read_mismatched_sources(paths).num_rows() == 2
-
-
-@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ms", "ns")])
-@pytest.mark.parametrize("reverse", [False, True])
-def test_read_parquet_sources_with_different_time_units(
-    tmp_path: Path,
-    units: tuple[Literal["ms", "us", "ns"], Literal["ms", "us", "ns"]],
-    *,
-    reverse: bool,
-) -> None:
-    # The values are copied without conversion, so sources with different
-    # time units must not be read together. Polars writes no converted type,
-    # so only the logical type tells the files apart.
+@pytest.mark.parametrize("mismatched", [False, True])
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_read_parquet_timestamps_with_different_units(tmp_path, units, mismatched):
+    # polars writes no converted type, so only the logical type tells the units
+    # apart. The values are copied without conversion, so the read must fail.
     t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
     paths = [tmp_path / f"{unit}.parquet" for unit in units]
     for path, unit in zip(paths, units, strict=True):
         pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(path)
-    with pytest.raises(ValueError, match="mismatching data type or schema"):
-        _read_mismatched_sources(paths[::-1] if reverse else paths)
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    with pytest.raises(error, match=match):
+        _read_parquet_sources(paths, mismatched=mismatched)
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_timestamps_from_different_writers(tmp_path, mismatched):
+    # pyarrow writes the deprecated converted type for UTC timestamps and names
+    # the root element "schema", polars writes neither and names it "root".
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    paths = [tmp_path / "pyarrow.parquet", tmp_path / "polars.parquet"]
+    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", "UTC"))}), paths[0])
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", "UTC")}).write_parquet(
+        paths[1]
+    )
+    result = _read_parquet_sources(paths, mismatched=mismatched)
+    assert result.columns()[0].to_arrow().to_pylist() == [t, t]

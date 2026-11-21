@@ -179,18 +179,18 @@ __device__ cudf::errc compute_url_component_sizes(int32_t* protocol_size,
 }
 
 // Copies the six parsed URL components into their preallocated string buffers.
-extern "C" __device__ cudf::errc write_url_components(cuda::std::span<char>* protocol,
-                                                      cuda::std::span<char>* host,
-                                                      cuda::std::span<char>* port,
-                                                      cuda::std::span<char>* path,
-                                                      cuda::std::span<char>* query,
-                                                      cuda::std::span<char>* fragment,
+extern "C" __device__ cudf::errc write_url_components(cudf::mutable_string_view* protocol,
+                                                      cudf::mutable_string_view* host,
+                                                      cudf::mutable_string_view* port,
+                                                      cudf::mutable_string_view* path,
+                                                      cudf::mutable_string_view* query,
+                                                      cudf::mutable_string_view* fragment,
                                                       cudf::string_view input)
 {
   url_ranges ranges;
   if (!parse_url(input, &ranges)) { return cudf::errc::SUCCESS; }
-  cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
-  range32 components[]             = {
+  cudf::mutable_string_view* outputs[] = {protocol, host, port, path, query, fragment};
+  range32 components[]                 = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
   for (auto component = 0; component < 6; ++component) {
     auto range = components[component];

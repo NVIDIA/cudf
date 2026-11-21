@@ -49,8 +49,9 @@ __device__ errc cudf_all_true(bool* selected)
 
 __device__ errc cudf_all_true_indexed(size_type, bool* selected) { return cudf_all_true(selected); }
 
-static_assert(sizeof(CUDF_REDUCE_STATE) == CUDF_REDUCE_STATE_SIZE,
-              "sizeof(CUDF_REDUCE_STATE) does not match CUDF_REDUCE_STATE_SIZE");
+static_assert(sizeof(CUDF_REDUCE_STATE) == CUDF_REDUCE_STATE_SIZE &&
+                alignof(CUDF_REDUCE_STATE) == CUDF_REDUCE_STATE_ALIGNMENT,
+              "Fatal error: reduction state layout mismatch");
 
 __global__ void cudf_kernel_entry(jit::reduce::phase phase,
                                   size_type num_rows,

@@ -434,6 +434,7 @@ kernel get_kernel(kernel_reflection const& spec, reduce_udf const& udf, std::str
     R"CUDA(
 #define CUDF_REDUCE_STATE {}
 #define CUDF_REDUCE_STATE_SIZE {}
+#define CUDF_REDUCE_STATE_ALIGNMENT {}
 {}
 #define CUDF_REDUCE_UPDATE_INDEXED {}
 #define CUDF_REDUCE_FILTER_INDEXED {}
@@ -441,6 +442,7 @@ kernel get_kernel(kernel_reflection const& spec, reduce_udf const& udf, std::str
   )CUDA",
     spec.state,
     spec.state_layout.size,
+    spec.state_layout.alignment,
     type_defines,
     udf.indexed_update,
     udf.indexed_filter,

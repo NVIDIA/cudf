@@ -52,9 +52,9 @@ struct row_group_stats_caster : public stats_caster_base {
   std::vector<metadata> const& per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
   bool with_null_and_nan_stats;
-  // Whether to null inexact (truncated) min == max, which does not mean the column chunk is
-  // constant. Unset only to get the stored bounds as is
-  bool ignore_inexact_equal_min_max = true;
+  // Whether to return the stored min/max as is. Otherwise, an inexact (truncated) min/max value is
+  // ignored if `min == max`
+  bool ignore_exactness_flags = false;
 
   template <typename T>
   result_type operator()(std::span<int const> schema_indices_per_source,
@@ -143,11 +143,11 @@ struct row_group_stats_caster : public stats_caster_base {
                                  std::distance(row_group.columns.begin(), col)) or
               int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
             // Compliant writers never produce inexact min == max
-            auto const is_inexact_equal_min_max =
+            auto const ignore_inexact_min_max =
+              not ignore_exactness_flags and
               (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
               stats.min_value.has_value() and stats.min_value == stats.max_value;
-            if (ignore_int96_min_max or
-                (ignore_inexact_equal_min_max and is_inexact_equal_min_max)) {
+            if (ignore_int96_min_max or ignore_inexact_min_max) {
               host_column<T>::set_min_max(
                 min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             } else {

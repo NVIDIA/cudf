@@ -185,6 +185,14 @@ CUDF_HOST_DEVICE cuda::std::optional<T> parse_numeric(char const* begin,
   return value * sign;
 }
 
+/**
+ * @brief Checks whether the given character is a space or tab.
+ *
+ * @param ch The character to check
+ * @return True if the input is a space or tab
+ */
+CUDF_HOST_DEVICE inline bool is_whitespace(char ch) { return ch == '\t' || ch == ' '; }
+
 namespace gpu {
 
 /**
@@ -212,17 +220,21 @@ __device__ __inline__ char const* skip_leading_delimiter_run(char const* begin,
  * @param opts A set of parsing options
  * @param escape_char A boolean value to signify whether to consider `\` as escape character or
  * just a character.
+ * @param quoted_end Optional output pointing just past a closing quote followed only by padding,
+ * or null if no such quote was found
  *
  * @return Pointer to the first delimiter or record terminator after the field, or `end`.
  */
 __device__ __inline__ char const* seek_field_end(char const* begin,
                                                  char const* end,
                                                  parse_options_view const& opts,
-                                                 bool escape_char = false)
+                                                 bool escape_char        = false,
+                                                 char const** quoted_end = nullptr)
 {
-  bool quotation   = false;
-  auto current     = begin;
-  bool escape_next = false;
+  bool quotation        = false;
+  auto current          = begin;
+  bool escape_next      = false;
+  char const* quote_end = nullptr;
 
   auto const field_starts_with_quote = (begin < end && *begin == opts.quotechar);
   while (current < end) {
@@ -234,6 +246,7 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
     // Only process quotes if field started with a quote
     if (field_starts_with_quote && *current == opts.quotechar && !escape_next) {
       quotation = !quotation;
+      if (quoted_end != nullptr) { quote_end = quotation ? nullptr : current + 1; }
     } else if (!quotation) {
       if (*current == opts.delimiter) {
         break;
@@ -243,6 +256,7 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
         --end;
         break;
       }
+      if (quote_end != nullptr && !is_whitespace(*current)) { quote_end = nullptr; }
     }
 
     if (escape_char) {
@@ -256,6 +270,7 @@ __device__ __inline__ char const* seek_field_end(char const* begin,
 
     if (current < end) { current++; }
   }
+  if (quoted_end != nullptr) { *quoted_end = quote_end; }
   return current;
 }
 
@@ -357,15 +372,6 @@ __device__ __inline__ cudf::size_type* infer_integral_field_counter(char const* 
 }
 
 }  // namespace gpu
-
-/**
- * @brief Checks whether the given character is a whitespace character.
- *
- * @param ch The character to check
- *
- * @return True if the input is whitespace, False otherwise
- */
-__inline__ __device__ bool is_whitespace(char ch) { return ch == '\t' || ch == ' '; }
 
 /**
  * @brief Skips past the current character if it matches the given value.

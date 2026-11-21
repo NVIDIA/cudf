@@ -167,23 +167,38 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
-  // This is a regression test for a ptxas codegen bug (not a race) and for the page-header
-  // overflow path that is mostly host logic. It takes hours when racecheck is used.
+  // This is a regression test for a ptxas codegen bug (not a race) and for page-header
+  // address-buffer overflow. It takes hours when racecheck is used.
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
   // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
   // counting page headers without an offset index (1M).
-  constexpr cudf::size_type num_rows    = 300'000;
-  constexpr cudf::size_type num_columns = 4;
+  // More column chunks parallelize page setup and header discovery without reducing page coverage.
+  constexpr cudf::size_type source_rows       = 300'000;
+  constexpr cudf::size_type num_columns       = 64;
+  constexpr cudf::size_type slices_per_source = num_columns / 4;
+  constexpr cudf::size_type num_rows          = source_rows / slices_per_source;
+  static_assert(source_rows % slices_per_source == 0);
 
   std::vector<std::string> values;
-  values.reserve(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
+  values.reserve(source_rows);
+  for (cudf::size_type i = 0; i < source_rows; ++i) {
     values.push_back(std::to_string(i) + std::string(static_cast<std::size_t>(i % 12), 'a'));
   }
   cudf::test::strings_column_wrapper strings(values.begin(), values.end());
-  cudf::table_view const input{std::vector<cudf::column_view>(num_columns, strings)};
+  // Reuse every original string four times, as before, while shortening each column chunk.
+  std::vector<cudf::size_type> boundaries;
+  for (cudf::size_type i = 0; i < slices_per_source; ++i) {
+    boundaries.push_back(i * num_rows);
+    boundaries.push_back((i + 1) * num_rows);
+  }
+  auto const slices = cudf::slice(strings, boundaries);
+  std::vector<cudf::column_view> columns;
+  for (cudf::size_type i = 0; i < num_columns; ++i) {
+    columns.push_back(slices[i % slices_per_source]);
+  }
+  cudf::table_view const input{columns};
 
   auto const filepath = temp_env->get_temp_filepath("ManyTinyStringPages.parquet");
   auto const write_options =

@@ -7,6 +7,7 @@
 
 #include <cudf/detail/integral_math.cuh>
 #include <cudf/detail/operators/arithmetic.cuh>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -392,7 +393,12 @@ struct NullMax {
       output_valid = false;
       return common_t{};
     } else if (lhs_valid && rhs_valid) {
-      return (x_conv > y_conv) ? x_conv : y_conv;
+      // Floating-point values follow DeviceMax: NaN propagates and +0 is greater than -0
+      if constexpr (cuda::std::is_floating_point_v<common_t>) {
+        return cudf::detail::ieee_maximum(x_conv, y_conv);
+      } else {
+        return (x_conv > y_conv) ? x_conv : y_conv;
+      }
     } else if (lhs_valid)
       return x_conv;
     else
@@ -421,7 +427,12 @@ struct NullMin {
       output_valid = false;
       return common_t{};
     } else if (lhs_valid && rhs_valid) {
-      return (x_conv < y_conv) ? x_conv : y_conv;
+      // Floating-point values follow DeviceMin: NaN propagates and -0 is less than +0
+      if constexpr (cuda::std::is_floating_point_v<common_t>) {
+        return cudf::detail::ieee_minimum(x_conv, y_conv);
+      } else {
+        return (x_conv < y_conv) ? x_conv : y_conv;
+      }
     } else if (lhs_valid)
       return x_conv;
     else

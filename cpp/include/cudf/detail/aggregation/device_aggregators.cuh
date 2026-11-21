@@ -214,90 +214,6 @@ struct update_target_element<dictionary32, k> {
   }
 };
 
-template <aggregation::Kind k>
-  requires(k == aggregation::ARGMIN)
-struct update_target_element<dictionary32, k> {
-  struct target_from_dictionary {
-    template <cudf::concepts::dictionary_key KeysType>
-    __device__ void operator()(mutable_column_device_view target,
-                               size_type target_index,
-                               column_device_view source,
-                               size_type source_index) const noexcept
-    {
-      using Target = target_type_t<KeysType, aggregation::ARGMIN>;
-      auto old     = cudf::detail::atomic_cas(
-        &target.element<Target>(target_index), ARGMIN_SENTINEL, source_index);
-      if (old != ARGMIN_SENTINEL) {
-        auto const keys       = source.child(cudf::dictionary_column_view::keys_column_index);
-        auto source_key_index = source.element<dictionary32>(source_index).value();
-        auto old_key_index    = source.element<dictionary32>(old).value();
-        while (keys.element<KeysType>(source_key_index) < keys.element<KeysType>(old_key_index)) {
-          old = cudf::detail::atomic_cas(&target.element<Target>(target_index), old, source_index);
-          old_key_index = source.element<dictionary32>(old).value();
-        }
-      }
-    }
-    template <typename KeysType>
-    __device__ void operator()(mutable_column_device_view,
-                               size_type,
-                               column_device_view,
-                               size_type) const noexcept
-    {
-    }
-  };
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    auto const keys = source.child(cudf::dictionary_column_view::keys_column_index);
-    type_dispatcher<dispatch_storage_type>(
-      keys.type(), target_from_dictionary{}, target, target_index, source, source_index);
-  }
-};
-
-template <aggregation::Kind k>
-  requires(k == aggregation::ARGMAX)
-struct update_target_element<dictionary32, k> {
-  struct target_from_dictionary {
-    template <cudf::concepts::dictionary_key KeysType>
-    __device__ void operator()(mutable_column_device_view target,
-                               size_type target_index,
-                               column_device_view source,
-                               size_type source_index) const noexcept
-    {
-      using Target = target_type_t<KeysType, aggregation::ARGMAX>;
-      auto old     = cudf::detail::atomic_cas(
-        &target.element<Target>(target_index), ARGMAX_SENTINEL, source_index);
-      if (old != ARGMAX_SENTINEL) {
-        auto const keys       = source.child(cudf::dictionary_column_view::keys_column_index);
-        auto source_key_index = source.element<dictionary32>(source_index).value();
-        auto old_key_index    = source.element<dictionary32>(old).value();
-        while (keys.element<KeysType>(source_key_index) > keys.element<KeysType>(old_key_index)) {
-          old = cudf::detail::atomic_cas(&target.element<Target>(target_index), old, source_index);
-          old_key_index = source.element<dictionary32>(old).value();
-        }
-      }
-    }
-    template <typename KeysType>
-    __device__ void operator()(mutable_column_device_view,
-                               size_type,
-                               column_device_view,
-                               size_type) const noexcept
-    {
-    }
-  };
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    auto const keys = source.child(cudf::dictionary_column_view::keys_column_index);
-    type_dispatcher<dispatch_storage_type>(
-      keys.type(), target_from_dictionary{}, target, target_index, source, source_index);
-  }
-};
-
 template <typename Source>
   requires(is_product_supported<Source>())
 struct update_target_element<Source, aggregation::SUM_OF_SQUARES> {
@@ -352,42 +268,6 @@ struct update_target_element<Source, aggregation::COUNT_ALL> {
   }
 };
 
-template <cudf::concepts::dictionary_key Source>
-struct update_target_element<Source, aggregation::ARGMAX> {
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    using Target = target_type_t<Source, aggregation::ARGMAX>;
-    auto old     = cudf::detail::atomic_cas(
-      &target.element<Target>(target_index), ARGMAX_SENTINEL, source_index);
-    if (old != ARGMAX_SENTINEL) {
-      while (source.element<Source>(source_index) > source.element<Source>(old)) {
-        old = cudf::detail::atomic_cas(&target.element<Target>(target_index), old, source_index);
-      }
-    }
-  }
-};
-
-template <cudf::concepts::dictionary_key Source>
-struct update_target_element<Source, aggregation::ARGMIN> {
-  __device__ void operator()(mutable_column_device_view target,
-                             size_type target_index,
-                             column_device_view source,
-                             size_type source_index) const noexcept
-  {
-    using Target = target_type_t<Source, aggregation::ARGMIN>;
-    auto old     = cudf::detail::atomic_cas(
-      &target.element<Target>(target_index), ARGMIN_SENTINEL, source_index);
-    if (old != ARGMIN_SENTINEL) {
-      while (source.element<Source>(source_index) < source.element<Source>(old)) {
-        old = cudf::detail::atomic_cas(&target.element<Target>(target_index), old, source_index);
-      }
-    }
-  }
-};
-
 /**
  * @brief Function object to update a single element in a target column by
  * performing an aggregation operation with a single element from a source
@@ -404,14 +284,12 @@ struct update_target_element<Source, aggregation::ARGMIN> {
  *  - MAX: Min value of type and NULL
  *  - COUNT_VALID: 0 and VALID
  *  - COUNT_ALL:   0 and VALID
- *  - ARGMAX: `ARGMAX_SENTINEL` and NULL
- *  - ARGMIN: `ARGMIN_SENTINEL` and NULL
  *
  * It is required that the elements of `target` be initialized with the corresponding
  * initial values and validity specified above.
  *
  * Handling of null elements in both `source` and `target` depends on the aggregation. For example:
- *  - SUM, MIN, MAX, ARGMIN, ARGMAX:  `source` is skipped, `target` is updated from null to valid
+ *  - SUM, MIN, MAX:  `source` is skipped, `target` is updated from null to valid
  *    upon first successful aggregation
  *  - COUNT_VALID, COUNT_ALL:  `source` is skipped, `target` cannot be null
  */

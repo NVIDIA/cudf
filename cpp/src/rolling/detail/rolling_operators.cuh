@@ -24,9 +24,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
-#include <cuda/std/cmath>
 #include <cuda/std/limits>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
@@ -82,25 +80,15 @@ struct DeviceRolling {
     using AggOp = typename corresponding_operator<op>::type;
     AggOp agg_op;
 
-    // A NaN element never replaces the accumulated MIN/MAX value, so a window of only NaNs
-    // would otherwise produce the identity value (+/-infinity) instead of NaN
-    constexpr bool track_nans = cuda::std::is_floating_point_v<OutputType> &&
-                                (op == aggregation::MIN || op == aggregation::MAX);
-
     cudf::size_type count = 0;
-    bool all_nans         = true;
     OutputType val        = AggOp::template identity<OutputType>();
 
     for (size_type j = start_index; j < end_index; j++) {
       if (!has_nulls || input.is_valid_nocheck(j)) {
         OutputType element = input.element<device_storage_type_t<InputType>>(j);
-        if constexpr (track_nans) { all_nans = all_nans && cuda::std::isnan(element); }
-        val = agg_op(element, val);
+        val                = agg_op(element, val);
         count++;
       }
-    }
-    if constexpr (track_nans) {
-      if (count > 0 && all_nans) { val = cuda::std::numeric_limits<OutputType>::quiet_NaN(); }
     }
 
     bool output_is_valid = (count >= min_periods);
@@ -265,7 +253,18 @@ struct DeviceRollingArgMinMaxDictionary : DeviceRollingArgMinMaxBase<cudf::dicti
         if (!has_nulls || dict.is_valid_nocheck(j)) {
           auto element = keys.element<T>(dict.element<dictionary32>(j).value());
           val          = agg_op(element, val);
-          if (val == element) { index = j; }
+          // Select a row whose key is equivalent to the result: a NaN result selects a row
+          // holding a NaN, and a zero result selects a row holding a zero of the same sign
+          auto const selected = [&] {
+            if constexpr (cuda::std::is_floating_point_v<T>) {
+              auto constexpr is_min = op == aggregation::ARGMIN;
+              return !cudf::detail::ieee_extremum_precedes<is_min>(val, element) &&
+                     !cudf::detail::ieee_extremum_precedes<is_min>(element, val);
+            } else {
+              return val == element;
+            }
+          }();
+          if (selected) { index = j; }
           count++;
         }
       }

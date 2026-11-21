@@ -18,11 +18,17 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/bit.hpp>
 
 #include <cuda/iterator>
 
+#include <bit>
+#include <cmath>
+#include <cstdint>
 #include <limits>
+#include <string>
 #include <type_traits>
+#include <vector>
 
 template <typename T>
 auto lhs_random_column(cudf::size_type size)
@@ -810,6 +816,77 @@ TEST_F(BinaryOperationCompiledTest_NullOpsString, NullMin_Vector_Vector)
                            cudf::binary_operator::NULL_MIN,
                            cudf::data_type(cudf::type_to_id<cudf::string_view>()));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
+}
+
+// NULL_MAX/NULL_MIN of floating-point values follow DeviceMax/DeviceMin: NaN propagates whichever
+// operand it is, -0 is less than +0, and a NaN result is the canonical quiet NaN
+template <typename T>
+struct BinaryOperationCompiledTest_NullMinMaxNaN : public cudf::test::BaseFixture {
+  using bits_t = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t, uint64_t>;
+
+  /// Checks each row against `expected`, including the sign of a zero and the bits of a NaN
+  static void check(cudf::column_view const& result,
+                    std::vector<T> const& expected,
+                    std::vector<bool> const& expected_valid)
+  {
+    auto const [values, validity] = cudf::test::to_host<T>(result);
+    ASSERT_EQ(values.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      SCOPED_TRACE("row " + std::to_string(i));
+      auto const valid = result.nullable() ? cudf::bit_is_set(validity.data(), i) : true;
+      ASSERT_EQ(valid, expected_valid[i]);
+      if (!valid) { continue; }
+      EXPECT_EQ(std::bit_cast<bits_t>(values[i]), std::bit_cast<bits_t>(expected[i]));
+    }
+  }
+};
+
+TYPED_TEST_SUITE(BinaryOperationCompiledTest_NullMinMaxNaN, cudf::test::FloatingPointTypes);
+
+TYPED_TEST(BinaryOperationCompiledTest_NullMinMaxNaN, VectorVector)
+{
+  using T            = TypeParam;
+  using bits_t       = typename TestFixture::bits_t;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  auto const neg_nan = std::copysign(NaN, T{-1});
+  auto const payload = std::bit_cast<T>(std::bit_cast<bits_t>(NaN) | bits_t{5});
+  auto const type    = cudf::data_type{cudf::type_to_id<T>()};
+
+  // When only one operand is valid, it is returned unchanged
+  auto const lhs = cudf::test::fixed_width_column_wrapper<T>(
+    {NaN, T{1}, neg_nan, payload, -T{0}, T{0}, T{0}, T{2}, NaN}, {1, 1, 1, 1, 1, 1, 0, 1, 0});
+  auto const rhs = cudf::test::fixed_width_column_wrapper<T>(
+    {T{1}, NaN, T{3}, neg_nan, T{0}, -T{0}, neg_nan, T{0}, NaN}, {1, 1, 1, 1, 1, 1, 1, 0, 0});
+  auto const valid = std::vector<bool>{true, true, true, true, true, true, true, true, false};
+
+  auto const max = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MAX, type);
+  this->check(max->view(), {NaN, NaN, NaN, NaN, T{0}, T{0}, neg_nan, T{2}, T{0}}, valid);
+  auto const min = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MIN, type);
+  this->check(min->view(), {NaN, NaN, NaN, NaN, -T{0}, -T{0}, neg_nan, T{2}, T{0}}, valid);
+}
+
+TYPED_TEST(BinaryOperationCompiledTest_NullMinMaxNaN, Scalar)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  auto const type    = cudf::data_type{cudf::type_to_id<T>()};
+  auto const valid   = std::vector<bool>{true, true, true};
+
+  // The result does not depend on which operand is the scalar
+  auto const col =
+    cudf::test::fixed_width_column_wrapper<T>{T{1}, std::copysign(NaN, T{-1}), -T{0}};
+  auto const zero = cudf::numeric_scalar<T>(T{0});
+  auto const nan  = cudf::numeric_scalar<T>(std::copysign(NaN, T{-1}));
+  for (auto const op : {cudf::binary_operator::NULL_MAX, cudf::binary_operator::NULL_MIN}) {
+    auto const is_max = op == cudf::binary_operator::NULL_MAX;
+    auto const expected =
+      is_max ? std::vector<T>{T{1}, NaN, T{0}} : std::vector<T>{T{0}, NaN, -T{0}};
+    this->check(cudf::binary_operation(col, zero, op, type)->view(), expected, valid);
+    this->check(cudf::binary_operation(zero, col, op, type)->view(), expected, valid);
+    auto const all_nan = std::vector<T>{NaN, NaN, NaN};
+    this->check(cudf::binary_operation(col, nan, op, type)->view(), all_nan, valid);
+    this->check(cudf::binary_operation(nan, col, op, type)->view(), all_nan, valid);
+  }
 }
 
 TEST(BinaryOperationCompiledTest, LargeColumnNoOverflow)

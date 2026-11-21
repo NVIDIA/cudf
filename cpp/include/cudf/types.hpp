@@ -217,6 +217,14 @@ enum class type_id : int32_t {
 };
 
 /**
+ * @brief Whether an operation checks and propagates device evaluation errors to the host.
+ */
+enum class fallible : bool {
+  NO  = 0,  ///< Do not check or propagate device evaluation errors to the host
+  YES = 1   ///< Check and propagate device evaluation errors to the host
+};
+
+/**
  * @brief A function is null-aware if its output value uses the input validity.
  *
  * For example, ADD is not null-aware, but IS_NULL and NULL_LOGICAL_AND are null-aware.

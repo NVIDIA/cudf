@@ -233,7 +233,8 @@ public class Rmm {
    *                       {@link RmmAllocationMode#POOL},
    *                       {@link RmmAllocationMode#ARENA},
    *                       {@link RmmAllocationMode#CUDA_ASYNC},
-   *                       {@link RmmAllocationMode#CUDA_ASYNC_FABRIC} and
+   *                       {@link RmmAllocationMode#CUDA_ASYNC_FABRIC},
+   *                       {@link RmmAllocationMode#CUDA_ASYNC_POSIX_FD} and
    *                       {@link RmmAllocationMode#CUDA_MANAGED_MEMORY}
    * @param logConf        How to do logging or null if you don't want to
    * @param poolSize       The initial pool size in bytes
@@ -259,9 +260,10 @@ public class Rmm {
     boolean isArena = (allocationMode & RmmAllocationMode.ARENA) != 0;
     boolean isAsync = (allocationMode & RmmAllocationMode.CUDA_ASYNC) != 0;
     boolean isAsyncFabric = (allocationMode & RmmAllocationMode.CUDA_ASYNC_FABRIC) != 0;
+    boolean isAsyncPosixFd = (allocationMode & RmmAllocationMode.CUDA_ASYNC_POSIX_FD) != 0;
     boolean isManaged = (allocationMode & RmmAllocationMode.CUDA_MANAGED_MEMORY) != 0;
 
-    if (isAsync && isManaged) {
+    if ((isAsync || isAsyncPosixFd) && isManaged) {
       throw new IllegalArgumentException(
           "CUDA Unified Memory is not supported in CUDA_ASYNC allocation mode");
     }
@@ -287,6 +289,10 @@ public class Rmm {
       } else if (isAsyncFabric) {
         resource = new RmmLimitingResourceAdaptor<>(
             new RmmCudaAsyncMemoryResource(poolSize, poolSize, true), poolSize, 512);
+      } else if (isAsyncPosixFd) {
+        resource = new RmmLimitingResourceAdaptor<>(
+            new RmmCudaAsyncMemoryResource(poolSize, poolSize,
+                RmmCudaAsyncMemoryResource.HandleType.POSIX_FILE_DESCRIPTOR), poolSize, 512);
       } else if (isManaged) {
         resource = new RmmManagedMemoryResource();
       } else {
@@ -660,7 +666,12 @@ public class Rmm {
 
   static native void releaseArenaMemoryResource(long handle);
 
-  static native long newCudaAsyncMemoryResource(long size, long release, boolean fabric) throws RmmException;
+  /**
+   * Returns {resource handle, cudaMemPool_t}. {@code handleType} is a
+   * {@link RmmCudaAsyncMemoryResource.HandleType} nativeId.
+   */
+  static native long[] newCudaAsyncMemoryResource(long size, long release, int handleType)
+      throws RmmException;
 
   static native void releaseCudaAsyncMemoryResource(long handle);
 

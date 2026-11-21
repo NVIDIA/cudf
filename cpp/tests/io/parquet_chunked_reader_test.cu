@@ -1428,6 +1428,136 @@ TEST_F(ParquetChunkedReaderInputLimitTest, V2PagesWithLevels)
   EXPECT_GT(num_chunks, 1);
 }
 
+TEST_F(ParquetChunkedReaderInputLimitTest, ScratchIncludedForEveryPage)
+{
+  // A subpass allocates level and string offset buffers for all of its pages, so the input limit
+  // must include them for every page, not just the last one.
+  constexpr cudf::size_type num_rows  = 100'000;
+  constexpr cudf::size_type page_rows = 5'000;
+  auto const values                   = cuda::counting_iterator<int32_t>{0};
+  auto const valids =
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) { return i % 7 != 0; });
+  auto const strs = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                      return std::string(1 + (i % 3), static_cast<char>('a' + (i % 26)));
+                    });
+  int32s_col const ints(values, values + num_rows, valids.begin());
+  strings_col const strings(strs.begin(), strs.begin() + num_rows, valids.begin());
+  // Two strings per row; the repetition levels add level scratch on top of the definition levels.
+  strings_col list_child(strs.begin(), strs.begin() + 2 * num_rows);
+  auto const list_offsets =
+    std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) { return 2 * i; });
+  int32s_col list_offsets_col(list_offsets.begin(), list_offsets.begin() + num_rows + 1);
+  auto const string_lists =
+    cudf::make_lists_column(num_rows,
+                            list_offsets_col.release(),
+                            list_child.release(),
+                            0,
+                            cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const expected = cudf::table_view{{ints, strings, string_lists->view()}};
+  auto const filepath = temp_env->get_temp_filepath("ScratchIncludedForEveryPage.parquet");
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+      .compression(cudf::io::compression_type::SNAPPY)
+      .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+      .max_page_size_rows(page_rows)
+      .build());
+
+  // Reading the file allocates about 1.2 MB of string offsets (4 B per string) plus the level
+  // buffers of all three columns. Summed per column, that scratch splits the read into three
+  // chunks under a 2 MiB input limit; counted one page at a time, it splits into two.
+  constexpr std::size_t input_limit = 2 * 1024 * 1024;
+  auto const [result, num_chunks]   = chunked_read(filepath, 0, input_limit);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(expected, result->view());
+  EXPECT_GT(num_chunks, 2);
+}
+
+namespace {
+constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
+}  // namespace
+
+TEST_F(ParquetChunkedReaderInputLimitTest, NzMapScratchIncludedInReadLimit)
+{
+  // With the nz map on, the reader allocates a 4-byte rank map per value of each nullable flat
+  // DELTA page. The input limit includes it, so the same read splits into more chunks.
+  constexpr cudf::size_type num_rows = 100'000;
+  auto const values                  = cuda::counting_iterator<int32_t>{0};
+  auto const strs = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                      return std::string(1 + (i % 3), static_cast<char>('a' + (i % 26)));
+                    });
+  std::vector<std::unique_ptr<cudf::column>> input_columns;
+  input_columns.emplace_back(int32s_col(values, values + num_rows).release());
+  input_columns.emplace_back(strings_col(strs.begin(), strs.begin() + num_rows).release());
+  // Nullable, so every page gets a rank map. With `delta_encoding` the columns are written as
+  // DELTA_BINARY_PACKED and DELTA_LENGTH_BYTE_ARRAY, in 5'000-row SNAPPY pages.
+  auto const [expected, filepath] = write_file(input_columns,
+                                               "nz_map_scratch_read_limit",
+                                               true,
+                                               true,
+                                               cudf::io::default_max_page_size_bytes,
+                                               5'000);
+
+  // Each column's rank maps take 100'000 rows * 4 B = 400 KB, 20 KB per page.
+  constexpr std::size_t input_limit = 512 * 1024;
+  int num_chunks_map_off            = 0;
+  int num_chunks_map_on             = 0;
+  {
+    tmp_env_var const env{nz_map_env_var, "0"};
+    auto const [result, num_chunks] = chunked_read(filepath, 0, input_limit);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
+    num_chunks_map_off = num_chunks;
+  }
+  {
+    tmp_env_var const env{nz_map_env_var, "1"};
+    auto const [result, num_chunks] = chunked_read(filepath, 0, input_limit);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
+    num_chunks_map_on = num_chunks;
+  }
+  EXPECT_GT(num_chunks_map_on, num_chunks_map_off);
+}
+
+TEST_F(ParquetChunkedReaderInputLimitTest, NzMapOutputLimitedAndSkipRows)
+{
+  // Output-limited reads, where a page's rows span two output chunks, with and without an input
+  // limit and from a row inside the first page, with the nz map off and on.
+  constexpr cudf::size_type num_rows = 100'000;
+  auto const values                  = cuda::counting_iterator<int32_t>{0};
+  auto const strs = std::views::iota(int32_t{0}) | std::views::transform([](int32_t i) {
+                      return std::string(1 + (i % 3), static_cast<char>('a' + (i % 26)));
+                    });
+  std::vector<std::unique_ptr<cudf::column>> input_columns;
+  input_columns.emplace_back(int32s_col(values, values + num_rows).release());
+  input_columns.emplace_back(strings_col(strs.begin(), strs.begin() + num_rows).release());
+  auto const [expected, filepath] = write_file(input_columns,
+                                               "nz_map_output_limited",
+                                               true,
+                                               true,
+                                               cudf::io::default_max_page_size_bytes,
+                                               5'000);
+
+  constexpr std::size_t output_limit      = 64 * 1024;
+  constexpr std::size_t input_limit       = 512 * 1024;
+  constexpr cudf::size_type mid_page_skip = 1'234;  // inside the first 5'000-row page
+  auto const skip_options =
+    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+      .skip_rows(mid_page_skip)
+      .build();
+  auto const expected_skipped = cudf::slice(expected->view(), {mid_page_skip, num_rows})[0];
+  for (auto const* const nz_map : {"0", "1"}) {
+    SCOPED_TRACE(std::string{"nz map "} + nz_map);
+    tmp_env_var const env{nz_map_env_var, nz_map};
+    {
+      auto const [result, num_chunks] = chunked_read(filepath, output_limit);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(*expected, *result);
+      EXPECT_GT(num_chunks, 1);
+    }
+    {
+      auto const [result, num_chunks] = chunked_read(skip_options, output_limit, input_limit);
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected_skipped, result->view());
+      EXPECT_GT(num_chunks, 1);
+    }
+  }
+}
+
 TEST_F(ParquetChunkedReaderInputLimitTest, ProjectedColumnsReducePasses)
 {
   constexpr int num_columns        = 16;

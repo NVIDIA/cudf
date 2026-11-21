@@ -303,6 +303,15 @@ void append_pch_options(std::vector<std::string>& options, int32_t nvrtc_version
   }
 }
 
+void append_cccl_options(std::vector<std::string>& options)
+{
+  // Workarounds for reducing CCCL's AST impact
+
+  // limit template unrolling in CCCL headers (until https://github.com/NVIDIA/cccl/pull/12560/
+  // makes it into a release)
+  options.emplace_back("-D_CCCL_META_UNROLL_LIMIT=1");
+}
+
 std::vector<std::string> make_lto_compile_options(char const* name,
                                                   std::span<char const* const> include_paths,
                                                   bool use_pch,
@@ -332,6 +341,7 @@ std::vector<std::string> make_lto_compile_options(char const* name,
   if (LTO_ARCHITECTURE >= 100) { options.emplace_back("--device-float128"); }
 
   options.emplace_back(std::format("-std={}", std));
+  append_cccl_options(options);
   options.emplace_back("--device-as-default-execution-space");
   options.emplace_back("--generate-line-info");
   options.emplace_back("--dopt=on");

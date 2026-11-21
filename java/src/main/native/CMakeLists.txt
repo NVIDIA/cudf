@@ -156,6 +156,7 @@ add_library(
   src/HybridScanReaderJni.cpp
   src/HybridScanReaderJniInternal.cpp
   src/HybridScanReaderJniMaterialize.cpp
+  src/JoinMatchContextJni.cpp
   src/KeyRemappingJni.cpp
   src/LtoFragmentJni.cpp
   src/HostUDFWrapperJni.cpp

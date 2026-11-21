@@ -7,11 +7,15 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/copying.hpp>
+#include <cudf/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/dictionary/update_keys.hpp>
 #include <cudf/sorting.hpp>
 
+#include <limits>
 #include <vector>
 
 struct DictionarySortTest : public cudf::test::BaseFixture {};
@@ -67,4 +71,94 @@ TEST_F(DictionarySortTest, DuplicateKeys)
   auto result_decoded = cudf::dictionary::decode(result.front()->view());
   auto expected = cudf::test::strings_column_wrapper({"aaa", "aaa", "ccc", "ccc", "eee", "eee"});
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result_decoded->view());
+}
+
+TEST_F(DictionarySortTest, AllNullsNoKeys)
+{
+  auto input = cudf::test::fixed_width_column_wrapper<int32_t>({0, 0, 0}, {false, false, false});
+  auto dict_input = cudf::dictionary::encode(input);
+  EXPECT_EQ(cudf::dictionary_column_view(dict_input->view()).keys().size(), 0);
+
+  auto result   = cudf::sorted_order(cudf::table_view{{dict_input->view()}});
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::size_type>({0, 1, 2});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+
+  auto sorted         = cudf::sort(cudf::table_view{{dict_input->view()}})->release();
+  auto result_decoded = cudf::dictionary::decode(sorted.front()->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result_decoded->view());
+}
+
+TEST_F(DictionarySortTest, Sliced)
+{
+  auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
+    {50, 30, 0, 10, 40, 0, 20, 60}, {true, true, false, true, true, false, true, true});
+  auto dict_input = cudf::dictionary::encode(input);
+
+  // compare against the sorted order of the equivalent non-dictionary column
+  for (auto const& bounds :
+       std::vector<std::vector<cudf::size_type>>{{1, 5}, {2, 7}, {3, 5}, {3, 8}, {4, 4}, {0, 8}}) {
+    auto const sliced      = cudf::slice(input, bounds).front();
+    auto const dict_sliced = cudf::slice(dict_input->view(), bounds).front();
+    for (auto const null_order : {cudf::null_order::BEFORE, cudf::null_order::AFTER}) {
+      for (auto const column_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+        auto const expected =
+          cudf::stable_sorted_order(cudf::table_view{{sliced}}, {column_order}, {null_order});
+        auto const result =
+          cudf::stable_sorted_order(cudf::table_view{{dict_sliced}}, {column_order}, {null_order});
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
+      }
+    }
+  }
+}
+
+namespace {
+void expect_dictionary_sort_matches(cudf::column_view const& input,
+                                    cudf::column_view const& dict_input,
+                                    std::vector<std::vector<cudf::size_type>> const& slices)
+{
+  for (auto const& bounds : slices) {
+    auto const sliced      = cudf::slice(input, bounds).front();
+    auto const dict_sliced = cudf::slice(dict_input, bounds).front();
+    for (auto const null_order : {cudf::null_order::BEFORE, cudf::null_order::AFTER}) {
+      for (auto const column_order : {cudf::order::ASCENDING, cudf::order::DESCENDING}) {
+        auto const expected =
+          cudf::stable_sorted_order(cudf::table_view{{sliced}}, {column_order}, {null_order});
+        auto const result =
+          cudf::stable_sorted_order(cudf::table_view{{dict_sliced}}, {column_order}, {null_order});
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
+      }
+    }
+  }
+}
+}  // namespace
+
+TEST_F(DictionarySortTest, SlicedNullMaskWordBoundaries)
+{
+  // slices start and end on and around the 32-bit null mask word boundaries
+  auto values =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i * 7) % 23; });
+  auto validity =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 3 != 0; });
+  auto input      = cudf::test::fixed_width_column_wrapper<int32_t>(values, values + 100, validity);
+  auto dict_input = cudf::dictionary::encode(input);
+
+  expect_dictionary_sort_matches(
+    input,
+    dict_input->view(),
+    {{31, 33}, {30, 70}, {32, 64}, {33, 97}, {63, 100}, {64, 65}, {0, 100}});
+}
+
+TEST_F(DictionarySortTest, OutOfRangeIndicesAtNulls)
+{
+  // the indices values at null positions are out of range for the keys and must not be used
+  auto keys    = cudf::test::fixed_width_column_wrapper<int32_t>({10, 20, 30});
+  auto indices = cudf::test::fixed_width_column_wrapper<int32_t>(
+    {2, std::numeric_limits<int32_t>::max(), 0, -1, 1, 1000000, 2, 0},
+    {true, false, true, false, true, false, true, true});
+  auto dict_input = cudf::make_dictionary_column(keys, indices);
+
+  auto input = cudf::test::fixed_width_column_wrapper<int32_t>(
+    {30, 0, 10, 0, 20, 0, 30, 10}, {true, false, true, false, true, false, true, true});
+
+  expect_dictionary_sort_matches(input, dict_input->view(), {{0, 8}, {1, 6}, {3, 8}, {5, 6}});
 }

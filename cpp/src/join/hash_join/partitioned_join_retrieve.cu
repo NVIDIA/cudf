@@ -26,7 +26,7 @@ std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
                                              cudf::join_partition_context const& context,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr) const
+                                             cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -51,8 +51,9 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
 
   // Empty partition
   if (left_start_idx >= left_end_idx) {
-    return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                     std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+    return std::pair(
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+      std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
   }
 
   auto const partition_size = left_end_idx - left_start_idx;
@@ -60,8 +61,9 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   // Trivial case: build table is empty
   if (_is_empty) {
     if (join == join_kind::INNER_JOIN) {
-      return std::pair(std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr),
-                       std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr));
+      return std::pair(
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()),
+        std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr()));
     }
     return get_trivial_left_join_indices(
       cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0],
@@ -105,6 +107,6 @@ template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
 hash_join<hash_join_hasher>::partitioned_join_retrieve(join_kind,
                                                        cudf::join_partition_context const&,
                                                        cuda::stream_ref,
-                                                       rmm::device_async_resource_ref) const;
+                                                       cudf::memory_resources) const;
 
 }  // namespace cudf::detail

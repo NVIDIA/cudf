@@ -6,14 +6,20 @@
 #include <tests/groupby/groupby_test_util.hpp>
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+#include <cudf/copying.hpp>
+#include <cudf/groupby.hpp>
+#include <cudf/sorting.hpp>
+#include <cudf/table/table_view.hpp>
 
 #include <limits>
+#include <vector>
 
 using namespace cudf::test::iterators;
 
@@ -174,6 +180,77 @@ TYPED_TEST(groupby_covariance_test, null_values_different)
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 }
 
+TYPED_TEST(groupby_covariance_test, sliced)
+{
+  using V = TypeParam;
+  using R = double;
+
+  // The rows of null_values_different, between two leading rows and one trailing row that are
+  // sliced off.
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys({4, 1, 1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4, 1},
+                                     {true, true, true, true, true, true, true, true, true, false, true, true, true, true});
+  cudf::test::fixed_width_column_wrapper<V> val0({5, 7, 9, 1, 1, 2, 2, 3, 3,-1, 1, 4, 4, 8},
+                                     {1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<V> val1({6, 2, 1, 2, 1, 2,-1, 3, 3,-1, 0, 4, 2, 0},
+                                     {0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1});
+  // clang-format on
+  auto vals = cudf::test::structs_column_wrapper{{val0, val1}};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys({1, 2, 3, 4}, no_nulls());
+  cudf::test::fixed_width_column_wrapper<R> expect_vals(
+    {std::numeric_limits<double>::quiet_NaN(), 1.5, 0.0, -0.}, {0, 1, 1, 0});
+
+  auto agg = cudf::make_covariance_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(cudf::slice(keys, {2, 13})[0],
+                  cudf::slice(vals, {2, 13})[0],
+                  expect_keys,
+                  expect_vals,
+                  std::move(agg));
+}
+
+TYPED_TEST(groupby_covariance_test, sliced_multiple_requests)
+{
+  using V = TypeParam;
+  using R = double;
+
+  // Two requests on different sliced structs in one aggregate call. Covariance is symmetric, so
+  // swapping the children gives the same result.
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys({4, 1, 1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4, 1},
+                                     {true, true, true, true, true, true, true, true, true, false, true, true, true, true});
+  cudf::test::fixed_width_column_wrapper<V> val0({5, 7, 9, 1, 1, 2, 2, 3, 3,-1, 1, 4, 4, 8},
+                                     {1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1});
+  cudf::test::fixed_width_column_wrapper<V> val1({6, 2, 1, 2, 1, 2,-1, 3, 3,-1, 0, 4, 2, 0},
+                                     {0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1});
+  // clang-format on
+  auto vals         = cudf::test::structs_column_wrapper{{val0, val1}};
+  auto swapped_vals = cudf::test::structs_column_wrapper{{val1, val0}};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys({1, 2, 3, 4}, no_nulls());
+  cudf::test::fixed_width_column_wrapper<R> expect_vals(
+    {std::numeric_limits<double>::quiet_NaN(), 1.5, 0.0, -0.}, {0, 1, 1, 0});
+
+  std::vector<cudf::groupby::aggregation_request> requests(2);
+  requests[0].values = cudf::slice(vals, {2, 13})[0];
+  requests[1].values = cudf::slice(swapped_vals, {2, 13})[0];
+  for (auto& request : requests) {
+    request.aggregations.emplace_back(
+      cudf::make_covariance_aggregation<cudf::groupby_aggregation>());
+  }
+  auto gb_obj       = cudf::groupby::groupby(cudf::table_view({cudf::slice(keys, {2, 13})[0]}));
+  auto const result = gb_obj.aggregate(requests);
+
+  auto const sort_order = cudf::sorted_order(result.first->view());
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expect_keys, cudf::gather(result.first->view(), *sort_order)->get_column(0));
+  for (auto const& request_result : result.second) {
+    auto const sorted_vals =
+      cudf::gather(cudf::table_view({request_result.results[0]->view()}), *sort_order);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect_vals, sorted_vals->get_column(0));
+  }
+}
+
 TYPED_TEST(groupby_covariance_test, min_periods)
 {
   using V = TypeParam;
@@ -238,4 +315,33 @@ TEST_F(groupby_dictionary_covariance_test, basic)
 
   auto agg = cudf::make_covariance_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
+}
+
+TEST_F(groupby_dictionary_covariance_test, sliced)
+{
+  using V = int16_t;
+  using R = double;
+
+  // The rows of groupby_covariance_test.null_values_different, between two leading rows and one
+  // trailing row that are sliced off.
+  // clang-format off
+  cudf::test::fixed_width_column_wrapper<K> keys({4, 1, 1, 2, 3, 1, 2, 2, 1, 3, 3, 2, 4, 1},
+                                     {true, true, true, true, true, true, true, true, true, false, true, true, true, true});
+  cudf::test::dictionary_column_wrapper<V> member_0({5, 7, 9, 1, 1, 2, 2, 3, 3,-1, 1, 4, 4, 8},
+                                     {1, 0, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1});
+  cudf::test::dictionary_column_wrapper<V> member_1({6, 2, 1, 2, 1, 2,-1, 3, 3,-1, 0, 4, 2, 0},
+                                     {0, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1});
+  // clang-format on
+  auto vals = cudf::test::structs_column_wrapper{{member_0, member_1}};
+
+  cudf::test::fixed_width_column_wrapper<K> expect_keys({1, 2, 3, 4}, no_nulls());
+  cudf::test::fixed_width_column_wrapper<R> expect_vals(
+    {std::numeric_limits<double>::quiet_NaN(), 1.5, 0.0, -0.}, {0, 1, 1, 0});
+
+  auto agg = cudf::make_covariance_aggregation<cudf::groupby_aggregation>();
+  test_single_agg(cudf::slice(keys, {2, 13})[0],
+                  cudf::slice(vals, {2, 13})[0],
+                  expect_keys,
+                  expect_vals,
+                  std::move(agg));
 }

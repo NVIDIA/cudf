@@ -28,8 +28,8 @@ classifiers = [
 dependencies = [
     "cuda-pathfinder",
     "cuda-toolkit[nvrtc]==13.*",
-    "libkvikio==26.12.*,>=0.0.0a0",
-    "librmm==26.12.*,>=0.0.0a0",
+    "libkvikio==27.2.*,>=0.0.0a0",
+    "librmm==27.2.*,>=0.0.0a0",
     "nvidia-libnvcomp==6.0.0.12",
     "nvidia-nvjitlink>=13.4,<14",
     "rapids-logger==0.3.*",
@@ -71,10 +71,10 @@ build-backend = "scikit_build_core.build"
 dependencies-file = "../../dependencies.yaml"
 matrix-entry = "cuda_suffixed=true;use_cuda_wheels=true"
 requires = [
-    "cmake>=4.0",
+    "cmake>=4.0,<4.5",
     "cuda-toolkit[nvrtc]==13.*",
-    "libkvikio==26.12.*,>=0.0.0a0",
-    "librmm==26.12.*,>=0.0.0a0",
+    "libkvikio==27.2.*,>=0.0.0a0",
+    "librmm==27.2.*,>=0.0.0a0",
     "ninja",
     "nvidia-libnvcomp==6.0.0.12",
     "nvidia-nvjitlink>=13.4,<14",

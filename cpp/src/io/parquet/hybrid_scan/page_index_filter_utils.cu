@@ -12,8 +12,10 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/labeling/label_segments.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/replace.hpp>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -28,7 +30,6 @@
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_select.cuh>
@@ -36,7 +37,8 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -57,8 +59,7 @@ namespace {
 /**
  * @brief Functor to read the row mask, i.e. the zeroth Fenwick tree level
  *
- * Nulls are read as retained rows here so that pages aren't accidentally pruned due to
- * unavailable page-level statistics (represented as nulls)
+ * Null rows are treated as pruned
  */
 struct row_mask_accessor {
   bool const* data;               ///< Row mask data, adjusted for the column view offset
@@ -79,8 +80,8 @@ struct row_mask_accessor {
 
   __device__ bool inline operator()(cudf::size_type row_idx) const noexcept
   {
-    if (data[row_idx]) { return true; }
-    return null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx);
+    if (null_mask != nullptr and not bit_is_set(null_mask, offset + row_idx)) { return false; }
+    return data[row_idx];
   }
 };
 
@@ -418,13 +419,13 @@ compute_segment_row_offsets_device(cudf::device_span<size_type const> all_page_r
   cudf::device_span<size_type const> input_slice_bounds,
   cudf::device_span<size_type const> segment_row_offsets,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_inputs   = input_slice_bounds.size() - 1;
   auto const num_segments = segment_row_offsets.size() - 1;
 
-  auto page_maps =
-    cuda::device_buffer<size_type>(stream, mr, num_inputs * num_segments, cuda::no_init);
+  auto page_maps = cuda::device_buffer<size_type>(
+    stream, mr.get_output_mr(), num_inputs * num_segments, cuda::no_init);
 
   // One thread per (input, segment) pair. `upper_bound` finds the containing page. Segments are
   // built from the union of all page boundaries, so containment is guaranteed.
@@ -573,9 +574,10 @@ std::pair<std::vector<size_type>, size_type> compute_page_row_offsets(
   return {std::move(page_row_offsets), max_page_size};
 }
 
-bool are_all_rows_retained(cudf::column_view const& row_mask, cuda::stream_ref stream)
+bool are_all_rows_retained(cudf::column_view const& row_mask,
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   return cudf::detail::all_of(cuda::counting_iterator<cudf::size_type>{0},
                               cuda::counting_iterator{row_mask.size()},
                               row_mask_accessor{row_mask},
@@ -587,17 +589,17 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
   cudf::column_view const& row_mask,
   std::span<cudf::size_type const> page_row_offsets,
   cudf::size_type max_page_size,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Need at least two offsets (or one range) to search the Fenwick tree
   if (page_row_offsets.size() < 2) { return thrust::host_vector<bool>{}; }
 
   auto const total_rows         = row_mask.size();
-  auto const mr                 = cudf::get_current_device_resource_ref();
   auto const tree_level_offsets = compute_fenwick_tree_level_offsets(total_rows, max_page_size);
   auto const num_levels         = static_cast<cudf::size_type>(tree_level_offsets.size());
-  auto tree_levels_data =
-    cuda::device_buffer<bool>(stream, mr, tree_level_offsets.back(), cuda::no_init);
+  auto tree_levels_data         = cuda::device_buffer<bool>(
+    stream, mr.get_temporary_mr(), tree_level_offsets.back(), cuda::no_init);
   auto host_tree_level_ptrs = cudf::detail::make_pinned_vector_async<bool*>(num_levels, stream);
   // The zeroth level is the row mask itself, read through its accessor
   auto const d_row_mask   = row_mask_accessor{row_mask};
@@ -608,7 +610,8 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
                   host_tree_level_ptrs[level_idx] =
                     tree_levels_data.data() + tree_level_offsets[level_idx - 1];
                 });
-  auto tree_level_ptrs = cudf::detail::make_device_buffer_async(host_tree_level_ptrs, stream, mr);
+  auto tree_level_ptrs =
+    cudf::detail::make_device_buffer_async(host_tree_level_ptrs, stream, mr.as_temporary());
 
   auto prev_level_size = total_rows;
   std::for_each(
@@ -616,7 +619,7 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
     cuda::counting_iterator<cudf::size_type>{num_levels - 1},
     [&](auto const prev_level) {
       auto const current_level_size = cudf::detail::div_rounding_up_safe(prev_level_size, 2);
-      thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<cudf::size_type>{0},
                        cuda::counting_iterator{current_level_size},
                        build_fenwick_tree_level_functor{.tree_level_ptrs = tree_level_ptrs.data(),
@@ -627,11 +630,13 @@ thrust::host_vector<bool> compute_row_range_selection_mask(
       prev_level_size = current_level_size;
     });
 
-  auto const num_ranges    = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
-  auto device_results      = cuda::device_buffer<bool>(stream, mr, num_ranges, cuda::no_init);
+  auto const num_ranges = static_cast<cudf::size_type>(page_row_offsets.size() - 1);
+  auto device_results =
+    cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), num_ranges, cuda::no_init);
   auto pinned_page_offsets = cudf::detail::make_pinned_vector(page_row_offsets, stream);
-  auto page_offsets = cudf::detail::make_device_buffer_async(pinned_page_offsets, stream, mr);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto page_offsets =
+    cudf::detail::make_device_buffer_async(pinned_page_offsets, stream, mr.as_temporary());
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<cudf::size_type>{0},
                     cuda::counting_iterator{num_ranges},
                     device_results.begin(),
@@ -740,6 +745,7 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   //   min(col[i])     = segment_views[i * stats_cols_per_column + 0]
   //   max(col[i])     = segment_views[i * stats_cols_per_column + 1]
   //   is_null(col[i]) = segment_views[i * stats_cols_per_column + 2]
+  //   has_nan(col[i]) = segment_views[i * stats_cols_per_column + 3]
   std::vector<std::unique_ptr<column>> segment_columns;
   segment_columns.reserve(stats_cols_per_column * inputs.size());
   std::vector<column_view> segment_views(stats_cols_per_column * num_columns,
@@ -772,8 +778,15 @@ std::unique_ptr<column> compute_row_mask_from_page_stats(
   CUDF_EXPECTS(segment_mask->type().id() == type_id::BOOL8,
                "Page statistics expression must produce a boolean column");
 
-  // Drop the null mask if it was allocated but ended up empty
-  if (segment_mask->nullable() and segment_mask->null_count() == 0) {
+  // Statistics can't decide the null segments so retain them and drop the null mask
+  if (segment_mask->nullable()) {
+    if (segment_mask->null_count() > 0) {
+      segment_mask =
+        cudf::detail::replace_nulls(segment_mask->view(),
+                                    cudf::numeric_scalar<bool>(true, true, stream, temp_mr),
+                                    stream,
+                                    temp_mr);
+    }
     segment_mask->set_null_mask(
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, temp_mr), 0);
   }

@@ -80,7 +80,7 @@ struct list_gatherer {
 std::unique_ptr<column> gather_list_leaf(column_view const& column,
                                          gather_data const& gd,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   // gather map iterator for this level (N)
   auto gather_map_begin =
@@ -111,7 +111,7 @@ std::unique_ptr<column> gather_list_leaf(column_view const& column,
 std::unique_ptr<column> gather_list_nested(cudf::lists_column_view const& list,
                                            gather_data& gd,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   // gather map iterator for this level (N)
   auto gather_map_begin =

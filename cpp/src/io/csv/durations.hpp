@@ -19,7 +19,7 @@ namespace csv {
 
 std::unique_ptr<column> pandas_format_durations(column_view const& durations,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr);
+                                                cudf::memory_resources mr);
 
 }  // namespace csv
 }  // namespace detail

@@ -10,12 +10,14 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -640,8 +642,16 @@ class parquet_reader_options {
    *
    * @param width The decimal type_id (DECIMAL32, DECIMAL64, or DECIMAL128) to which all decimal
    * columns need to be cast. The scale of each column is preserved from the file.
+   * @throws std::invalid_argument if `width` is not EMPTY or a decimal type
    */
-  void set_decimal_width(type_id width) { _decimal_width = width; }
+  void set_decimal_width(type_id width)
+  {
+    CUDF_EXPECTS(width == type_id::EMPTY or width == type_id::DECIMAL32 or
+                   width == type_id::DECIMAL64 or width == type_id::DECIMAL128,
+                 "decimal_width must be a decimal type",
+                 std::invalid_argument);
+    _decimal_width = width;
+  }
 
   /**
    * @brief Sets whether to use JIT for filtering.

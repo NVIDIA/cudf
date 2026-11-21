@@ -28,6 +28,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <tuple>
 #include <utility>
@@ -41,9 +42,9 @@ using metadata_base = parquet::detail::metadata;
 namespace {
 
 /**
- * @brief Converts page-level statistics of an input column to three device columns (min, max
- * values, and all-null) with the host page-row offsets that map its rows back to the input column's
- * pages.
+ * @brief Converts page-level statistics of an input column to four device columns (min, max
+ * values, all-null and has-NaN) with the host page-row offsets that map its rows back to the input
+ * column's pages.
  */
 struct page_stats_caster : public stats_caster_base {
   cudf::size_type total_rows;
@@ -52,13 +53,13 @@ struct page_stats_caster : public stats_caster_base {
 
   /**
    * @brief Computes host side data including page row offsets and host columns containing
-   * page-level min, max, and all-null statistics for a column
+   * page-level min, max, all-null and has-NaN statistics for a column
    *
    * @param schema_indices_per_source Column schema index in each source
    * @param dtype Column data type
    * @param stream CUDA stream
-   * @return A tuple of page row offsets and host columns containing page-level min, max, and
-   * all-null statistics
+   * @return A tuple of page row offsets and host columns containing page-level min, max, all-null
+   * and has-NaN statistics
    */
   template <typename T>
   [[nodiscard]] auto compute_host_data(std::span<size_type const> schema_indices_per_source,
@@ -75,12 +76,14 @@ struct page_stats_caster : public stats_caster_base {
 
     auto const total_pages = col_chunk_page_offsets.back();
 
-    // Create host columns with page-level min, max, and all-null statistics. The all-null column
-    // is true only when every value in the page is null, false when none are, and null when only
-    // some are, which is what lets it answer both IS_NULL and IS NOT NULL.
+    // Create host columns with page-level min, max, all-null and has-NaN statistics. The all-null
+    // column is true only when every value in the page is null, false when none are, and null when
+    // only some are, which is what lets it answer both IS_NULL and IS NOT NULL. The has-NaN column
+    // is null when the column index carries no NaN counts.
     host_column<T> min(total_pages, stream);
     host_column<T> max(total_pages, stream);
     host_column<bool> all_null(total_pages, stream);
+    host_column<bool> has_nan(total_pages, stream);
 
     // Populate the host columns with page-level min, max statistics from the page index
     auto page_offset_idx = 0;
@@ -99,6 +102,11 @@ struct page_stats_caster : public stats_caster_base {
           }
           return 0;
         }();
+        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
+        auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+        auto const is_narrowing_column =
+          cuda::std::signed_integral<T> and
+          parquet::detail::is_column_wider_than(schema.type, schema.type_length, sizeof(T));
 
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
@@ -110,9 +118,28 @@ struct page_stats_caster : public stats_caster_base {
             std::ranges::find(row_group.columns, mapped_schema_idx, &ColumnChunk::schema_idx);
 
           auto const& colchunk               = *colchunk_iter;
-          auto const& column_index           = colchunk.column_index.value();
-          auto const num_pages_in_colchunk   = column_index.min_values.size();
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
+          // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
+          auto const ignore_int96_min_max = parquet::detail::is_unordered_int96(
+            per_file_metadata[src_idx],
+            colchunk.meta_data.type,
+            std::distance(row_group.columns.begin(), colchunk_iter));
+
+          // Without a column index (e.g. a float chunk with NaNs), no page can be pruned
+          if (not colchunk.column_index.has_value()) {
+            std::ranges::for_each(
+              std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
+              [&](auto column_page_idx) {
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
+                all_null.set_value(column_page_idx, std::nullopt);
+                has_nan.set_value(column_page_idx, std::nullopt);
+              });
+            return;
+          }
+
+          auto const& column_index         = colchunk.column_index.value();
+          auto const num_pages_in_colchunk = column_index.min_values.size();
 
           CUDF_EXPECTS(column_index.max_values.size() == num_pages_in_colchunk,
                        "Number of max values must match the number of pages in the column chunk",
@@ -126,6 +153,11 @@ struct page_stats_caster : public stats_caster_base {
                        "Number of page null counts must match the number of pages in the column "
                        "chunk",
                        std::invalid_argument);
+          CUDF_EXPECTS(not column_index.nan_counts.has_value() or
+                         column_index.nan_counts.value().size() == num_pages_in_colchunk,
+                       "Number of page NaN counts must match the number of pages in the column "
+                       "chunk",
+                       std::invalid_argument);
 
           // For all pages in this column chunk
           std::for_each(
@@ -137,19 +169,38 @@ struct page_stats_caster : public stats_caster_base {
               auto const column_page_idx = page_offset_in_colchunk + page_idx;
               // Check if the page is completely null
               if (column_index.null_pages[page_idx]) {
-                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
                 all_null.val[column_page_idx] = true;
+                has_nan.set_value(column_page_idx, false);
                 return;
               }
 
-              // Translate binary data to Type then to <T>
-              min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+              // Also ignore INT96 min/max that cannot bound the converted values
+              if (ignore_int96_min_max or
+                  int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
+              } else {
+                // Translate binary data to Type then to <T>
+                host_column<T>::set_min_max(min,
+                                            max,
+                                            column_page_idx,
+                                            min_value,
+                                            max_value,
+                                            is_narrowing_column,
+                                            colchunk.meta_data.type,
+                                            ts_scale);
+              }
+              has_nan.set_value(column_page_idx,
+                                parquet::detail::has_nans(
+                                  column_index.nan_counts.has_value()
+                                    ? std::make_optional(column_index.nan_counts.value()[page_idx])
+                                    : std::nullopt));
 
               // Check if the page doesn't have a null count
               if (not column_index.null_counts.has_value()) {
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                all_null.set_value(column_page_idx, std::nullopt);
                 return;
               }
               // Use the null count to determine if the page is completely null
@@ -159,7 +210,7 @@ struct page_stats_caster : public stats_caster_base {
               if (null_count == 0) {
                 all_null.val[column_page_idx] = false;
               } else if (null_count < page_row_count) {
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                all_null.set_value(column_page_idx, std::nullopt);
               } else if (null_count == page_row_count) {
                 all_null.val[column_page_idx] = true;
               } else {
@@ -169,13 +220,16 @@ struct page_stats_caster : public stats_caster_base {
         });
       });
 
-    return std::tuple{
-      std::move(page_row_offsets), std::move(min), std::move(max), std::move(all_null)};
+    return std::tuple{std::move(page_row_offsets),
+                      std::move(min),
+                      std::move(max),
+                      std::move(all_null),
+                      std::move(has_nan)};
   }
 
   /**
-   * @brief Builds a `page_statistics_input` storing compact per-column stats (min, max, all-null)
-   * with the host page-row offsets that map its rows back to the input column's pages.
+   * @brief Builds a `page_statistics_input` storing compact per-column stats (min, max, all-null,
+   * has-NaN) with the host page-row offsets that map its rows back to the input column's pages.
    *
    * @tparam T Underlying type of the column
    * @param column_index Logical filter column index used by the stats expression
@@ -197,8 +251,9 @@ struct page_stats_caster : public stats_caster_base {
     if constexpr (cudf::is_compound<T>() and not cuda::std::is_same_v<T, string_view>) {
       CUDF_FAIL("Compound types other than strings do not have statistics");
     } else {
-      // Compute page row offsets, and page-statistics (min, max and all-null) host columns.
-      auto [page_row_offsets, min, max, all_null] =
+      // Compute page row offsets, and page-statistics (min, max, all-null and has-NaN) host
+      // columns.
+      auto [page_row_offsets, min, max, all_null, has_nan] =
         compute_host_data<T>(schema_indices_per_source, dtype, stream);
 
       std::vector<std::unique_ptr<column>> columns;
@@ -207,6 +262,8 @@ struct page_stats_caster : public stats_caster_base {
       columns.emplace_back(max.to_device(dtype, stream, mr.get_output_mr()));
       columns.emplace_back(
         all_null.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
+      columns.emplace_back(
+        has_nan.to_device(data_type{type_id::BOOL8}, stream, mr.get_output_mr()));
 
       return page_statistics_input{
         .column_index = column_index,
@@ -269,12 +326,12 @@ std::unique_ptr<cudf::column> aggregate_reader_metadata::build_row_mask_with_pag
     return build_all_true_row_mask(row_group_indices, stream, mr);
   }
 
-  // We need both column and offset indexes to be present for each participating column.
-  auto const [has_column_index, has_offset_index] =
-    page_index_presence(row_group_indices, stats_column_schemas);
-  CUDF_EXPECTS(has_column_index and has_offset_index,
-               "Filter column page pruning using page-statistics requires both column and "
-               "offset indexes to be present",
+  // We need offset indexes for each participating column. Column indexes may be missing for some
+  // column chunks, whose pages are then kept.
+  auto const has_offset_index = page_index_presence(row_group_indices, stats_column_schemas).second;
+  CUDF_EXPECTS(has_offset_index,
+               "Filter column page pruning using page-statistics requires offset indexes to be "
+               "present",
                std::runtime_error);
 
   // Convert the filter to an expression over page statistics
@@ -326,7 +383,8 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   cudf::column_view const& row_mask,
   std::span<std::vector<size_type> const> row_group_indices,
   std::span<input_column_info const> input_columns,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   CUDF_FUNC_RANGE();
 
@@ -345,7 +403,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
     std::overflow_error);
 
   // Return an empty vector if all rows are required
-  if (are_all_rows_retained(row_mask, stream)) { return thrust::host_vector<bool>{}; }
+  if (are_all_rows_retained(row_mask, stream, mr)) { return thrust::host_vector<bool>{}; }
 
   // Collect column schema indices from the input columns.
   auto column_schema_indices = std::vector<size_type>(input_columns.size());
@@ -434,7 +492,7 @@ thrust::host_vector<bool> aggregate_reader_metadata::compute_data_page_mask(
   auto data_page_mask = thrust::host_vector<bool>{};
 
   auto const row_range_mask =
-    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream);
+    compute_row_range_selection_mask(row_mask, page_row_offsets, max_page_size, stream, mr);
   if (row_range_mask.empty()) { return data_page_mask; }
 
   data_page_mask.reserve(page_row_offsets.size() - num_columns);

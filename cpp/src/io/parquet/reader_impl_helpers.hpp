@@ -14,6 +14,7 @@
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
 #include <thrust/host_vector.h>
@@ -144,6 +145,7 @@ struct row_group_size_info {
  * @brief Translates Parquet datatype to cuDF type enum
  */
 [[nodiscard]] type_id to_type_id(SchemaElement const& schema,
+                                 std::optional<type_id> arrow_type,
                                  bool strings_to_categorical,
                                  type_id timestamp_type_id,
                                  type_id decimal_type_id);
@@ -216,6 +218,14 @@ struct metadata : public FileMetaData {
  protected:
   void sanitize_schema();
 
+  /**
+   * @brief Decodes the arrow:schema from the key value metadata, if any, and sets the arrow types
+   * of the corresponding schema elements
+   *
+   * Resets all previously set arrow types first so it is safe to call more than once.
+   */
+  void apply_arrow_schema();
+
  private:
   bool is_page_index_setup_ = false;
 };
@@ -283,6 +293,7 @@ class aggregate_reader_metadata {
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
   std::unordered_set<int32_t> nullable_across_sources;
+  bool use_arrow_schema = false;  ///< Whether to use the arrow:schema types of the sources
 
   int64_t num_rows;
   size_type num_row_groups;
@@ -320,25 +331,6 @@ class aggregate_reader_metadata {
    * @param src Corresponding SchemaElement in another source
    */
   void propagate_optional_field(int schema_idx, SchemaElement const& src);
-
-  /**
-   * @brief Decodes and constructs the arrow schema from the ARROW_SCHEMA_KEY IPC message
-   * in key value metadata section of Parquet file footer
-   */
-  [[nodiscard]] arrow_schema_data_types collect_arrow_schema() const;
-
-  /**
-   * @brief Co-walks the collected arrow and Parquet schema, updates
-   * dtypes and destroys the no longer needed arrow schema object(s).
-   */
-  void apply_arrow_schema();
-
-  /**
-   * @brief Decode an arrow:IPC message and returns an optional string_view of
-   * its metadata header
-   */
-  [[nodiscard]] std::optional<std::string_view> decode_ipc_message(
-    std::string_view const serialized_message) const;
 
   /**
    * @brief Sums up the number of rows of each source
@@ -379,7 +371,7 @@ class aggregate_reader_metadata {
                      std::span<int const> column_schemas,
                      size_type num_row_groups,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const;
+                     cudf::memory_resources mr) const;
 
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
@@ -449,20 +441,19 @@ class aggregate_reader_metadata {
 
  protected:
   /**
-   * @brief Computes a boolean mask indicating if an output column is a timestamp whose precision in
-   * any source differs from the output precision
+   * @brief Computes a boolean mask indicating if an output column's bloom filters cannot be queried
+   * with a literal of its output type
    *
-   * A column is flagged if its Parquet timestamp logical type requires rescaling to the output
-   * clock rate in any source, as sources are not required to store a column with the same
-   * precision.
+   * A column is flagged if, in any source, it is a timestamp whose Parquet logical type requires
+   * rescaling to the output clock rate, or a decimal whose physical values may be wider than its
+   * output storage type.
    *
    * @param output_dtypes Output column data types
    * @param output_column_schemas Output column schema indices
    *
-   * @return Boolean vector indicating if the output column is a timestamp with mismatched precision
-   * in any source
+   * @return Boolean vector indicating if the output column cannot use bloom filters
    */
-  [[nodiscard]] thrust::host_vector<bool> calc_mismatched_timestamp_mask(
+  [[nodiscard]] thrust::host_vector<bool> calc_bloom_hash_mismatch_mask(
     std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
 
   /**
@@ -474,6 +465,7 @@ class aggregate_reader_metadata {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
@@ -483,7 +475,8 @@ class aggregate_reader_metadata {
     std::span<data_type const> output_dtypes,
     std::span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Filters the row groups using bloom filters
@@ -497,6 +490,7 @@ class aggregate_reader_metadata {
    * @param bloom_filter_col_schemas Schema indices of bloom filter columns only
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
@@ -509,7 +503,8 @@ class aggregate_reader_metadata {
     std::span<data_type const> output_dtypes,
     std::span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Initialize the internal variables
@@ -625,7 +620,7 @@ class aggregate_reader_metadata {
   [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
     std::span<std::string const> column_names,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Get total number of rows across all files
@@ -717,6 +712,19 @@ class aggregate_reader_metadata {
   }
 
   /**
+   * @brief Checks if a schema element is a binary BYTE_ARRAY leaf of a logical group, i.e. the
+   * `inline` child of a valid FILE group or the `metadata` / `value` child of a VARIANT group
+   *
+   * Such leaves are always read as `list<uint8>` and are never converted to categories.
+   *
+   * @param schema_idx The index of the SchemaElement in the pfm_idx'th file
+   * @param pfm_idx The index of the per_file_metadata, default = 0 if not specified
+   *
+   * @return True if the schema element is a binary leaf of a logical group
+   */
+  [[nodiscard]] bool is_binary_leaf(int schema_idx, int pfm_idx = 0) const;
+
+  /**
    * @brief Extracts the schema_idx'th SchemaElement from the pfm_idx'th file
    *
    * @param schema_idx The index of the SchemaElement to be extracted.
@@ -732,6 +740,17 @@ class aggregate_reader_metadata {
       "Parquet reader encountered an invalid schema_idx or pfm_idx",
       std::out_of_range);
     return per_file_metadata[pfm_idx].schema[schema_idx];
+  }
+
+  /**
+   * @brief Returns the arrow:schema type of a column, if any and if arrow:schema is in use
+   *
+   * @param schema_idx Schema index in the `pfm_idx`th source
+   * @param pfm_idx Source index
+   */
+  [[nodiscard]] std::optional<type_id> arrow_type(int schema_idx, int pfm_idx = 0) const
+  {
+    return use_arrow_schema ? get_schema(schema_idx, pfm_idx).arrow_type : std::nullopt;
   }
 
   [[nodiscard]] auto const& get_schema_tree(int pfm_idx = 0) const

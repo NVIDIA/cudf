@@ -96,7 +96,7 @@ table_chunk::table_chunk(std::unique_ptr<cudf::table> table, cuda::stream_ref st
   RAPIDSMPF_EXPECTS(table_ != nullptr, "table pointer cannot be null", std::invalid_argument);
   table_view_ = table_->view();
   data_alloc_size_[static_cast<std::size_t>(rapidsmpf::MemoryType::DEVICE)] =
-    cudf::packed_size(*table_view_, stream_, rmm::mr::get_current_device_resource_ref());
+    cudf::packed_size(*table_view_, stream_);
   make_available_cost_ = 0;
 }
 
@@ -110,7 +110,7 @@ table_chunk::table_chunk(cudf::table_view table_view,
     is_spillable_{static_cast<bool>(exclusive_view)}
 {
   data_alloc_size_[static_cast<std::size_t>(rapidsmpf::MemoryType::DEVICE)] =
-    cudf::packed_size(table_view, stream_, rmm::mr::get_current_device_resource_ref());
+    cudf::packed_size(table_view, stream_);
   make_available_cost_ = 0;
 }
 

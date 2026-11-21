@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport uint8_t
 from libc.stddef cimport size_t
@@ -8,6 +8,7 @@ from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 from pylibcudf.libcudf.utilities.span cimport device_span
 from rmm.librmm.device_buffer cimport device_buffer
 from cuda.bindings.cyruntime cimport cudaStream_t
@@ -33,7 +34,7 @@ cdef extern from "cudf/contiguous_split.hpp" namespace "cudf" nogil:
             const table_view & input,
             size_t user_buffer_size,
             cudaStream_t stream,
-            device_async_resource_ref temp_mr,
+            memory_resources mr,
         ) except +libcudf_exception_handler
 
     cdef struct contiguous_split_result:

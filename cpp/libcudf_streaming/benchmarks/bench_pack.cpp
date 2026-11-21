@@ -125,7 +125,8 @@ void run_chunked_pack(benchmark::State& state,
   // Create the chunked_pack instance to get total output size
   std::size_t total_size;
   {
-    cudf::chunked_pack packer(table.view(), bounce_buffer_size, stream, table_mr);
+    cudf::chunked_pack packer(
+      table.view(), bounce_buffer_size, stream, cudf::memory_resources{table_mr, table_mr});
     total_size = packer.get_total_contiguous_size();
   }
 
@@ -135,7 +136,8 @@ void run_chunked_pack(benchmark::State& state,
   cuda::device_buffer<std::uint8_t> destination(stream, pack_mr, total_size, cuda::no_init);
 
   auto run_packer = [&] {
-    cudf::chunked_pack packer(table.view(), bounce_buffer_size, stream, pack_mr);
+    cudf::chunked_pack packer(
+      table.view(), bounce_buffer_size, stream, cudf::memory_resources{pack_mr, pack_mr});
 
     std::size_t offset = 0;
     while (packer.has_next()) {

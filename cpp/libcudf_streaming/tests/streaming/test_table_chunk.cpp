@@ -679,7 +679,7 @@ TEST_F(StreamingTableChunk, ToMessageNotSpillable)
   EXPECT_FALSE(m.content_description().spillable());
   EXPECT_EQ(m.content_description().content_size(rapidsmpf::MemoryType::HOST), 0);
   EXPECT_EQ(m.content_description().content_size(rapidsmpf::MemoryType::DEVICE),
-            cudf::packed_size(expect.view(), stream, rmm::mr::get_current_device_resource_ref()));
+            cudf::packed_size(expect.view(), stream));
   // packed size is greater than or equal to the alloc size due to buffer alignments.
   EXPECT_GE(m.content_description().content_size(rapidsmpf::MemoryType::DEVICE),
             expect.alloc_size());
@@ -787,9 +787,8 @@ TEST_P(StreamingTableChunk, ToMessageCopy)
   constexpr std::int64_t seed = 2025;
   constexpr std::uint64_t seq = 7;
 
-  auto expect = random_table(seed, nrows, ncols, 0, 5);
-  auto const expected_packed_size =
-    cudf::packed_size(expect.view(), stream, rmm::mr::get_current_device_resource_ref());
+  auto expect                     = random_table(seed, nrows, ncols, 0, 5);
+  auto const expected_packed_size = cudf::packed_size(expect.view(), stream);
   EXPECT_GE(expected_packed_size, expect.alloc_size());
   auto chunk = std::make_unique<table_chunk>(std::make_unique<cudf::table>(expect), stream);
 

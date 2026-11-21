@@ -1829,23 +1829,6 @@ TEST_F(ParquetReaderTest, DecimalRead)
   }
 }
 
-namespace {
-// Swap the trailing footer of the in-memory Parquet file for `footer`, keeping the data pages
-void replace_footer(std::vector<char>& buffer, cudf::io::parquet::FileMetaData const& footer)
-{
-  uint32_t footer_len{};
-  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
-  auto const new_footer = parquet_delta_test::serialize_footer(footer);
-  buffer.resize(buffer.size() - 8 - footer_len);
-  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
-  footer_len = new_footer.size();
-  buffer.insert(buffer.end(),
-                reinterpret_cast<char const*>(&footer_len),
-                reinterpret_cast<char const*>(&footer_len + 1));
-  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
-}
-}  // namespace
-
 template <typename T>
 struct ParquetReaderByteArrayDecimalTest : public ParquetReaderTest {};
 
@@ -1900,7 +1883,17 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
   schema.logical_type      = cudf::io::parquet::LogicalType{
     cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
 
-  replace_footer(buffer, footer);
+  // Swap the trailing footer for the annotated one, keeping the data pages
+  uint32_t footer_len{};
+  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
+  auto const new_footer = parquet_delta_test::serialize_footer(footer);
+  buffer.resize(buffer.size() - 8 - footer_len);
+  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
+  footer_len = new_footer.size();
+  buffer.insert(buffer.end(),
+                reinterpret_cast<char const*>(&footer_len),
+                reinterpret_cast<char const*>(&footer_len + 1));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
 
   auto const result = cudf::io::read_parquet(
     cudf::io::parquet_reader_options::builder(
@@ -4107,19 +4100,16 @@ TEST_F(ParquetReaderTest, FilterInexactStats)
 
   // Mimic a non-compliant writer that truncates both bounds of row group 0 to the same prefix,
   // and mark row group 2 inexact without changing its (still valid) bounds
-  auto footer =
-    cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
-                                     cudf::host_span<char const>{buffer.data(), buffer.size()}}))
-      .front();
-  ASSERT_EQ(footer.row_groups.size(), 3);
-  auto& rg0_stats     = footer.row_groups[0].columns[0].meta_data.statistics;
-  rg0_stats.min_value = rg0_stats.max_value = std::vector<uint8_t>{'a', 'b', 'c'};
-  for (auto const rg : {0, 2}) {
-    auto& stats              = footer.row_groups[rg].columns[0].meta_data.statistics;
-    stats.is_min_value_exact = false;
-    stats.is_max_value_exact = false;
-  }
-  replace_footer(buffer, footer);
+  edit_footer(buffer, [](cudf::io::parquet::FileMetaData& fmd) {
+    ASSERT_EQ(fmd.row_groups.size(), 3);
+    auto& rg0_stats     = fmd.row_groups[0].columns[0].meta_data.statistics;
+    rg0_stats.min_value = rg0_stats.max_value = std::vector<uint8_t>{'a', 'b', 'c'};
+    for (auto const rg : {0, 2}) {
+      auto& stats              = fmd.row_groups[rg].columns[0].meta_data.statistics;
+      stats.is_min_value_exact = false;
+      stats.is_max_value_exact = false;
+    }
+  });
 
   auto const test_filter =
     [&](cudf::ast::ast_operator op, std::string const& value, cudf::size_type expected_row_groups) {

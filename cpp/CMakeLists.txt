@@ -784,6 +784,7 @@ add_library(
   src/interop/from_arrow_host.cu
   src/interop/from_arrow_host_strings.cu
   src/interop/from_arrow_stream.cu
+  src/interop/packed_arrow_host.cpp
   src/interop/to_arrow_schema.cpp
   src/io/avro/avro.cpp
   src/io/avro/avro_gpu.cu

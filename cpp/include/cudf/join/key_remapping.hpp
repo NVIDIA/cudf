@@ -63,8 +63,12 @@ constexpr size_type KEY_REMAP_RIGHT_NULL = -2;
  *
  * Each distinct key in the right table is assigned a unique non-negative integer ID.
  * Rows with equal keys will map to the same ID. Keys that cannot be mapped (e.g., not found
- * in the left table, or null keys when nulls are unequal) receive negative sentinel values.
- * The specific ID values are stable for the lifetime of this object but are otherwise unspecified.
+ * in the right table, or null keys when nulls are unequal) receive negative sentinel values.
+ * Non-negative IDs are smaller than the number of rows in the right table. If the right table has
+ * no duplicate keys and no key that cannot be mapped, the ID of a key is the index of its row in
+ * the right table; otherwise the IDs are not guaranteed to be contiguous or smaller than
+ * get_distinct_count(). Beyond these guarantees the ID values are unspecified, but they are
+ * stable for the lifetime of this object.
  *
  * @note The right table is the build side: the internal hash table is built from its keys, and
  *       keys passed to remap_left_keys() form the probe side matched against it.

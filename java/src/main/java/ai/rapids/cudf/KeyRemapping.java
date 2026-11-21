@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -13,8 +13,12 @@ import org.slf4j.LoggerFactory;
  * <p>
  * Each distinct key in the build table is assigned a unique non-negative integer ID.
  * Rows with equal keys will map to the same ID. Keys that cannot be mapped (e.g., not found
- * in probe, or null keys when nulls are unequal) receive negative sentinel values.
- * The specific ID values are stable for the lifetime of this object but are otherwise unspecified.
+ * in the build table, or null keys when nulls are unequal) receive negative sentinel values.
+ * Non-negative IDs are smaller than the number of rows in the build table. If the build table has
+ * no duplicate keys and no key that cannot be mapped, the ID of a key is the index of its row in
+ * the build table; otherwise the IDs are not guaranteed to be contiguous or smaller than
+ * {@link #getDistinctCount()}. Beyond these guarantees the ID values are unspecified, but they are
+ * stable for the lifetime of this object.
  * </p>
  * <p>
  * <b>Ownership:</b> This class increments the reference counts on the columns from the provided

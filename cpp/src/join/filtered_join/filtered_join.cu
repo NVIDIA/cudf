@@ -44,7 +44,8 @@ namespace detail {
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>
 make_filtered_join_row_bitmask(table_view const& input,
                                null_equality nulls_equal,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   if (nulls_equal == null_equality::EQUAL || !has_nested_nulls(input)) {
     return std::pair(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr);
@@ -54,10 +55,7 @@ make_filtered_join_row_bitmask(table_view const& input,
   // Combine multiple masks so a row is valid only when every nested level is valid. Reuse a single
   // mask directly when possible.
   if (nullable_columns.size() > 1) {
-    auto row_bitmask =
-      cudf::detail::bitmask_and(
-        table_view{nullable_columns}, stream, cudf::get_current_device_resource_ref())
-        .first;
+    auto row_bitmask = cudf::detail::bitmask_and(table_view{nullable_columns}, stream, mr).first;
     auto const row_bitmask_ptr = row_bitmask.data();
     return std::pair(std::move(row_bitmask), row_bitmask_ptr);
   }
@@ -104,16 +102,17 @@ filtered_join::filtered_join(cudf::table_view const& right,
                              cudf::null_equality compare_nulls,
                              double load_factor,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                             cudf::memory_resources mr)
   : _right_mode{select_row_operator_mode(right)},
+    _mr{mr},
     _bucket_storage{cuco::extent<std::size_t>{compute_bucket_storage_size(
                       right.num_rows(), checked_load_factor(load_factor), _right_mode)},
-                    rmm::mr::polymorphic_allocator<char>{std::move(mr)},
+                    rmm::mr::polymorphic_allocator<char>{_mr.get_output_mr()},
                     stream.get()},
     _right{right},
     _nulls_equal{compare_nulls},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
-      _right, stream, cudf::get_current_device_resource_ref())}
+    _preprocessed_right{
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())}
 {
   cudf::scoped_range range{"filtered_join::filtered_join"};
   if (_right.num_rows() == 0) return;
@@ -141,12 +140,12 @@ std::unique_ptr<rmm::device_uvector<cudf::size_type>> filtered_join::semi_anti_j
   auto contains_map = cuda::device_buffer<bool>(stream, temp_mr, left.num_rows(), cuda::no_init);
   auto const contains_map_span = cudf::device_span<bool>{contains_map.data(), contains_map.size()};
   if (_right_mode == row_operator_mode::PRIMITIVE) {
-    query_right_table_primitive(left, preprocessed_left, contains_map_span, stream);
+    query_right_table_primitive(left, preprocessed_left, contains_map_span, stream, mr);
   } else if (_right_mode == row_operator_mode::NESTED) {
     query_right_table_nested(
       left, preprocessed_left, contains_map_span, stream, cudf::get_current_device_resource_ref());
   } else {
-    query_right_table_flat(left, preprocessed_left, contains_map_span, stream);
+    query_right_table_flat(left, preprocessed_left, contains_map_span, stream, mr);
   }
 
   rmm::device_uvector<size_type> gather_map(left.num_rows(), stream, mr.get_output_mr());
@@ -197,18 +196,17 @@ filtered_join::filtered_join(cudf::table_view const& build,
                              null_equality compare_nulls,
                              double load_factor,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<cudf::detail::filtered_join>(
-      build, compare_nulls, load_factor, stream, std::move(mr))}
+                             cudf::memory_resources mr)
+  : _impl{
+      std::make_unique<cudf::detail::filtered_join>(build, compare_nulls, load_factor, stream, mr)}
 {
 }
 
 filtered_join::filtered_join(cudf::table_view const& build,
                              null_equality compare_nulls,
                              cuda::stream_ref stream,
-                             cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : filtered_join(
-      build, compare_nulls, cudf::detail::CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr))
+                             cudf::memory_resources mr)
+  : filtered_join(build, compare_nulls, cudf::detail::CUCO_DESIRED_LOAD_FACTOR, stream, mr)
 {
 }
 

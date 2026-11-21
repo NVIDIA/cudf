@@ -143,6 +143,24 @@ TEST_F(DistinctJoinTest, MemoryResource)
   this->compare_to_reference(right.view(), left.view(), result, gold.view());
 }
 
+TEST_F(DistinctJoinTest, MemoryResources)
+{
+  column_wrapper<int32_t> right_0{{1, 2, 3, 4}, {true, true, false, true}};
+  column_wrapper<int32_t> right_1{{5, 6, 7, 8}, {true, false, true, true}};
+  auto const right = cudf::table_view{{right_0, right_1}};
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto distinct_join = cudf::distinct_hash_join{right,
+                                                cudf::null_equality::UNEQUAL,
+                                                0.5,
+                                                cudf::get_default_stream(),
+                                                cudf::memory_resources{output_mr, temporary_mr}};
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
+}
+
 TEST_F(DistinctJoinTest, InnerJoinNoNulls)
 {
   column_wrapper<int32_t> col0_0{{1, 2, 3, 4, 5}};

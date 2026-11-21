@@ -145,8 +145,8 @@ void find_matches_in_hash_table(HashTableType const& hash_table,
 distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : distinct_hash_join{right, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, std::move(mr)}
+                                       cudf::memory_resources mr)
+  : distinct_hash_join{right, compare_nulls, CUCO_DESIRED_LOAD_FACTOR, stream, mr}
 {
 }
 
@@ -154,12 +154,13 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        cudf::null_equality compare_nulls,
                                        double load_factor,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
+                                       cudf::memory_resources mr)
   : _has_nested_columns{cudf::has_nested_columns(right)},
     _nulls_equal{compare_nulls},
     _right{right},
-    _preprocessed_right{cudf::detail::row::equality::preprocessed_table::create(
-      _right, stream, cudf::get_current_device_resource_ref())},
+    _mr{mr},
+    _preprocessed_right{
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())},
     _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
                 checked_load_factor(load_factor),
                 cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),
@@ -168,7 +169,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                 {},
                 cuco::thread_scope_device,
                 cuco_storage_type{},
-                rmm::mr::polymorphic_allocator<char>{std::move(mr)},
+                rmm::mr::polymorphic_allocator<char>{_mr.get_output_mr()},
                 stream.get()}
 {
   CUDF_FUNC_RANGE();
@@ -181,10 +182,9 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
     if (this->_nulls_equal == cudf::null_equality::EQUAL or (not cudf::nullable(right))) {
       this->_hash_table.insert_async(iter, iter + right_table_num_rows, stream.get());
     } else {
-      auto stencil = cuda::counting_iterator<size_type>{0};
-      auto const row_bitmask =
-        cudf::detail::bitmask_and(_right, stream, cudf::get_current_device_resource_ref()).first;
-      auto const pred = cudf::detail::row_is_valid{row_bitmask.data()};
+      auto stencil           = cuda::counting_iterator<size_type>{0};
+      auto const row_bitmask = cudf::detail::bitmask_and(_right, stream, _mr.as_temporary()).first;
+      auto const pred        = cudf::detail::row_is_valid{row_bitmask.data()};
 
       // insert valid rows
       this->_hash_table.insert_if_async(
@@ -408,8 +408,8 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
                                        null_equality compare_nulls,
                                        double load_factor,
                                        cuda::stream_ref stream,
-                                       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<impl_type>(right, compare_nulls, load_factor, stream, std::move(mr))}
+                                       cudf::memory_resources mr)
+  : _impl{std::make_unique<impl_type>(right, compare_nulls, load_factor, stream, mr)}
 {
 }
 

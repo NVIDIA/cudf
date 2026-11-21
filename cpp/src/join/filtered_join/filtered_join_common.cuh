@@ -39,7 +39,8 @@ struct precomputed_hash {
 std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>
 make_filtered_join_row_bitmask(table_view const& input,
                                null_equality nulls_equal,
-                               cuda::stream_ref stream);
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr);
 
 class filtered_join_row_is_valid {
  public:
@@ -61,8 +62,9 @@ void filtered_join::insert_right_table(Iterator right_iter,
 {
   cudf::scoped_range range{"filtered_join::insert_right_table"};
   // Insert valid rows from the right table into the hash table.
-  auto const grid_size              = cuco::detail::grid_size(_right.num_rows(), CGSize);
-  auto const bitmask_buffer_and_ptr = make_filtered_join_row_bitmask(_right, _nulls_equal, stream);
+  auto const grid_size = cuco::detail::grid_size(_right.num_rows(), CGSize);
+  auto const bitmask_buffer_and_ptr =
+    make_filtered_join_row_bitmask(_right, _nulls_equal, stream, _mr.as_temporary());
   if (bitmask_buffer_and_ptr.second != nullptr) {
     cuco::detail::open_addressing_ns::insert_if_n<CGSize, cuco::detail::default_block_size()>
       <<<grid_size, cuco::detail::default_block_size(), 0, stream.get()>>>(
@@ -88,11 +90,13 @@ void filtered_join::query_right_table(cudf::table_view const& left,
                                       Iterator left_iter,
                                       Ref query_ref,
                                       cudf::device_span<bool> contains_map,
-                                      cuda::stream_ref stream)
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr)
 {
   cudf::scoped_range range{"filtered_join::query_right_table"};
-  auto const grid_size              = cuco::detail::grid_size(left.num_rows(), CGSize);
-  auto const bitmask_buffer_and_ptr = make_filtered_join_row_bitmask(left, _nulls_equal, stream);
+  auto const grid_size = cuco::detail::grid_size(left.num_rows(), CGSize);
+  auto const bitmask_buffer_and_ptr =
+    make_filtered_join_row_bitmask(left, _nulls_equal, stream, mr.as_temporary());
   if (bitmask_buffer_and_ptr.second != nullptr) {
     cuco::detail::open_addressing_ns::contains_if_n<CGSize, cuco::detail::default_block_size()>
       <<<grid_size, cuco::detail::default_block_size(), 0, stream.get()>>>(

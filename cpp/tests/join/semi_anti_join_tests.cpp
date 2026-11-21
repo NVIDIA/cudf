@@ -566,6 +566,23 @@ TEST_F(SemiAntiJoinTest, FilteredJoinMemoryResource)
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(*sorted_expected, *sorted_result);
 }
 
+TEST_F(SemiAntiJoinTest, FilteredJoinMemoryResources)
+{
+  column_wrapper<int32_t> right_0{{0, 1, 3}, {true, false, true}};
+  column_wrapper<int32_t> right_1{{4, 5, 6}, {true, true, false}};
+  auto const right = cudf::table_view{{right_0, right_1}};
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::filtered_join obj(right,
+                          cudf::null_equality::UNEQUAL,
+                          cudf::get_default_stream(),
+                          cudf::memory_resources{output_mr, temporary_mr});
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
+}
+
 TEST_F(SemiAntiJoinTest, MarkJoinMemoryResource)
 {
   column_wrapper<int32_t> left_col{0, 1, 1, 2, 3, 5};
@@ -577,6 +594,24 @@ TEST_F(SemiAntiJoinTest, MarkJoinMemoryResource)
     left, cudf::null_equality::EQUAL, cudf::join_prefilter::YES, cudf::get_default_stream(), mr);
 
   EXPECT_GT(mr.get_bytes_counter().peak, 0);
+}
+
+TEST_F(SemiAntiJoinTest, MarkJoinMemoryResources)
+{
+  column_wrapper<int32_t> left_0{{0, 1, 3}, {true, false, true}};
+  column_wrapper<int32_t> left_1{{4, 5, 6}, {true, true, false}};
+  auto const left = cudf::table_view{{left_0, left_1}};
+
+  auto output_mr    = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  auto temporary_mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+  cudf::mark_join obj(left,
+                      cudf::null_equality::UNEQUAL,
+                      cudf::join_prefilter::YES,
+                      cudf::get_default_stream(),
+                      cudf::memory_resources{output_mr, temporary_mr});
+  EXPECT_GT(output_mr.get_bytes_counter().value, 0);
+  EXPECT_GT(temporary_mr.get_bytes_counter().peak, 0);
+  EXPECT_EQ(temporary_mr.get_bytes_counter().value, 0);
 }
 
 std::string test_name(join_implementation implementation)

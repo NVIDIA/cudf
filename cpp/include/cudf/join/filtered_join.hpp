@@ -67,13 +67,15 @@ class filtered_join {
    * @param right The right (filter) table used to build the hash table
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the hash table; the temporary resource backs scratch
+   * used during construction. Both are non-owning references, so the resources they refer to must
+   * outlive the join object.
    */
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Constructs a filtered hash join object for subsequent probe calls.
@@ -89,14 +91,16 @@ class filtered_join {
    * in range (0,1]. For example, 0.5 indicates a target of 50% occupancy. Note that the actual
    * occupancy achieved may be slightly lower than the specified value.
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the hash table; the temporary resource backs scratch
+   * used during construction. Both are non-owning references, so the resources they refer to must
+   * outlive the join object.
    */
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 double load_factor,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-                  cudf::get_current_device_resource_ref());
+                cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns a vector of row indices corresponding to a semi-join

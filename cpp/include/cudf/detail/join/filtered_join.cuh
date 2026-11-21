@@ -131,13 +131,14 @@ class filtered_join {
    * @param compare_nulls How null values should be compared
    * @param load_factor Target load factor for the hash table
    * @param stream CUDA stream on which to perform operations
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources: the output resource backs the hash table and preprocessed right
+   * table, which live as long as this object; the temporary resource backs construction scratch.
    */
   filtered_join(cudf::table_view const& right,
                 cudf::null_equality compare_nulls,
                 double load_factor,
                 cuda::stream_ref stream,
-                cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                cudf::memory_resources mr);
 
   /**
    * @brief Returns indices of left table rows that have matching keys in the right table
@@ -165,19 +166,22 @@ class filtered_join {
                          Iterator left_iter,
                          Ref query_ref,
                          cudf::device_span<bool> contains_map,
-                         cuda::stream_ref stream);
+                         cuda::stream_ref stream,
+                         cudf::memory_resources mr);
 
   void query_right_table_primitive(
     cudf::table_view const& left,
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
     cudf::device_span<bool> contains_map,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   void query_right_table_flat(
     cudf::table_view const& left,
     std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
     cudf::device_span<bool> contains_map,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   void query_right_table_nested(
     cudf::table_view const& left,
@@ -203,6 +207,7 @@ class filtered_join {
   using nested_probing_scheme = cuco::linear_probing<4, hash_extract_fn>;
 
   row_operator_mode const _right_mode;
+  cudf::memory_resources _mr;    ///< Resources backing this object's allocations
   storage_type _bucket_storage;  ///< Storage for hash table buckets
 
   // Empty sentinel key used to mark empty slots in the hash table

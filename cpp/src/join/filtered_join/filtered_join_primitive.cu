@@ -53,7 +53,8 @@ void filtered_join::query_right_table_primitive(
   cudf::table_view const& left,
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table> const& preprocessed_left,
   cudf::device_span<bool> contains_map,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto const comparator = primitive_row_comparator{
     nullate::DYNAMIC{true}, _preprocessed_right, preprocessed_left, _nulls_equal};
@@ -66,7 +67,7 @@ void filtered_join::query_right_table_primitive(
   auto const iter   = cudf::detail::make_counting_transform_iterator(
     size_type{0}, key_pair_fn<rhs_index_type, primitive_row_hasher>{hasher});
   query_right_table<single_probing_scheme::cg_size>(
-    left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream);
+    left, iter, set_ref.rebind_operators(cuco::op::contains), contains_map, stream, mr);
 }
 
 }  // namespace cudf::detail

@@ -111,16 +111,17 @@ class distinct_hash_join {
    * @param right The right table, from which the hash table is built
    * @param compare_nulls Controls whether null join-key values should match or not.
    * @param stream CUDA stream used for device memory operations and kernel launches.
-   * @param mr Device memory resource used to allocate the internal hash table.
+   * @param mr Memory resources: the output resource backs the hash table and preprocessed right
+   * table, which live as long as this object; the temporary resource backs construction scratch.
    */
   distinct_hash_join(cudf::table_view const& right,
                      cudf::null_equality compare_nulls,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                     cudf::memory_resources mr);
 
   /**
    * @copydoc distinct_hash_join(cudf::table_view const&, null_equality, cuda::stream_ref,
-   * cuda::mr::any_resource<cuda::mr::device_accessible>)
+   * cudf::memory_resources)
    *
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% occupancy.
    */
@@ -128,7 +129,7 @@ class distinct_hash_join {
                      cudf::null_equality compare_nulls,
                      double load_factor,
                      cuda::stream_ref stream,
-                     cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+                     cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::distinct_hash_join::inner_join
@@ -162,6 +163,7 @@ class distinct_hash_join {
   bool _has_nested_columns;  ///< True if nested columns are present in right and left tables
   cudf::null_equality _nulls_equal;  ///< Whether to consider nulls as equal
   cudf::table_view _right;           ///< Input table to build the hash map
+  cudf::memory_resources _mr;        ///< Resources backing this object's allocations
   std::shared_ptr<cudf::detail::row::equality::preprocessed_table>
     _preprocessed_right;        ///< Input table preprocssed for row operators
   hash_table_type _hash_table;  ///< Hash table built on `_right`

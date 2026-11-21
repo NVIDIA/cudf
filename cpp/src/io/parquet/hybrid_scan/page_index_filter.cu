@@ -130,9 +130,9 @@ struct page_stats_caster : public stats_caster_base {
             std::ranges::for_each(
               std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
               [&](auto column_page_idx) {
-                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
+                all_null.set_value(column_page_idx, std::nullopt);
                 has_nan.set_value(column_page_idx, std::nullopt);
               });
             return;

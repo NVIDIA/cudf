@@ -29,6 +29,8 @@ The library-owned kernel TU declares the device-function entry point it calls. U
 The following example supports three non-nullable, fixed-width arithmetic inputs and one output.
 The example UDF uses three ``FLOAT64`` inputs and a ``FLOAT64`` output. It follows the :doc:`device UDF ABI <udf_abi>`
 
+.. _jit-authoring-kernel:
+
 1. Write the Kernel and UDF Translation Units
 ---------------------------------------------
 
@@ -52,7 +54,7 @@ Place the kernel in ``cpp/src/sample_ternary_op_kernel/jit/ternary_op_kernel.cu`
 
    extern "C" __device__ transform_udf_type cudf_transform_udf;
 
-   template <typename X, typename Y, typename Z, typename Output>
+   template <typename T0, typename T1, typename T2, typename Output>
    __device__ void ternary_op_kernel(column_device_view_core const* inputs,
                                      mutable_column_device_view_core const* output,
                                      size_type n,
@@ -67,9 +69,9 @@ Place the kernel in ``cpp/src/sample_ternary_op_kernel/jit/ternary_op_kernel.cu`
          row,
    #endif
          &output->element<Output>(row),
-         inputs[0].element<X>(row),
-         inputs[1].element<Y>(row),
-         inputs[2].element<Z>(row));
+         inputs[0].element<T0>(row),
+         inputs[1].element<T1>(row),
+         inputs[2].element<T2>(row));
        if (error != errc::SUCCESS) { atomicMax(error_code, static_cast<error_int>(error)); }
      }
    }
@@ -84,7 +86,7 @@ Place the kernel in ``cpp/src/sample_ternary_op_kernel/jit/ternary_op_kernel.cu`
 
    }  // namespace cudf::detail
 
-``cudf_kernel_entry`` is the entry-point name required by ``cudf::get_lto_linked_kernel``. C linkage keeps the exported name independent of the kernel's C++ namespace and template parameters. Its pointer arguments let the host launch it without knowing the element types at compile time.
+:ref:`cudf_kernel_entry <jit-authoring-kernel>` is the entry-point name required by `cudf::get_lto_linked_kernel <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/src/jit/cache.hpp#L150>`__. C linkage keeps the exported name independent of the kernel's C++ namespace and template parameters. Its pointer arguments let the host launch it without knowing the element types at compile time.
 
 ``#pragma nv_hdrstop`` marks the end of the source prefix used to create a **precompiled header (PCH)**. With PCH enabled, NVRTC can reuse the compiler state produced by processing that prefix. The generated ``kernel_instance.cuh`` follows the pragma so each compilation processes its own ``CUDF_KERNEL_INSTANCE``, ``CUDF_TRANSFORM_UDF_TYPE``, and ``CUDF_TRANSFORM_UDF_INDEXED`` definitions.
 
@@ -114,12 +116,12 @@ The user writes a UDF in a separate translation unit. For this example, it can e
    }
 
 The kernel declares its fixed dispatch symbol, ``cudf_transform_udf``, while this UDF exports the user-chosen name ``asymmetric_squared_loss``.
-A forwarding adapter connects the two names at link time. The UDF assigns its output and returns ``cudf::errc::SUCCESS``; another implementation can return an evaluation error.
+A forwarding adapter from `cudf::get_udf_adapter <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/src/jit/cache.hpp#L136>`__ connects the two names at link time. The UDF assigns its output and returns ``cudf::errc::SUCCESS``; another implementation can return an evaluation error.
 
 2. Embed the Kernel Source and Prepare UDF Fragments
 ----------------------------------------------------
 
-Register the kernel source on the existing ``cudf_cuda_embed`` target before its ``rtcx_embed`` finalization:
+Register the kernel source on the existing ``cudf_cuda_embed`` target using `rtcx_embed_includes <https://github.com/rapidsai/librtcx/blob/d3e85e2801f72893de8f789674aa3eacf1f55878/cmake/modules/embed/embed_includes.cmake#L45>`__ before its `rtcx_embed <https://github.com/rapidsai/librtcx/blob/d3e85e2801f72893de8f789674aa3eacf1f55878/cmake/modules/embed/embed.cmake#L65>`__ finalization:
 
 .. code-block:: cmake
 
@@ -142,9 +144,9 @@ For this example, compile and embed the UDF fragment on the existing ``cudf_frag
      SOURCE src/sample_ternary_op_kernel/jit/asymmetric_squared_loss_udf.cu
    )
 
-``add_fragment`` is an internal cuDF build helper. Here it compiles only the UDF translation unit into a fatbin containing LTO code. The generated ``<cudf_fragments.hpp>`` header provides access to the embedded LTO bytes.
+`add_fragment <https://github.com/NVIDIA/cudf/blob/09c4ba814d4b38bb2496e0847dd4f7afd403e37c/cpp/cmake/Modules/AddFragment.cmake#L14>`__ is an internal cuDF build helper. Here it compiles only the UDF translation unit into a fatbin containing LTO code. The generated ``<cudf_fragments.hpp>`` header provides access to the embedded LTO bytes.
 
-Embedding the UDF is a packaging choice. Callers can instead compile CUDA C++ with ``cudf::compile_cuda_to_lto_ir`` or provide fragments from another compatible compiler, then describe them with ``cudf::transform_udf``.
+Embedding the UDF is a packaging choice. Callers can instead compile CUDA C++ with `cudf::compile_cuda_to_lto_ir <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/include/cudf/udf.hpp#L140>`__ or provide fragments from another compatible compiler, then describe them with `cudf::transform_udf <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/include/cudf/udf.hpp#L81>`__.
 
 3. Reflect, Compile, and Link the Kernel
 ----------------------------------------
@@ -168,19 +170,21 @@ First, provide a reflection function mapping runtime types to the kernel's templ
    #include <string>
    #include <vector>
 
-   std::string reflect_ternary_op_kernel(cudf::data_type x_type,
-                                         cudf::data_type y_type,
-                                         cudf::data_type z_type,
+   std::string reflect_ternary_op_kernel(cudf::data_type t0,
+                                         cudf::data_type t1,
+                                         cudf::data_type t2,
                                          cudf::data_type output_type)
    {
      return std::format("cudf::detail::ternary_op_kernel<{}, {}, {}, {}>",
-                        cudf::type_to_name(x_type),
-                        cudf::type_to_name(y_type),
-                        cudf::type_to_name(z_type),
+                        cudf::type_to_name(t0),
+                        cudf::type_to_name(t1),
+                        cudf::type_to_name(t2),
                         cudf::type_to_name(output_type));
    }
 
-For the UDF signature, use ``cudf::jit::reflect_udf_signature``. Pass input/output specifications and the requested index count. This example uses logical types (``use_physical_types = false``) to match its typed column accessors. The caller must supply supported arithmetic types and a UDF with the matching signature.
+For the UDF signature, use `cudf::jit::reflect_udf_signature <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/src/jit/reflect.cpp#L357>`__. Pass input/output specifications and the requested index count. This example uses logical types (``use_physical_types = false``) to match its typed column accessors. The caller must supply supported arithmetic types and a UDF with the matching signature.
+
+.. _jit-authoring-get-kernel:
 
 Append the kernel getter to the same file:
 
@@ -189,20 +193,20 @@ Append the kernel getter to the same file:
    // file: cpp/src/sample_ternary_op_kernel/ternary_op.cu
 
    cudf::kernel get_kernel(cudf::transform_udf const& udf,
-                           cudf::data_type x_type,
-                           cudf::data_type y_type,
-                           cudf::data_type z_type,
+                           cudf::data_type t0,
+                           cudf::data_type t1,
+                           cudf::data_type t2,
                            cudf::data_type output_type)
    {
      CUDF_EXPECTS(udf.is_null_aware == cudf::null_aware::NO,
                   "This example kernel requires a non-null-aware UDF");
 
-     std::array inputs{cudf::transform_input_spec{.type = x_type.id()},
-                       cudf::transform_input_spec{.type = y_type.id()},
-                       cudf::transform_input_spec{.type = z_type.id()}};
+     std::array inputs{cudf::transform_input_spec{.type = t0.id()},
+                       cudf::transform_input_spec{.type = t1.id()},
+                       cudf::transform_input_spec{.type = t2.id()}};
      std::array outputs{cudf::transform_output_spec{.type = output_type.id()}};
      auto const index_count = udf.indexed ? 1 : 0;
-     auto const instance    = reflect_ternary_op_kernel(x_type, y_type, z_type, output_type);
+     auto const instance    = reflect_ternary_op_kernel(t0, t1, t2, output_type);
      auto const signature =
        cudf::jit::reflect_udf_signature(false, inputs, outputs, false, index_count);
      auto kernel_lto_ir = cudf::jit::get_udf_kernel_fragment(
@@ -227,7 +231,7 @@ Append the kernel getter to the same file:
        "cudf/cpp/src/sample_ternary_op_kernel/jit/ternary_op_kernel.cu", {}, fragments);
    }
 
-``get_udf_kernel_fragment`` specializes `ternary_op_kernel`. For the ``FLOAT64`` inputs and output, it generates the following kernel instance:
+`get_udf_kernel_fragment <https://github.com/NVIDIA/cudf/blob/06447e1ee9c67d71c354248e67588c1d2f54449a/cpp/src/jit/helpers.cpp#L44>`__ specializes :ref:`ternary_op_kernel <jit-authoring-kernel>`. For the ``FLOAT64`` inputs and output, it generates the following kernel instance:
 
 .. code-block:: cpp
 
@@ -236,13 +240,15 @@ Append the kernel getter to the same file:
    #define CUDF_TRANSFORM_UDF_TYPE    cudf::errc(double*, double, double, double)
    #define CUDF_TRANSFORM_UDF_INDEXED 0
 
-`get_kernel` then links the kernel fragment, a forwarding adapter when needed, and all fragments supplied through ``udf.fragments``.
+:ref:`get_kernel <jit-authoring-get-kernel>` then links the kernel fragment, a forwarding adapter when needed, and all fragments supplied through ``udf.fragments``.
 
+
+.. _jit-authoring-launch:
 
 4. Launch the Kernel
 --------------------
 
-Append the following helpers to the host file. ``asymmetric_squared_loss_udf`` packages the embedded UDF fragment.
+Append the following helpers to the host file. :ref:`asymmetric_squared_loss_udf <jit-authoring-launch>` packages the embedded UDF fragment.
 
 .. code-block:: cpp
 
@@ -263,7 +269,7 @@ Append the following helpers to the host file. ``asymmetric_squared_loss_udf`` p
    {
      static std::array const fragments{
        cudf::lto_fragment{.type = cudf::lto_binary_type::FATBIN,
-                          .data = cudf_fragments::get(cudf_fragments::asymmetric_squared_loss)}};
+                          .data = cudf_fragments::get(cudf_fragments::asymmetric_squared_loss_udf)}};
      return {.symbol = "asymmetric_squared_loss", .fragments = fragments};
    }
 
@@ -272,15 +278,15 @@ Append the following helpers to the host file. ``asymmetric_squared_loss_udf`` p
                           cudf::mutable_column_device_view_core const* device_output,
                           cudf::size_type n,
                           cudf::error_int* device_error,
-                          cudf::data_type x,
-                          cudf::data_type y,
-                          cudf::data_type z,
+                          cudf::data_type t0,
+                          cudf::data_type t1,
+                          cudf::data_type t2,
                           cudf::data_type output_type,
                           cuda::stream_ref stream)
    {
      if (n == 0) { return; }
 
-     auto kernel = get_kernel(udf, x, y, z, output_type);
+     auto kernel = get_kernel(udf, t0, t1, t2, output_type);
 
      // Launch the kernel with device-side column views.
      cudf::detail::grid_1d const grid{n, 256};
@@ -311,3 +317,8 @@ Append the following helpers to the host file. ``asymmetric_squared_loss_udf`` p
                        cudf::data_type{cudf::type_id::FLOAT64},
                        stream);
    }
+
+5. Test the Example
+-------------------
+
+cuDF's ``KernelAuthoringTest.AsymmetricSquaredLoss`` test contains the full example for this JIT kernel, including the host-side setup, device kernel launch, and verification of the output.

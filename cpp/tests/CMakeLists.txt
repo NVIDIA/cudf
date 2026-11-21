@@ -724,6 +724,13 @@ ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_ex
 # -------------------------------------------------------------------------------------
 rtcx_add_embed(cudf_test_fragments)
 
+if(BUILD_DOCS_TESTS)
+  add_fragment(
+    cudf_test_fragments FRAGMENT asymmetric_squared_loss_udf SOURCE
+    docs/fragments/asymmetric_squared_loss_udf.cu
+  )
+endif()
+
 add_fragment(
   cudf_test_fragments FRAGMENT bankers_rounding SOURCE transform/fragments/bankers_rounding.cu
 )
@@ -761,6 +768,17 @@ foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
   add_dependencies(${test} cudf_test_fragments)
   target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
 endforeach()
+
+# ##################################################################################################
+# * documentation tests ---------------------------------------------------------------------------
+if(BUILD_DOCS_TESTS)
+  ConfigureTest(
+    DOCS_TEST docs/kernel_authoring_test.cu ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
+    EXTRA_LIBS rtcx::rtcx
+  )
+  add_dependencies(DOCS_TEST cudf_test_fragments)
+  target_include_directories(DOCS_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endif()
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------

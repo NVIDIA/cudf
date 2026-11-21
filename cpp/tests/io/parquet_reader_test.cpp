@@ -59,6 +59,9 @@ namespace {
 // Selects the nz map decode path. Removed once the feature is on by default.
 constexpr char const* nz_map_env_var = "LIBCUDF_PARQUET_NZ_MAP";
 
+// Strings per batch in `decode_delta_byte_array_kernel_with_nz_map`; keep the two equal.
+constexpr int nz_map_dba_batch_size = 576;
+
 auto page_boundary_slices(cudf::size_type const num_rows)
 {
   return std::array<std::pair<cudf::size_type, cudf::size_type>, 5>{
@@ -289,6 +292,13 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   auto const str_valids =
     cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 5) != 0; });
   cudf::test::strings_column_wrapper const str_col{strings, strings + num_rows, str_valids};
+  // DELTA_BYTE_ARRAY, with neighboring strings sharing prefixes and one row in 9 null.
+  auto const prefixed_strings = cudf::detail::make_counting_transform_iterator(
+    0, [](auto i) { return "prefix_" + std::to_string(i / 3) + std::string(1 + (i % 4), 'x'); });
+  auto const prefixed_valids =
+    cudf::detail::make_counting_transform_iterator(0, [](auto i) { return (i % 9) != 0; });
+  cudf::test::strings_column_wrapper const prefixed_str_col{
+    prefixed_strings, prefixed_strings + num_rows, prefixed_valids};
   // A nested column the classifier declines, so its pages stay on the level-decoding kernel while
   // the flat ones above go to the consumers. They must partition the pages between them.
   auto const list_offsets = cudf::detail::make_counting_transform_iterator(
@@ -302,8 +312,8 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
     0,
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
-  auto const expected =
-    table_view({nullable_col, required_col, no_nulls_col, str_col, nested_col->view()});
+  auto const expected = table_view(
+    {nullable_col, required_col, no_nulls_col, str_col, nested_col->view(), prefixed_str_col});
 
   auto input_metadata = cudf::io::table_input_metadata{expected};
   for (auto& col_meta : input_metadata.column_metadata) {
@@ -314,6 +324,7 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
     cudf::io::column_encoding::DELTA_LENGTH_BYTE_ARRAY);
   input_metadata.column_metadata[4].child(1).set_encoding(
     cudf::io::column_encoding::DELTA_BINARY_PACKED);
+  input_metadata.column_metadata[5].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
 
   std::vector<char> buffer;
   cudf::io::write_parquet(
@@ -433,6 +444,177 @@ TEST_F(ParquetReaderTest, NzMapMatchesLevelDecoder)
   }
 }
 
+TEST_F(ParquetReaderTest, NzMapDeltaByteArrayNullRates)
+{
+  // DELTA_BYTE_ARRAY strings sharing prefixes, at null rates from none to all, with the map off and
+  // on. Each is read in full and from rows inside the first page. Starting thousands of rows in
+  // leaves whole batches of the consumer's strings before the first row. The long strings average
+  // more than a warp's width, so the consumer builds each with a whole warp.
+  constexpr int num_rows      = 40000;
+  constexpr int num_read_rows = 5678;
+
+  for (auto const long_strings : {false, true}) {
+    std::vector<std::string> strings(num_rows);
+    for (int i = 0; i < num_rows; ++i) {
+      strings[i] = long_strings
+                     ? std::string(80, 'x') + std::to_string(i) + std::string(i % 50, 'y')
+                     : "string_value_" + std::to_string(i);
+    }
+    for (int null_percent : {0, 1, 10, 50, 100}) {
+      auto const valids = cudf::detail::make_counting_transform_iterator(
+        0, [null_percent](auto i) { return (i % 100) >= null_percent; });
+      auto const col =
+        null_percent == 0
+          ? cudf::test::strings_column_wrapper{strings.begin(), strings.end()}
+          : cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids};
+      auto const expected = table_view({col});
+
+      auto input_metadata = cudf::io::table_input_metadata{expected};
+      input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+      std::vector<char> buffer;
+      cudf::io::write_parquet(
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+          .write_v2_headers(true)
+          .metadata(input_metadata)
+          .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+          .build());
+      auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+      for (auto const* const nz_map : {"0", "1"}) {
+        SCOPED_TRACE(std::string{long_strings ? "long" : "short"} + " strings, null_percent " +
+                     std::to_string(null_percent) + ", nz map " + nz_map);
+        tmp_env_var const env{nz_map_env_var, nz_map};
+        auto const full =
+          cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source).build());
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected, full.tbl->view());
+        for (auto const skip : {1234, 4321}) {
+          SCOPED_TRACE("skip_rows " + std::to_string(skip));
+          auto const trimmed =
+            cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                     .skip_rows(skip)
+                                     .num_rows(num_read_rows)
+                                     .build());
+          CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {skip, skip + num_read_rows})[0],
+                                        trimmed.tbl->view());
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ParquetReaderTest, NzMapDeltaByteArrayBatchBoundaries)
+{
+  // Pages whose valid strings end just before, at and after the nz map kernel's first and second
+  // batch boundaries, read in full and from rows on either side of the first boundary.
+  // Consecutive strings share prefixes of different lengths, so prefixes cross the boundaries.
+  // Without nulls a row is its string's rank; with nulls every other row is null.
+  constexpr int b = nz_map_dba_batch_size;
+  for (auto const nullable : {false, true}) {
+    for (auto const num_valid : {b - 1, b, b + 1, 2 * b - 1, 2 * b, 2 * b + 1}) {
+      auto const num_rows = nullable ? 2 * num_valid - 1 : num_valid;
+      std::vector<std::string> strings(num_rows);
+      for (int i = 0; i < num_rows; ++i) {
+        strings[i] = "prefix_" + std::to_string(100000 + i) + std::string(i % 5, 'z');
+      }
+      auto const valids =
+        cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 2 == 0; });
+      auto const col =
+        nullable ? cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids}
+                 : cudf::test::strings_column_wrapper{strings.begin(), strings.end()};
+      auto const expected = table_view({col});
+
+      auto input_metadata = cudf::io::table_input_metadata{expected};
+      input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+      std::vector<char> buffer;
+      cudf::io::write_parquet(
+        cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+          .write_v2_headers(true)
+          .metadata(input_metadata)
+          .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+          .build());
+      auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+      for (auto const* const nz_map : {"0", "1"}) {
+        SCOPED_TRACE(std::to_string(num_valid) + " valid strings, " +
+                     (nullable ? "nullable" : "required") + ", nz map " + nz_map);
+        tmp_env_var const env{nz_map_env_var, nz_map};
+        auto const full =
+          cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source).build());
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected, full.tbl->view());
+        // Skip up to the first boundary, or one string either side of it.
+        for (auto const skip_valid : {b - 1, b, b + 1}) {
+          auto const skip = nullable ? 2 * skip_valid : skip_valid;
+          if (skip >= num_rows) { continue; }
+          SCOPED_TRACE("skip_rows " + std::to_string(skip));
+          auto const trimmed = cudf::io::read_parquet(
+            cudf::io::parquet_reader_options::builder(source).skip_rows(skip).build());
+          CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {skip, num_rows})[0],
+                                        trimmed.tbl->view());
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ParquetReaderTest, NzMapDeltaByteArrayLongPrefixChains)
+{
+  // Runs of strings whose prefix lengths increase by one ("a", "aa", ..., 40 "a"s), each followed
+  // by "aZ", which shares only the first byte. That byte comes from the run's first string, and
+  // the nz map kernel's pointer jumping moves "aZ"'s pointer back one string per round, so its
+  // round limit is reached and building "aZ" follows the rest of the chain. The block repeats
+  // across batch boundaries, without and with nulls, read in full and from inside runs.
+  constexpr int run_length = 40;
+  constexpr int num_runs   = 30;
+  std::vector<std::string> block;
+  for (int k = 1; k <= run_length; ++k) {
+    block.emplace_back(k, 'a');
+  }
+  block.emplace_back("aZ");
+  std::vector<std::string> strings;
+  for (int r = 0; r < num_runs; ++r) {
+    strings.insert(strings.end(), block.begin(), block.end());
+  }
+  auto const num_rows = static_cast<cudf::size_type>(strings.size());
+
+  for (auto const nullable : {false, true}) {
+    auto const valids =
+      cudf::detail::make_counting_transform_iterator(0, [](auto i) { return i % 7 != 3; });
+    auto const col      = nullable
+                            ? cudf::test::strings_column_wrapper{strings.begin(), strings.end(), valids}
+                            : cudf::test::strings_column_wrapper{strings.begin(), strings.end()};
+    auto const expected = table_view({col});
+
+    auto input_metadata = cudf::io::table_input_metadata{expected};
+    input_metadata.column_metadata[0].set_encoding(cudf::io::column_encoding::DELTA_BYTE_ARRAY);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .write_v2_headers(true)
+        .metadata(input_metadata)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER)
+        .build());
+    auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
+
+    for (auto const* const nz_map : {"0", "1"}) {
+      SCOPED_TRACE(std::string{nullable ? "nullable" : "required"} + ", nz map " + nz_map);
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      auto const full =
+        cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source).build());
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected, full.tbl->view());
+      for (auto const skip : {20, nz_map_dba_batch_size + 20}) {
+        SCOPED_TRACE("skip_rows " + std::to_string(skip));
+        auto const trimmed = cudf::io::read_parquet(
+          cudf::io::parquet_reader_options::builder(source).skip_rows(skip).build());
+        CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::slice(expected, {skip, num_rows})[0],
+                                      trimmed.tbl->view());
+      }
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
 {
   // Reads only nulls, which follow the page's first string. With 50 rows the page holds that one
@@ -441,7 +623,6 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
   constexpr int num_nulls     = 99;
   constexpr int num_read_rows = 40;
   for (auto const num_rows : {50, 150}) {
-    SCOPED_TRACE(std::to_string(num_rows) + " rows");
     std::vector<std::string> strings(num_rows, "a");
     strings[0]        = std::string(1000, 'x');
     auto const valids = cudf::detail::make_counting_transform_iterator(
@@ -461,12 +642,16 @@ TEST_F(ParquetReaderTest, DeltaByteArraySkipsOnlyEarlierString)
     auto const source = cudf::io::source_info{cudf::host_span<std::byte const>{
       reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}};
 
-    auto const result = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
-                                                 .skip_rows(first_null)
-                                                 .num_rows(num_read_rows)
-                                                 .build());
-    CUDF_TEST_EXPECT_TABLES_EQUAL(
-      cudf::slice(expected, {first_null, first_null + num_read_rows})[0], result.tbl->view());
+    for (auto const* const nz_map : {"0", "1"}) {
+      SCOPED_TRACE(std::to_string(num_rows) + " rows, nz map " + nz_map);
+      tmp_env_var const env{nz_map_env_var, nz_map};
+      auto const result = cudf::io::read_parquet(cudf::io::parquet_reader_options::builder(source)
+                                                   .skip_rows(first_null)
+                                                   .num_rows(num_read_rows)
+                                                   .build());
+      CUDF_TEST_EXPECT_TABLES_EQUAL(
+        cudf::slice(expected, {first_null, first_null + num_read_rows})[0], result.tbl->view());
+    }
   }
 }
 
@@ -2302,6 +2487,73 @@ TEST_F(ParquetReaderTest, NzMapRejectsShortDeltaStream)
     auto const file    = build_delta_length_byte_array_parquet(strings, 128, 4);
     delta_large_mini_block_string_read_test(file, strings, 0, 90);
   }
+}
+
+TEST_F(ParquetReaderTest, NzMapDeltaByteArrayRejectsMalformed)
+{
+  // Each DELTA_BYTE_ARRAY page here, except the control, is malformed, and the nz map consumer must
+  // reject it instead of reading outside the page.
+  namespace pq = cudf::io::parquet;
+  tmp_env_var const env{nz_map_env_var, "1"};
+  auto const dba_file = [](std::vector<int64_t> const& prefixes,
+                           std::vector<int64_t> const& suffixes,
+                           std::string const& chars,
+                           int rows) {
+    auto body                = encode_delta_binary_packed(prefixes, 128, 4);
+    auto const suffix_stream = encode_delta_binary_packed(suffixes, 128, 4);
+    body.insert(body.end(), suffix_stream.begin(), suffix_stream.end());
+    body.insert(body.end(), chars.begin(), chars.end());
+    return wrap_single_page_parquet(
+      body, rows, pq::Type::BYTE_ARRAY, pq::Encoding::DELTA_BYTE_ARRAY, true);
+  };
+  auto const read = [](std::vector<uint8_t> const& file) {
+    return cudf::io::read_parquet(delta_fixture_reader_options(file, 0, std::nullopt));
+  };
+
+  // A 5-byte prefix of a 2-byte string.
+  EXPECT_THROW(read(dba_file({0, 5}, {2, 1}, "abc", 2)), cudf::logic_error);
+  // The third string's prefix fits in the second string, but the second's does not fit in the
+  // first, so building the third would read 1000 bytes of the first.
+  EXPECT_THROW(read(dba_file({0, 1000, 1000}, {2, 0, 0}, "ab", 3)), cudf::logic_error);
+  // A suffix past the end of the page.
+  EXPECT_THROW(read(dba_file({0, 0}, {2, 5}, "abc", 2)), cudf::logic_error);
+  // A negative suffix length.
+  EXPECT_THROW(read(dba_file({0, 0}, {2, -1}, "ab", 2)), cudf::logic_error);
+  // More suffixes than prefixes.
+  EXPECT_THROW(read(dba_file({0, 0}, {1, 1, 1}, "abc", 2)), cudf::logic_error);
+  // Fewer values than rows.
+  EXPECT_THROW(read(dba_file({0, 0}, {1, 1}, "ab", 3)), cudf::logic_error);
+
+  // The control: "ab" and "ac".
+  auto const result = read(dba_file({0, 1}, {2, 1}, "abc", 2));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0),
+                                 cudf::test::strings_column_wrapper{"ab", "ac"});
+
+  // The same errors in the second batch, after a valid first batch: at the batch's first string and
+  // the one after it. Every other string is "x".
+  constexpr int b           = nz_map_dba_batch_size;
+  constexpr int num_values  = b + 32;
+  auto const batch_two_file = [&](int idx, int64_t prefix, int64_t suffix) {
+    std::vector<int64_t> prefixes(num_values, 0);
+    std::vector<int64_t> suffixes(num_values, 1);
+    prefixes[idx] = prefix;
+    suffixes[idx] = suffix;
+    return dba_file(prefixes, suffixes, std::string(num_values, 'x'), num_values);
+  };
+  for (int idx : {b, b + 1}) {
+    SCOPED_TRACE("string " + std::to_string(idx));
+    EXPECT_THROW(read(batch_two_file(idx, 5, 1)), cudf::logic_error);
+    EXPECT_THROW(read(batch_two_file(idx, 0, -1)), cudf::logic_error);
+  }
+
+  // The control: the second batch's first string takes "x" from the string before it as its
+  // prefix and adds "x".
+  std::vector<std::string> expected(num_values, "x");
+  expected[b]          = "xx";
+  auto const batch_two = read(batch_two_file(b, 1, 1));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    batch_two.tbl->view().column(0),
+    cudf::test::strings_column_wrapper(expected.begin(), expected.end()));
 }
 
 TEST_F(ParquetReaderTest, DeltaBinaryListMiniBlock64)

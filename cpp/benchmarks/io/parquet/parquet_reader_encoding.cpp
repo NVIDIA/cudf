@@ -136,12 +136,23 @@ void bench_read_encoding(nvbench::state& state,
 
   auto const num_rows_written = [&]() {
     auto const leaf_types = cycle_dtypes(d_types, num_cols);
+    // Set the string length distribution so the `max_string_length` axis can raise the maximum
+    // string length above the generator's default of 32, which the axis also defaults to. Nested
+    // tables do not use this profile.
     auto profile_builder =
-      data_profile_builder().cardinality(cardinality).avg_run_length(run_length);
+      data_profile_builder()
+        .cardinality(cardinality)
+        .avg_run_length(run_length)
+        .distribution(
+          cudf::type_id::STRING,
+          distribution_id::NORMAL,
+          0,
+          static_cast<cudf::size_type>(state.get_int64_or_default("max_string_length", 32)));
     if (validity == "no_validity") {
       profile_builder.no_validity();
     } else {
-      profile_builder.null_probability(validity == "nullable_1" ? 0.01 : 0.50);
+      // `nullable_<percent>`, so any null rate can be passed with `-a validity=nullable_<percent>`
+      profile_builder.null_probability(std::stod(validity.substr(validity.find('_') + 1)) / 100);
     }
     auto const tbl =
       nesting > 0 ? create_nested_table(leaf_types, data_size, cardinality, run_length, nesting)
@@ -209,6 +220,7 @@ NVBENCH_BENCH(BM_parquet_read_delta_string)
   .add_int64_axis("cardinality", {0, 1000})
   .add_int64_axis("run_length", {1, 32})
   .add_int64_axis("nesting", {0, 1})
+  .add_int64_axis("max_string_length", {32})
   .add_int64_axis("data_size", {512 << 20});
 
 NVBENCH_BENCH(BM_parquet_read_delta_binary_nullable_page_sizes)

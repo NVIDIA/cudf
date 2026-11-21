@@ -78,24 +78,29 @@ def _(e: expr.LiteralColumn) -> pl.Expr:
     return pl.lit(e.value).first() if len(e.value) == 1 else pl.lit(e.value)
 
 
-@expr_to_polars.register
-def _(e: expr.Cast) -> pl.Expr:
+def _reject_float_to_string(e: expr.Cast | expr.WrappingCast) -> None:
     (child,) = e.children
     if plc.traits.is_floating_point(child.dtype.plc_type) and isinstance(
         e.dtype.polars_type, pl.String
     ):
         # libcudf formats floats with a fixed number of digits.
         raise NotImplementedError("Cast from float to string")
-    if (
-        e.strict
-        and plc.traits.is_integral_not_bool(child.dtype.plc_type)
-        and plc.traits.is_integral_not_bool(e.dtype.plc_type)
-    ):
-        # libcudf wraps out of range integers instead of raising.
-        return expr_to_polars(child).cast(
-            e.dtype.polars_type, strict=False, wrap_numerical=True
-        )
+
+
+@expr_to_polars.register
+def _(e: expr.Cast) -> pl.Expr:
+    _reject_float_to_string(e)
+    (child,) = e.children
     return expr_to_polars(child).cast(e.dtype.polars_type, strict=e.strict)
+
+
+@expr_to_polars.register
+def _(e: expr.WrappingCast) -> pl.Expr:
+    _reject_float_to_string(e)
+    (child,) = e.children
+    return expr_to_polars(child).cast(
+        e.dtype.polars_type, strict=e.strict, wrap_numerical=True
+    )
 
 
 @expr_to_polars.register

@@ -8,6 +8,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, ClassVar, TypeGuard, assert_never, cast
 
+import numpy as np
+
 import polars as pl
 from polars.exceptions import ComputeError, InvalidOperationError
 
@@ -26,7 +28,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.containers import DataFrame
 
-__all__ = ["Cast", "Len", "UnaryFunction"]
+__all__ = ["Cast", "Len", "UnaryFunction", "WrappingCast"]
 
 
 _INTEGER_BITS = {
@@ -47,6 +49,56 @@ def _integer_range(dtype: plc.DataType) -> tuple[int, int]:
     if signed:
         return -(1 << (bits - 1)), (1 << (bits - 1)) - 1
     return 0, (1 << bits) - 1
+
+
+def _in_range_mask(
+    column: plc.Column, target: plc.DataType, stream: Stream
+) -> plc.Column | None:
+    """
+    Mask of the values of ``column`` that fit in the integer type ``target``.
+
+    Returns None when every value of the source type fits.
+    """
+    lo, hi = _integer_range(target)
+    source = column.type()
+    if plc.traits.is_floating_point(source):
+        # The cast truncates toward zero, so a float is in range when
+        # lo - 1 < x < hi + 1 (false for NaN too). Where lo - 1 is not
+        # representable in the source type, lo itself is the closest bound.
+        float_type = np.float32 if source.id() == plc.TypeId.FLOAT32 else np.float64
+        if float_type(lo - 1) == float_type(lo):
+            lower = (float(lo), plc.binaryop.BinaryOperator.GREATER_EQUAL)
+        else:
+            lower = (float(lo - 1), plc.binaryop.BinaryOperator.GREATER)
+        bounds = [lower, (float(hi + 1), plc.binaryop.BinaryOperator.LESS)]
+    else:
+        src_lo, src_hi = _integer_range(source)
+        bounds = []
+        if lo > src_lo:
+            bounds.append((lo, plc.binaryop.BinaryOperator.GREATER_EQUAL))
+        if hi < src_hi:
+            bounds.append((hi, plc.binaryop.BinaryOperator.LESS_EQUAL))
+    in_range: plc.Column | None = None
+    for bound, op in bounds:
+        check = plc.binaryop.binary_operation(
+            column,
+            plc.Scalar.from_py(bound, source, stream=stream),
+            op,
+            plc.DataType(plc.TypeId.BOOL8),
+            stream=stream,
+        )
+        in_range = (
+            check
+            if in_range is None
+            else plc.binaryop.binary_operation(
+                in_range,
+                check,
+                plc.binaryop.BinaryOperator.NULL_LOGICAL_AND,
+                plc.DataType(plc.TypeId.BOOL8),
+                stream=stream,
+            )
+        )
+    return in_range
 
 
 def _make_groupby(
@@ -106,50 +158,68 @@ class Cast(Expr):
                 dtype=self.dtype,
             )
         result = column.astype(self.dtype, stream=df.stream, strict=self.strict)
-        if (
-            not self.strict
-            and plc.traits.is_integral_not_bool(column.obj.type())
-            and plc.traits.is_integral_not_bool(self.dtype.plc_type)
+        source = column.obj.type()
+        target = self.dtype.plc_type
+        if plc.traits.is_integral_not_bool(target) and (
+            plc.traits.is_integral_not_bool(source)
+            or plc.traits.is_floating_point(source)
         ):
-            # libcudf wraps out-of-range integers; a non-strict Polars cast
-            # produces null instead.
-            lo, hi = _integer_range(self.dtype.plc_type)
-            src_lo, src_hi = _integer_range(column.obj.type())
-            in_range: plc.Column | None = None
-            for bound, needed, op in (
-                (lo, lo > src_lo, plc.binaryop.BinaryOperator.GREATER_EQUAL),
-                (hi, hi < src_hi, plc.binaryop.BinaryOperator.LESS_EQUAL),
-            ):
-                if needed:
-                    check = plc.binaryop.binary_operation(
-                        column.obj,
-                        plc.Scalar.from_py(bound, column.obj.type(), stream=df.stream),
-                        op,
-                        plc.DataType(plc.TypeId.BOOL8),
-                        stream=df.stream,
+            # libcudf wraps out-of-range values; Polars raises for a strict
+            # cast and produces null for a non-strict one.
+            in_range = _in_range_mask(column.obj, target, df.stream)
+            if in_range is not None and self.strict:
+                in_range = plc.replace.replace_nulls(
+                    in_range,
+                    plc.Scalar.from_py(py_val=True, stream=df.stream),
+                    stream=df.stream,
+                )
+                if not plc.reduce.reduce(
+                    in_range,
+                    plc.aggregation.all(),
+                    plc.DataType(plc.TypeId.BOOL8),
+                    stream=df.stream,
+                ).to_py(stream=df.stream):
+                    raise InvalidOperationError(
+                        f"conversion from `{column.dtype.polars_type._string_repr()}` "
+                        f"to `{self.dtype.polars_type._string_repr()}` failed in "
+                        f"column '{column.name}'"
                     )
-                    in_range = (
-                        check
-                        if in_range is None
-                        else plc.binaryop.binary_operation(
-                            in_range,
-                            check,
-                            plc.binaryop.BinaryOperator.NULL_LOGICAL_AND,
-                            plc.DataType(plc.TypeId.BOOL8),
-                            stream=df.stream,
-                        )
-                    )
-            if in_range is not None:
+            elif in_range is not None:
                 result = Column(
                     plc.copying.copy_if_else(
                         result.obj,
-                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        plc.Scalar.from_py(None, target, stream=df.stream),
                         in_range,
                         stream=df.stream,
                     ),
                     dtype=self.dtype,
                 )
         return result
+
+
+class WrappingCast(Cast):
+    """Class representing a cast that wraps out-of-range integers."""
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate this expression given a dataframe for context."""
+        (child,) = self.children
+        column = child.evaluate(df, context=context)
+        if isinstance(self.dtype.polars_type, pl.Null) and not isinstance(
+            child.dtype.polars_type, pl.Null
+        ):
+            # Null is stored as INT8, so a libcudf cast would keep the values.
+            # Polars gives nulls here, even for a wrapping cast.
+            return Column(
+                plc.Column.from_scalar(
+                    plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                    column.size,
+                    stream=df.stream,
+                ),
+                dtype=self.dtype,
+            )
+        return column.astype(self.dtype, stream=df.stream, strict=self.strict)
 
 
 class Len(Expr):

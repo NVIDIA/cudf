@@ -734,7 +734,12 @@ def test_string_zfill_column(engine: pl.GPUEngine, fill):
     if fill is not None and fill < 0:
         with pytest.raises(pl.exceptions.InvalidOperationError):
             q.collect()
-        q.collect(engine=engine)
+        if is_streaming_engine(engine):
+            with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+                q.collect(engine=engine)
+        else:
+            with pytest.raises(pl.exceptions.InvalidOperationError):
+                q.collect(engine=engine)
     else:
         assert_gpu_result_equal(q, engine=engine)
 

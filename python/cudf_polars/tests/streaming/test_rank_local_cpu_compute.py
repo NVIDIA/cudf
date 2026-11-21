@@ -342,7 +342,9 @@ def test_binary_ops_match(
             id="first-last",
         ),
         pytest.param(
-            [(pl.col("i") * 100).cast(pl.Int8)], {"Cast.Int8"}, id="cast-wraps"
+            [(pl.col("i") * 100).cast(pl.Int8, wrap_numerical=True)],
+            {"Cast.Int8"},
+            id="cast-wraps",
         ),
         pytest.param(
             [pl.col("i").is_in([1, 2, 7])], {"BooleanFunction.IsIn"}, id="is_in"
@@ -397,6 +399,17 @@ def test_select_matches_gpu(
     assert targets <= cpu_exprs
 
 
+def test_strict_cast_overflow_raises(left, engine, cpu_calls):
+    q = left.select((pl.col("a") * 100).cast(pl.Int8))
+    with pytest.raises(
+        (pl.exceptions.InvalidOperationError, ExceptionGroup)
+    ) as excinfo:
+        q.collect(engine=engine)
+    if isinstance(excinfo.value, ExceptionGroup):
+        assert excinfo.value.subgroup(pl.exceptions.InvalidOperationError) is not None
+    assert cpu_calls["Select"] > 0
+
+
 def test_col_reads_regex_shaped_name():
     # pl.col reads "^i$" as a regex matching "i", so check that the
     # conversion reads the column named "^i$".
@@ -405,9 +418,12 @@ def test_col_reads_regex_shaped_name():
     assert_frame_equal(got, pl.DataFrame({"^i$": [10, 20]}))
 
 
-def test_float_to_string_stays_on_gpu(edge_cases, streaming_engine_factory, cpu_calls):
+@pytest.mark.parametrize("wrap_numerical", [False, True])
+def test_float_to_string_stays_on_gpu(
+    edge_cases, streaming_engine_factory, cpu_calls, wrap_numerical
+):
     # libcudf formats floats with a fixed number of digits, unlike Polars.
-    q = edge_cases.select(pl.col("f").cast(pl.String))
+    q = edge_cases.select(pl.col("f").cast(pl.String, wrap_numerical=wrap_numerical))
     assert_frame_equal(
         _collect(q, streaming_engine_factory, "always"),
         _collect(q, streaming_engine_factory, "never"),

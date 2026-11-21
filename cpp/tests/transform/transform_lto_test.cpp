@@ -190,9 +190,7 @@ TEST_F(TransformLTOTest, OutputWithPreallocatedOffsets)
   std::vector<std::unique_ptr<cudf::column>> string_offsets;
   string_offsets.push_back(column_wrapper<int32_t>{0, 3, 3, 5, 8, 11}.release());
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::copy_string];
-  auto const udf   = cudf_test_fragments::files.subspan(range[0], range[1]);
-  auto result      = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::copy_string),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,

@@ -4,7 +4,9 @@
  */
 
 #include "../compact_protocol_reader.hpp"
+#include "io/parquet/hybrid_scan/hybrid_scan_helpers.hpp"
 #include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
+#include "io/parquet/reader_impl_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
@@ -13,10 +15,15 @@
 #include <thrust/host_vector.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <exception>
 #include <iterator>
+#include <memory>
 #include <optional>
+#include <span>
+#include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace cudf::io::parquet::experimental {
 
@@ -48,40 +55,102 @@ std::optional<int64_t> dictionary_page_length(std::span<uint8_t const> page_byte
   return page_length;
 }
 
-hybrid_scan_metadata::hybrid_scan_metadata(std::span<uint8_t const> footer_bytes,
-                                           parquet_reader_options const& options)
-  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
-      std::vector<std::span<uint8_t const>>{footer_bytes},
-      options.is_enabled_use_arrow_schema(),
-      options.is_enabled_allow_mismatched_pq_schemas())}
+hybrid_scan_metadata::hybrid_scan_metadata(
+  std::vector<std::shared_ptr<parquet::detail::metadata>>&& sources)
+  : _sources{std::move(sources)}
 {
 }
 
-hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData const& parquet_metadata,
-                                           parquet_reader_options const& options)
-  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
-      std::vector<FileMetaData>{parquet_metadata},
-      options.is_enabled_use_arrow_schema(),
-      options.is_enabled_allow_mismatched_pq_schemas())}
+hybrid_scan_metadata::hybrid_scan_metadata(std::span<uint8_t const> footer_bytes)
+  : hybrid_scan_metadata{std::span<std::span<uint8_t const> const>{&footer_bytes, 1}}
 {
 }
 
-hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata,
-                                           parquet_reader_options const& options)
-  : _metadata{std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
-      // Move iterators avoid the copy an initializer list would make
-      std::vector<FileMetaData>(std::make_move_iterator(&parquet_metadata),
-                                std::make_move_iterator(&parquet_metadata + 1)),
-      options.is_enabled_use_arrow_schema(),
-      options.is_enabled_allow_mismatched_pq_schemas())}
+hybrid_scan_metadata::hybrid_scan_metadata(std::span<std::span<uint8_t const> const> footer_bytes)
+  : hybrid_scan_metadata{
+      parquet::detail::parallel_construct_metadatas(footer_bytes, [](auto const& bytes) {
+        return std::make_shared<parquet::detail::metadata>(
+          FileMetaData{hybrid_scan::detail::metadata{bytes}});
+      })}
 {
 }
 
-hybrid_scan_metadata::~hybrid_scan_metadata() = default;
-
-FileMetaData const& hybrid_scan_metadata::parquet_metadata() const
+hybrid_scan_metadata::hybrid_scan_metadata(FileMetaData&& parquet_metadata)
+  : hybrid_scan_metadata{std::vector<std::shared_ptr<parquet::detail::metadata>>{
+      std::make_shared<parquet::detail::metadata>(std::move(parquet_metadata))}}
 {
-  return _metadata->parquet_metadata(0);
+}
+
+hybrid_scan_metadata::hybrid_scan_metadata(std::vector<FileMetaData>&& parquet_metadatas)
+  : hybrid_scan_metadata{[&] {
+      std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+      sources.reserve(parquet_metadatas.size());
+      std::ranges::transform(parquet_metadatas, std::back_inserter(sources), [](auto& metadata) {
+        return std::make_shared<parquet::detail::metadata>(std::move(metadata));
+      });
+      return sources;
+    }()}
+{
+}
+
+hybrid_scan_metadata::hybrid_scan_metadata(std::span<hybrid_scan_metadata const> metadatas)
+  : hybrid_scan_metadata{[&] {
+      std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+      for (auto const& metadata : metadatas) {
+        std::ranges::copy(metadata._sources, std::back_inserter(sources));
+      }
+      return sources;
+    }()}
+{
+}
+
+std::size_t hybrid_scan_metadata::num_sources() const { return _sources.size(); }
+
+std::shared_ptr<FileMetaData const> hybrid_scan_metadata::parquet_metadata(
+  std::size_t source_index) const
+{
+  CUDF_EXPECTS(source_index < _sources.size(), "Invalid source index", std::out_of_range);
+  return _sources[source_index];
+}
+
+std::vector<std::shared_ptr<FileMetaData const>> hybrid_scan_metadata::parquet_metadatas() const
+{
+  return {_sources.begin(), _sources.end()};
+}
+
+std::vector<byte_range_info> hybrid_scan_metadata::page_index_byte_ranges() const
+{
+  std::vector<byte_range_info> byte_ranges;
+  byte_ranges.reserve(_sources.size());
+  std::ranges::transform(_sources, std::back_inserter(byte_ranges), [](auto const& source) {
+    return source->page_index_byte_range();
+  });
+  return byte_ranges;
+}
+
+void hybrid_scan_metadata::setup_page_indexes(
+  std::span<std::span<uint8_t const> const> page_index_bytes) const
+{
+  CUDF_FUNC_RANGE();
+  hybrid_scan::detail::setup_page_indexes(_sources, page_index_bytes);
+}
+
+hybrid_scan_metadata hybrid_scan_metadata::slice(std::size_t begin, std::size_t end) const
+{
+  CUDF_EXPECTS(begin <= end and end <= _sources.size(), "Invalid source range", std::out_of_range);
+  return hybrid_scan_metadata{std::vector<std::shared_ptr<parquet::detail::metadata>>(
+    _sources.begin() + begin, _sources.begin() + end)};
+}
+
+hybrid_scan_metadata hybrid_scan_metadata::select(std::span<std::size_t const> source_indices) const
+{
+  std::vector<std::shared_ptr<parquet::detail::metadata>> sources;
+  sources.reserve(source_indices.size());
+  std::ranges::transform(source_indices, std::back_inserter(sources), [&](auto source_index) {
+    CUDF_EXPECTS(source_index < _sources.size(), "Invalid source index", std::out_of_range);
+    return _sources[source_index];
+  });
+  return hybrid_scan_metadata{std::move(sources)};
 }
 
 hybrid_scan_reader::hybrid_scan_reader(std::span<uint8_t const> footer_bytes,
@@ -108,9 +177,18 @@ hybrid_scan_reader::hybrid_scan_reader(FileMetaData&& parquet_metadata,
 {
 }
 
-hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata)
-  : _impl{
-      std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(std::move(metadata._metadata))}
+hybrid_scan_reader::hybrid_scan_reader(hybrid_scan_metadata metadata,
+                                       parquet_reader_options const& options)
+  : _impl{[&] {
+      CUDF_EXPECTS(metadata.num_sources() == 1,
+                   "Hybrid scan reader requires metadata of exactly one source",
+                   std::invalid_argument);
+      return std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+        std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+          std::move(metadata._sources),
+          options.is_enabled_use_arrow_schema(),
+          options.is_enabled_allow_mismatched_pq_schemas()));
+    }()}
 {
 }
 
@@ -121,7 +199,7 @@ hybrid_scan_reader::~hybrid_scan_reader() = default;
   return _impl->page_index_byte_ranges().front();
 }
 
-[[nodiscard]] FileMetaData hybrid_scan_reader::parquet_metadata() const
+[[nodiscard]] std::shared_ptr<FileMetaData const> hybrid_scan_reader::parquet_metadata() const
 {
   return _impl->parquet_metadatas().front();
 }

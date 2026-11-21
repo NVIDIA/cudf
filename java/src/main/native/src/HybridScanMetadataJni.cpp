@@ -17,23 +17,17 @@ using namespace cudf::jni::hybrid_scan;
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL
-Java_ai_rapids_cudf_HybridScanMetadata_createFromFooter(JNIEnv* env,
-                                                        jclass,
-                                                        jlong footer_address,
-                                                        jlong footer_length,
-                                                        jobjectArray j_column_names,
-                                                        jint time_unit_type_id)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_HybridScanMetadata_createFromFooter(
+  JNIEnv* env, jclass, jlong footer_address, jlong footer_length)
 {
   JNI_NULL_CHECK(env, footer_address, "footer address is null", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
     auto const len         = checked_size_t(env, footer_length, "footerLength");
-    auto const opts        = build_options(env, j_column_names, time_unit_type_id);
     auto const* footer_ptr = reinterpret_cast<uint8_t const*>(footer_address);
-    auto metadata          = std::make_unique<exp_pq::hybrid_scan_metadata>(
-      std::span<uint8_t const>{footer_ptr, len}, opts);
+    auto metadata =
+      std::make_unique<exp_pq::hybrid_scan_metadata>(std::span<uint8_t const>{footer_ptr, len});
     return reinterpret_cast<jlong>(metadata.release());
   }
   JNI_CATCH(env, 0);
@@ -47,7 +41,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_HybridScanMetadata_parquetMetadataAd
   JNI_TRY
   {
     auto const* metadata = reinterpret_cast<exp_pq::hybrid_scan_metadata const*>(handle);
-    return reinterpret_cast<jlong>(&metadata->parquet_metadata());
+    return reinterpret_cast<jlong>(metadata->parquet_metadata(0).get());
   }
   JNI_CATCH(env, 0);
 }

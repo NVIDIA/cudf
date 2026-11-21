@@ -81,7 +81,7 @@ void filter_row_groups_with_dicts_common(nvbench::state& state,
 
   auto const parquet_metadata = reader->parquet_metadata();
   CUDF_EXPECTS(
-    std::cmp_equal(parquet_metadata.row_groups.size(), num_row_groups),
+    std::cmp_equal(parquet_metadata->row_groups.size(), num_row_groups),
     "Number of row groups written to the file must match the number of requested row groups");
 
   auto const page_index_byte_range = reader->page_index_byte_range();

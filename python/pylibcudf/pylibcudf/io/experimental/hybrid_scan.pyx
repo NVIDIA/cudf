@@ -76,7 +76,8 @@ cdef class HybridScanMetadata:
     This class enables parsing the metadata of a Parquet file once, then
     constructing multiple :class:`HybridScanReader` instances that share it
     (one per row-group range of the file) instead of each re-parsing and copying
-    the metadata.
+    the metadata. The metadata holds no reader options: each reader validates
+    and interprets it with its own options.
 
     For details, see :cpp:class:`cudf::io::parquet::experimental::hybrid_scan_metadata`
 
@@ -84,8 +85,8 @@ cdef class HybridScanMetadata:
     --------
     >>> import pylibcudf as plc
     >>> metadata = plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
-    ...     file_metadata, options)
-    >>> reader = plc.io.experimental.HybridScanReader.from_metadata(metadata)
+    ...     file_metadata)
+    >>> reader = plc.io.experimental.HybridScanReader.from_metadata(metadata, options)
     """
 
     def __init__(self):
@@ -95,18 +96,13 @@ cdef class HybridScanMetadata:
         )
 
     @staticmethod
-    def from_footer_bytes(
-        const uint8_t[::1] footer_bytes,
-        ParquetReaderOptions options
-    ):
+    def from_footer_bytes(const uint8_t[::1] footer_bytes):
         """Parse shareable metadata from Parquet footer bytes.
 
         Parameters
         ----------
         footer_bytes : Buffer
             Parquet file footer bytes
-        options : ParquetReaderOptions
-            Parquet reader options
 
         Returns
         -------
@@ -118,32 +114,28 @@ cdef class HybridScanMetadata:
             footer_ptr = &footer_bytes[0]
         with nogil:
             result.c_obj = make_unique[cpp_hybrid_scan_metadata](
-                host_span[const_uint8_t](footer_ptr, len(footer_bytes)),
-                options.c_obj
+                std_span[const_uint8_t](footer_ptr, len(footer_bytes))
             )
         return result
 
     @staticmethod
-    def from_parquet_metadata(c_FileMetaData metadata, ParquetReaderOptions options):
-        """Build shareable metadata from a pre-populated ``FileMetaData``.
+    def from_parquet_metadata(c_FileMetaData metadata not None):
+        """Build shareable metadata from a copy of a pre-populated ``FileMetaData``.
 
         Parameters
         ----------
         metadata : FileMetaData
             Pre-populated Parquet file metadata
-        options : ParquetReaderOptions
-            Parquet reader options
 
         Returns
         -------
         HybridScanMetadata
         """
         cdef HybridScanMetadata result = HybridScanMetadata.__new__(HybridScanMetadata)
+        cdef cpp_FileMetaData copy
         with nogil:
-            result.c_obj = make_unique[cpp_hybrid_scan_metadata](
-                dereference(metadata.c_obj),
-                options.c_obj
-            )
+            copy = dereference(metadata.c_obj)
+            result.c_obj = make_unique[cpp_hybrid_scan_metadata](move(copy))
         return result
 
 
@@ -215,7 +207,9 @@ cdef class HybridScanReader:
         return reader
 
     @staticmethod
-    def from_metadata(HybridScanMetadata metadata not None):
+    def from_metadata(
+        HybridScanMetadata metadata not None, ParquetReaderOptions options
+    ):
         """Create a HybridScanReader that shares pre-parsed metadata.
 
         Constructs a lightweight reader that borrows ``metadata`` instead of
@@ -227,6 +221,8 @@ cdef class HybridScanReader:
         ----------
         metadata : HybridScanMetadata
             Shared, pre-parsed Parquet file metadata
+        options : ParquetReaderOptions
+            Parquet reader options
 
         Returns
         -------
@@ -235,7 +231,7 @@ cdef class HybridScanReader:
         cdef HybridScanReader reader = HybridScanReader.__new__(HybridScanReader)
         with nogil:
             reader.c_obj = make_unique[cpp_hybrid_scan_reader](
-                dereference(metadata.c_obj.get())
+                dereference(metadata.c_obj.get()), options.c_obj
             )
         return reader
 
@@ -250,7 +246,7 @@ cdef class HybridScanReader:
         cdef unique_ptr[cpp_FileMetaData] metadata
         with nogil:
             metadata = make_unique[cpp_FileMetaData](
-                self.c_obj.get()[0].parquet_metadata()
+                dereference(self.c_obj.get()[0].parquet_metadata())
             )
         return c_FileMetaData.from_libcudf(move(metadata))
 

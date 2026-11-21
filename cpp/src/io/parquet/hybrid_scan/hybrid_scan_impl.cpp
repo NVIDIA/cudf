@@ -235,7 +235,7 @@ hybrid_scan_reader_impl::hybrid_scan_reader_impl(
   _extended_metadata = static_cast<aggregate_reader_metadata*>(_metadata.get());
 }
 
-std::vector<FileMetaData> hybrid_scan_reader_impl::parquet_metadatas() const
+std::vector<std::shared_ptr<FileMetaData const>> hybrid_scan_reader_impl::parquet_metadatas() const
 {
   return _extended_metadata->parquet_metadatas();
 }
@@ -596,7 +596,7 @@ hybrid_scan_reader_impl::sparse_payload_pages_byte_ranges(
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->get_num_sources(),
+  CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->num_sources(),
                "Row group source count must match the number of input sources");
   CUDF_EXPECTS(std::cmp_equal(row_mask.size(), total_rows_in_row_groups(row_group_indices)),
                "Row mask must span across all input row groups");
@@ -890,7 +890,7 @@ hybrid_scan_reader_impl::construct_row_group_passes(
   CUDF_EXPECTS(
     total_row_groups > 0, "Empty input row group indices encountered", std::invalid_argument);
 
-  CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->get_num_sources(),
+  CUDF_EXPECTS(row_group_indices.size() == _extended_metadata->num_sources(),
                "Mismatch in the number of row group indices vectors and the number of input "
                "datasources",
                std::invalid_argument);

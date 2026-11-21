@@ -16,6 +16,8 @@
 
 #include <cuda/stream>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <utility>
@@ -91,16 +93,35 @@ class hybrid_scan_multifile {
                                  parquet_reader_options const& options);
 
   /**
+   * @brief Constructor that shares pre-parsed Parquet file metadata
+   *
+   * The reader shares the per-file metadata of `metadata`, and validates and interprets it with
+   * `options`. Pass `metadata` by move to hand over its references instead of adding to them;
+   * either way, the per-file metadata stays alive while this reader, any handle or any pointer
+   * returned by `parquet_metadata(s)()` refers to it. See `hybrid_scan_metadata` for thread safety.
+   *
+   * @throws std::invalid_argument if `metadata` has no sources
+   *
+   * @param metadata Shared, pre-parsed Parquet file metadata of all sources to read
+   * @param options Parquet reader options
+   */
+  explicit hybrid_scan_multifile(hybrid_scan_metadata metadata,
+                                 parquet_reader_options const& options);
+
+  /**
    * @brief Destructor for the multi-file experimental Parquet reader
    */
   ~hybrid_scan_multifile();
 
   /**
-   * @brief Get parquet metadatas for all sources
+   * @brief Get the Parquet file metadata of all sources without copying it
    *
-   * @return Vector of parquet metadata, one per source
+   * The metadata contains the materialized page indexes once `setup_page_indexes()` has been
+   * called.
+   *
+   * @return Shared Parquet file metadata, one per source
    */
-  [[nodiscard]] std::vector<FileMetaData> parquet_metadatas() const;
+  [[nodiscard]] std::vector<std::shared_ptr<FileMetaData const>> parquet_metadatas() const;
 
   /**
    * @brief Get byte ranges of the page index for all sources

@@ -3,15 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "io/parquet/hybrid_scan/hybrid_scan_helpers.hpp"
 #include "io/parquet/hybrid_scan/hybrid_scan_impl.hpp"
+#include "io/parquet/reader_impl_helpers.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <iterator>
+#include <memory>
 #include <numeric>
+#include <ranges>
+#include <span>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace cudf::io::parquet::experimental {
 
@@ -36,9 +45,19 @@ hybrid_scan_multifile::hybrid_scan_multifile(std::vector<FileMetaData>&& parquet
 {
 }
 
+hybrid_scan_multifile::hybrid_scan_multifile(hybrid_scan_metadata metadata,
+                                             parquet_reader_options const& options)
+  : _impl{std::make_unique<hybrid_scan::detail::hybrid_scan_reader_impl>(
+      std::make_shared<hybrid_scan::detail::aggregate_reader_metadata>(
+        std::move(metadata._sources),
+        options.is_enabled_use_arrow_schema(),
+        options.is_enabled_allow_mismatched_pq_schemas()))}
+{
+}
+
 hybrid_scan_multifile::~hybrid_scan_multifile() = default;
 
-std::vector<FileMetaData> hybrid_scan_multifile::parquet_metadatas() const
+std::vector<std::shared_ptr<FileMetaData const>> hybrid_scan_multifile::parquet_metadatas() const
 {
   return _impl->parquet_metadatas();
 }

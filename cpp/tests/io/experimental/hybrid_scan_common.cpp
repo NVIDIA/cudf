@@ -166,6 +166,24 @@ cudf::io::source_info build_source_info(std::vector<std::vector<char>> const& fi
   return cudf::io::source_info(cudf::host_span<cudf::host_span<char const>>{spans});
 }
 
+std::vector<cudf::io::parquet::FileMetaData> copy_parquet_metadatas(
+  std::span<std::shared_ptr<cudf::io::parquet::FileMetaData const> const> metadatas)
+{
+  std::vector<cudf::io::parquet::FileMetaData> copies;
+  copies.reserve(metadatas.size());
+  std::ranges::transform(
+    metadatas, std::back_inserter(copies), [](auto const& metadata) { return *metadata; });
+  return copies;
+}
+
+cudf::io::parquet::experimental::hybrid_scan_metadata make_multifile_metadata(
+  multifile_inputs const& inputs)
+{
+  auto const footer_spans = std::vector<std::span<uint8_t const>>(inputs.footer_byte_spans.begin(),
+                                                                  inputs.footer_byte_spans.end());
+  return cudf::io::parquet::experimental::hybrid_scan_metadata{footer_spans};
+}
+
 void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile const& reader,
                         multifile_inputs const& inputs)
 {

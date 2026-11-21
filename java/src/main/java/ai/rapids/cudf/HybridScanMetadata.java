@@ -69,20 +69,12 @@ public class HybridScanMetadata implements AutoCloseable {
    *
    * @param footerBuffer host-resident footer bytes (must remain valid until this constructor
    *                     returns; the JNI reads the bytes synchronously)
-   * @param opts         Parquet reader options. {@link ParquetOptions#DEFAULT} by default.
    */
-  public HybridScanMetadata(HostMemoryBuffer footerBuffer, ParquetOptions opts) {
+  public HybridScanMetadata(HostMemoryBuffer footerBuffer) {
     if (footerBuffer == null) {
       throw new IllegalArgumentException("footerBuffer must not be null");
     }
-    if (opts == null) {
-      opts = ParquetOptions.DEFAULT;
-    }
-    long handle = createFromFooter(
-        footerBuffer.getAddress(),
-        footerBuffer.getLength(),
-        opts.getIncludeColumnNames(),
-        opts.timeUnit().getTypeId().getNativeId());
+    long handle = createFromFooter(footerBuffer.getAddress(), footerBuffer.getLength());
     this.cleaner = new HybridScanMetadataCleaner(handle);
     MemoryCleaner.register(this, cleaner);
     cleaner.addRef();
@@ -120,10 +112,7 @@ public class HybridScanMetadata implements AutoCloseable {
     isClosed = true;
   }
 
-  private static native long createFromFooter(long footerAddress,
-                                              long footerLength,
-                                              String[] columnNames,
-                                              int timeUnitTypeId);
+  private static native long createFromFooter(long footerAddress, long footerLength);
 
   private static native long parquetMetadataAddress(long handle);
 

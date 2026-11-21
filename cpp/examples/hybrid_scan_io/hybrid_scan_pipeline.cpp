@@ -166,7 +166,7 @@ auto hybrid_scan_pipelined(io_source const& io_source,
   auto reader =
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
 
-  auto const metadata = std::move(reader->parquet_metadata());
+  auto const metadata = reader->parquet_metadata();
 
   auto const row_groups_indices = reader->all_row_groups(options);
 
@@ -186,7 +186,7 @@ auto hybrid_scan_pipelined(io_source const& io_source,
   readers.emplace_back(std::move(reader));
   for (cudf::size_type i = 1; i < num_partitions; ++i) {
     readers.emplace_back(
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(metadata, options));
+      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*metadata, options));
   }
 
   if constexpr (verbose) { timer.print_elapsed_millis(); }

@@ -168,10 +168,17 @@ def test_hybrid_scan_reader_from_metadata(
         metadata, simple_parquet_options
     )
 
-    # Verify both readers work the same
+    # Readers sharing parsed metadata take their own options
+    shared = plc.io.experimental.HybridScanMetadata.from_parquet_metadata(
+        metadata
+    )
+    reader3 = HybridScanReader.from_metadata(shared, simple_parquet_options)
+
+    # Verify all readers work the same
     assert (
         simple_hybrid_scan_reader.parquet_metadata().num_rows
         == reader2.parquet_metadata().num_rows
+        == reader3.parquet_metadata().num_rows
     )
 
 

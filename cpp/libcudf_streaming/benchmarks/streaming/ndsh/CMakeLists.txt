@@ -48,7 +48,6 @@ foreach(query IN ITEMS ${CUDF_STREAMING_NDSH_QUERIES})
 endforeach()
 
 # Compile the CUDA UDFs once into an LTO fatbin and embed the module in the shared NDSH library.
-include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/thirdparty/get_xxhash.cmake")
 include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/thirdparty/get_rtcx.cmake")
 include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/Modules/AddFragment.cmake")
 get_target_property(cudf_compile_definitions cudf::cudf INTERFACE_COMPILE_DEFINITIONS)

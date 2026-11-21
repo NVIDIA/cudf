@@ -6,7 +6,6 @@ from functools import cache
 
 import pyarrow as pa
 import pytest
-from cuda.bindings import runtime
 from utils import assert_column_eq, assert_table_eq
 
 import pylibcudf as plc
@@ -162,8 +161,6 @@ _TRANSFORM_UDF_PTX = b"""\
 """
 
 
-
-
 # Generated multi-output PTX for the UDF (Numba 0.64.0, CUDA 12.5.82):
 #
 # ```python
@@ -238,6 +235,7 @@ _MULTI_OUTPUT_UDF_PTX = b"""\
 }
 """
 
+
 @cache
 def get_transform_udf(num_outputs):
     ptx_symbol, ptx = {
@@ -250,11 +248,12 @@ def get_transform_udf(num_outputs):
             _MULTI_OUTPUT_UDF_PTX,
         ),
     }[num_outputs]
-    
+
     return plc.udf.TransformUDF(
         symbol=ptx_symbol,
-        fragments=(plc.udf.LTOFragment("ptx", ptx),),
+        fragments=(plc.udf.LTOFragment(plc.udf.LTOBinaryType.PTX, ptx),),
     )
+
 
 @pytest.mark.parametrize("values", [[], [1.0, 2.0, 3.0]])
 def test_transform_single_output_table(values):
@@ -297,4 +296,3 @@ def test_transform_multiple_outputs(values):
         pa.array([value - 0.5 for value in values], type=pa.float32()),
         got.columns()[1],
     )
-

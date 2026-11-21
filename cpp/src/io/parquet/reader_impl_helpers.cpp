@@ -1075,16 +1075,19 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
     // Validate that all sources have the same schema unless we are reading select columns
     // from mismatched sources, in which case, we will only check the projected columns later.
     if (not has_cols_from_mismatched_srcs) {
-      // `SchemaElement::operator==` ignores logical types, so compare FILE groups separately
+      // `SchemaElement::operator==` ignores logical types, so compare FILE groups and binary
+      // leaves of logical groups (FILE, VARIANT) separately
       auto const is_file_group = [](std::vector<SchemaElement> const& tree, size_t idx) {
         return is_valid_file_group(
           tree[idx],
           tree[idx].children_idx |
             std::views::transform([&](int child) -> SchemaElement const& { return tree[child]; }));
       };
-      auto const same_file_groups = [&](std::vector<SchemaElement> const& other) {
+      auto const same_logical_groups = [&](std::shared_ptr<metadata> const& pfm) {
+        auto const pfm_idx = static_cast<int>(&pfm - per_file_metadata.data());
         return std::ranges::all_of(std::views::iota(size_t{0}, schema.size()), [&](size_t idx) {
-          return is_file_group(schema, idx) == is_file_group(other, idx);
+          return is_file_group(schema, idx) == is_file_group(pfm->schema, idx) and
+                 is_binary_leaf(idx) == is_binary_leaf(idx, pfm_idx);
         });
       };
 
@@ -1095,7 +1098,7 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
             pfm->row_groups.empty() or num_cols == pfm->row_groups.front().columns.size(),
             "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm->schema and same_file_groups(pfm->schema),
+        CUDF_EXPECTS(schema == pfm->schema and same_logical_groups(pfm),
                      "All sources must have the same schema");
       }
 
@@ -1696,6 +1699,25 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
   return std::make_unique<table>(std::move(columns));
 }
 
+bool aggregate_reader_metadata::is_binary_leaf(int schema_idx, int pfm_idx) const
+{
+  auto const& schema_elem = get_schema(schema_idx, pfm_idx);
+  if (schema_elem.type != Type::BYTE_ARRAY or schema_elem.num_children != 0) { return false; }
+  auto const& parent = get_schema(schema_elem.parent_idx, pfm_idx);
+  if (not parent.logical_type.has_value()) { return false; }
+  switch (parent.logical_type->type) {
+    case LogicalType::VARIANT: return schema_elem.name == "metadata" or schema_elem.name == "value";
+    case LogicalType::FILE:
+      return schema_elem.name == "inline" and
+             is_valid_file_group(
+               parent,
+               parent.children_idx | std::views::transform([&](int idx) -> SchemaElement const& {
+                 return get_schema(idx, pfm_idx);
+               }));
+    default: return false;
+  }
+}
+
 bool aggregate_reader_metadata::is_schema_index_mapped(int schema_idx, int src_idx) const
 {
   // Check if schema_idx or src_idx is invalid
@@ -2227,12 +2249,15 @@ aggregate_reader_metadata::select_columns(
 
       auto const& parent_schema = get_schema(schema_elem.parent_idx);
       auto const one_level_list = schema_elem.is_one_level_list(parent_schema);
+      // Binary leaves of logical groups (FILE, VARIANT) are never converted to categories
+      auto const binary_leaf         = is_binary_leaf(schema_idx);
+      auto const leaf_to_categorical = strings_to_categorical and not binary_leaf;
 
       // if we're at the root, this is a new output column
       auto const col_type = one_level_list ? type_id::LIST
                                            : to_type_id(schema_elem,
                                                         arrow_type(schema_idx),
-                                                        strings_to_categorical,
+                                                        leaf_to_categorical,
                                                         timestamp_type_id,
                                                         decimal_type_id);
       auto const dtype    = to_data_type(col_type, schema_elem);
@@ -2274,15 +2299,6 @@ aggregate_reader_metadata::select_columns(
         }
       }
 
-      // Flag the `inline` child of a valid FILE group so that `make_column` materializes it as
-      // `list<uint8>` instead of strings.
-      if (output_col.is_file) {
-        auto const inline_col = std::ranges::find(output_col.children,
-                                                  std::string_view{"inline"},
-                                                  &cudf::io::detail::inline_column_buffer::name);
-        if (inline_col != output_col.children.end()) { inline_col->string_as_binary = true; }
-      }
-
       // if I have no children, we're at a leaf and I'm an input column (that is, one with actual
       // data stored) so add me to the list.
       if (schema_elem.num_children == 0) {
@@ -2294,7 +2310,7 @@ aggregate_reader_metadata::select_columns(
           // determine the element data type
           auto const element_type  = to_type_id(schema_elem,
                                                arrow_type(schema_idx),
-                                               strings_to_categorical,
+                                               leaf_to_categorical,
                                                timestamp_type_id,
                                                decimal_type_id);
           auto const element_dtype = to_data_type(element_type, schema_elem);
@@ -2319,13 +2335,10 @@ aggregate_reader_metadata::select_columns(
         // pop off the extra nesting element.
         if (one_level_list) { nesting.pop_back(); }
 
-        // Flag the `metadata` / `value` BYTE_ARRAY children of a VARIANT group so that
-        // `make_column` materializes them as `list<uint8>` instead of strings.
-        if (schema_elem.type == Type::BYTE_ARRAY && parent_schema.logical_type.has_value() &&
-            parent_schema.logical_type->type == LogicalType::VARIANT &&
-            (schema_elem.name == "metadata" || schema_elem.name == "value")) {
-          output_col.string_as_binary = true;
-        }
+        // Flag binary leaves of logical groups (the `inline` child of a valid FILE group and the
+        // `metadata` / `value` children of a VARIANT group) so that `make_column` materializes
+        // them as `list<uint8>` instead of strings.
+        if (binary_leaf) { output_col.string_as_binary = true; }
 
         path_is_valid = true;  // If we're able to reach leaf then path is valid
       }
@@ -2394,6 +2407,15 @@ aggregate_reader_metadata::select_columns(
         is_file_group(src_schema_elem, 0) == is_file_group(dst_schema_elem, src_idx),
         std::format("Encountered mismatching FILE logical type across the Parquet sources for "
                     "column '{}'",
+                    src_schema_elem.name),
+        std::invalid_argument);
+
+      // Binary leaves of logical groups (FILE, VARIANT) are read as binary, so they must be
+      // binary leaves in all sources
+      CUDF_EXPECTS(
+        is_binary_leaf(src_schema_idx) == is_binary_leaf(dst_schema_idx, src_idx),
+        std::format("Encountered mismatching binary leaf of a logical group across the Parquet "
+                    "sources for column '{}'",
                     src_schema_elem.name),
         std::invalid_argument);
 

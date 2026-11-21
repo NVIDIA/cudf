@@ -20,7 +20,6 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
-#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/null_mask.hpp>
@@ -1866,7 +1865,7 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
       .dictionary_policy(cudf::io::dictionary_policy::ALWAYS)
       .build());
 
-  auto footer =
+  auto const footer =
     cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
                                      cudf::host_span<char const>{buffer.data(), buffer.size()}}))
       .front();
@@ -1876,24 +1875,14 @@ TYPED_TEST(ParquetReaderByteArrayDecimalTest, DictionaryEncoded)
            enc == cudf::io::parquet::Encoding::RLE_DICTIONARY;
   }));
 
-  auto& schema             = footer.schema[1];
-  schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
-  schema.decimal_scale     = scale;
-  schema.decimal_precision = precision;
-  schema.logical_type      = cudf::io::parquet::LogicalType{
-    cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
-
-  // Swap the trailing footer for the annotated one, keeping the data pages
-  uint32_t footer_len{};
-  std::memcpy(&footer_len, buffer.data() + buffer.size() - 8, sizeof(footer_len));
-  auto const new_footer = parquet_delta_test::serialize_footer(footer);
-  buffer.resize(buffer.size() - 8 - footer_len);
-  buffer.insert(buffer.end(), new_footer.begin(), new_footer.end());
-  footer_len = new_footer.size();
-  buffer.insert(buffer.end(),
-                reinterpret_cast<char const*>(&footer_len),
-                reinterpret_cast<char const*>(&footer_len + 1));
-  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+  edit_footer(buffer, [&](cudf::io::parquet::FileMetaData& fmd) {
+    auto& schema             = fmd.schema[1];
+    schema.converted_type    = cudf::io::parquet::ConvertedType::DECIMAL;
+    schema.decimal_scale     = scale;
+    schema.decimal_precision = precision;
+    schema.logical_type      = cudf::io::parquet::LogicalType{
+      cudf::io::parquet::DecimalType{.scale = scale, .precision = precision}};
+  });
 
   auto const result = cudf::io::read_parquet(
     cudf::io::parquet_reader_options::builder(
@@ -2825,33 +2814,20 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   file_metadata.child(0).set_name("offset").set_nullability(true);
   file_metadata.child(1).set_name("inline").set_nullability(true).set_output_as_binary(true);
 
-  std::vector<char> buffer;
+  std::vector<char> file_group;
   cudf::io::write_parquet(
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, input)
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&file_group}, input)
       .metadata(std::move(input_metadata))
       .build());
+  edit_footer(file_group, [](cudf::io::parquet::FileMetaData& fmd) {
+    EXPECT_EQ(fmd.schema[1].name, "file");
+    EXPECT_EQ(fmd.schema[2].name, "offset");
+    EXPECT_EQ(fmd.schema[3].name, "inline");
+    fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+    // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
+    fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
+  });
 
-  auto const source = cudf::io::datasource::create(cudf::host_span<std::byte const>{
-    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
-  auto fmd          = cudf::io::read_parquet_footers({&source, 1}).front();
-  ASSERT_EQ(fmd.schema[1].name, "file");
-  ASSERT_EQ(fmd.schema[2].name, "offset");
-  ASSERT_EQ(fmd.schema[3].name, "inline");
-  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
-  // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
-  fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
-
-  // Appends `fmd` as the new footer, leaving the original one unreferenced
-  auto const rewrite_file_footer = [&] {
-    auto const footer      = cudf::io::parquet::experimental::write_parquet_footer_bytes(fmd);
-    auto const footer_size = static_cast<uint32_t>(footer.size());
-    auto const size_bytes  = reinterpret_cast<char const*>(&footer_size);
-    auto file              = buffer;
-    file.insert(file.end(), footer.begin(), footer.end());
-    file.insert(file.end(), size_bytes, size_bytes + sizeof(footer_size));
-    file.insert(file.end(), {'P', 'A', 'R', '1'});
-    return file;
-  };
   auto const read_metadata = [](std::span<std::vector<char> const> files,
                                 bool allow_mismatched = true) {
     std::vector<cudf::host_span<std::byte const>> sources;
@@ -2867,15 +2843,13 @@ TEST_F(ParquetReaderTest, FileLogicalType)
       .metadata;
   };
 
-  auto const file_group = rewrite_file_footer();
-  auto const metadata   = read_metadata(std::array{file_group});
+  auto const metadata = read_metadata(std::array{file_group});
   EXPECT_EQ(metadata.schema_info[0].is_file, true);
   EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
 
   // A FILE group and a plain struct across sources throw, with or without mismatched schemas
-  fmd.schema[1].logical_type.reset();
-  auto const plain_struct    = rewrite_file_footer();
-  fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
+  auto plain_struct = file_group;
+  edit_footer(plain_struct, [](auto& fmd) { fmd.schema[1].logical_type.reset(); });
   for (auto const allow_mismatched : {true, false}) {
     EXPECT_THROW(read_metadata(std::array{file_group, plain_struct}, allow_mismatched),
                  std::logic_error);
@@ -2884,8 +2858,67 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   }
 
   // An annotated `inline` breaks the FILE spec, so the group is read as a plain struct
-  fmd.schema[3].logical_type = LogicalType{LogicalType::STRING};
-  EXPECT_FALSE(read_metadata(std::array{rewrite_file_footer()}).schema_info[0].is_file.has_value());
+  auto annotated_inline = file_group;
+  edit_footer(annotated_inline,
+              [](auto& fmd) { fmd.schema[3].logical_type = LogicalType{LogicalType::STRING}; });
+  EXPECT_FALSE(read_metadata(std::array{annotated_inline}).schema_info[0].is_file.has_value());
+}
+
+TEST_F(ParquetReaderTest, VariantGroupsAcrossSources)
+{
+  // VARIANT binary leaves read from multiple sources keep their bytes when strings are converted
+  // to categories. A VARIANT group and a plain struct with the same binary children across
+  // sources throw, with or without mismatched schemas, as only the VARIANT binary leaves skip
+  // category conversion
+
+  cudf::test::strings_column_wrapper metadata_col{"m"};
+  cudf::test::strings_column_wrapper value_col{"v"};
+  auto variant_col = cudf::test::structs_column_wrapper{{metadata_col, value_col}};
+
+  auto const input = table_view{{variant_col}};
+  cudf::io::table_input_metadata input_metadata(input);
+  auto& variant_metadata = input_metadata.column_metadata[0].set_name("variant");
+  variant_metadata.child(0).set_name("metadata").set_output_as_binary(true);
+  variant_metadata.child(1).set_name("value").set_output_as_binary(true);
+
+  std::vector<char> plain_struct;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&plain_struct}, input)
+      .metadata(std::move(input_metadata))
+      .build());
+
+  // cudf cannot write VARIANT groups yet, so retag the struct group as VARIANT in the footer
+  auto variant_group = plain_struct;
+  edit_footer(variant_group, [](cudf::io::parquet::FileMetaData& fmd) {
+    EXPECT_EQ(fmd.schema[1].name, "variant");
+    fmd.schema[1].logical_type =
+      cudf::io::parquet::LogicalType{cudf::io::parquet::LogicalType::VARIANT};
+  });
+
+  auto const read = [](std::span<std::vector<char> const> files, bool allow_mismatched) {
+    std::vector<cudf::host_span<std::byte const>> sources;
+    for (auto const& file : files) {
+      sources.emplace_back(reinterpret_cast<std::byte const*>(file.data()), file.size());
+    }
+    return cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(
+        cudf::io::source_info{cudf::host_span<cudf::host_span<std::byte const>>{sources}})
+        .allow_mismatched_pq_schemas(allow_mismatched)
+        .column_names({"variant"})
+        .convert_strings_to_categories(true));
+  };
+
+  for (auto const allow_mismatched : {true, false}) {
+    auto const result  = read(std::array{variant_group, variant_group}, allow_mismatched);
+    auto const variant = result.tbl->view().column(0);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(variant.child(0),
+                                        cudf::test::lists_column_wrapper<uint8_t>{{'m'}, {'m'}});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(variant.child(1),
+                                        cudf::test::lists_column_wrapper<uint8_t>{{'v'}, {'v'}});
+
+    EXPECT_THROW(read(std::array{variant_group, plain_struct}, allow_mismatched), std::logic_error);
+    EXPECT_THROW(read(std::array{plain_struct, variant_group}, allow_mismatched), std::logic_error);
+  }
 }
 
 TEST_F(ParquetReaderTest, NestingOptimizationTest)

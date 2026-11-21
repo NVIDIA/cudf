@@ -1648,7 +1648,7 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
                                          .per_file_metadata       = per_file_metadata,
                                          .row_group_indices       = input_row_group_indices,
                                          .with_null_and_nan_stats = false,
-                                         .ignore_exactness_flags  = true};
+                                         .ignore_inexact_stats    = false};
 
   for (auto const& column_name : column_names) {
     auto schema_indices_per_source = std::vector<int>(per_file_metadata.size());

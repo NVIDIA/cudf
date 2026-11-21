@@ -235,6 +235,9 @@ std::unique_ptr<column> scan(column_view const& input,
 /**
  * @brief Determines the minimum and maximum values of a column.
  *
+ * Floating-point values follow the IEEE 754-2019 `minimum` and `maximum` operations: both results
+ * are NaN if any value is NaN, and -0.0 is less than +0.0. The sign and payload of a NaN result
+ * are not specified and may differ from those of the input NaNs.
  *
  * @param col column to compute minmax
  * @param stream CUDA stream used for device memory operations and kernel launches

@@ -101,6 +101,7 @@ dependencies:
 - sphinx-copybutton
 - sphinx-remove-toctrees
 - sphinx>=8.1.0
+- sphinxcontrib-mermaid
 - sqlalchemy>=2.0.18
 - streamz
 - sysroot_linux-64==2.28

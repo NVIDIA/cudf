@@ -15,3 +15,4 @@ libcudf C++ Developer Guide
    Unit Testing in libcudf <TESTING>
    Unit Benchmarking in libcudf <BENCHMARKING>
    Profiling libcudf <PROFILING>
+   Just-In-Time Compilation (JIT) <jit/index>

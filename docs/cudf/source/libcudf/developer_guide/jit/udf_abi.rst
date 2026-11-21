@@ -97,7 +97,7 @@ The following table maps column values and UDF arguments to CUDA C++ types.
    * - ``STRING``
      - ``cudf::string_view``; for outputs, used when offsets are not preallocated.
    * - ``STRING`` output with preallocated offsets
-     - ``cuda::std::span<char>``, describing the writable character range for that row.
+     - ``cudf::mutable_string_view``, describing the writable character range for that row.
    * - ``DICTIONARY32`` input
      - The dictionary key's value type, decoded before calling the UDF. Dictionary outputs are not supported.
    * - ``user_data`` input

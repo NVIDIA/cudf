@@ -110,13 +110,13 @@ namespace {
 struct default_scalar_functor {
   data_type type;
 
-  template <typename T, std::enable_if_t<not is_fixed_point<T>()>* = nullptr>
+  template <typename T>
   std::unique_ptr<cudf::scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     return make_fixed_width_scalar(data_type(type_to_id<T>()), stream, mr);
   }
 
-  template <typename T, std::enable_if_t<is_fixed_point<T>()>* = nullptr>
+  template <cudf::concepts::fixed_point T>
   std::unique_ptr<cudf::scalar> operator()(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     auto const scale_ = numeric::scale_type{type.scale()};

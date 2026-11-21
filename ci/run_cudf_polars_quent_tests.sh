@@ -8,7 +8,9 @@ set -euo pipefail
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
 REPO_ROOT="${PWD}"
-BRIDGE_DIR="${REPO_ROOT}/python/cudf_polars/quent/bridge"
+QUENT_DIR="${REPO_ROOT}/python/cudf_polars/quent"
+BRIDGE_DIR="${QUENT_DIR}/bridge"
+TARGET_DIR="${QUENT_DIR}/target"
 TRACKED_STUB="${BRIDGE_DIR}/cudf_polars_quent.pyi"
 
 pushd "${BRIDGE_DIR}"
@@ -16,7 +18,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo clean -p cudf-polars-quent
-rm -f dist/*.whl target/wheels/*.whl
+rm -f dist/*.whl "${TARGET_DIR}"/wheels/*.whl
 
 # maturin reads the wheel version from Cargo.toml. Local runs keep the checked-in version.
 if [[ -n "${RAPIDS_PACKAGE_VERSION:-}" ]]; then
@@ -36,7 +38,7 @@ else
   python -m maturin build --release
   popd
   shopt -s nullglob
-  generated_wheels=("${BRIDGE_DIR}"/target/wheels/*.whl)
+  generated_wheels=("${TARGET_DIR}"/wheels/*.whl)
   shopt -u nullglob
 fi
 
@@ -50,7 +52,7 @@ if [[ "$(basename "${generated_wheels[0]}")" != *-cp312-abi3-*.whl ]]; then
 fi
 
 shopt -s nullglob
-generated_stubs=("${BRIDGE_DIR}"/target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
+generated_stubs=("${TARGET_DIR}"/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
 shopt -u nullglob
 if ((${#generated_stubs[@]} == 0)); then
   echo "No generated Quent stub found" >&2
@@ -71,4 +73,18 @@ pushd python/cudf_polars/quent/analyzer
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
+cargo check --locked --no-default-features
+popd
+
+pushd python/cudf_polars/quent/store
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+popd
+
+pushd python/cudf_polars/quent/browser
+cargo fmt --all -- --check
+cargo clippy --locked --features generate --all-targets -- -D warnings
+cargo test --locked --features generate --all-targets
+cargo build --locked --release --target wasm32-unknown-unknown
 popd

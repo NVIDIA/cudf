@@ -59,6 +59,7 @@ public class HashJoin implements AutoCloseable {
 
   private final HashJoinCleaner cleaner;
   private final long numberOfColumns;
+  private final long rowCount;
   private final boolean compareNullsEqual;
   private boolean isClosed = false;
 
@@ -72,6 +73,7 @@ public class HashJoin implements AutoCloseable {
    */
   public HashJoin(Table buildKeys, boolean compareNullsEqual) {
     this.numberOfColumns = buildKeys.getNumberOfColumns();
+    this.rowCount = buildKeys.getRowCount();
     this.compareNullsEqual = compareNullsEqual;
     this.cleaner = new HashJoinCleaner(buildKeys);
     try {
@@ -102,6 +104,11 @@ public class HashJoin implements AutoCloseable {
   /** Get the number of join key columns for the table used to generate the hash table. */
   public long getNumberOfColumns() {
     return numberOfColumns;
+  }
+
+  /** Get the number of rows in the table used to generate the hash table. */
+  long getRowCount() {
+    return rowCount;
   }
 
   /** Returns true if the hash table was built to match on nulls otherwise false. */

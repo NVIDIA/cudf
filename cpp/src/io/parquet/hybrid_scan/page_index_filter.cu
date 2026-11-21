@@ -102,6 +102,11 @@ struct page_stats_caster : public stats_caster_base {
           }
           return 0;
         }();
+        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
+        auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+        auto const is_narrowing_column =
+          cuda::std::signed_integral<T> and
+          parquet::detail::is_column_wider_than(schema.type, schema.type_length, sizeof(T));
 
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
@@ -125,9 +130,9 @@ struct page_stats_caster : public stats_caster_base {
             std::ranges::for_each(
               std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
               [&](auto column_page_idx) {
-                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
+                all_null.set_value(column_page_idx, std::nullopt);
                 has_nan.set_value(column_page_idx, std::nullopt);
               });
             return;
@@ -164,8 +169,8 @@ struct page_stats_caster : public stats_caster_base {
               auto const column_page_idx = page_offset_in_colchunk + page_idx;
               // Check if the page is completely null
               if (column_index.null_pages[page_idx]) {
-                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
                 all_null.val[column_page_idx] = true;
                 has_nan.set_value(column_page_idx, false);
                 return;
@@ -174,12 +179,18 @@ struct page_stats_caster : public stats_caster_base {
               // Also ignore INT96 min/max that cannot bound the converted values
               if (ignore_int96_min_max or
                   int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
-                min.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
-                max.set_index(column_page_idx, std::nullopt, colchunk.meta_data.type);
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
               } else {
                 // Translate binary data to Type then to <T>
-                min.set_index(column_page_idx, min_value, colchunk.meta_data.type, ts_scale);
-                max.set_index(column_page_idx, max_value, colchunk.meta_data.type, ts_scale);
+                host_column<T>::set_min_max(min,
+                                            max,
+                                            column_page_idx,
+                                            min_value,
+                                            max_value,
+                                            is_narrowing_column,
+                                            colchunk.meta_data.type,
+                                            ts_scale);
               }
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
@@ -189,7 +200,7 @@ struct page_stats_caster : public stats_caster_base {
 
               // Check if the page doesn't have a null count
               if (not column_index.null_counts.has_value()) {
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                all_null.set_value(column_page_idx, std::nullopt);
                 return;
               }
               // Use the null count to determine if the page is completely null
@@ -199,7 +210,7 @@ struct page_stats_caster : public stats_caster_base {
               if (null_count == 0) {
                 all_null.val[column_page_idx] = false;
               } else if (null_count < page_row_count) {
-                all_null.set_index(column_page_idx, std::nullopt, {});
+                all_null.set_value(column_page_idx, std::nullopt);
               } else if (null_count == page_row_count) {
                 all_null.val[column_page_idx] = true;
               } else {

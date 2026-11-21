@@ -488,13 +488,17 @@ void reader_impl::create_global_chunk_info()
       auto col = _input_columns[i];
       // look up metadata
       auto& col_meta = _metadata->get_column_metadata(rg.index, rg.source_index, col.schema_idx);
-      auto& schema   = _metadata->get_schema(
-        _metadata->map_schema_index(col.schema_idx, rg.source_index), rg.source_index);
+      auto const mapped_schema_idx = _metadata->map_schema_index(col.schema_idx, rg.source_index);
+      auto& schema                 = _metadata->get_schema(mapped_schema_idx, rg.source_index);
+      // Binary leaves of logical groups (FILE, VARIANT) are never converted to categories
+      auto const strings_to_categorical =
+        _strings_to_categorical and
+        not _metadata->is_binary_leaf(mapped_schema_idx, rg.source_index);
 
       auto [clock_rate, logical_type] =
         conversion_info(to_type_id(schema,
                                    _metadata->arrow_type(col.schema_idx),
-                                   _strings_to_categorical,
+                                   strings_to_categorical,
                                    _options.timestamp_type.id(),
                                    _options.decimal_width),
                         _options.timestamp_type.id(),
@@ -532,7 +536,7 @@ void reader_impl::create_global_chunk_info()
                           col.schema_idx,
                           chunk_info,
                           list_bytes_per_row_est,
-                          schema.type == Type::BYTE_ARRAY and _strings_to_categorical,
+                          schema.type == Type::BYTE_ARRAY and strings_to_categorical,
                           rg.source_index);
     }
     // Adjust for skip_rows when updating the remaining rows after the first group

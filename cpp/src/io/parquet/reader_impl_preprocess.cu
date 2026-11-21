@@ -258,17 +258,19 @@ void reader_impl::allocate_nesting_info()
           }
 
           // Get the schema from the current input source.
-          auto& actual_cur_schema = _metadata->get_schema(
-            _metadata->map_schema_index(schema_idx, src_file_idx), src_file_idx);
+          auto const actual_cur_schema_idx = _metadata->map_schema_index(schema_idx, src_file_idx);
+          auto& actual_cur_schema = _metadata->get_schema(actual_cur_schema_idx, src_file_idx);
 
           // values indexed by output column index
           nesting_info[cur_depth].max_def_level = actual_cur_schema.max_definition_level;
           pni[cur_depth].size                   = 0;
-          pni[cur_depth].type                   = to_type_id(actual_cur_schema,
-                                           _metadata->arrow_type(schema_idx),
-                                           _strings_to_categorical,
-                                           _options.timestamp_type.id(),
-                                           _options.decimal_width);
+          pni[cur_depth].type =
+            to_type_id(actual_cur_schema,
+                       _metadata->arrow_type(schema_idx),
+                       _strings_to_categorical and
+                         not _metadata->is_binary_leaf(actual_cur_schema_idx, src_file_idx),
+                       _options.timestamp_type.id(),
+                       _options.decimal_width);
           pni[cur_depth].nullable = cur_schema.repetition_type == FieldRepetitionType::OPTIONAL;
 
           // the implicit list of a one-level list is a required list with its parent's def level
@@ -736,11 +738,12 @@ void reader_impl::preprocess_file(read_mode mode)
   printf("# Input columns: %'lu\n", _input_columns.size());
   for (size_t idx = 0; idx < _input_columns.size(); idx++) {
     auto const& schema = _metadata->get_schema(_input_columns[idx].schema_idx);
-    auto const type_id = to_type_id(schema,
-                                    _metadata->arrow_type(_input_columns[idx].schema_idx),
-                                    _strings_to_categorical,
-                                    _options.timestamp_type.id(),
-                                    _options.decimal_width);
+    auto const type_id = to_type_id(
+      schema,
+      _metadata->arrow_type(_input_columns[idx].schema_idx),
+      _strings_to_categorical and not _metadata->is_binary_leaf(_input_columns[idx].schema_idx),
+      _options.timestamp_type.id(),
+      _options.decimal_width);
     printf("\tC(%'lu, %s): %s\n",
            idx,
            _input_columns[idx].name.c_str(),

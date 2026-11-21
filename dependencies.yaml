@@ -1047,6 +1047,7 @@ dependencies:
           - sphinx-copybutton
           - sphinx-markdown-tables
           - sphinx-remove-toctrees
+          - sphinxcontrib-mermaid
           - sphinxcontrib-websupport
           - pip:
               - nvidia-sphinx-theme

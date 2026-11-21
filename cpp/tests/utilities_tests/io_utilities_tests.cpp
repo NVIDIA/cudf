@@ -13,6 +13,7 @@
 #include <chrono>
 #include <future>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 using cudf::io::detail::base64_decode;
@@ -129,6 +130,19 @@ TEST(IoUtilitiesTest, Base64EncodeAndDecode)
 
   // Check equal columns
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results);
+}
+
+TEST(IoUtilitiesTest, Base64DecodeUnpadded)
+{
+  // Decode views into a larger buffer so any read past the end of the view would pick up the
+  // trailing characters instead of stopping
+  auto const decode_prefix = [](std::string_view encoded, size_t length) {
+    return base64_decode(encoded.substr(0, length));
+  };
+  EXPECT_EQ(decode_prefix("QQAAAAAA", 2), "A");
+  EXPECT_EQ(decode_prefix("QUIAAAAA", 3), "AB");
+  EXPECT_EQ(decode_prefix("QUJDRAAA", 6), "ABCD");
+  EXPECT_EQ(decode_prefix("QUJDRAAA", 5), "");
 }
 
 TEST(IoUtilitiesTest, FuturesWaitGuardWaitsForPendingFutures)

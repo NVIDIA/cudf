@@ -14,6 +14,7 @@ from polars.testing import assert_frame_equal
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.expressions.base import ExecutionContext
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
@@ -601,19 +602,69 @@ def test_over_with_order_by(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize(
-    "order_by",
-    [
-        ["x", "x2"],
-        ["g_null", "g2", "x2"],
-        [pl.col("g") + 7, (pl.col("x") * 3) - 2],
-    ],
+def _multi_key_over_ldf() -> pl.LazyFrame:
+    return pl.LazyFrame({"g": [1], "x": [1], "y": [1]}).select(
+        pl.col("x").sum().over("g", order_by=["x", "y"])
+    )
+
+
+def _polars_exposes_row_encode() -> bool:
+    # Ask the Polars visitor directly, so that a cudf-polars translation
+    # failure is not mistaken for a Polars version without row_encode.
+    visitor = _multi_key_over_ldf()._ldf.visit()
+    window = visitor.view_expression(visitor.get_exprs()[0].node)
+    try:
+        visitor.view_expression(window.order_by)
+    except NotImplementedError:
+        return False
+    return True
+
+
+MULTIPLE_ORDER_BY_KEYS = [
+    ["x", "x2"],
+    ["g_null", "g2", "x2"],
+    [pl.col("g") + 7, (pl.col("x") * 3) - 2],
+]
+
+
+@pytest.mark.skipif(
+    _polars_exposes_row_encode(), reason="Polars exposes row_encode in the IR visitor"
 )
+@pytest.mark.parametrize("order_by", MULTIPLE_ORDER_BY_KEYS)
 def test_over_with_multiple_order_by_keys_unsupported(
     engine: pl.GPUEngine, df, order_by
 ) -> None:
     q = df.select(pl.col("x").sum().over("g", order_by=order_by))
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.skipif(
+    not _polars_exposes_row_encode(),
+    reason="Polars does not expose row_encode in the IR visitor",
+)
+def test_over_with_multiple_order_by_keys_translates() -> None:
+    translator = Translator(_multi_key_over_ldf()._ldf.visit(), pl.GPUEngine())
+    translator.translate_ir()
+    assert not translator.errors
+
+
+@pytest.mark.skipif(
+    not _polars_exposes_row_encode(),
+    reason="Polars does not expose row_encode in the IR visitor",
+)
+@pytest.mark.parametrize("order_by", MULTIPLE_ORDER_BY_KEYS)
+@pytest.mark.parametrize("descending", [False, True])
+@pytest.mark.parametrize("nulls_last", [False, True])
+@pytest.mark.parametrize("agg", ["cum_sum", "rank"])
+def test_over_with_multiple_order_by_keys(
+    engine: pl.GPUEngine, df, order_by, descending, nulls_last, agg
+) -> None:
+    col = pl.col("x")
+    col = col.cum_sum() if agg == "cum_sum" else col.rank(method="ordinal")
+    q = df.select(
+        col.over("g", order_by=order_by, descending=descending, nulls_last=nulls_last)
+    )
+    assert_gpu_result_equal(q, engine=engine)
 
 
 @pytest.mark.parametrize("strategy", ["explode", "join"], ids=["explode", "join"])
@@ -922,7 +973,7 @@ def test_order_sensitive_over_scalar_aggs(
             nulls_last=nulls_last,
         )
     )
-    if isinstance(order_by, list):
+    if isinstance(order_by, list) and not _polars_exposes_row_encode():
         assert_ir_translation_raises(q, engine, NotImplementedError)
     else:
         assert_gpu_result_equal(q, engine=engine)

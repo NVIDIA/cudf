@@ -40,13 +40,6 @@ extern "C" __device__ transform_type transform;
 
 namespace cudf::join::jit {
 
-// Precompiled UDFs are linked against the physical type of the BOOL8 output.
-#ifdef CUDF_LTO_MODE
-using result_type = uint8_t;
-#else
-using result_type = bool;
-#endif
-
 // TODO: Create a JIT-compatible header for JoinNoMatch to avoid this duplication.
 // This must match the definition in cudf/join/join.hpp
 constexpr cudf::size_type JoinNoMatch = cuda::std::numeric_limits<cudf::size_type>::min();
@@ -73,7 +66,23 @@ __device__ errc execute_predicate_op(void* user_data,
   }
 }
 
-template <bool has_user_data, bool is_null_aware, typename Accessors>
+// Table index of the extra inputs, which are read at the pair index rather than a table row.
+constexpr int32_t pair_table_index = 2;
+
+// Row of accessor `A`'s column for pair `i`: the left or right index, or the pair index.
+template <typename A>
+__device__ cudf::size_type input_row(cudf::size_type const* left_indices,
+                                     cudf::size_type const* right_indices,
+                                     cudf::size_type i)
+{
+  if constexpr (A::table_index == pair_table_index) {
+    return i;
+  } else {
+    return (A::table_index == 0 ? left_indices : right_indices)[i];
+  }
+}
+
+template <bool has_user_data, bool is_null_aware, typename OutputType, typename Accessors>
 __device__ void filter_join_kernel(cudf::size_type num_rows,
                                    cudf::size_type const* __restrict__ left_indices,
                                    cudf::size_type const* __restrict__ right_indices,
@@ -94,15 +103,12 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
       continue;
     }
 
-    cudf::size_type const* indices[] = {left_indices, right_indices};
-
-    // Each accessor receives both tables and both indices, and internally selects
-    // the appropriate table based on whether it's a left or right accessor.
     if constexpr (is_null_aware) {
       // Null-aware path: pass optional<T> inputs, get optional<bool> result
-      cuda::std::optional<result_type> result{false};
+      cuda::std::optional<OutputType> result{false};
       auto inputs    = Accessors::map([&]<typename... A>() {
-        return cuda::std::tuple{A::nullable_element(columns, indices[A::table_index][i])...};
+        return cuda::std::tuple{
+          A::nullable_element(columns, input_row<A>(left_indices, right_indices, i))...};
       });
       auto row_error = execute_predicate_op<has_user_data>(
         user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
@@ -110,17 +116,19 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
       predicate_results[i] = result.has_value() && result.value();
     } else {
       // Non-null-aware path: if any input is null, predicate is false
-      auto any_null = Accessors::map(
-        [&]<typename... A>() { return (A::is_null(columns, indices[A::table_index][i]) || ...); });
+      auto any_null = Accessors::map([&]<typename... A>() {
+        return (A::is_null(columns, input_row<A>(left_indices, right_indices, i)) || ...);
+      });
       if (any_null) {
         predicate_results[i] = false;
         continue;
       }
-      result_type result = false;
-      auto inputs        = Accessors::map([&]<typename... A>() {
-        return cuda::std::tuple{A::element(columns, indices[A::table_index][i])...};
+      OutputType result = false;
+      auto inputs       = Accessors::map([&]<typename... A>() {
+        return cuda::std::tuple{
+          A::element(columns, input_row<A>(left_indices, right_indices, i))...};
       });
-      auto row_error     = execute_predicate_op<has_user_data>(
+      auto row_error    = execute_predicate_op<has_user_data>(
         user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
       thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result;

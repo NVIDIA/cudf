@@ -18,6 +18,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
@@ -35,9 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <format>
 #include <numeric>
-#include <optional>
 #include <random>
 #include <span>
 #include <sstream>
@@ -2311,30 +2310,32 @@ TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
 struct FilterJoinJitErrorTest : public FilteredFullJoinTest,
                                 public ::testing::WithParamInterface<cudf::join_kind> {};
 
+// Loads a precompiled predicate from cpp/tests/join/fragments.
+std::span<uint8_t const> join_filter_fragment(std::size_t id)
+{
+  auto const range = cudf_test_fragments::file_ranges[id];
+  return cudf_test_fragments::files.subspan(range[0], range[1]);
+}
+
 TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
 {
-  // The same fallible predicate as CUDA source and LTO IR, reading a per-pair overflow limit from
-  // user_data at the pair's position in the input maps.
-  auto const make_source = [](bool lto) {
-    return std::format(R"(
-{0} {1} {2}(void* user_data, int row, {3}* output, int a, int b)
-{{
-  if (a < static_cast<int const*>(user_data)[row]) {{ return {1}(1); }}  // ARITHMETIC_OVERFLOW
-  if (b == 0) {{ return {1}(2); }}  // DIVISION_BY_ZERO
+  // The same fallible predicate reads a per-pair overflow limit from user_data in CUDA and from a
+  // per-pair extra input column in the fragment (join/fragments/join_overflow_filter.cu).
+  auto const udf = R"(
+__device__ cudf::errc predicate(void* user_data, int row, bool* output, int a, int b)
+{
+  if (a < static_cast<int const*>(user_data)[row]) { return cudf::errc::ARITHMETIC_OVERFLOW; }
+  if (b == 0) { return cudf::errc::DIVISION_BY_ZERO; }
   *output = a >= b;
-  return {1}(0);
-}}
-)",
-                       lto ? R"(extern "C" __device__)" : "__device__",
-                       lto ? "int" : "cudf::errc",
-                       lto ? "transform" : "predicate",
-                       lto ? "unsigned char" : "bool");
-  };
+  return cudf::errc::SUCCESS;
+}
+)";
 
   // A FULL join predicate reading the limit at a compacted position would see 3 for pair 3 below.
-  std::array const host_limits{0, 0, 3, 0};
-  thrust::device_vector<int> limits(host_limits.begin(), host_limits.end());
-  void* const user_data = thrust::raw_pointer_cast(limits.data());
+  cudf::test::fixed_width_column_wrapper<int> limits{0, 0, 3, 0};
+  cudf::column_view const limits_view = limits;
+  void* const user_data               = const_cast<int*>(limits_view.data<int>());
+  std::vector<cudf::transform_input> const extra_inputs{limits_view};
 
   cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
   cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
@@ -2364,31 +2365,31 @@ TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
   std::sort(expected.begin(), expected.end());
 
   for (bool lto : {false, true}) {
-    auto const source = make_source(lto);
-    auto const fragment =
-      lto ? std::optional{cudf::compile_cuda_to_lto_ir(source.c_str(), {}, {}, {})} : std::nullopt;
     auto const run = [&](cudf::table_view const& l,
                          cudf::table_view const& r,
                          cudf::device_span<cudf::size_type const> li,
                          cudf::device_span<cudf::size_type const> ri) {
-      return fragment.has_value() ? cudf::filter_join_indices_jit_lto(l,
-                                                                      r,
-                                                                      li,
-                                                                      ri,
-                                                                      fragment->view().data,
-                                                                      GetParam(),
-                                                                      fragment->view().type,
-                                                                      cudf::null_aware::NO,
-                                                                      user_data)
-                                  : cudf::filter_join_indices_jit(l,
-                                                                  r,
-                                                                  li,
-                                                                  ri,
-                                                                  source,
-                                                                  GetParam(),
-                                                                  cudf::udf_source_type::CUDA,
-                                                                  cudf::null_aware::NO,
-                                                                  user_data);
+      if (lto) {
+        return cudf::filter_join_indices_jit_lto(
+          l,
+          r,
+          li,
+          ri,
+          join_filter_fragment(cudf_test_fragments::join_overflow_filter),
+          GetParam(),
+          cudf::lto_binary_type::FATBIN,
+          extra_inputs);
+      }
+      return cudf::filter_join_indices_jit(l,
+                                           r,
+                                           li,
+                                           ri,
+                                           udf,
+                                           GetParam(),
+                                           {},
+                                           cudf::udf_source_type::CUDA,
+                                           cudf::null_aware::NO,
+                                           user_data);
     };
 
     // Errors from multiple rows must be aggregated using the maximum code.
@@ -2410,37 +2411,24 @@ TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
 
 TEST_P(FilterJoinJitErrorTest, NullAwareUdf)
 {
-  // Null inputs reach the predicate, and a null output rejects the pair.
+  // Null inputs reach the predicate, and a null output rejects the pair. The fragment is
+  // join/fragments/join_null_aware_filter.cu.
   auto const udf = R"(
 __device__ void predicate(cuda::std::optional<bool>* output,
                           cuda::std::optional<int> a,
-                          cuda::std::optional<int> b)
+                          cuda::std::optional<int> b,
+                          cuda::std::optional<int> offset)
 {
   if (!b.has_value()) {
     *output = cuda::std::nullopt;
     return;
   }
-  *output = !a.has_value() || *a >= *b;
+  *output = !a.has_value() || *a + *offset >= *b;
 }
 )";
-  // Precompiled predicates receive the BOOL8 output as its physical type.
-  auto const fragment = cudf::compile_cuda_to_lto_ir(R"(
-#include <cuda/std/optional>
-extern "C" __device__ int transform(cuda::std::optional<unsigned char>* output,
-                                   cuda::std::optional<int> a,
-                                   cuda::std::optional<int> b)
-{
-  if (!b.has_value()) {
-    *output = cuda::std::nullopt;
-    return 0;
-  }
-  *output = !a.has_value() || *a >= *b;
-  return 0;
-}
-)",
-                                                     {},
-                                                     {},
-                                                     {});
+  cudf::test::fixed_width_column_wrapper<int> offset{1};
+  std::vector<cudf::transform_input> const extra_inputs{cudf::scalar_column_view{offset}};
+
   cudf::test::fixed_width_column_wrapper<int> left{{1, 0, 3, 4}, {true, false, true, true}};
   cudf::test::fixed_width_column_wrapper<int> right{{1, 1, 5, 0}, {true, true, true, false}};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
@@ -2462,17 +2450,20 @@ extern "C" __device__ int transform(cuda::std::optional<unsigned char>* output,
                                                    maps,
                                                    udf,
                                                    GetParam(),
+                                                   extra_inputs,
                                                    cudf::udf_source_type::CUDA,
                                                    cudf::null_aware::YES)),
             expected);
-  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit_lto(cudf::table_view{{left}},
-                                                       cudf::table_view{{right}},
-                                                       maps,
-                                                       maps,
-                                                       fragment.view().data,
-                                                       GetParam(),
-                                                       fragment.view().type,
-                                                       cudf::null_aware::YES)),
+  EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit_lto(
+              cudf::table_view{{left}},
+              cudf::table_view{{right}},
+              maps,
+              maps,
+              join_filter_fragment(cudf_test_fragments::join_null_aware_filter),
+              GetParam(),
+              cudf::lto_binary_type::FATBIN,
+              extra_inputs,
+              cudf::null_aware::YES)),
             expected);
 }
 

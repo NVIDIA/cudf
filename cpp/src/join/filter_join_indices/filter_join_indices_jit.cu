@@ -38,6 +38,7 @@
 #include <jit/parser.hpp>
 #include <jit/reflect.hpp>
 #include <jit/row_ir.hpp>
+#include <jit/util.hpp>
 #include <rtcx/rtcx.hpp>
 
 #include <array>
@@ -77,7 +78,14 @@ std::vector<std::string> build_join_filter_template_params(
                                        std::span<transform_output_spec const>{},
                                        input_table_sources,
                                        input_table_indices);
-  return {rtcx::reflect(has_user_data), rtcx::reflect(is_null_aware), reflection.input_accessors};
+  // Precompiled UDFs are linked against the physical type of the BOOL8 output.
+  auto const result_type = std::holds_alternative<lto_binary_type>(source_type)
+                             ? cudf::jit::physical_type_of(data_type{type_id::BOOL8})
+                             : data_type{type_id::BOOL8};
+  return {rtcx::reflect(has_user_data),
+          rtcx::reflect(is_null_aware),
+          type_to_name(result_type),
+          reflection.input_accessors};
 }
 
 // Build the JIT kernel for join filtering
@@ -326,7 +334,8 @@ void validate_filter_inputs(cudf::table_view const& left,
                             cudf::table_view const& right,
                             cudf::device_span<size_type const> left_indices,
                             cudf::device_span<size_type const> right_indices,
-                            join_kind join_kind)
+                            join_kind join_kind,
+                            std::span<transform_input const> extra_inputs = {})
 {
   CUDF_EXPECTS(left_indices.size() == right_indices.size(),
                "Left and right index arrays must have the same size",
@@ -339,6 +348,13 @@ void validate_filter_inputs(cudf::table_view const& left,
 
   validate_column_types(left, "left");
   validate_column_types(right, "right");
+
+  for (auto const& input : extra_inputs) {
+    auto const* col = std::get_if<column_view>(&input);
+    CUDF_EXPECTS(col == nullptr || std::cmp_equal(col->size(), left_indices.size()),
+                 "Extra input columns must have one row per index pair",
+                 std::invalid_argument);
+  }
 }
 
 // Evaluates the predicate on every input pair and applies the join semantics. The predicate sees
@@ -386,6 +402,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         std::span<uint8_t const> udf,
                         std::variant<udf_source_type, lto_binary_type> udf_type,
+                        std::span<transform_input const> extra_inputs,
                         null_aware is_null_aware,
                         std::optional<void*> user_data,
                         join_kind join_kind,
@@ -394,7 +411,7 @@ filter_join_indices_jit(cudf::table_view const& left,
 {
   CUDF_FUNC_RANGE();
 
-  validate_filter_inputs(left, right, left_indices, right_indices, join_kind);
+  validate_filter_inputs(left, right, left_indices, right_indices, join_kind, extra_inputs);
 
   if (left_indices.empty()) { return make_empty_result(stream, mr); }
 
@@ -407,6 +424,11 @@ filter_join_indices_jit(cudf::table_view const& left,
   for (auto const& col : right) {
     inputs.emplace_back(col);
     table_sources.emplace_back(1);
+  }
+  // Extra columns are read at the pair index.
+  for (auto const& input : extra_inputs) {
+    inputs.push_back(input);
+    table_sources.emplace_back(2);
   }
 
   auto kernel = build_join_filter_kernel(
@@ -484,6 +506,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         std::string const& predicate_code,
                         cudf::join_kind join_kind,
+                        std::span<transform_input const> extra_inputs,
                         udf_source_type source_type,
                         null_aware is_null_aware,
                         std::optional<void*> user_data,
@@ -500,6 +523,7 @@ filter_join_indices_jit(cudf::table_view const& left,
     source_type == udf_source_type::PTX
       ? std::variant<udf_source_type, lto_binary_type>{lto_binary_type::PTX}
       : std::variant<udf_source_type, lto_binary_type>{udf_source_type::CUDA},
+    extra_inputs,
     is_null_aware,
     user_data,
     join_kind,
@@ -516,6 +540,7 @@ filter_join_indices_jit_lto(cudf::table_view const& left,
                             std::span<uint8_t const> udf,
                             cudf::join_kind join_kind,
                             lto_binary_type binary_type,
+                            std::span<transform_input const> extra_inputs,
                             null_aware is_null_aware,
                             std::optional<void*> user_data,
                             cuda::stream_ref stream,
@@ -528,6 +553,7 @@ filter_join_indices_jit_lto(cudf::table_view const& left,
                                          right_indices,
                                          udf,
                                          binary_type,
+                                         extra_inputs,
                                          is_null_aware,
                                          user_data,
                                          join_kind,

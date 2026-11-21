@@ -7,6 +7,7 @@
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/join/join.hpp>
+#include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/udf.hpp>
 #include <cudf/utilities/span.hpp>
@@ -38,6 +39,7 @@ namespace detail {
  * @param udf The predicate as CUDA source, PTX (NUL-terminated), or an LTO binary
  * @param udf_type `udf_source_type::CUDA` for CUDA source, or the binary type of a precompiled
  * `udf`
+ * @param extra_inputs Scalars or per-pair columns passed after the table columns
  * @param is_null_aware Whether the predicate receives row inputs as optional values
  * @param user_data Caller-owned device data passed to the predicate
  * @param join_kind The type of join operation
@@ -54,6 +56,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         std::span<uint8_t const> udf,
                         std::variant<udf_source_type, lto_binary_type> udf_type,
+                        std::span<transform_input const> extra_inputs,
                         null_aware is_null_aware,
                         std::optional<void*> user_data,
                         join_kind join_kind,

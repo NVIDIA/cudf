@@ -9,6 +9,7 @@
 #include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
@@ -25,6 +26,6 @@ template rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(
   size_type num_rows,
   duplicate_keep_option keep,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace cudf::detail

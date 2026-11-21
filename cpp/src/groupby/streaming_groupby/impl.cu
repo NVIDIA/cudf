@@ -120,7 +120,7 @@ std::unique_ptr<column> compute_raw_m2(data_type source_type,
                                        column_view const& sum,
                                        column_view const& count,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   auto output = make_numeric_column(cudf::detail::target_type(source_type, aggregation::M2),
                                     sum.size(),
@@ -139,14 +139,15 @@ struct is_atomic_aggregation_supported {
   {
     if constexpr (cudf::is_nested<T>()) {
       return false;
-    } else if constexpr (std::is_same_v<T, numeric::decimal128> && K == aggregation::SUM) {
+    } else if constexpr (std::is_same_v<T, numeric::decimal128> &&
+                         (K == aggregation::SUM || K == aggregation::MEAN)) {
       // The existing decimal128 SUM implementation provides its own atomic addition.
       return true;
     } else {
       using Target = cudf::detail::target_type_t<T, K>;
       constexpr auto uses_storage =
-        cudf::is_fixed_point<T>() &&
-        (K == aggregation::MIN || K == aggregation::MAX || K == aggregation::SUM);
+        cudf::is_fixed_point<T>() && (K == aggregation::MIN || K == aggregation::MAX ||
+                                      K == aggregation::SUM || K == aggregation::MEAN);
       using DeviceTarget =
         std::conditional_t<uses_storage, cudf::device_storage_type_t<Target>, Target>;
       if constexpr (!std::is_void_v<DeviceTarget>) {
@@ -497,7 +498,7 @@ std::unique_ptr<table> streaming_groupby::impl::gather_agg_results(cuda::stream_
 }
 
 std::unique_ptr<table> streaming_groupby::impl::gather_distinct_keys(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   if (_compacted_batches.empty()) {
     return std::make_unique<table>(_empty_key_schema->view(), stream, mr);
@@ -540,6 +541,8 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
   // The stored aggregation objects already match the physical result order. Re-extracting
   // them here can reorder results or duplicate intermediates shared with explicit requests.
   cudf::detail::result_cache cache(_agg_kinds.size());
+  detail::hash::finalize_means(
+    table_view{cache_keys}, _agg_kinds, agg_gathered->mutable_view(), nullptr, stream);
   detail::hash::finalize_output(table_view{cache_keys}, _agg_objects, agg_gathered, &cache, stream);
 
   // Preserve the user's request order while sharing cached simple and compound results.
@@ -552,9 +555,8 @@ streaming_groupby::impl::finalize_gathered(std::unique_ptr<table> keys,
       dynamic_cast<groupby_aggregation*>(_requests_clone[i].aggregation->clone().release())});
     auto const& agg = *ar.aggregations.front();
     if (_has_compound_aggs && !cache.has_result(ar.values, agg)) {
-      // Gathered intermediates may lack null masks, so MEAN derives nulls from the counts.
       auto const finalizer =
-        detail::hash::hash_compound_agg_finalizer(ar.values, &cache, true, stream, mr);
+        detail::hash::hash_compound_agg_finalizer(ar.values, &cache, stream, mr);
       // Streaming accumulates raw moments, while ordinary HashCSR caches stable M2 directly.
       if (agg.kind == aggregation::M2 || agg.kind == aggregation::VARIANCE ||
           agg.kind == aggregation::STD) {
@@ -654,7 +656,7 @@ void streaming_groupby::do_merge(streaming_groupby const& other, cuda::stream_re
 }
 
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> streaming_groupby::do_finalize(
-  cuda::stream_ref stream, rmm::device_async_resource_ref mr) const
+  cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(_impl != nullptr, "streaming_groupby has been consumed or moved from.");
   return _impl->do_finalize(stream, cudf::memory_resources{mr});

@@ -106,7 +106,7 @@ struct one_capture_fn {
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   auto const groups = prog.groups_count();
   CUDF_EXPECTS(groups <= 1, "findall does not support more than 1 capture group");
@@ -189,7 +189,7 @@ struct find_re_fn {
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   auto results = make_numeric_column(data_type{type_to_id<size_type>()},
                                      input.size(),
@@ -229,7 +229,7 @@ std::unique_ptr<column> find_re(strings_column_view const& input,
 std::unique_ptr<column> findall(strings_column_view const& input,
                                 regex_program const& prog,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::findall(input, prog, stream, mr);
@@ -238,7 +238,7 @@ std::unique_ptr<column> findall(strings_column_view const& input,
 std::unique_ptr<column> find_re(strings_column_view const& input,
                                 regex_program const& prog,
                                 cuda::stream_ref stream,
-                                rmm::device_async_resource_ref mr)
+                                cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::find_re(input, prog, stream, mr);

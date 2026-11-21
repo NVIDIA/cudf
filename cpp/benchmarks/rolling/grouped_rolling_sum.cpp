@@ -14,7 +14,7 @@
 #include <nvbench/nvbench.cuh>
 
 template <typename Type>
-void bench_row_grouped_rolling_sum(nvbench::state& state, nvbench::type_list<Type>)
+void row_grouped_rolling(nvbench::state& state, cudf::rolling_aggregation const& agg)
 {
   auto const num_rows       = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const cardinality    = static_cast<cudf::size_type>(state.get_int64("cardinality"));
@@ -35,18 +35,32 @@ void bench_row_grouped_rolling_sum(nvbench::state& state, nvbench::type_list<Typ
     cudf::type_to_id<Type>(), distribution_id::UNIFORM, 0, 100);
   auto vals = create_random_column(cudf::type_to_id<Type>(), row_count{num_rows}, profile);
 
-  auto req = cudf::make_sum_aggregation<cudf::rolling_aggregation>();
-
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     auto const result = cudf::grouped_rolling_window(
-      keys->view(), vals->view(), preceding_size, following_size, min_periods, *req);
+      keys->view(), vals->view(), preceding_size, following_size, min_periods, agg);
   });
   auto const elapsed_time = state.get_summary("nv/cold/time/gpu/mean").get_float64("value");
   state.add_element_count(static_cast<double>(num_rows) / elapsed_time / 1'000'000., "Mrows/s");
   state.add_buffer_size(
     mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
+template <typename Type>
+void bench_row_grouped_rolling_sum(nvbench::state& state, nvbench::type_list<Type>)
+{
+  row_grouped_rolling<Type>(state, *cudf::make_sum_aggregation<cudf::rolling_aggregation>());
+}
+
+template <typename Type>
+void bench_row_grouped_rolling_min(nvbench::state& state, nvbench::type_list<Type>)
+{
+  auto const semantics = state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+                           ? cudf::nan_semantics::TOTALLY_ORDERED
+                           : cudf::nan_semantics::UNORDERED;
+  row_grouped_rolling<Type>(state,
+                            *cudf::make_min_aggregation<cudf::rolling_aggregation>(semantics));
 }
 
 NVBENCH_BENCH_TYPES(bench_row_grouped_rolling_sum,
@@ -57,6 +71,16 @@ NVBENCH_BENCH_TYPES(bench_row_grouped_rolling_sum,
   .add_int64_axis("following_size", {2})
   .add_int64_axis("min_periods", {1})
   .add_int64_axis("cardinality", {10, 100, 1'000'000, 100'000'000});
+
+NVBENCH_BENCH_TYPES(bench_row_grouped_rolling_min,
+                    NVBENCH_TYPE_AXES(nvbench::type_list<float, double>))
+  .set_name("row_grouped_rolling_min")
+  .add_int64_power_of_two_axis("num_rows", {14, 28})
+  .add_int64_axis("preceding_size", {1, 10})
+  .add_int64_axis("following_size", {2})
+  .add_int64_axis("min_periods", {1})
+  .add_int64_axis("cardinality", {10, 100, 1'000'000, 100'000'000})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});
 
 NVBENCH_BENCH_TYPES(bench_row_grouped_rolling_sum,
                     NVBENCH_TYPE_AXES(nvbench::type_list<std::int32_t>))

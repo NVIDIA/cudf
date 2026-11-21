@@ -60,11 +60,22 @@ std::unique_ptr<cudf::column> segmented_min(
   data_type const output_dtype,
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
+  nan_semantics semantics,
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(col.type() == output_dtype,
                "segmented_min() operation requires matching output type");
+  // TOTALLY_ORDERED only changes floating-point results, so only float and double are instantiated
+  // with op::min_totally_ordered.
+  if (semantics == nan_semantics::TOTALLY_ORDERED &&
+      (col.type().id() == type_id::FLOAT32 || col.type().id() == type_id::FLOAT64)) {
+    using ordered_reducer = simple::detail::same_column_type_dispatcher<op::min_totally_ordered>;
+    return col.type().id() == type_id::FLOAT32 ? ordered_reducer{}.template operator()<float>(
+                                                   col, offsets, null_handling, init, stream, mr)
+                                               : ordered_reducer{}.template operator()<double>(
+                                                   col, offsets, null_handling, init, stream, mr);
+  }
   using reducer = simple::detail::same_column_type_dispatcher<op::min>;
   return cudf::type_dispatcher(
     col.type(), reducer{}, col, offsets, null_handling, init, stream, mr);

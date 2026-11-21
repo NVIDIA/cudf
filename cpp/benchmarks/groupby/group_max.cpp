@@ -13,11 +13,12 @@
 
 NVBENCH_DECLARE_TYPE_STRINGS(numeric::decimal128, "decimal128", "decimal128");
 
-template <typename Type>
+template <typename Type, typename AggFactory>
 void groupby_max_helper(nvbench::state& state,
                         cudf::size_type num_rows,
                         cudf::size_type cardinality,
-                        double null_probability)
+                        double null_probability,
+                        AggFactory make_aggregation)
 {
   auto const keys = [&] {
     data_profile const profile =
@@ -55,7 +56,7 @@ void groupby_max_helper(nvbench::state& state,
     requests.emplace_back();
     val_cols.emplace_back(make_values());
     requests[i].values = val_cols.back()->view();
-    requests[i].aggregations.push_back(cudf::make_max_aggregation<cudf::groupby_aggregation>());
+    requests[i].aggregations.push_back(make_aggregation());
   }
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
@@ -78,7 +79,26 @@ void bench_groupby_max(nvbench::state& state, nvbench::type_list<Type>)
   auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const null_probability = state.get_float64("null_probability");
 
-  groupby_max_helper<Type>(state, num_rows, cardinality, null_probability);
+  groupby_max_helper<Type>(state, num_rows, cardinality, null_probability, [] {
+    return cudf::make_max_aggregation<cudf::groupby_aggregation>();
+  });
+}
+
+template <typename Type>
+void bench_groupby_min(nvbench::state& state, nvbench::type_list<Type>)
+{
+  auto const cardinality      = static_cast<cudf::size_type>(state.get_int64("cardinality"));
+  auto const num_rows         = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const null_probability = state.get_float64("null_probability");
+  auto const is_argmin        = state.get_string("aggregation") == "argmin";
+  auto const semantics        = state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+                                  ? cudf::nan_semantics::TOTALLY_ORDERED
+                                  : cudf::nan_semantics::UNORDERED;
+
+  groupby_max_helper<Type>(state, num_rows, cardinality, null_probability, [=] {
+    return is_argmin ? cudf::make_argmin_aggregation<cudf::groupby_aggregation>(semantics)
+                     : cudf::make_min_aggregation<cudf::groupby_aggregation>(semantics);
+  });
 }
 
 template <typename Type>
@@ -170,6 +190,15 @@ NVBENCH_BENCH_TYPES(bench_groupby_max,
   .add_int64_power_of_two_axis("num_rows", {12, 18, 24})
   .add_float64_axis("null_probability", {0, 0.1, 0.9})
   .add_int64_axis("num_aggregations", {1, 2, 4, 8, 16, 32});
+
+NVBENCH_BENCH_TYPES(bench_groupby_min, NVBENCH_TYPE_AXES(nvbench::type_list<float, double>))
+  .set_name("groupby_min")
+  .add_string_axis("aggregation", {"min", "argmin"})
+  .add_int64_axis("cardinality", {0})
+  .add_int64_power_of_two_axis("num_rows", {12, 18, 24})
+  .add_float64_axis("null_probability", {0, 0.1})
+  .add_int64_axis("num_aggregations", {1, 4})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});
 
 NVBENCH_BENCH_TYPES(bench_groupby_max_cardinality,
                     NVBENCH_TYPE_AXES(nvbench::type_list<int32_t, numeric::decimal128>))

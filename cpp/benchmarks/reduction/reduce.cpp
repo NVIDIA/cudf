@@ -17,6 +17,7 @@
 #include <nvbench/nvbench.cuh>
 
 #include <memory>
+#include <type_traits>
 
 template <typename T>
 struct representation_type {
@@ -31,14 +32,22 @@ struct representation_type<T> {
 template <typename T>
 using representation_type_t = typename representation_type<T>::type;
 
+static cudf::nan_semantics nan_semantics_axis(nvbench::state& state)
+{
+  return state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+           ? cudf::nan_semantics::TOTALLY_ORDERED
+           : cudf::nan_semantics::UNORDERED;
+}
+
 template <cudf::reduce_aggregation::Kind kind>
-static std::unique_ptr<cudf::reduce_aggregation> make_reduce_aggregation()
+static std::unique_ptr<cudf::reduce_aggregation> make_reduce_aggregation(
+  cudf::nan_semantics semantics)
 {
   switch (kind) {
     case cudf::reduce_aggregation::ARGMIN:
-      return cudf::make_argmin_aggregation<cudf::reduce_aggregation>();
+      return cudf::make_argmin_aggregation<cudf::reduce_aggregation>(semantics);
     case cudf::reduce_aggregation::MIN:
-      return cudf::make_min_aggregation<cudf::reduce_aggregation>();
+      return cudf::make_min_aggregation<cudf::reduce_aggregation>(semantics);
     case cudf::reduce_aggregation::SUM:
       return cudf::make_sum_aggregation<cudf::reduce_aggregation>();
     case cudf::reduce_aggregation::MEAN:
@@ -58,6 +67,13 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
 {
   if (cudf::is_chrono<DataType>() && kind != cudf::aggregation::MIN) {
     state.skip("Skip chrono types for some aggregations");
+    return;
+  }
+  auto const semantics = nan_semantics_axis(state);
+  if (semantics == cudf::nan_semantics::TOTALLY_ORDERED &&
+      (!std::is_floating_point_v<DataType> ||
+       (kind != cudf::aggregation::MIN && kind != cudf::aggregation::ARGMIN))) {
+    state.skip("TOTALLY_ORDERED only changes floating-point MIN and ARGMIN");
     return;
   }
 
@@ -91,7 +107,7 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
   state.add_global_memory_reads<DataType>(size);
   state.add_global_memory_writes<DataType>(1);
 
-  auto agg                    = make_reduce_aggregation<kind>();
+  auto agg                    = make_reduce_aggregation<kind>(semantics);
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&input_column, output_type, &agg](nvbench::launch&) {
     cudf::reduce(*input_column, *agg, output_type);
@@ -104,7 +120,7 @@ static void reduction(nvbench::state& state, nvbench::type_list<DataType, nvbenc
 
 NVBENCH_DECLARE_TYPE_STRINGS(cudf::timestamp_ms, "cudf::timestamp_ms", "cudf::timestamp_ms");
 
-using Types    = nvbench::type_list<int32_t, int64_t, double, cudf::timestamp_ms>;
+using Types    = nvbench::type_list<int32_t, int64_t, float, double, cudf::timestamp_ms>;
 using AggKinds = nvbench::enum_type_list<cudf::reduce_aggregation::ARGMIN,
                                          cudf::reduce_aggregation::MIN,
                                          cudf::reduce_aggregation::SUM,
@@ -117,4 +133,5 @@ NVBENCH_BENCH_TYPES(reduction, NVBENCH_TYPE_AXES(Types, AggKinds))
   .set_name("reduction")
   .set_type_axes_names({"DataType", "AggKinds"})
   .add_int64_axis("size", {100'000, 1'000'000, 10'000'000, 100'000'000})
-  .add_int64_axis("max_value", {100, -1});
+  .add_int64_axis("max_value", {100, -1})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});

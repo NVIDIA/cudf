@@ -71,39 +71,43 @@ make_product_aggregation<segmented_reduce_aggregation>();
 
 /// Factory to create a MIN aggregation
 template <typename Base>
-std::unique_ptr<Base> make_min_aggregation()
+std::unique_ptr<Base> make_min_aggregation(nan_semantics semantics)
 {
-  return std::make_unique<detail::min_aggregation>();
+  return std::make_unique<detail::min_aggregation>(semantics);
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_min_aggregation<aggregation>();
-template CUDF_EXPORT std::unique_ptr<rolling_aggregation>
-make_min_aggregation<rolling_aggregation>();
-template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_min_aggregation<groupby_aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_min_aggregation<aggregation>(nan_semantics);
+template CUDF_EXPORT std::unique_ptr<rolling_aggregation> make_min_aggregation<rolling_aggregation>(
+  nan_semantics);
+template CUDF_EXPORT std::unique_ptr<groupby_aggregation> make_min_aggregation<groupby_aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<groupby_scan_aggregation>
-make_min_aggregation<groupby_scan_aggregation>();
-template CUDF_EXPORT std::unique_ptr<reduce_aggregation> make_min_aggregation<reduce_aggregation>();
-template CUDF_EXPORT std::unique_ptr<scan_aggregation> make_min_aggregation<scan_aggregation>();
+  make_min_aggregation<groupby_scan_aggregation>(nan_semantics);
+template CUDF_EXPORT std::unique_ptr<reduce_aggregation> make_min_aggregation<reduce_aggregation>(
+  nan_semantics);
+template CUDF_EXPORT std::unique_ptr<scan_aggregation> make_min_aggregation<scan_aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<segmented_reduce_aggregation>
-make_min_aggregation<segmented_reduce_aggregation>();
+  make_min_aggregation<segmented_reduce_aggregation>(nan_semantics);
 
 /// Factory to create a MAX aggregation
 template <typename Base>
-std::unique_ptr<Base> make_max_aggregation()
+std::unique_ptr<Base> make_max_aggregation(nan_semantics semantics)
 {
-  return std::make_unique<detail::max_aggregation>();
+  return std::make_unique<detail::max_aggregation>(semantics);
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_max_aggregation<aggregation>();
-template CUDF_EXPORT std::unique_ptr<rolling_aggregation>
-make_max_aggregation<rolling_aggregation>();
-template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_max_aggregation<groupby_aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_max_aggregation<aggregation>(nan_semantics);
+template CUDF_EXPORT std::unique_ptr<rolling_aggregation> make_max_aggregation<rolling_aggregation>(
+  nan_semantics);
+template CUDF_EXPORT std::unique_ptr<groupby_aggregation> make_max_aggregation<groupby_aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<groupby_scan_aggregation>
-make_max_aggregation<groupby_scan_aggregation>();
-template CUDF_EXPORT std::unique_ptr<reduce_aggregation> make_max_aggregation<reduce_aggregation>();
-template CUDF_EXPORT std::unique_ptr<scan_aggregation> make_max_aggregation<scan_aggregation>();
+  make_max_aggregation<groupby_scan_aggregation>(nan_semantics);
+template CUDF_EXPORT std::unique_ptr<reduce_aggregation> make_max_aggregation<reduce_aggregation>(
+  nan_semantics);
+template CUDF_EXPORT std::unique_ptr<scan_aggregation> make_max_aggregation<scan_aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<segmented_reduce_aggregation>
-make_max_aggregation<segmented_reduce_aggregation>();
+  make_max_aggregation<segmented_reduce_aggregation>(nan_semantics);
 
 /// Factory to create a COUNT aggregation
 template <typename Base>
@@ -263,31 +267,33 @@ make_quantile_aggregation<reduce_aggregation>(std::vector<double> const& quantil
 
 /// Factory to create an ARGMAX aggregation
 template <typename Base>
-std::unique_ptr<Base> make_argmax_aggregation()
+std::unique_ptr<Base> make_argmax_aggregation(nan_semantics semantics)
 {
-  return std::make_unique<detail::argmax_aggregation>();
+  return std::make_unique<detail::argmax_aggregation>(semantics);
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_argmax_aggregation<aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_argmax_aggregation<aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<rolling_aggregation>
-make_argmax_aggregation<rolling_aggregation>();
+  make_argmax_aggregation<rolling_aggregation>(nan_semantics);
 template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_argmax_aggregation<groupby_aggregation>();
+  make_argmax_aggregation<groupby_aggregation>(nan_semantics);
 template CUDF_EXPORT std::unique_ptr<reduce_aggregation>
-make_argmax_aggregation<reduce_aggregation>();
+  make_argmax_aggregation<reduce_aggregation>(nan_semantics);
 
 /// Factory to create an ARGMIN aggregation
 template <typename Base>
-std::unique_ptr<Base> make_argmin_aggregation()
+std::unique_ptr<Base> make_argmin_aggregation(nan_semantics semantics)
 {
-  return std::make_unique<detail::argmin_aggregation>();
+  return std::make_unique<detail::argmin_aggregation>(semantics);
 }
-template CUDF_EXPORT std::unique_ptr<aggregation> make_argmin_aggregation<aggregation>();
+template CUDF_EXPORT std::unique_ptr<aggregation> make_argmin_aggregation<aggregation>(
+  nan_semantics);
 template CUDF_EXPORT std::unique_ptr<rolling_aggregation>
-make_argmin_aggregation<rolling_aggregation>();
+  make_argmin_aggregation<rolling_aggregation>(nan_semantics);
 template CUDF_EXPORT std::unique_ptr<groupby_aggregation>
-make_argmin_aggregation<groupby_aggregation>();
+  make_argmin_aggregation<groupby_aggregation>(nan_semantics);
 template CUDF_EXPORT std::unique_ptr<reduce_aggregation>
-make_argmin_aggregation<reduce_aggregation>();
+  make_argmin_aggregation<reduce_aggregation>(nan_semantics);
 
 /// Factory to create an NUNIQUE aggregation
 template <typename Base>

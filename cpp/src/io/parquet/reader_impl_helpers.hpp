@@ -450,20 +450,19 @@ class aggregate_reader_metadata {
 
  protected:
   /**
-   * @brief Computes a boolean mask indicating if an output column is a timestamp whose precision in
-   * any source differs from the output precision
+   * @brief Computes a boolean mask indicating if an output column's bloom filters cannot be queried
+   * with a literal of its output type
    *
-   * A column is flagged if its Parquet timestamp logical type requires rescaling to the output
-   * clock rate in any source, as sources are not required to store a column with the same
-   * precision.
+   * A column is flagged if, in any source, it is a timestamp whose Parquet logical type requires
+   * rescaling to the output clock rate, or a decimal whose physical values may be wider than its
+   * output storage type.
    *
    * @param output_dtypes Output column data types
    * @param output_column_schemas Output column schema indices
    *
-   * @return Boolean vector indicating if the output column is a timestamp with mismatched precision
-   * in any source
+   * @return Boolean vector indicating if the output column cannot use bloom filters
    */
-  [[nodiscard]] thrust::host_vector<bool> calc_mismatched_timestamp_mask(
+  [[nodiscard]] thrust::host_vector<bool> calc_bloom_hash_mismatch_mask(
     std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
 
   /**
@@ -475,6 +474,7 @@ class aggregate_reader_metadata {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
@@ -484,7 +484,8 @@ class aggregate_reader_metadata {
     std::span<data_type const> output_dtypes,
     std::span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Filters the row groups using bloom filters
@@ -498,6 +499,7 @@ class aggregate_reader_metadata {
    * @param bloom_filter_col_schemas Schema indices of bloom filter columns only
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
@@ -510,7 +512,8 @@ class aggregate_reader_metadata {
     std::span<data_type const> output_dtypes,
     std::span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Initialize the internal variables

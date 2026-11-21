@@ -11,6 +11,8 @@
 
 #include <cudf/hashing.hpp>
 
+#include <limits>
+
 using NumericTypesNoBools =
   cudf::test::Concat<cudf::test::IntegralTypesNotBool, cudf::test::FloatingPointTypes>;
 
@@ -97,6 +99,81 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
                                                                8863578460974333747ul,
                                                                11176802453047055260ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected);
+
+  // Cover empty input, partial blocks, and complete 16-byte blocks with a full-width seed.
+  auto const boundary_input =
+    cudf::test::strings_column_wrapper({"",
+                                        "0",
+                                        "0123456789abcde",
+                                        "0123456789abcdef",
+                                        "0123456789abcdef0",
+                                        "0123456789abcdef0123456789abcde",
+                                        "0123456789abcdef0123456789abcdef",
+                                        "0123456789abcdef0123456789abcdef0"});
+  auto const boundary_output = cudf::hashing::murmurhash3_x64_128(
+    cudf::table_view{{boundary_input}}, uint64_t{0x123456789abcdef0});
+
+  // Reference values from the original cuco MurmurHash3 x64 implementation.
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected_low({12670565569421277103ul,
+                                                                       7436438012523435542ul,
+                                                                       9182848219183220191ul,
+                                                                       1608373816723163038ul,
+                                                                       17566612986151629899ul,
+                                                                       13352410209864817512ul,
+                                                                       1213784217078048059ul,
+                                                                       4667731712117700191ul});
+  cudf::test::fixed_width_column_wrapper<uint64_t> const expected_high({8552480720497679734ul,
+                                                                        15811099216923661374ul,
+                                                                        5968932763527278272ul,
+                                                                        7539280683575153609ul,
+                                                                        16398509401717830041ul,
+                                                                        4777729961966234481ul,
+                                                                        10427324415301665755ul,
+                                                                        11601329378799277982ul});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(boundary_output->view().column(0), expected_low);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(boundary_output->view().column(1), expected_high);
+}
+
+TEST_F(MurmurHash3_x64_128_Test, IntegerType)
+{
+  auto constexpr seed = uint64_t{0x123456789abcdef0};
+  auto constexpr min  = std::numeric_limits<int32_t>::min();
+  auto constexpr max  = std::numeric_limits<int32_t>::max();
+
+  // Reference values from a CPU implementation of MurmurHash3 x64 128 with a 64-bit seed.
+  cudf::test::fixed_width_column_wrapper<int32_t> const int32_input({0, 1, -1, 42, min, max});
+  auto output = cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int32_input}}, seed);
+  cudf::test::fixed_width_column_wrapper<uint64_t> const int32_low({16171072276759621859ul,
+                                                                    17262603546401455210ul,
+                                                                    12711963030754346615ul,
+                                                                    18226976503916875536ul,
+                                                                    16328679645040193767ul,
+                                                                    11179377120613608218ul});
+  cudf::test::fixed_width_column_wrapper<uint64_t> const int32_high({16963931180576252815ul,
+                                                                     16408157432823198965ul,
+                                                                     2074124821410842894ul,
+                                                                     4423695892072655596ul,
+                                                                     10433797240704751331ul,
+                                                                     16165709806370322755ul});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), int32_low);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), int32_high);
+
+  cudf::test::fixed_width_column_wrapper<int64_t> const int64_input({0, 1, -1, 42, min, max});
+  output = cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int64_input}}, seed);
+  cudf::test::fixed_width_column_wrapper<uint64_t> const int64_low({8446848690776147849ul,
+                                                                    2177231992012963529ul,
+                                                                    5774400613906242884ul,
+                                                                    7282352372194964032ul,
+                                                                    1340115803818592068ul,
+                                                                    11946284795443978790ul});
+  cudf::test::fixed_width_column_wrapper<uint64_t> const int64_high({9845961485014813475ul,
+                                                                     7246624320603305217ul,
+                                                                     120396094497276611ul,
+                                                                     15497694688976670770ul,
+                                                                     4390549089724037051ul,
+                                                                     7654781420204105039ul});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), int64_low);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), int64_high);
 }
 
 TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)

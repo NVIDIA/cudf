@@ -33,6 +33,12 @@ struct string_view {
   size_type length;
 };
 
+struct mutable_string_view {
+  char* data;
+  size_type bytes;
+  size_type length;
+};
+
 template <typename Rep>
 struct duration {
   Rep count;

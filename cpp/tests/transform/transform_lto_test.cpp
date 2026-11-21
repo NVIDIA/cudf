@@ -19,9 +19,8 @@
 
 #include <array>
 #include <format>
-#include <string>
-
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -44,7 +43,7 @@ TEST_F(TransformLTOTest, UdfAbiLayouts)
                                     "numeric::decimal64",
                                     "numeric::decimal128",
                                     "cudf::string_view",
-                                    "cuda::std::span<char>",
+                                    "cudf::mutable_string_view",
                                     "cudf::size_type",
                                     "cudf::errc",
                                     "cudf::voidptr_t"};
@@ -216,15 +215,12 @@ TEST_F(TransformLTOTest, OutputWithPreallocatedOffsets)
   std::vector<std::unique_ptr<cudf::column>> string_offsets;
   string_offsets.push_back(column_wrapper<int32_t>{0, 3, 3, 5, 8, 11}.release());
 
-  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::copy_string),
-                                    cudf::lto_binary_type::FATBIN,
-                                    cudf::null_aware::NO,
-                                    std::nullopt,
-                                    inputs,
-                                    outputs,
-                                    std::move(string_offsets),
-                                    std::nullopt,
-                                    cudf::test::get_default_stream());
+  auto result = cudf::transform(cudf::test::get_udf("copy_string"),
+                                inputs,
+                                outputs,
+                                std::move(string_offsets),
+                                std::nullopt,
+                                cudf::test::get_default_stream());
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
 }

@@ -15,6 +15,7 @@
  */
 
 #include <cudf/detail/row_ir/opcode.hpp>
+#include <cudf/strings/mutable_string_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>

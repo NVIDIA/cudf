@@ -59,6 +59,14 @@ __device__ errc string_find(int32_t* out, string_view a, string_view b)
   return errc::SUCCESS;
 }
 
+__device__ errc copy_string(mutable_string_view* output, string_view input)
+{
+  for (size_type i = 0; i < input.size_bytes(); ++i) {
+    output->data()[i] = input.data()[i];
+  }
+  return errc::SUCCESS;
+}
+
 __device__ errc
 compare_string_and_integer(bool* out, string_view a, string_view b, int32_t c, int32_t d)
 {
@@ -83,7 +91,7 @@ __device__ errc nullable_string_identity(cuda::std::optional<string_view>* outpu
   return errc::SUCCESS;
 }
 
-__device__ errc concat(cuda::std::span<char>* out, string_view a, string_view b, string_view c)
+__device__ errc concat(mutable_string_view* out, string_view a, string_view b, string_view c)
 {
   auto iter = out->data();
   memcpy(iter, a.data(), a.size_bytes());
@@ -96,7 +104,7 @@ __device__ errc concat(cuda::std::span<char>* out, string_view a, string_view b,
 }
 
 __device__ errc concat_with_metadata(int32_t* ab_size,
-                                     cuda::std::span<char>* out,
+                                     mutable_string_view* out,
                                      bool* is_odd,
                                      string_view a,
                                      string_view b,

@@ -2247,6 +2247,37 @@ def _(
         right.dtype.polars_type, pl.Array
     ):
         raise NotImplementedError("Binary operations on Array are not supported")
+    if (
+        node.op == plrs._expr_nodes.Operator.Plus
+        and dtype.id() == left.dtype.id() == plc.TypeId.TIMESTAMP_DAYS
+        and right.dtype.id() == plc.TypeId.DURATION_MICROSECONDS
+    ):
+        # Polars SQL lowers integer day offsets to microsecond durations.
+        # Match Polars by adding at microsecond resolution before casting to Date.
+        timestamp = DataType(pl.Datetime("us"))
+        # Polars' non-strict widening cast nulls dates outside the int64 range.
+        days = DataType(pl.Int32())
+        boolean = DataType(pl.Boolean())
+        day = expr.Cast(days, True, left)  # noqa: FBT003
+        max_day = (2**63 - 1) // 86_400_000_000
+        op = plc.binaryop.BinaryOperator
+        in_range = expr.BinOp(
+            boolean,
+            op.LOGICAL_AND,
+            expr.BinOp(boolean, op.GREATER_EQUAL, day, expr.Literal(days, -max_day)),
+            expr.BinOp(boolean, op.LESS_EQUAL, day, expr.Literal(days, max_day)),
+        )
+        date = expr.Ternary(dtype, in_range, left, expr.Literal(dtype, None))
+        return expr.Cast(
+            dtype,
+            True,  # noqa: FBT003
+            expr.BinOp(
+                timestamp,
+                op.ADD,
+                expr.Cast(timestamp, True, date),  # noqa: FBT003
+                right,
+            ),
+        )
     if node.op == plrs._expr_nodes.Operator.TrueDivide and (
         plc.traits.is_fixed_point(left.dtype.plc_type)
         or plc.traits.is_fixed_point(right.dtype.plc_type)

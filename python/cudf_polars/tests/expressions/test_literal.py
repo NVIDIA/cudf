@@ -72,12 +72,16 @@ def test_timelike_literal(engine: pl.GPUEngine, timestamp, timedelta):
         two_delta=timedelta + timedelta,
     )
     schema = {k: DataType(v).plc_type for k, v in q.collect_schema().items()}
-    if plc.binaryop.is_supported_operation(
+    supports_adjusted = (
+        schema["adjusted"].id() == schema["time"].id() == plc.TypeId.TIMESTAMP_DAYS
+        and schema["delta"].id() == plc.TypeId.DURATION_MICROSECONDS
+    ) or plc.binaryop.is_supported_operation(
         schema["adjusted"],
         schema["time"],
         schema["delta"],
         plc.binaryop.BinaryOperator.ADD,
-    ) and plc.binaryop.is_supported_operation(
+    )
+    if supports_adjusted and plc.binaryop.is_supported_operation(
         schema["two_delta"],
         schema["delta"],
         schema["delta"],

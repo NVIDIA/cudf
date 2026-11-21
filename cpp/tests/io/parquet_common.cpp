@@ -777,7 +777,7 @@ cudf::table_view get_row_group_slice(ordered_rg_source const& src, cudf::size_ty
   return cudf::slice(src.table->view(), {start, end}).front();
 }
 
-std::unique_ptr<cudf::table> build_expected_ordered_table(
+std::unique_ptr<cudf::table> create_expected_ordered_table(
   cudf::host_span<ordered_rg_source const* const> sources,
   cudf::host_span<std::vector<cudf::size_type> const> rg_selection)
 {

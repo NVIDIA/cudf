@@ -181,6 +181,23 @@ def test_parquet_filter_boolean_column(engine: pl.GPUEngine, tmp_path):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "values",
+    [[None, {"a": None}, {"a": 2}, None], [None, [], [None, 1], None]],
+    ids=["struct", "list"],
+)
+@pytest.mark.parametrize("negate", [False, True])
+def test_scan_nested_null_filter(engine, tmp_path, values, negate):
+    path = tmp_path / "nested.parquet"
+    pl.DataFrame({"id": range(len(values)), "nested": values}).write_parquet(
+        path, row_group_size=2
+    )
+    col = pl.col("nested")
+    predicate = col.is_not_null() if negate else col.is_null()
+    query = pl.scan_parquet(path).filter(predicate).select("id")
+    assert_gpu_result_equal(query, engine=engine)
+
+
 def test_jit_filter(pq_file):
     q = pq_file.filter((pl.col("a") >= 2) & (pl.col("a") <= 4)).select("a", "c")
     assert_gpu_result_equal(

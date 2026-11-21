@@ -1007,6 +1007,19 @@ column_selection_options reader_impl::make_column_selection_options(
     .case_sensitive_names   = options.is_enabled_case_sensitive_names()};
 }
 
+std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
+{
+  auto const num_prepended_cols = static_cast<size_type>(_options.prepend_source_index_column) +
+                                  static_cast<size_type>(_options.prepend_row_index_column);
+  auto const expr = _expr_conv.get_converted_expr();
+  row_filter const filter{
+    expr.value().get(), std::move(input), num_prepended_cols, _stream, _mr.as_temporary()};
+  auto const mr      = _mr.get_temporary_mr();
+  auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
+  return use_jit ? cudf::compute_column_jit(filter.input(), filter.expression(), {}, _stream, mr)
+                 : cudf::detail::compute_column(filter.input(), filter.expression(), _stream, mr);
+}
+
 table_with_metadata reader_impl::finalize_output(read_mode mode,
                                                  table_metadata& out_metadata,
                                                  std::vector<std::unique_ptr<column>>& out_columns,
@@ -1075,12 +1088,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     }
   }
 
-  // Offset column references in `_expr_conv` by the number of prepended columns
-  auto const final_filter      = compute_offset_filter();
-  auto const final_filter_expr = final_filter.get_converted_expr();
-
-  // check if the output filter AST expression (= _expr_conv.get_converted_expr()) exists
-  if (final_filter_expr.has_value()) {
+  if (_expr_conv.get_converted_expr().has_value()) {
     auto const output_count = out_columns.size() - _num_filter_only_columns;
     auto read_table         = std::make_unique<table>(std::move(out_columns));
     auto counting_it        = cuda::counting_iterator<std::size_t>{0};
@@ -1092,15 +1100,7 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
     // Clear the number of rows per source as it is not valid after filtering
     out_metadata.num_rows_per_source.clear();
 
-    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
-    auto predicate =
-      use_jit ? cudf::compute_column_jit(read_table->view(),
-                                         final_filter_expr.value().get(),
-                                         {},
-                                         _stream,
-                                         _mr.get_temporary_mr())
-              : cudf::detail::compute_column(
-                  *read_table, final_filter_expr.value().get(), _stream, _mr.get_temporary_mr());
+    auto predicate = compute_row_filter(read_table->view());
 
     CUDF_EXPECTS(predicate->view().type().id() == type_id::BOOL8,
                  "Predicate filter should return a boolean");

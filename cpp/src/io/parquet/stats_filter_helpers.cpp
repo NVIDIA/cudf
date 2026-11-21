@@ -87,6 +87,8 @@ simplified_expression_opt stats_columns_collector::simplify_comparison(
 simplified_expression_opt stats_columns_collector::simplify_unary_op(
   ast::ast_operator op, ast::column_reference const& col_ref)
 {
+  // Parquet statistics describe leaf chunks. They cannot determine parent validity.
+  if (cudf::is_nested(_output_dtypes[col_ref.get_column_index()])) { return std::nullopt; }
   if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
   return col_ref;
 }
@@ -94,8 +96,7 @@ simplified_expression_opt stats_columns_collector::simplify_unary_op(
 simplified_expression_opt stats_columns_collector::simplify_negated_unary_op(
   ast::ast_operator op, ast::column_reference const& col_ref)
 {
-  if (op != ast::ast_operator::IS_NULL) { return std::nullopt; }
-  return col_ref;
+  return simplify_unary_op(op, col_ref);
 }
 
 simplified_expression_opt stats_columns_collector::simplify_negated_comparison(
@@ -236,9 +237,11 @@ simplified_expression_opt stats_expression_converter::simplify_unary_op(
 {
   using cudf::ast::ast_operator;
 
+  auto const col_index = col_ref.get_column_index();
+  // Parquet statistics describe leaf chunks. They cannot determine parent validity.
+  if (cudf::is_nested(_output_dtypes[col_index])) { return std::nullopt; }
   if (op != ast_operator::IS_NULL) { return std::nullopt; }
-  auto const& all_null =
-    _tree.push(ast::column_reference{col_ref.get_column_index() * stats_cols_per_column + 2});
+  auto const& all_null = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 2});
   return _tree.push(ast::operation{ast_operator::IDENTITY, all_null});
 }
 
@@ -247,9 +250,11 @@ simplified_expression_opt stats_expression_converter::simplify_negated_unary_op(
 {
   using cudf::ast::ast_operator;
 
+  auto const col_index = col_ref.get_column_index();
+  // Parquet statistics describe leaf chunks. They cannot determine parent validity.
+  if (cudf::is_nested(_output_dtypes[col_index])) { return std::nullopt; }
   if (op != ast_operator::IS_NULL) { return std::nullopt; }
-  auto const& all_null =
-    _tree.push(ast::column_reference{col_ref.get_column_index() * stats_cols_per_column + 2});
+  auto const& all_null = _tree.push(ast::column_reference{col_index * stats_cols_per_column + 2});
   return _tree.push(ast::operation{ast_operator::NOT, all_null});
 }
 

@@ -499,17 +499,9 @@ class reader_impl {
   }
 
   /**
-   * @brief Offset the column references in `_expr_conv` by the number of columns prepended to
-   * the output
-   *
-   * @return Offsetted expression converter
+   * @brief Evaluates the filter against decoded rows, including any prepended index columns.
    */
-  [[nodiscard]] inline offset_column_references compute_offset_filter() const
-  {
-    auto const num_prepended_cols = static_cast<size_type>(_options.prepend_source_index_column) +
-                                    static_cast<size_type>(_options.prepend_row_index_column);
-    return offset_column_references(_expr_conv.get_converted_expr(), num_prepended_cols);
-  }
+  [[nodiscard]] std::unique_ptr<column> compute_row_filter(table_view input) const;
 
   /**
    * @brief Calculate the number of rows read from each source in the output chunk

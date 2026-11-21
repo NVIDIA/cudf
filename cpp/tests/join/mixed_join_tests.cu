@@ -2309,13 +2309,6 @@ TEST_F(FilteredFullJoinTest, ManyToManyMixedMatches)
 struct FilterJoinJitErrorTest : public FilteredFullJoinTest,
                                 public ::testing::WithParamInterface<cudf::join_kind> {};
 
-// Loads a precompiled predicate from cpp/tests/join/fragments.
-std::span<uint8_t const> join_filter_fragment(std::size_t id)
-{
-  auto const range = cudf_test_fragments::file_ranges[id];
-  return cudf_test_fragments::files.subspan(range[0], range[1]);
-}
-
 TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
 {
   // The same fallible predicate reads a per-pair overflow limit from user_data in CUDA and from a
@@ -2374,7 +2367,7 @@ __device__ cudf::errc predicate(void* user_data, int row, bool* output, int a, i
           r,
           li,
           ri,
-          join_filter_fragment(cudf_test_fragments::join_overflow_filter),
+          cudf_test_fragments::get(cudf_test_fragments::join_overflow_filter),
           GetParam(),
           cudf::lto_binary_type::FATBIN,
           extra_inputs);
@@ -2458,7 +2451,7 @@ __device__ void predicate(cuda::std::optional<bool>* output,
               cudf::table_view{{right}},
               maps,
               maps,
-              join_filter_fragment(cudf_test_fragments::join_null_aware_filter),
+              cudf_test_fragments::get(cudf_test_fragments::join_null_aware_filter),
               GetParam(),
               cudf::lto_binary_type::FATBIN,
               extra_inputs,

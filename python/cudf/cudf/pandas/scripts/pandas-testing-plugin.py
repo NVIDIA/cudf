@@ -12242,7 +12242,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[pyarrow]-min-True-False-1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[python]-min-False-False-0]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[python]-min-True-False-1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/indexes/multi/test_formats.py::TestRepr::test_tuple_width": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-partition2-object]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12488,8 +12487,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
 NODEIDS_THAT_MAY_FAIL = {
     "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[max]": "Environment-sensitive TypeError expectation",
     "tests/groupby/test_numeric_only.py::TestNumericOnly::test_extrema[min]": "Environment-sensitive TypeError expectation",
-    "tests/indexes/multi/test_formats.py::TestRepr::test_rjust": "TODO: Fails starting with pandas version 3.0.6",
-    "tests/indexes/multi/test_formats.py::TestRepr::test_tuple_width": "TODO: Fails starting with pandas version 3.0.6",
     "tests/io/test_spss.py::test_spss_metadata": "pandas 3.0.3 metadata expectation is incompatible with pyreadstat 1.3.6",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=object]": "TODO: Fails starting with pandas version 3.0.6",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[categorical-string=object]": "TODO: Fails starting with pandas version 3.0.6",

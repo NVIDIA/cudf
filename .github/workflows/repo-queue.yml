@@ -1,0 +1,43 @@
+name: cuDF work tracking
+
+on:
+  schedule:
+    - cron: '17 17 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Preview, refresh the board, send due DMs, or rehearse reminders
+        type: choice
+        default: preview
+        options:
+          - preview
+          - refresh
+          - dm
+          - rehearsal
+
+concurrency:
+  group: cudf-work-tracking
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tracking:
+    if: >-
+      github.repository == 'NVIDIA/cudf' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Refresh work tracking or rehearse DM reminders
+        env:
+          GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN }}
+          TRACKING_MODE: ${{ inputs.mode || 'dm' }}
+        run: >-
+          python3 ci/repo_queue/scheduled.py --mode "$TRACKING_MODE"
+          --output-dir "$RUNNER_TEMP/cudf-work-tracking"

@@ -2213,6 +2213,20 @@ def test_string_slice_replace(string, number, diff, repl):
     )
 
 
+@pytest.mark.parametrize(
+    "start, stop",
+    [(np.int64(-1), None), (0, np.int64(-1)), (np.uint32(2), np.int32(1))],
+)
+def test_string_slice_replace_numpy_integer_bounds(start, stop):
+    ps = pd.Series(["abc", "é", "", None])
+    gs = cudf.from_pandas(ps)
+
+    assert_eq(
+        ps.str.slice_replace(start, stop, repl="!"),
+        gs.str.slice_replace(start, stop, repl="!"),
+    )
+
+
 def test_string_slice_replace_fail():
     gs = cudf.Series(["abc", "xyz", ""])
     with pytest.raises(TypeError):

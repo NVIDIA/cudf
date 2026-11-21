@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import operator
 import re
 import warnings
 from typing import TYPE_CHECKING, Literal, cast, overload
@@ -2348,8 +2349,9 @@ class StringMethods(BaseAccessor):
         4    aXde
         dtype: str
         """
-        if start is None:
-            start = 0
+        start = 0 if start is None else operator.index(start)
+        if stop is not None:
+            stop = operator.index(stop)
 
         if repl is None:
             repl = ""

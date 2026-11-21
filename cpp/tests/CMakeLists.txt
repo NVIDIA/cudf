@@ -300,7 +300,6 @@ ConfigureTest(
   binaryop/binop-null-test.cpp
   binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
-  binaryop/binop-generic-ptx-test.cpp
   binaryop/operator_parity_test.cpp
   GPUS 1
   PERCENT 100

@@ -46,17 +46,16 @@ public enum BinaryOp {
   NULL_NOT_EQUALS(28), // negation of NULL_EQUALS
   NULL_MAX(29), // MAX but NULL < not NULL
   NULL_MIN(30), // MIN but NULL > not NULL
-  //NOT IMPLEMENTED YET GENERIC_BINARY(31);
-  NULL_LOGICAL_AND(32), // three-valued (Kleene) &&: if any operand is false, returns false; if both
+  NULL_LOGICAL_AND(31), // three-valued (Kleene) &&: if any operand is false, returns false; if both
                         // operands are true, returns true; otherwise returns null
-  NULL_LOGICAL_OR(33),  // three-valued (Kleene) ||: if any operand is true, returns true; if both
+  NULL_LOGICAL_OR(32),  // three-valued (Kleene) ||: if any operand is true, returns true; if both
                         // operands are false, returns false; otherwise returns null
-  ADD_OVERFLOW(34),
-  SUB_OVERFLOW(35),
-  MUL_OVERFLOW(36),
-  DIV_OVERFLOW(37),
-  MOD_OVERFLOW(38),
-  INVALID_BINARY(39);
+  ADD_OVERFLOW(33),
+  SUB_OVERFLOW(34),
+  MUL_OVERFLOW(35),
+  DIV_OVERFLOW(36),
+  MOD_OVERFLOW(37),
+  INVALID_BINARY(38);
 
 
   static final EnumSet<BinaryOp> COMPARISON = EnumSet.of(

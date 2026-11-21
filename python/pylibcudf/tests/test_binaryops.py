@@ -711,13 +711,6 @@ def py_shift_right_unsigned(x, y):
             "int64",
             "int64",
             "int64",
-            plc.binaryop.BinaryOperator.GENERIC_BINARY,
-            None,
-        ),
-        (
-            "int64",
-            "int64",
-            "int64",
             plc.binaryop.BinaryOperator.INVALID_BINARY,
             None,
         ),

@@ -1396,7 +1396,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
     children.push_back(walk_schema(mt, child_idx));
   }
 
-  auto const type_id   = to_type_id(sch, false, type_id::EMPTY, type_id::EMPTY);
+  auto const type_id = to_type_id(sch, mt->arrow_type(idx), false, type_id::EMPTY, type_id::EMPTY);
   auto const cudf_type = to_data_type(type_id, sch);
 
   return parquet_column_schema{

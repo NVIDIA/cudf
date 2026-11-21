@@ -4,12 +4,13 @@
  */
 
 #include "common.cuh"
-#include "hash_csr_kernels.cuh"
+#include "hash_graph_kernels.cuh"
 #include "join/join_common_utils.hpp"
 #include "join/join_match_state.hpp"
 
 #include <cudf/copying.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -72,34 +73,37 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
       mr);
   }
 
-  // Contexts created by a factory cache the matching groups; others probe the partition again.
+  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const left_partition =
+    cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0];
+  auto const preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left_partition, stream, temp_mr);
+
+  // Contexts created by a factory cache the row hashes; others probe the partition again.
   // TODO: Remove the probe when the deprecated join_match_context constructor is removed in 27.02
   // (#20958).
-  cuda::device_buffer<size_type> probed_groups(stream,
-                                               cudf::get_current_device_resource_ref(),
-                                               state == nullptr ? partition_size : 0,
-                                               cuda::no_init);
+  cuda::device_buffer<hash_value_type> probed_hashes(
+    stream, temp_mr, state == nullptr ? partition_size : 0, cuda::no_init);
   if (state == nullptr) {
-    auto const left_partition =
-      cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0];
     validate_hash_join_probe(_right, left_partition, _has_nulls);
-    probe(join, left_partition, probed_groups, {}, nullptr, {}, nullptr, stream);
+    probe(join, left_partition, preprocessed_left, probed_hashes, {}, nullptr, {}, nullptr, stream);
   }
-  auto const probe_groups = state == nullptr ? device_span<size_type const>{probed_groups}
-                                             : device_span<size_type const>{state->groups}.subspan(
-                                                 left_start_idx, partition_size);
+  auto const hashes = state == nullptr ? device_span<hash_value_type const>{probed_hashes}
+                                       : device_span<hash_value_type const>{state->hashes}.subspan(
+                                           left_start_idx, partition_size);
 
   auto const [offsets, output_size] =
-    hash_csr_match_offsets(match_counts.subspan(left_start_idx, partition_size), stream);
-  return hash_csr_retrieve(join != join_kind::INNER_JOIN,
-                           output_size,
-                           offsets,
-                           probe_groups,
-                           _impl->csr(),
-                           left_start_idx,
-                           0,
-                           stream,
-                           mr);
+    hash_graph_match_offsets(match_counts.subspan(left_start_idx, partition_size), stream);
+  return retrieve(join,
+                  left_partition,
+                  preprocessed_left,
+                  hashes,
+                  offsets,
+                  output_size,
+                  left_start_idx,
+                  0,
+                  stream,
+                  mr);
 }
 
 template std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,

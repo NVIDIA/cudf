@@ -639,13 +639,13 @@ def decompose_single_agg(
                 aggs,
                 named_expr.reconstruct(agg.reconstruct([p.value for p in posts])),
             )
-        elif is_top and all(
+        elif all(
             isinstance(node, expr.Literal)
             for node in traversal([agg])
             if not node.children
-        ):
-            # An expression built only from scalar literals is itself a
-            # scalar: it yields one value per group rather than a list.
+        ) and (is_top or agg.all_pointwise()):
+            # Keep scalar expressions available for post-evaluation, including
+            # when they are operands of another grouped expression.
             return [], named_expr
         else:
             # Or pre-evaluation if inside an aggregation.

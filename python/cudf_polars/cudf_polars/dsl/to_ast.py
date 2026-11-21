@@ -16,6 +16,7 @@ from pylibcudf import expressions as plc_expr
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
+from cudf_polars.dsl.expressions.binaryop import _integer_cast_decimal_precision
 from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traversal
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.replace import replace
@@ -508,6 +509,7 @@ def _insert_colrefs(node: expr.Expr, rec: ExprTransformer) -> expr.Expr:
             node.dtype,
             rec.state["name_to_index"][node.name],
             rec.state["table_ref"],
+            None,
             node,
         )
     return reuse_if_unchanged(node, rec)
@@ -684,6 +686,7 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
             node.dtype,
             state["indices"][table_ref][name],
             table_ref,
+            None,
             expr.Col(node.dtype, name),
         )
     sides = _sides(node, state)
@@ -701,8 +704,14 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
         if local not in extras:
             extras[local] = next(state["names"][table_ref])
         index = len(state["indices"][table_ref]) + list(extras).index(local)
+        # Rebuilding a decimal comparison still needs the bound of the
+        # cast, even though the join now reads a materialized column.
         return expr.ColRef(
-            node.dtype, index, table_ref, expr.Col(node.dtype, extras[local])
+            node.dtype,
+            index,
+            table_ref,
+            _integer_cast_decimal_precision(node),
+            expr.Col(node.dtype, extras[local]),
         )
     if isinstance(node, expr.BinOp) and node.op in expr.BinOp._COMPARISONS:
         # The AST has no conditional, so compare each branch of a conditional

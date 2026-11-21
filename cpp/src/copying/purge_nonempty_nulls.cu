@@ -124,9 +124,11 @@ bool may_have_nonempty_nulls(column_view const& input)
 /**
  * @copydoc cudf::has_nonempty_nulls
  */
-bool has_nonempty_nulls(column_view const& input, cuda::stream_ref stream)
+bool has_nonempty_nulls(column_view const& input,
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr)
 {
-  return detail::has_nonempty_nulls(input, stream);
+  return detail::has_nonempty_nulls(input, stream, mr);
 }
 
 /**

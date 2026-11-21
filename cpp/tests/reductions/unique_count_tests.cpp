@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/reduction/unique_count.hpp>
@@ -284,4 +285,37 @@ TEST_F(UniqueCount, NullableStructOfStructs)
 
   EXPECT_EQ(6, cudf::unique_count(input, null_equality::EQUAL));
   EXPECT_EQ(8, cudf::unique_count(input, null_equality::UNEQUAL));
+}
+
+TEST_F(UniqueCount, ExplicitMemoryResources)
+{
+  auto const input =
+    cudf::test::strings_column_wrapper({"a", "a", "", "b"}, cudf::test::iterators::nulls_at({2}));
+  auto const stream = cudf::test::get_default_stream();
+  {
+    auto harness = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) {
+        return cudf::unique_count(
+          input, null_policy::INCLUDE, nan_policy::NAN_IS_VALID, stream, mr);
+      },
+      [](auto) { return 0; },
+      [](auto result) { EXPECT_EQ(result, 3); },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME});
+  }
+  {
+    auto const input_table = cudf::table_view{{input}};
+    auto harness           = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) {
+        return cudf::unique_count(input_table, null_equality::EQUAL, stream, mr);
+      },
+      [](auto) { return 0; },
+      [](auto result) { EXPECT_EQ(result, 3); },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME});
+  }
 }

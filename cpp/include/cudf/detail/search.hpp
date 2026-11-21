@@ -47,7 +47,10 @@ std::unique_ptr<column> upper_bound(table_view const& haystack,
  *
  * @param stream CUDA stream used for device memory operations and kernel launches.
  */
-bool contains(column_view const& haystack, scalar const& needle, cuda::stream_ref stream);
+bool contains(column_view const& haystack,
+              scalar const& needle,
+              cuda::stream_ref stream,
+              cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::contains(column_view const&, column_view const&, cudf::memory_resources)

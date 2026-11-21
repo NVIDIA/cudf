@@ -408,7 +408,7 @@ class self_comparator {
   self_comparator(table_view const& t,
                   cuda::stream_ref stream,
                   rmm::device_async_resource_ref temp_mr)
-    : d_t(preprocessed_table::create(t, stream, temp_mr))
+    : d_t(preprocessed_table::create(t, stream, cudf::memory_resources{temp_mr, temp_mr}))
   {
   }
 

@@ -382,8 +382,11 @@ void reader_impl::assemble_dict_transcoded_columns(
         auto const& chunk = pass.chunks[chunk_indices[0]];
         auto keys         = make_keys_column_from_index_pairs(
           chunk.str_dict_index, chunk_key_counts[0], _stream, _mr);
-        auto const num_distinct_keys = cudf::detail::distinct_count(
-          keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
+        auto const num_distinct_keys = cudf::detail::distinct_count(keys->view(),
+                                                                    null_policy::INCLUDE,
+                                                                    nan_policy::NAN_IS_VALID,
+                                                                    _stream,
+                                                                    _mr.as_temporary());
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
         out_columns[out_idx] = cudf::make_dictionary_column(
           std::move(keys), std::move(indices_owner), _stream, _mr.get_output_mr());

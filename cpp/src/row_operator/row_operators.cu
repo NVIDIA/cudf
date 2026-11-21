@@ -871,8 +871,10 @@ two_table_comparator::two_table_comparator(table_view const& left,
                                            table_view const& right,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref temp_mr)
-  : d_left_table{preprocessed_table::create(left, stream, temp_mr)},
-    d_right_table{preprocessed_table::create(right, stream, temp_mr)}
+  : d_left_table{preprocessed_table::create(
+      left, stream, cudf::memory_resources{temp_mr, temp_mr})},
+    d_right_table{
+      preprocessed_table::create(right, stream, cudf::memory_resources{temp_mr, temp_mr})}
 {
   check_shape_compatibility(left, right);
 }

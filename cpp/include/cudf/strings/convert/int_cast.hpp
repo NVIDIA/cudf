@@ -124,11 +124,14 @@ std::unique_ptr<column> cast_from_integer(
  *
  * @param input Strings instance for this operation
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return The minimum integer type required to encode the input column, or std::nullopt
  * if the input column is not castable to an integer.
  */
 std::optional<cudf::data_type> integer_cast_type(
-  strings_column_view const& input, cuda::stream_ref stream = cudf::get_default_stream());
+  strings_column_view const& input,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of doxygen group
 }  // namespace strings

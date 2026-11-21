@@ -99,7 +99,7 @@ struct byte_list_conversion_fn<T> {
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
     if (auto const result_cv = result->view();
-        cudf::detail::has_nonempty_nulls(result_cv, stream)) {
+        cudf::detail::has_nonempty_nulls(result_cv, stream, mr.as_temporary())) {
       return cudf::detail::purge_nonempty_nulls(result_cv, stream, mr);
     }
 
@@ -148,7 +148,7 @@ struct byte_list_conversion_fn<T> {
     // If any nulls are present, the corresponding lists must be purged so that
     // the result is sanitized.
     if (auto const result_cv = result->view();
-        cudf::detail::has_nonempty_nulls(result_cv, stream)) {
+        cudf::detail::has_nonempty_nulls(result_cv, stream, mr.as_temporary())) {
       return cudf::detail::purge_nonempty_nulls(result_cv, stream, mr);
     }
 

@@ -1,7 +1,8 @@
-# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 cimport pylibcudf.libcudf.types as libcudf_types
 from libc.stdint cimport int32_t, uint32_t
+from libcpp cimport bool
 from libcpp.memory cimport unique_ptr
 from libcpp.pair cimport pair
 from libcpp.vector cimport vector
@@ -18,6 +19,10 @@ cdef extern from "cudf/partitioning.hpp" namespace "cudf" nogil:
     cpdef enum class hash_id(int32_t):
         HASH_IDENTITY "cudf::hash_id::HASH_IDENTITY"
         HASH_MURMUR3 "cudf::hash_id::HASH_MURMUR3"
+
+    cpdef enum class partition_order(bool):
+        UNSTABLE "cudf::partition_order::UNSTABLE"
+        STABLE "cudf::partition_order::STABLE"
 
 
 cdef extern from "cudf/partitioning.hpp" namespace "cudf" nogil:
@@ -37,6 +42,17 @@ cdef extern from "cudf/partitioning.hpp" namespace "cudf" nogil:
         const table_view& input,
         const table_view& keys,
         int num_partitions,
+        hash_id hash_function,
+        uint32_t seed,
+        cudaStream_t stream,
+        device_async_resource_ref mr
+    ) except +libcudf_exception_handler
+
+    cdef pair[unique_ptr[column], vector[libcudf_types.size_type]] \
+        hash_partition_indices "cudf::hash_partition_indices" (
+        const table_view& keys,
+        int num_partitions,
+        partition_order order,
         hash_id hash_function,
         uint32_t seed,
         cudaStream_t stream,

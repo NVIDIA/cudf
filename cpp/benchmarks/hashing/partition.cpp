@@ -402,6 +402,42 @@ void bench_hash_partition_all_keys_stress(nvbench::state& state)
   run_hash_partition(state, *input, num_columns, num_partitions);
 }
 
+/**
+ * @brief Measure hash_partition_indices against hash_partition for partition-count scaling.
+ *
+ * The input contains one INT64 key, eight INT64 payload columns, and 2^26 rows. The
+ * `gather` axis adds a gather of the full table so the result is comparable to hash_partition.
+ *
+ * @param state Benchmark state
+ */
+void bench_hash_partition_indices(nvbench::state& state)
+{
+  auto const num_rows       = cudf::size_type{1} << 26;
+  auto const num_partitions = get_size_type_axis(state, "num_partitions");
+  auto const order          = state.get_string("order") == "stable" ? cudf::partition_order::STABLE
+                                                                    : cudf::partition_order::UNSTABLE;
+  auto const gather         = state.get_int64("gather") != 0;
+
+  auto input            = make_input_table(std::array{cudf::type_id::INT64},
+                                std::vector<cudf::type_id>(8, cudf::type_id::INT64),
+                                num_rows);
+  auto const input_view = input->view();
+  auto const keys       = input_view.select({0});
+
+  auto const stream = cudf::get_default_stream();
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  state.add_element_count(num_rows, "rows");
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+    auto [gather_map, offsets] = cudf::hash_partition_indices(keys, num_partitions, order);
+    if (gather) { [[maybe_unused]] auto output = cudf::gather(input_view, gather_map->view()); }
+  });
+
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
 }  // namespace
 
 NVBENCH_BENCH_TYPES(bench_hash_partition_analytic,
@@ -446,3 +482,9 @@ NVBENCH_BENCH(bench_hash_partition_all_keys_stress)
   .set_name("hash_partition_all_keys_stress")
   .add_int64_axis("num_columns", {2, 8, 16, 256})
   .add_int64_axis("num_partitions", {256, 1024});
+
+NVBENCH_BENCH(bench_hash_partition_indices)
+  .set_name("hash_partition_indices")
+  .add_int64_axis("num_partitions", {8, 64, 256, 1024, 8192, 65536})
+  .add_string_axis("order", {"stable", "unstable"})
+  .add_int64_axis("gather", {0, 1});

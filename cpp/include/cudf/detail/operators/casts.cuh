@@ -9,8 +9,6 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/utilities/export.hpp>
 
-#include <cuda/std/type_traits>
-
 namespace CUDF_EXPORT cudf {
 namespace detail {
 namespace ops {

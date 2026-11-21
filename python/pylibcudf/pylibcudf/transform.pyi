@@ -8,7 +8,8 @@ from pylibcudf.column import Column
 from pylibcudf.expressions import Expression
 from pylibcudf.gpumemoryview import gpumemoryview
 from pylibcudf.table import Table
-from pylibcudf.types import DataType, NullAware, OutputNullability
+from pylibcudf.types import DataType, OutputNullability
+from pylibcudf.udf import TransformUDF, UserData
 from pylibcudf.utils import CudaStreamLike
 
 def column_nans_to_nulls(
@@ -41,15 +42,14 @@ def mask_to_bools(
     mr: DeviceMemoryResource | None = None,
 ) -> Column: ...
 def transform(
-    inputs: Sequence[Column],
-    transform_udf: str,
-    output_type: DataType,
-    is_ptx: bool,
-    null_aware: NullAware = NullAware.NO,
+    inputs: Sequence[Column | UserData],
+    udf: TransformUDF,
+    output_type: DataType | list[DataType],
     null_policy: OutputNullability = OutputNullability.PRESERVE,
+    row_size: int | None = None,
     stream: CudaStreamLike | None = None,
     mr: DeviceMemoryResource | None = None,
-) -> Column: ...
+) -> Table: ...
 def encode(
     input: Table,
     stream: CudaStreamLike | None = None,

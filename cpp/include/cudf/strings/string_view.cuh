@@ -7,20 +7,20 @@
 
 #include <cudf/strings/detail/utf8.hpp>
 #include <cudf/strings/string_view.hpp>
+#include <cudf/utilities/config.hpp>
 #include <cudf/utilities/export.hpp>
 
 #ifndef __CUDA_ARCH__
 #include <cudf/utilities/error.hpp>
 #endif
 
-// This is defined when compiling with NVRTC. NVRTC cannot include thrust headers at this time.
-#ifndef __CUDACC_RTC__
+// Keep Thrust out of runtime device compilation.
+#if !CUDF_RUNTIME_COMPILATION
 #include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #endif
 
 #include <cuda/std/algorithm.max.h>
-#include <cuda/std/functional>
 #include <cuda/std/utility>
 
 // This file should only include device code logic.
@@ -41,7 +41,7 @@ __device__ inline size_type characters_in_string(char const* str, size_type byte
 {
   if ((str == nullptr) || (bytes == 0)) return 0;
   auto ptr = reinterpret_cast<uint8_t const*>(str);
-#ifndef __CUDACC_RTC__
+#if !CUDF_RUNTIME_COMPILATION
   return thrust::count_if(
     thrust::seq, ptr, ptr + bytes, [](uint8_t chr) { return is_begin_utf8_char(chr); });
 #else

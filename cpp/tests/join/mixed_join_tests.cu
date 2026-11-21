@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/debug_utilities.hpp>
@@ -18,6 +20,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -29,16 +32,16 @@
 #include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
-#include <cudf_test_fragments.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <format>
 #include <numeric>
 #include <random>
 #include <span>
-#include <sstream>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -63,23 +66,11 @@ auto const col_ref_right_0 = cudf::ast::column_reference(0, cudf::ast::table_ref
 auto left_zero_eq_right_zero =
   cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_left_0, col_ref_right_0);
 
-// Helper to generate JIT predicate for simple column comparison
+// Select a typed export from the precompiled comparison module.
 template <typename T>
-std::string make_jit_comparison(
-  int num_left_cols, int num_right_cols, int left_col_idx, int right_col_idx, std::string const& op)
+std::string make_jit_comparison(std::string_view prefix)
 {
-  auto type_str = cudf::type_to_name(cudf::data_type{cudf::type_to_id<T>()});
-  std::stringstream ss;
-  ss << "__device__ void predicate(bool* output";
-  for (int i = 0; i < num_left_cols; ++i)
-    ss << ", " << type_str << " left_col" << i;
-  for (int i = 0; i < num_right_cols; ++i)
-    ss << ", " << type_str << " right_col" << i;
-  ss << ") {\n";
-  ss << "  *output = left_col" << left_col_idx << " " << op << " right_col" << right_col_idx
-     << ";\n";
-  ss << "}\n";
-  return ss.str();
+  return std::format("{}_{}", prefix, cudf::type_to_name(cudf::data_type{cudf::type_to_id<T>()}));
 }
 
 // Generate a single pair of left/right non-nullable columns of random data
@@ -460,7 +451,7 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          jit_predicate,
+          cudf::test::get_udf(jit_predicate),
           cudf::join_kind::INNER_JOIN);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
@@ -502,7 +493,7 @@ TYPED_TEST(MixedInnerJoinTest, Empty)
 TYPED_TEST(MixedInnerJoinTest, BasicEquality)
 {
   // Conditional table has 2 columns each. The AST predicate compares column 0.
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 1, 2}, {3, 4, 5}, {10, 20, 30}},
              {{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {0},
@@ -539,7 +530,7 @@ TYPED_TEST(MixedInnerJoinTest, BasicNullEqualityUnequal)
 
 TYPED_TEST(MixedInnerJoinTest, AsymmetricEquality)
 {
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 2, 1}, {3, 5, 4}, {10, 30, 20}},
              {{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {0},
@@ -552,7 +543,7 @@ TYPED_TEST(MixedInnerJoinTest, AsymmetricEquality)
 
 TYPED_TEST(MixedInnerJoinTest, AsymmetricLeftLargerEquality)
 {
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 2, 1, 4}, {3, 5, 4, 10}, {10, 30, 20, 100}},
              {{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {0},
@@ -570,7 +561,7 @@ TYPED_TEST(MixedInnerJoinTest, AsymmetricLeftLargerGreater)
   auto condition =
     cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref_left_1, col_ref_right_1);
   // Conditional tables have 2 columns each. Predicate compares column 1.
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 1, 1, ">");
+  auto jit_pred = make_jit_comparison<TypeParam>("greater_second");
   this->test({{2, 3, 9, 0, 1, 7, 4, 6, 5, 8}, {1, 2, 3, 4, 5, 6, 7, 8, 9, 0}},
              {{6, 5, 9, 8, 10, 32}, {0, 1, 2, 3, 4, 5}, {7, 8, 9, 0, 1, 2}},
              {0},
@@ -583,7 +574,7 @@ TYPED_TEST(MixedInnerJoinTest, AsymmetricLeftLargerGreater)
 
 TYPED_TEST(MixedInnerJoinTest, AsymmetricRightLargerEquality)
 {
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {{0, 2, 1, 4}, {3, 5, 4, 10}, {10, 30, 20, 100}},
              {0},
@@ -816,11 +807,7 @@ TEST_F(MixedInnerJoinTest2, FloatingPointConditionalComparison)
   auto const predicate =
     cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref_left_1, col_ref_right_1);
 
-  std::string jit_pred = R"(
-    __device__ void predicate(bool* output, double left_col0, double right_col0) {
-      *output = left_col0 >= right_col0;
-    }
-  )";
+  std::string jit_pred = "greater_equal_double";
 
   auto left_col0  = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3};
   auto left_col1  = cudf::test::fixed_width_column_wrapper<double>{1.5, 2.7, 3.1};
@@ -858,12 +845,7 @@ TEST_F(MixedInnerJoinTest2, MultiColumnAndPredicate)
     cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref_left_1, col_ref_right_1);
   auto const predicate = cudf::ast::operation(cudf::ast::ast_operator::LOGICAL_AND, cmp0, cmp1);
 
-  std::string jit_pred = R"(
-    __device__ void predicate(bool* output, int32_t left_col0, int32_t left_col1,
-                              int32_t right_col0, int32_t right_col1) {
-      *output = (left_col0 > right_col0) && (left_col1 > right_col1);
-    }
-  )";
+  std::string jit_pred = "greater_both_int32_t";
 
   // Equality col: {1,2,3,4} matched to {1,2,3,4}
   // Conditional col0: {10,20,30,40} vs {15,15,25,35}
@@ -901,7 +883,7 @@ TEST_F(MixedInnerJoinTest2, AllFilteredOut)
   auto const predicate =
     cudf::ast::operation(cudf::ast::ast_operator::GREATER, col_ref_left_1, col_ref_right_1);
 
-  auto jit_pred = make_jit_comparison<int32_t>(2, 2, 1, 1, ">");
+  auto jit_pred = make_jit_comparison<int32_t>("greater_second");
 
   this->test({{0, 1, 2}, {0, 1, 2}, {10, 20, 30}},
              {{0, 1, 2}, {0, 1, 2}, {50, 60, 70}},
@@ -927,17 +909,13 @@ TEST_F(MixedInnerJoinTest2, InvalidJoinKind)
   auto right_span = cudf::device_span<cudf::size_type const>(
     right_indices.operator cudf::column_view().data<cudf::size_type>(), 1);
 
-  std::string predicate_code = R"(
-    __device__ void predicate(bool* output, int32_t left_val, int32_t right_val) {
-      *output = left_val > right_val;
-    }
-  )";
+  std::string jit_pred = "greater_int32_t";
 
   EXPECT_THROW(cudf::filter_join_indices_jit(left_table,
                                              right_table,
                                              left_span,
                                              right_span,
-                                             predicate_code,
+                                             cudf::test::get_udf(jit_pred),
                                              cudf::join_kind::LEFT_SEMI_JOIN),
                std::invalid_argument);
 }
@@ -959,20 +937,25 @@ TEST_F(MixedInnerJoinTest2, UnsupportedColumnType)
   auto const col_ref_r = cudf::ast::column_reference(0, cudf::ast::table_reference::RIGHT);
   auto const pred      = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref_l, col_ref_r);
 
-  std::string jit_pred = R"(
-    __device__ void predicate(bool* output, int32_t left_col0, int32_t right_col0) {
-      *output = left_col0 == right_col0;
-    }
-  )";
+  std::string jit_pred = "equal_int32_t";
 
-  // JIT filter (string predicate) — struct in left table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 struct_table, valid_table, span, span, jit_pred, cudf::join_kind::INNER_JOIN),
+  // JIT filter (compiled predicate) — struct in left table
+
+  EXPECT_THROW(cudf::filter_join_indices_jit(struct_table,
+                                             valid_table,
+                                             span,
+                                             span,
+                                             cudf::test::get_udf(jit_pred),
+                                             cudf::join_kind::INNER_JOIN),
                std::invalid_argument);
 
-  // JIT filter (string predicate) — struct in right table
-  EXPECT_THROW(cudf::filter_join_indices_jit(
-                 valid_table, struct_table, span, span, jit_pred, cudf::join_kind::INNER_JOIN),
+  // JIT filter (compiled predicate) — struct in right table
+  EXPECT_THROW(cudf::filter_join_indices_jit(valid_table,
+                                             struct_table,
+                                             span,
+                                             span,
+                                             cudf::test::get_udf(jit_pred),
+                                             cudf::join_kind::INNER_JOIN),
                std::invalid_argument);
 
   // JIT filter (AST predicate) — struct in left table
@@ -1003,18 +986,14 @@ TEST_F(MixedInnerJoinTest2, JitOnlyPredicate)
   cudf::hash_join hash_joiner(right_equality, cudf::null_equality::EQUAL);
   auto hash_result = hash_joiner.inner_join(left_equality);
 
-  std::string jit_pred = R"(
-    __device__ void predicate(bool* output, int32_t left_val, int32_t right_val) {
-      *output = __popc(left_val ^ right_val) <= 1;
-    }
-  )";
+  std::string jit_pred = "xor_popcount";
 
   auto result =
     cudf::filter_join_indices_jit(left_conditional,
                                   right_conditional,
                                   cudf::device_span<cudf::size_type const>(*hash_result.first),
                                   cudf::device_span<cudf::size_type const>(*hash_result.second),
-                                  jit_pred,
+                                  cudf::test::get_udf(jit_pred),
                                   cudf::join_kind::INNER_JOIN);
 
   // XOR popcount per equality-matched pair:
@@ -1063,9 +1042,7 @@ TEST_F(MixedInnerJoinTest2, UdfCallPredicate)
   cudf::hash_join hash_joiner(right_equality, cudf::null_equality::EQUAL);
   auto hash_result = hash_joiner.inner_join(left_equality);
 
-  // transform/fragments/ast_udf_callees.cu
-  auto const fragments    = std::array{cudf::lto_fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udf_callees)}};
+  auto const fragments    = cudf::test::get_udf_fragments();
   auto const type         = cudf::data_type{cudf::type_id::INT32};
   auto const xor_popcount = cudf::ast::jit::udf{"lto_xor_popcount", true, type, {type, type}};
 
@@ -1195,7 +1172,7 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
           right_conditional,
           cudf::device_span<cudf::size_type const>(*hash_join_result.first),
           cudf::device_span<cudf::size_type const>(*hash_join_result.second),
-          jit_predicate,
+          cudf::test::get_udf(jit_predicate),
           cudf::join_kind::LEFT_JOIN);
         this->compare_join_results(mixed_result, jit_filter_result);
       }
@@ -1232,7 +1209,7 @@ TYPED_TEST_SUITE(MixedLeftJoinTest, cudf::test::IntegralTypesNotBool);
 TYPED_TEST(MixedLeftJoinTest, Basic)
 {
   // Conditional table has 2 columns each. The AST predicate compares column 0.
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 1, 2}, {3, 4, 5}, {10, 20, 30}},
              {{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {0},
@@ -1499,7 +1476,7 @@ TYPED_TEST_SUITE(MixedFullJoinTest, cudf::test::IntegralTypesNotBool);
 TYPED_TEST(MixedFullJoinTest, Basic)
 {
   // Conditional table has 2 columns each. The AST predicate compares column 0.
-  auto jit_pred = make_jit_comparison<TypeParam>(2, 2, 0, 0, "==");
+  auto jit_pred = make_jit_comparison<TypeParam>("equal_first");
   this->test({{0, 1, 2}, {3, 4, 5}, {10, 20, 30}},
              {{0, 1, 3}, {5, 4, 5}, {30, 40, 50}},
              {0},
@@ -1560,7 +1537,7 @@ TYPED_TEST(MixedFullJoinTest, MultiMatchUnmatchedDedup)
               {2, cudf::JoinNoMatch},
               {cudf::JoinNoMatch, 1},
               {cudf::JoinNoMatch, 2}},
-             make_jit_comparison<TypeParam>(1, 1, 0, 0, ">"));
+             make_jit_comparison<TypeParam>("greater"));
 }
 
 using MixedFullJoinTest_int32 = MixedFullJoinTest<int32_t>;
@@ -2245,9 +2222,10 @@ struct FilteredFullJoinTest : public cudf::test::BaseFixture {
               expected);
     if (std::all_of(left_valid.begin(), left_valid.end(), [](bool v) { return v; }) &&
         std::all_of(right_valid.begin(), right_valid.end(), [](bool v) { return v; })) {
-      EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit(
-                  left, right, li, ri, make_jit_comparison<int>(1, 1, 0, 0, ">"), kind)),
-                expected);
+      EXPECT_EQ(
+        to_pairs(cudf::filter_join_indices_jit(
+          left, right, li, ri, cudf::test::get_udf(make_jit_comparison<int>("greater")), kind)),
+        expected);
     }
     EXPECT_EQ(to_pairs(maps), original_maps);
     maps = {};
@@ -2294,8 +2272,9 @@ TEST_F(FilteredFullJoinTest, EmptyMapsWithNonemptyTables)
   EXPECT_TRUE(
     to_pairs(cudf::filter_join_indices_jit(table, table, empty, empty, predicate, kind)).empty());
   EXPECT_TRUE(
-    to_pairs(cudf::filter_join_indices_jit(
-               table, table, empty, empty, make_jit_comparison<int>(1, 1, 0, 0, ">"), kind))
+    to_pairs(
+      cudf::filter_join_indices_jit(
+        table, table, empty, empty, cudf::test::get_udf(make_jit_comparison<int>("greater")), kind))
       .empty());
 }
 
@@ -2309,15 +2288,7 @@ struct FilterJoinJitErrorTest : public FilteredFullJoinTest,
 
 TEST_P(FilterJoinJitErrorTest, UdfErrorHandling)
 {
-  auto const udf = R"(
-__device__ cudf::errc predicate(bool* output, int a, int b)
-{
-  if (a < 0) { return cudf::errc::ARITHMETIC_OVERFLOW; }
-  if (b == 0) { return cudf::errc::DIVISION_BY_ZERO; }
-  *output = a >= b;
-  return cudf::errc::SUCCESS;
-}
-)";
+  std::string const udf = "checked_greater_equal";
   cudf::test::fixed_width_column_wrapper<int> left{1, -1, 3, 4};
   cudf::test::fixed_width_column_wrapper<int> right{1, 1, 0, 2};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
@@ -2326,8 +2297,12 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
 
   // Errors from multiple rows must be aggregated using the maximum code.
   try {
-    cudf::filter_join_indices_jit(
-      cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, udf, GetParam());
+    cudf::filter_join_indices_jit(cudf::table_view{{left}},
+                                  cudf::table_view{{right}},
+                                  maps,
+                                  maps,
+                                  cudf::test::get_udf(udf),
+                                  GetParam());
     FAIL() << "Expected predicate evaluation to fail";
   } catch (cudf::evaluation_error const& error) {
     EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
@@ -2339,7 +2314,7 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
                                                    cudf::table_view{{valid_right}},
                                                    maps,
                                                    maps,
-                                                   udf,
+                                                   cudf::test::get_udf(udf),
                                                    GetParam())),
             (std::vector<index_pair>{{0, 0}, {1, 1}, {2, 2}, {3, 3}}));
 
@@ -2365,7 +2340,7 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
                                                    cudf::table_view{{right}},
                                                    skipped_maps,
                                                    maps,
-                                                   udf,
+                                                   cudf::test::get_udf(udf),
                                                    GetParam())),
             expected);
 }

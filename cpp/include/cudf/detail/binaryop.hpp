@@ -16,11 +16,11 @@ namespace detail {
 
 /**
  * @copydoc cudf::binary_operation(column_view const&, column_view const&,
- * std::string const&, data_type, cuda::stream_ref, cudf::memory_resources)
+ * transform_udf const&, data_type, cuda::stream_ref, cudf::memory_resources)
  */
 std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          column_view const& rhs,
-                                         std::string const& ptx,
+                                         transform_udf const& udf,
                                          data_type output_type,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr);

@@ -177,25 +177,10 @@ rapidsmpf::streaming::Actor select_columns_for_groupby(
     auto extendedprice = table.column(3);
     auto discount      = table.column(4);
     auto tax           = table.column(5);
-    std::string udf_disc_price =
-      R"***(
-static __device__ void calculate_disc_price(double *disc_price, double extprice, double discount) {
-    *disc_price = extprice * (1 - discount);
-}
-           )***";
-    std::string udf_charge =
-      R"***(
-static __device__ void calculate_charge(double *charge, double discprice, double tax) {
-    *charge = discprice * (1 + tax);
-}
-           )***";
 
     // disc_price
     result.push_back(std::move(
-      cudf::transform(udf_disc_price,
-                      cudf::udf_source_type::CUDA,
-                      cudf::null_aware::NO,
-                      std::nullopt,
+      cudf::transform(rapidsmpf::ndsh::get_transform_udf("calculate_disc_price"),
                       std::vector<cudf::transform_input>{extendedprice, discount},
                       std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT64),
                                                         cudf::output_nullability::PRESERVE}},
@@ -207,10 +192,7 @@ static __device__ void calculate_charge(double *charge, double discprice, double
         .front()));
     // charge
     result.push_back(std::move(
-      cudf::transform(udf_charge,
-                      cudf::udf_source_type::CUDA,
-                      cudf::null_aware::NO,
-                      std::nullopt,
+      cudf::transform(rapidsmpf::ndsh::get_transform_udf("calculate_charge"),
                       std::vector<cudf::transform_input>{result.back()->view(), tax},
                       std::array{cudf::transform_output{cudf::data_type(cudf::type_id::FLOAT64),
                                                         cudf::output_nullability::PRESERVE}},

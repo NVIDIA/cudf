@@ -5,7 +5,9 @@
 
 #pragma once
 
-#ifndef __CUDACC_RTC__
+#include <cudf/utilities/config.hpp>
+
+#if !CUDF_RUNTIME_COMPILATION
 
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -14,7 +16,7 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/type_traits>
+#include <cuda/std/iterator>
 
 namespace cudf {
 namespace detail {
@@ -217,7 +219,7 @@ struct alignas(16) base_normalator {
   };
 
  protected:
-#ifndef __CUDACC_RTC__
+#if !CUDF_RUNTIME_COMPILATION
 
   /**
    * @brief Constructor assigns width and type member variables for base class.

@@ -13,6 +13,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <rmm/cuda_device.hpp>
@@ -23,6 +24,8 @@
 
 #include <cuda/memory_resource>
 
+#include <string_transform_fragments.hpp>
+
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -30,7 +33,21 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
+
+/**
+ * @brief Returns a named UDF from the shared embedded string-transform module.
+ *
+ * The fragment has static storage. The caller must keep the symbol alive during evaluation.
+ */
+inline cudf::transform_udf get_transform_udf(std::string_view symbol, bool indexed = false)
+{
+  static cudf::lto_fragment const fragment{
+    cudf::lto_binary_type::FATBIN,
+    string_transform_fragments::get(string_transform_fragments::transforms)};
+  return {symbol, {&fragment, 1}, cudf::null_aware::NO, indexed};
+}
 
 /**
  * @brief Main example function returns transformed string table.

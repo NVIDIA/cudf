@@ -1,0 +1,34 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <cudf/udf_includes.hpp>
+
+namespace cudf::benchmark_udfs {
+extern "C" {
+
+__device__ errc calculate_disc_price(double* disc_price, double extprice, double discount)
+{
+  *disc_price = extprice * (1 - discount);
+
+  return errc::SUCCESS;
+}
+
+__device__ errc calculate_charge(double* charge, double discprice, double tax)
+{
+  *charge = discprice * (1 + tax);
+
+  return errc::SUCCESS;
+}
+
+__device__ errc calculate_amount(
+  double* amount, double discount, double extprice, double supplycost, double quantity)
+{
+  *amount = extprice * (1 - discount) - supplycost * quantity;
+
+  return errc::SUCCESS;
+}
+
+}  // extern "C"
+}  // namespace cudf::benchmark_udfs

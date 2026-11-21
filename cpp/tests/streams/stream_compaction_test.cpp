@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
@@ -18,6 +20,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 
 #include <array>
 #include <span>
@@ -406,13 +409,7 @@ TEST_F(StreamCompactionTest, FilterUDF)
   auto const input               = cudf::table_view{{col}};
   cudf::transform_input inputs[] = {col};
   auto const predicate =
-    cudf::transform(R"***(
-__device__ void filter(bool * out, int32_t a){
-  *out = a < 10;
-})***",
-                    cudf::udf_source_type::CUDA,
-                    cudf::null_aware::NO,
-                    std::nullopt,
+    cudf::transform(cudf::test::get_udf("less_than_ten"),
                     std::span{inputs},
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::BOOL8},
                                                       cudf::output_nullability::PRESERVE}},

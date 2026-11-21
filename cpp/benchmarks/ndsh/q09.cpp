@@ -7,6 +7,7 @@
 
 #include <benchmarks/common/memory_stats.hpp>
 #include <benchmarks/common/nvtx_ranges.hpp>
+#include <benchmarks/common/udf.hpp>
 
 #include <cudf/ast/expressions.hpp>
 #include <cudf/binaryop.hpp>
@@ -144,20 +145,10 @@ struct q9_data {
 {
   CUDF_BENCHMARK_RANGE();
 
-  std::string udf =
-    R"***(
-  void calculate_price(double * amount, double discount, double extended_price, double supply_cost, double quantity){
-    *amount = extended_price * (1 - discount) - supply_cost * quantity;
-  }
-  )***";
-
   cudf::transform_input transform_inputs[] = {discount, extendedprice, supplycost, quantity};
 
   return std::move(
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
-                    cudf::null_aware::NO,
-                    std::nullopt,
+    cudf::transform(get_benchmark_udf("calculate_tpch_q9_price"),
                     transform_inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_id::FLOAT64},
                                                       cudf::output_nullability::PRESERVE}},

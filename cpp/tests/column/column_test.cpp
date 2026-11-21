@@ -7,6 +7,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
@@ -192,6 +193,26 @@ TYPED_TEST(TypedColumnTest, SetInvalidSizeNullMaskNonZeroNullCount)
   EXPECT_THROW(
     col.set_null_mask(invalid_size_null_mask, this->num_elements(), cudf::get_default_stream()),
     cudf::logic_error);
+}
+
+TYPED_TEST(TypedColumnTest, CopyNullMaskMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::column col{this->type(),
+                   this->num_elements(),
+                   std::move(this->data),
+                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                   0};
+  {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    col.set_null_mask(this->all_null_mask, this->num_elements(), stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_resource_usage(
+    this->all_null_mask.size() * sizeof(cudf::bitmask_type), {}, stream);
+  EXPECT_NE(col.view().null_mask(), this->all_null_mask.data());
+  EXPECT_EQ(col.null_count(), this->num_elements());
 }
 
 TYPED_TEST(TypedColumnTest, MoveNullMask)

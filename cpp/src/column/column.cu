@@ -129,7 +129,8 @@ void column::set_null_mask(cuda::device_buffer<cudf::bitmask_type>&& new_null_ma
 
 void column::set_null_mask(cuda::device_buffer<cudf::bitmask_type> const& new_null_mask,
                            size_type new_null_count,
-                           cuda::stream_ref stream)
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr)
 {
   if (new_null_count > 0) {
     CUDF_EXPECTS(new_null_mask.size() * sizeof(bitmask_type) >=
@@ -137,8 +138,8 @@ void column::set_null_mask(cuda::device_buffer<cudf::bitmask_type> const& new_nu
                  "Column with null values must be nullable and the null mask \
                   buffer size should match the size of the column.");
   }
-  _null_mask = cuda::device_buffer<cudf::bitmask_type>{
-    stream, cudf::get_current_device_resource_ref(), new_null_mask};  // copy
+  _null_mask =
+    cuda::device_buffer<cudf::bitmask_type>{stream, mr.get_output_mr(), new_null_mask};  // copy
   _null_count = new_null_count;
 }
 

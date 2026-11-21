@@ -27,10 +27,13 @@ namespace cudf::groupby {
 
 template <bool has_nested>
 cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
-  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream)
+  table_view const& batch_keys,
+  bool use_partials,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   auto const batch_size = batch_keys.num_rows();
-  auto const temp_mr    = cudf::get_current_device_resource_ref();
+  auto const temp_mr    = mr.get_temporary_mr();
   auto const has_null   = cudf::nullate::DYNAMIC{_has_nullable_keys};
 
   // Preprocess batch for row operators.
@@ -41,7 +44,7 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
   auto const skip_rows_with_nulls = _has_nullable_keys && _null_handling == null_policy::EXCLUDE;
   auto [bitmask_buffer, batch_bitmask] =
     skip_rows_with_nulls
-      ? detail::compute_row_bitmask(batch_keys, stream, cudf::get_current_device_resource_ref())
+      ? detail::compute_row_bitmask(batch_keys, stream, mr.as_temporary())
       : std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>{
           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr};
 
@@ -61,7 +64,7 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
     auto const hasher = cudf::detail::row::hash::row_hasher{preprocessed_batch}.device_hasher(
       cudf::nullate::DYNAMIC{has_nested || _has_nullable_keys});
     auto const d_cross_eqs = build_cross_comparators<has_nested>(
-      preprocessed_batch, _preprocessed_batches, has_null, stream, cudf::memory_resources{temp_mr});
+      preprocessed_batch, _preprocessed_batches, has_null, stream, mr.as_temporary());
     auto const comparator = n_table_comparator{
       batch_self_eq, d_cross_eqs.data(), _key_batch_ids->data(), _max_distinct_keys};
     thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),

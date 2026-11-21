@@ -52,18 +52,18 @@ class roaring_bitmap::impl {
   impl& operator=(impl&&) = default;
 
   template <roaring_bitmap_type Type>
-  void materialize(cuda::stream_ref stream)
+  void materialize(cuda::stream_ref stream, cudf::memory_resources mr)
   {
     auto const bytes = _serialized_bitmap_data.data();
 
     if constexpr (Type == roaring_bitmap_type::BITS_32) {
       if (_bitmap32) { return; }
       _bitmap32 = std::make_unique<roaring_bitmap_32_type>(
-        bytes, rmm::mr::polymorphic_allocator<char>{}, stream);
+        bytes, rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()}, stream);
     } else {
       if (_bitmap64) { return; }
       _bitmap64 = std::make_unique<roaring_bitmap_64_type>(
-        bytes, rmm::mr::polymorphic_allocator<char>{}, stream);
+        bytes, rmm::mr::polymorphic_allocator<char>{mr.get_output_mr()}, stream);
     }
 
     _serialized_bitmap_data = {};
@@ -88,11 +88,15 @@ class roaring_bitmap::impl {
   }
 
   template <roaring_bitmap_type Type, typename InputIt, typename OutputIt>
-  void contains_async(InputIt first, InputIt last, OutputIt output, cuda::stream_ref stream)
+  void contains_async(InputIt first,
+                      InputIt last,
+                      OutputIt output,
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
   {
     if (first == last) { return; }
 
-    materialize<Type>(stream);
+    materialize<Type>(stream, mr);
 
     bitmap<Type>().contains_async(first, last, output, stream);
   }
@@ -139,10 +143,10 @@ roaring_bitmap::roaring_bitmap(roaring_bitmap&&) noexcept = default;
 
 roaring_bitmap& roaring_bitmap::operator=(roaring_bitmap&&) noexcept = default;
 
-void roaring_bitmap::materialize(cuda::stream_ref stream) const
+void roaring_bitmap::materialize(cuda::stream_ref stream, cudf::memory_resources mr) const
 {
   dispatch_roaring_bitmap_type(
-    _type, [&]<roaring_bitmap_type Type>() { _impl->materialize<Type>(stream); });
+    _type, [&]<roaring_bitmap_type Type>() { _impl->materialize<Type>(stream, mr); });
 }
 
 roaring_bitmap_type roaring_bitmap::type() const { return _type; }
@@ -171,13 +175,14 @@ std::unique_ptr<cudf::column> roaring_bitmap::contains_async(cudf::column_view c
 {
   auto result = cudf::make_fixed_width_column(
     cudf::data_type{cudf::type_id::BOOL8}, keys.size(), cudf::mask_state::UNALLOCATED, stream, mr);
-  contains_async(keys, result->mutable_view(), stream);
+  contains_async(keys, result->mutable_view(), stream, mr);
   return result;
 }
 
 void roaring_bitmap::contains_async(cudf::column_view const& keys,
                                     cudf::mutable_column_view const& output,
-                                    cuda::stream_ref stream) const
+                                    cuda::stream_ref stream,
+                                    cudf::memory_resources mr) const
 {
   CUDF_EXPECTS(output.type().id() == cudf::type_id::BOOL8,
                "Output column must be BOOL8",
@@ -191,7 +196,8 @@ void roaring_bitmap::contains_async(cudf::column_view const& keys,
     _impl->contains_async<roaring_bitmap_type::BITS_32>(keys.begin<cuda::std::uint32_t>(),
                                                         keys.end<cuda::std::uint32_t>(),
                                                         output.begin<bool>(),
-                                                        stream);
+                                                        stream,
+                                                        mr);
   } else {
     CUDF_EXPECTS(keys.type().id() == cudf::type_id::UINT64,
                  "Key column must be UINT64 for a 64-bit roaring bitmap",
@@ -199,7 +205,8 @@ void roaring_bitmap::contains_async(cudf::column_view const& keys,
     _impl->contains_async<roaring_bitmap_type::BITS_64>(keys.begin<cuda::std::uint64_t>(),
                                                         keys.end<cuda::std::uint64_t>(),
                                                         output.begin<bool>(),
-                                                        stream);
+                                                        stream,
+                                                        mr);
   }
 }
 

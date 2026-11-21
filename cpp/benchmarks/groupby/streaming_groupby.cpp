@@ -19,9 +19,12 @@
 #include <cudf/strings/padding.hpp>
 #include <cudf/table/table.hpp>
 
+#include <cuda/stream>
+
 #include <nvbench/nvbench.cuh>
 
 #include <algorithm>
+#include <concepts>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -50,7 +53,18 @@ void add_request(std::vector<streaming_aggregation_request>& requests,
   requests.push_back({column_index, std::move(aggregation)});
 }
 
-// Measures one complete streaming operation: construction, every batch, finalize, and teardown.
+// Measures one complete operation: construction, every batch, finalize, and teardown.
+void measure(nvbench::state& state, std::invocable<cuda::stream_ref> auto const& operation)
+{
+  auto const stream = cudf::get_default_stream();
+  stream.sync();  // Keep input construction out of both metrics.
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) { operation(stream); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
 void run_streaming_groupby(nvbench::state& state,
                            std::vector<cudf::table_view> const& batches,
                            std::vector<cudf::size_type> const& key_indices,
@@ -58,11 +72,7 @@ void run_streaming_groupby(nvbench::state& state,
                            cudf::size_type max_distinct_keys,
                            cudf::null_policy null_handling = cudf::null_policy::EXCLUDE)
 {
-  auto const stream = cudf::get_default_stream();
-  stream.sync();  // Keep input construction out of both metrics.
-  state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
-  auto const mem_stats_logger = cudf::memory_stats_logger();
-  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+  measure(state, [&](cuda::stream_ref stream) {
     cudf::groupby::streaming_groupby streaming{
       key_indices, requests, max_distinct_keys, null_handling};
     for (auto const& batch : batches) {
@@ -70,11 +80,25 @@ void run_streaming_groupby(nvbench::state& state,
     }
     [[maybe_unused]] auto const result = streaming.finalize(stream);
   });
-  state.add_buffer_size(
-    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
-void bench_streaming_groupby(nvbench::state& state)
+// The first column of every batch holds the group IDs.
+void run_direct_groupby(nvbench::state& state,
+                        std::vector<cudf::table_view> const& batches,
+                        std::vector<streaming_aggregation_request> const& requests,
+                        cudf::size_type num_groups)
+{
+  measure(state, [&](cuda::stream_ref stream) {
+    cudf::groupby::direct_groupby direct{num_groups, requests};
+    for (auto const& batch : batches) {
+      direct.aggregate(batch.column(0), batch, stream);
+    }
+    [[maybe_unused]] auto const result = direct.finalize(stream);
+  });
+}
+
+// `direct` aggregates by the keys as group IDs instead of hashing them.
+void bench_dense_keys(nvbench::state& state, bool direct)
 {
   auto const num_rows    = static_cast<cudf::size_type>(state.get_int64("num_rows"));
   auto const batch_size  = static_cast<cudf::size_type>(state.get_int64("batch_size"));
@@ -134,9 +158,17 @@ void bench_streaming_groupby(nvbench::state& state)
   }
 
   state.add_element_count(num_rows);
+  if (direct) {
+    run_direct_groupby(state, batches, requests, cardinality);
+    return;
+  }
   // Streaming groupby also requires capacity for every row in an individual batch.
   run_streaming_groupby(state, batches, {0}, requests, std::max(batch_size, cardinality));
 }
+
+void bench_streaming_groupby(nvbench::state& state) { bench_dense_keys(state, false); }
+
+void bench_direct_groupby(nvbench::state& state) { bench_dense_keys(state, true); }
 
 // Two-column keys: quotient and remainder of a random group by key_modulus.
 std::unique_ptr<cudf::table> make_cardinality_inputs(cudf::size_type num_rows,
@@ -312,6 +344,14 @@ NVBENCH_BENCH(bench_streaming_groupby)
   .add_int64_axis("batch_size", {100'000, 1'000'000, 10'000'000, 100'000'000})
   .add_int64_axis("cardinality", {32, 256, 512, 65'536, 1'048'576})
   .add_string_axis("key_order", {"uniform_random", "round_robin", "sorted"})
+  .add_string_axis("aggs", {"sum", "mixed"});
+
+NVBENCH_BENCH(bench_direct_groupby)
+  .set_name("direct_groupby")
+  .add_int64_axis("num_rows", {100'000'000})
+  .add_int64_axis("batch_size", {1'000'000, 100'000'000})
+  .add_int64_axis("cardinality", {32, 1'048'576})
+  .add_string_axis("key_order", {"uniform_random"})
   .add_string_axis("aggs", {"sum", "mixed"});
 
 NVBENCH_BENCH(bench_streaming_groupby_cardinality)

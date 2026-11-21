@@ -106,6 +106,7 @@ dependencies:
 - sphinx-markdown-tables
 - sphinx-remove-toctrees
 - sphinx>=8.1.0
+- sphinxcontrib-mermaid
 - sphinxcontrib-websupport
 - sqlalchemy>=2.0.18
 - streamz

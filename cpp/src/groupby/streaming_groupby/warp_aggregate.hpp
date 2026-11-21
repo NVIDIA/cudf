@@ -20,6 +20,7 @@ inline constexpr int partial_aggregation_block_size = 256;
 /// Combines row values with equal targets within each warp.
 void compute_warp_aggregates(table_view const& values,
                              host_span<aggregation::Kind const> kinds,
+                             host_span<nan_semantics const> semantics,
                              device_span<size_type const> targets,
                              mutable_table_view const& output,
                              cuda::stream_ref stream,

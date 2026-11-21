@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import math
+
 import pyarrow as pa
 import pytest
 
@@ -269,3 +271,27 @@ def test_approx_distinct_count_large_cardinality():
         nan_handling=plc.types.NanPolicy.NAN_IS_VALID,
     )
     assert sketch.estimate() == pytest.approx(100_000, rel=0.05)
+
+
+@pytest.mark.parametrize(
+    "semantics, expected_min, expected_argmin",
+    [
+        (plc.types.NanSemantics.DEFAULT, None, 1),
+        (plc.types.NanSemantics.UNORDERED, None, 1),
+        (plc.types.NanSemantics.TOTALLY_ORDERED, 1.0, 2),
+    ],
+)
+def test_reduce_min_nan_semantics(semantics, expected_min, expected_argmin):
+    col = plc.Column.from_arrow(pa.array([3.0, float("nan"), 1.0, None]))
+    float_type = plc.DataType(plc.TypeId.FLOAT64)
+    got = plc.reduce.reduce(col, plc.aggregation.min(semantics), float_type)
+    if expected_min is None:
+        assert math.isnan(got.to_py())
+    else:
+        assert got.to_py() == expected_min
+    got = plc.reduce.reduce(
+        col,
+        plc.aggregation.argmin(semantics),
+        plc.DataType(plc.TypeId.INT32),
+    )
+    assert got.to_py() == expected_argmin

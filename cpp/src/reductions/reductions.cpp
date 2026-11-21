@@ -124,7 +124,12 @@ template <typename Source>
 struct reduction_function<Source, cudf::aggregation::MIN> : public base_reduction_function {
   [[nodiscard]] std::unique_ptr<scalar> reduce(reduction_parameters const& params) const
   {
-    return min(params.col, params.output_dtype, params.init, params.stream, params.mr);
+    return min(params.col,
+               params.output_dtype,
+               params.init,
+               cudf::detail::get_nan_semantics(params.agg),
+               params.stream,
+               params.mr);
   }
 };
 
@@ -143,7 +148,11 @@ struct reduction_function<Source, cudf::aggregation::ARGMIN> : public base_reduc
     CUDF_EXPECTS(params.output_dtype.id() == type_to_id<size_type>(),
                  "ARGMIN aggregation expects output type to be cudf::size_type",
                  cudf::data_type_error);
-    return argmin(params.col, data_type{type_to_id<Source>()}, params.stream, params.mr);
+    return argmin(params.col,
+                  data_type{type_to_id<Source>()},
+                  cudf::detail::get_nan_semantics(params.agg),
+                  params.stream,
+                  params.mr);
   }
 };
 

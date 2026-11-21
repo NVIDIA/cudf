@@ -273,6 +273,8 @@ struct streaming_groupby::impl {
 
   std::vector<size_type> _request_first_agg_offset;
   std::vector<aggregation::Kind> _agg_kinds;
+  /// NaN ordering of each aggregation; only a floating-point MIN depends on it
+  std::vector<nan_semantics> _agg_semantics;
   std::vector<std::unique_ptr<aggregation>> _agg_objects;
   std::vector<int8_t> _is_agg_intermediate;
   bool _has_compound_aggs{false};
@@ -291,6 +293,7 @@ struct streaming_groupby::impl {
   size_type _num_grown_agg_columns{0};
   std::vector<size_type> _value_col_indices;
   std::unique_ptr<cuda::device_buffer<aggregation::Kind>> _d_agg_kinds;
+  std::unique_ptr<cuda::device_buffer<nan_semantics>> _d_agg_semantics;
 
   std::unique_ptr<cuda::device_buffer<size_type>> _key_set;
 

@@ -9,11 +9,15 @@ namespace cudf::reduction::detail {
 
 std::unique_ptr<scalar> argmin(column_view const& input,
                                data_type dispatch_type,
+                               nan_semantics semantics,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
-  return type_dispatcher(
-    dispatch_type, simple::detail::arg_minmax_dispatcher<aggregation::ARGMIN>{}, input, stream, mr);
+  return type_dispatcher(dispatch_type,
+                         simple::detail::arg_minmax_dispatcher<aggregation::ARGMIN>{semantics},
+                         input,
+                         stream,
+                         mr);
 }
 
 }  // namespace cudf::reduction::detail

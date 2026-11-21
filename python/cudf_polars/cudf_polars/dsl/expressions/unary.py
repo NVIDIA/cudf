@@ -744,17 +744,43 @@ class UnaryFunction(Expr):
                 if self.name == "arg_max"
                 else plc.aggregation.argmin()
             )
-            return Column(
-                plc.Column.from_scalar(
-                    plc.reduce.reduce(
-                        column.obj,
-                        arg_agg,
-                        plc.DataType(plc.TypeId.INT32),
-                        stream=df.stream,
-                    ),
-                    1,
+            # Polars ignores NaN unless every non-null value is NaN, while libcudf
+            # argmin/argmax select the first NaN, so mask the NaNs out first
+            is_float = plc.traits.is_floating_point(column.dtype.plc_type)
+            arg_input = (
+                column.mask_nans(stream=df.stream).obj if is_float else column.obj
+            )
+            if is_float:
+                # Polars treats -0.0 and +0.0 as equal and selects the first zero, while
+                # libcudf argmin/argmax select the -0.0 or +0.0 that MIN/MAX return.
+                # Adding +0.0 turns -0.0 into +0.0 and keeps nulls and row positions.
+                arg_input = plc.binaryop.binary_operation(
+                    arg_input,
+                    plc.Scalar.from_py(0.0, column.dtype.plc_type, stream=df.stream),
+                    plc.binaryop.BinaryOperator.ADD,
+                    column.dtype.plc_type,
                     stream=df.stream,
-                ),
+                )
+            index = plc.reduce.reduce(
+                arg_input,
+                arg_agg,
+                plc.DataType(plc.TypeId.INT32),
+                stream=df.stream,
+            )
+            if (
+                is_float
+                and not index.is_valid(df.stream)
+                and column.null_count != column.size
+            ):
+                # Every non-null value is NaN, so select the first non-null row
+                index = plc.reduce.reduce(
+                    plc.unary.is_valid(column.obj, stream=df.stream),
+                    plc.aggregation.argmax(),
+                    plc.DataType(plc.TypeId.INT32),
+                    stream=df.stream,
+                )
+            return Column(
+                plc.Column.from_scalar(index, 1, stream=df.stream),
                 dtype=DataType(pl.Int32()),
             ).astype(self.dtype, stream=df.stream)
         if self.name == "arg_sort":
@@ -1616,20 +1642,24 @@ class UnaryFunction(Expr):
                 replacement = plc.replace.ReplacePolicy.PRECEDING
             elif strategy == "backward":
                 replacement = plc.replace.ReplacePolicy.FOLLOWING
-            elif strategy == "min":
+            elif strategy in {"min", "max"}:
+                # Polars ignores NaN here unless every non-null value is NaN, while
+                # libcudf min/max propagate NaN, so mask the NaNs out first
+                is_float = plc.traits.is_floating_point(column.dtype.plc_type)
+                source = column.mask_nans(stream=df.stream) if is_float else column
                 replacement = plc.reduce.reduce(
-                    column.obj,
-                    plc.aggregation.min(),
+                    source.obj,
+                    plc.aggregation.min()
+                    if strategy == "min"
+                    else plc.aggregation.max(),
                     column.dtype.plc_type,
                     stream=df.stream,
                 )
-            elif strategy == "max":
-                replacement = plc.reduce.reduce(
-                    column.obj,
-                    plc.aggregation.max(),
-                    column.dtype.plc_type,
-                    stream=df.stream,
-                )
+                if is_float and not replacement.is_valid(df.stream):
+                    # Every non-null value is NaN
+                    replacement = plc.Scalar.from_py(
+                        float("nan"), column.dtype.plc_type, stream=df.stream
+                    )
             elif strategy == "mean":
                 replacement = plc.reduce.reduce(
                     column.obj,

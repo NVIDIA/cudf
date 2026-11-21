@@ -67,7 +67,14 @@ struct segmented_reduce_dispatch_functor {
       case segmented_reduce_aggregation::PRODUCT:
         return segmented_product(col, offsets, output_dtype, null_handling, init, stream, mr);
       case segmented_reduce_aggregation::MIN:
-        return segmented_min(col, offsets, output_dtype, null_handling, init, stream, mr);
+        return segmented_min(col,
+                             offsets,
+                             output_dtype,
+                             null_handling,
+                             init,
+                             cudf::detail::get_nan_semantics(agg),
+                             stream,
+                             mr);
       case segmented_reduce_aggregation::MAX:
         return segmented_max(col, offsets, output_dtype, null_handling, init, stream, mr);
       case segmented_reduce_aggregation::ANY:

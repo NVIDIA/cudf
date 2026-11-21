@@ -49,7 +49,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
                "Merge source distinct keys (" + std::to_string(other_distinct_keys) +
                  ") exceeds max_distinct_keys (" + std::to_string(_max_distinct_keys) + ").",
                std::invalid_argument);
-  CUDF_EXPECTS(other._agg_kinds == _agg_kinds,
+  CUDF_EXPECTS(other._agg_kinds == _agg_kinds && other._agg_semantics == _agg_semantics,
                "Cannot merge streaming_groupby objects with different aggregation schemas.",
                std::invalid_argument);
   CUDF_EXPECTS(other._key_indices == _key_indices,
@@ -100,6 +100,7 @@ void streaming_groupby::impl::do_merge(impl const& other, cuda::stream_ref strea
                             other_distinct_keys,
                             source_partials_per_group,
                             _d_agg_kinds->data(),
+                            _d_agg_semantics->data(),
                             *d_source,
                             *d_target});
     record_aggregate_completion(stream);

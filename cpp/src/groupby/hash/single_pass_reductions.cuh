@@ -167,7 +167,7 @@ struct rep_type<T> {
 template <typename T>
 using rep_type_t = typename rep_type<T>::type;
 
-template <aggregation::Kind K>
+template <aggregation::Kind K, typename Op = cudf::detail::corresponding_operator_t<K>>
 struct grouped_reduction_fn {
   template <typename T>
     requires(is_reduction_supported<T>(K) &&
@@ -179,7 +179,6 @@ struct grouped_reduction_fn {
   {
     using Source = rep_type_t<T>;
     using Result = rep_type_t<cudf::detail::target_type_t<T, K>>;
-    using Op     = cudf::detail::corresponding_operator_t<K>;
 
     auto result = make_fixed_width_column(cudf::detail::target_type(ctx.values_type, K),
                                           ctx.num_groups,
@@ -309,7 +308,7 @@ struct grouped_reduction_fn {
 };
 
 /// Prepares compatible columns together, retaining each output's allocation resource.
-template <aggregation::Kind K>
+template <aggregation::Kind K, typename Op = cudf::detail::corresponding_operator_t<K>>
 struct grouped_reductions_fn {
   template <typename T>
     requires(is_reduction_supported<T>(K))
@@ -320,7 +319,6 @@ struct grouped_reductions_fn {
   {
     using Source           = rep_type_t<T>;
     using Result           = rep_type_t<cudf::detail::target_type_t<T, K>>;
-    using Op               = cudf::detail::corresponding_operator_t<K>;
     using value_fn         = grouped_value_fn<Source, Result, K == aggregation::SUM_OF_SQUARES>;
     auto const& first      = contexts.front();
     auto const num_columns = static_cast<size_type>(contexts.size());
@@ -439,6 +437,20 @@ std::vector<std::unique_ptr<column>> compute_reductions(host_span<reduction_cont
                                                         cuda::stream_ref stream,
                                                         cudf::memory_resources mr)
 {
+  // TOTALLY_ORDERED only changes floating-point MIN, so only float and double are instantiated with
+  // DeviceMinTotallyOrdered. Batched contexts share one nan_semantics.
+  if constexpr (K == aggregation::MIN) {
+    auto const& first = contexts.front();
+    if (first.semantics == nan_semantics::TOTALLY_ORDERED) {
+      using ordered_fn = grouped_reductions_fn<K, cudf::DeviceMinTotallyOrdered>;
+      if (first.values_type.id() == type_id::FLOAT32) {
+        return ordered_fn{}.template operator()<float>(contexts, is_intermediate, stream, mr);
+      }
+      if (first.values_type.id() == type_id::FLOAT64) {
+        return ordered_fn{}.template operator()<double>(contexts, is_intermediate, stream, mr);
+      }
+    }
+  }
   return type_dispatcher(contexts.front().values_type,
                          grouped_reductions_fn<K>{},
                          contexts,
@@ -455,6 +467,19 @@ std::unique_ptr<column> compute_reduction(reduction_context const& ctx,
   if constexpr (K == aggregation::ARGMIN || K == aggregation::ARGMAX) {
     return compute_argminmax(ctx, K == aggregation::ARGMIN, stream, mr);
   } else {
+    // TOTALLY_ORDERED only changes floating-point MIN, so only float and double are instantiated
+    // with DeviceMinTotallyOrdered.
+    if constexpr (K == aggregation::MIN) {
+      if (ctx.semantics == nan_semantics::TOTALLY_ORDERED) {
+        using ordered_fn = grouped_reduction_fn<K, cudf::DeviceMinTotallyOrdered>;
+        if (ctx.values_type.id() == type_id::FLOAT32) {
+          return ordered_fn{}.template operator()<float>(ctx, stream, mr);
+        }
+        if (ctx.values_type.id() == type_id::FLOAT64) {
+          return ordered_fn{}.template operator()<double>(ctx, stream, mr);
+        }
+      }
+    }
     return type_dispatcher(ctx.values_type, grouped_reduction_fn<K>{}, ctx, stream, mr);
   }
 }

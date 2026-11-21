@@ -74,11 +74,13 @@ void scan_result_functor::operator()<aggregation::MIN>(aggregation const& agg)
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(
-    values,
-    agg,
-    detail::min_scan(
-      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+  cache.add_result(values,
+                   agg,
+                   detail::min_scan(get_grouped_values(),
+                                    helper.group_labels(stream, mr),
+                                    cudf::detail::get_nan_semantics(agg),
+                                    stream,
+                                    mr.get_output_mr()));
 }
 
 template <>

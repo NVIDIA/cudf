@@ -50,11 +50,13 @@ std::unique_ptr<column> product_scan(column_view const& values,
  *
  * @param values Grouped values to get minimum from
  * @param group_labels ID of group that the corresponding value belongs to
+ * @param semantics How floating-point NaN values are ordered
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  */
 std::unique_ptr<column> min_scan(column_view const& values,
                                  device_span<size_type const> group_labels,
+                                 nan_semantics semantics,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr);
 

@@ -65,7 +65,7 @@ void finalize_means(table_view const& values,
     auto out =
       mutable_column_view{mean.type(), mean.size(), mean.head(), nullptr, 0, mean.offset()};
     cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
-      out, sums, counts, false, false, stream);
+      out, sums, counts, false, false, nan_semantics::UNORDERED, stream);
   }
 }
 
@@ -111,14 +111,14 @@ void finalize_minmax_for_compound_types(hash_compound_agg_finalizer const& final
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MIN>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmin_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmin_aggregation(); });
 }
 
 // Specialization for MAX aggregation
 template <>
 void hash_compound_agg_finalizer::operator()<aggregation::MAX>(aggregation const& agg) const
 {
-  finalize_minmax_for_compound_types(*this, agg, make_argmax_aggregation<>);
+  finalize_minmax_for_compound_types(*this, agg, [] { return make_argmax_aggregation(); });
 }
 
 // Helper for VARIANCE/STD finalization - shared logic for M2-based computations

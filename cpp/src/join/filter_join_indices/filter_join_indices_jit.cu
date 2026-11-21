@@ -4,6 +4,7 @@
  */
 
 #include "join/filter_join_indices/filter_join_indices_jit_kernel.cuh"
+#include "join/filter_join_indices/filter_passing_set.cuh"
 #include "join/filter_join_indices/full_join.hpp"
 
 #include <cudf/column/column_device_view.cuh>
@@ -26,8 +27,8 @@
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cub/device/device_transform.cuh>
-#include <cuco/static_set.cuh>
 #include <cuda/buffer>
+#include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/functional>
 #include <cuda/std/tuple>
@@ -240,22 +241,16 @@ apply_join_semantics(cudf::table_view const& left,
   } else if (join_kind == join_kind::LEFT_JOIN) {
     // LEFT_JOIN: Keep all left rows, nullify right indices for failed predicates
     // Using same complex logic as AST version with hash set for unmatched left rows
-    using SetType =
-      cuco::static_set<size_type,
-                       cuco::extent<std::size_t>,
-                       cuda::thread_scope_device,
-                       cuda::std::equal_to<size_type>,
-                       cuco::double_hashing<1, cuco::default_hash_function<size_type>>,
-                       rmm::mr::polymorphic_allocator<char>>;
-    SetType filter_passing_indices{cuco::extent{static_cast<std::size_t>(left.num_rows())},
-                                   cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
-                                   cuco::empty_key{-1},
-                                   {},
-                                   {},
-                                   {},
-                                   {},
-                                   rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
-                                   stream.get()};
+    filter_passing_set_type filter_passing_indices{
+      cuco::extent{static_cast<std::size_t>(left.num_rows())},
+      cudf::detail::CUCO_DESIRED_LOAD_FACTOR,
+      cuco::empty_key{-1},
+      {},
+      filter_passing_probing_scheme_type{filter_passing_hash_type{0}, filter_passing_hash_type{1}},
+      {},
+      {},
+      rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
+      stream.get()};
 
     auto predicate_func = [predicate_results_ptr] __device__(std::size_t idx) -> bool {
       return static_cast<bool>(predicate_results_ptr[idx]);

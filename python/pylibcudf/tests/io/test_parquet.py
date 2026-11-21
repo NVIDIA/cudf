@@ -1195,22 +1195,8 @@ def test_schema_element_is_one_level_list_rejects_none() -> None:
 
 
 def test_read_parquet_arrow_schema_duration() -> None:
-    table = pa.table({"d": pa.array([1, 2, 3], type=pa.duration("ms"))})
-    sink = io.BytesIO()
-    write_table(table, sink, store_schema=True)
-    sink.seek(0)
-
-    options = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo([sink])
-    ).build()
-    result = plc.io.parquet.read_parquet(options)
-
-    assert (
-        result.tbl.columns()[0].to_arrow().equals(table.column("d").chunk(0))
-    )
-
-
-def test_read_parquet_arrow_schema_duration_beside_deep_nesting() -> None:
+    # Duration column beside a deeply nested one to exercise the flatbuffer
+    # verifier's depth limit
     nested = pa.array([1, 2, 3], type=pa.int32())
     for _ in range(70):
         nested = pa.StructArray.from_arrays([nested], ["s"])
@@ -1236,26 +1222,47 @@ def test_read_parquet_arrow_schema_duration_beside_deep_nesting() -> None:
 def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
     tmp_path, from_bytes
 ) -> None:
-    table = pa.table({"d": pa.array([1, 2, 3, 4], type=pa.duration("ms"))})
-    path = tmp_path / "duration.parquet"
-    write_table(table, path, row_group_size=2, store_schema=True)
+    duration_path = tmp_path / "duration.parquet"
+    int64_path = tmp_path / "int64.parquet"
+    write_table(
+        pa.table({"d": pa.array([1, 2, 3, 4], type=pa.duration("ms"))}),
+        duration_path,
+        row_group_size=2,
+        store_schema=True,
+    )
+    write_table(
+        pa.table({"d": pa.array([1, 2], type=pa.int64())}),
+        int64_path,
+        store_schema=True,
+    )
 
-    if from_bytes:
-        footer, _ = _extract_footer_bytes_with_suffix(path.read_bytes())
-        file_metadatas = [
-            plc.io.parquet_metadata.FileMetaData.from_bytes(footer)
-        ]
-    else:
-        file_metadatas = plc.io.parquet_metadata.read_parquet_footers(
-            plc.io.SourceInfo([path])
+    def read_footers(paths):
+        if from_bytes:
+            return [
+                plc.io.parquet_metadata.FileMetaData.from_bytes(
+                    _extract_footer_bytes_with_suffix(path.read_bytes())[0]
+                )
+                for path in paths
+            ]
+        return plc.io.parquet_metadata.read_parquet_footers(
+            plc.io.SourceInfo(paths)
         )
 
     bounds = plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
-        file_metadatas, columns=["d"]
+        read_footers([duration_path]), columns=["d"]
     )
     d_min, d_max = bounds.columns()[2], bounds.columns()[3]
     assert d_min.to_arrow().equals(pa.array([1, 3], type=pa.duration("ms")))
     assert d_max.to_arrow().equals(pa.array([2, 4], type=pa.duration("ms")))
+
+    # Explicit int64 and duration arrow types must not mix, in either order
+    for paths in ([duration_path, int64_path], [int64_path, duration_path]):
+        with pytest.raises(
+            ValueError, match="Mismatching parquet statistics dtype"
+        ):
+            plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
+                read_footers(paths), columns=["d"]
+            )
 
 
 def test_file_metadata_schema_element_nesting() -> None:

@@ -809,6 +809,22 @@ TEST_F(HybridScanMultifileTest, SharedMultifileMetadata)
                std::out_of_range);
 }
 
+TEST_F(HybridScanMultifileTest, SharedMultifileMetadataArrowTypes)
+{
+  // Footers parsed by the shared metadata carry their arrow:schema types
+  auto col = cudf::test::fixed_width_column_wrapper<cudf::duration_ms, int64_t>{1, 2, 3};
+  auto parquet_buffers = std::vector<std::vector<char>>(1);
+  cudf::io::write_parquet(cudf::io::parquet_writer_options::builder(
+                            cudf::io::sink_info{&parquet_buffers.front()}, cudf::table_view{{col}})
+                            .write_arrow_schema(true)
+                            .build());
+  auto const source_info = build_source_info(parquet_buffers);
+  auto const inputs      = multifile_inputs(source_info);
+  auto const metadata    = make_multifile_metadata(inputs);
+  EXPECT_EQ(metadata.parquet_metadata(0)->schema[1].arrow_type,
+            cudf::type_id::DURATION_MILLISECONDS);
+}
+
 TEST_F(HybridScanMultifileTest, EmptySources)
 {
   // Arrow schema is applied during metadata construction, so make sure empty inputs are rejected

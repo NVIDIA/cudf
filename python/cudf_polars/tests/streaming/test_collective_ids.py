@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from contextlib import ExitStack
 from typing import Any
 
 import pytest
@@ -30,6 +31,23 @@ def _sort_ir():
 def _reserved_ids(ir) -> list[int]:
     with ReserveOpIDs(ir) as collective_id_map:
         return [i for ids in collective_id_map.values() for i in ids]
+
+
+def test_collective_id_allocation_order() -> None:
+    ir = _sort_ir()
+    with collective_id_scope(), ExitStack() as reservations:
+        released = _reserved_ids(ir)
+        assert len(released) > 1
+        assert released == list(range(len(released)))
+
+        # Recycling must not advance the counter for IDs that have never
+        # been reserved.
+        acquired = [
+            reservations.enter_context(reserve_op_id())
+            for _ in range(len(released) + 1)
+        ]
+        assert acquired == [*reversed(released), len(released)]
+        assert len(set(acquired)) == len(acquired)
 
 
 def test_collective_id_scope_ignores_held_ids() -> None:

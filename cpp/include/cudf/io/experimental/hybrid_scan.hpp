@@ -544,12 +544,14 @@ class hybrid_scan_reader {
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Filtered row group indices
    */
   [[nodiscard]] std::vector<size_type> filter_row_groups_with_stats(
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Get byte ranges of bloom filters for row group pruning
@@ -575,13 +577,15 @@ class hybrid_scan_reader {
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Filtered row group indices
    */
   [[nodiscard]] std::vector<size_type> filter_row_groups_with_bloom_filters(
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Get byte ranges of column chunk dictionary pages for row group pruning
@@ -616,13 +620,15 @@ class hybrid_scan_reader {
    * @param row_group_indices Input row groups indices
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Filtered row group indices
    */
   [[nodiscard]] std::vector<size_type> filter_row_groups_with_dictionary_pages(
     std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     std::span<size_type const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Builds a boolean (survival) column of size equal to the total number of rows in the row
@@ -711,13 +717,15 @@ class hybrid_scan_reader {
    * @param row_mask Boolean column indicating which rows need to be read
    * @param options Parquet reader options
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Vector of byte ranges to pages of payload columns
    */
   [[nodiscard]] std::vector<byte_range_info> payload_pages_byte_ranges(
     std::span<size_type const> row_group_indices,
     cudf::column_view const& row_mask,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Materialize payload columns and applies the row mask to the output table

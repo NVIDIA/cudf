@@ -435,26 +435,30 @@ type_id to_type_id(SchemaElement const& schema,
 
       case LogicalType::DECIMAL: {
         int32_t const decimal_precision = logical_type->precision();
+        // Use the requested decimal type (`decimal_type_id`) if any, otherwise use the native type.
+        auto const decimal_type = [&](type_id native_type) {
+          return decimal_type_id != type_id::EMPTY ? decimal_type_id : native_type;
+        };
         if (physical_type == Type::INT32) {
-          return type_id::DECIMAL32;
+          return decimal_type(type_id::DECIMAL32);
         } else if (physical_type == Type::INT64) {
-          return type_id::DECIMAL64;
+          return decimal_type(type_id::DECIMAL64);
         } else if (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
           if (std::cmp_less_equal(schema.type_length, sizeof(int32_t))) {
-            return type_id::DECIMAL32;
+            return decimal_type(type_id::DECIMAL32);
           } else if (std::cmp_less_equal(schema.type_length, sizeof(int64_t))) {
-            return type_id::DECIMAL64;
+            return decimal_type(type_id::DECIMAL64);
           } else if (std::cmp_less_equal(schema.type_length, sizeof(__int128_t))) {
-            return type_id::DECIMAL128;
+            return decimal_type(type_id::DECIMAL128);
           }
         } else if (physical_type == Type::BYTE_ARRAY) {
           CUDF_EXPECTS(decimal_precision <= MAX_DECIMAL128_PRECISION, "Invalid decimal precision");
           if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-            return type_id::DECIMAL32;
+            return decimal_type(type_id::DECIMAL32);
           } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-            return type_id::DECIMAL64;
+            return decimal_type(type_id::DECIMAL64);
           } else {
-            return type_id::DECIMAL128;
+            return decimal_type(type_id::DECIMAL128);
           }
         } else {
           CUDF_FAIL("Invalid representation of decimal type");
@@ -598,8 +602,31 @@ void metadata::sanitize_schema()
   process(0);
 }
 
+namespace {
+
+/**
+ * @brief Check if the schema tree of a Parquet footer has been initialized
+ */
+[[nodiscard]] bool is_schema_initialized(std::vector<SchemaElement> const& schema)
+{
+  return std::ranges::none_of(schema, [](auto const& schema_elem) {
+    return std::cmp_not_equal(schema_elem.num_children, schema_elem.children_idx.size());
+  });
+}
+
+}  // namespace
+
 metadata::metadata(FileMetaData&& other) : FileMetaData(std::move(other))
 {
+  // Check if the footer does not its schema tree initialized
+  if (not is_schema_initialized(schema)) {
+    // Clear any existing children indices
+    std::ranges::for_each(schema, [](auto& schema_elem) { schema_elem.children_idx.clear(); });
+    // Build from scratch and sanitize
+    init_schema(this);
+    sanitize_schema();
+  }
+
   // Since page index is set up for all or no row groups, just check if any column chunk has it set.
   // Update this check if this behavior changes in the future.
   is_page_index_setup_ = std::ranges::any_of(row_groups, [](auto const& row_group) {
@@ -1086,7 +1113,7 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
   }
 
   // Use arrow:schema types, filled into each source's schema at parse time, if requested
-  _use_arrow_schema = use_arrow_schema;
+  this->use_arrow_schema = use_arrow_schema;
 
   // Erase ARROW_SCHEMA_KEY from the output pfm if exists
   std::ranges::for_each(keyval_maps, [](auto& pfm) { pfm.erase(ARROW_SCHEMA_KEY); });
@@ -1170,30 +1197,30 @@ std::optional<std::string_view> decode_ipc_message(std::string_view const serial
 
   // Check for empty message
   if (message_size == 0) {
-    CUDF_LOG_ERROR("Parquet reader encountered zero length arrow:schema.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered zero length arrow:schema.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
   // Check for improper message size.
   if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_INITIAL) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered unexpected arrow:schema message length.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
   // Get the first 4 bytes (continuation) of the ipc message
   // and check if it matches the expected token
   if (read_int32_from_ipc_message() != IPC_CONTINUATION_TOKEN) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected IPC continuation token.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered unexpected IPC continuation token.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
   // Check for improper message size after the continuation bytes.
   if (message_size < MESSAGE_DECODER_NEXT_REQUIRED_SIZE_METADATA_LENGTH) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered unexpected arrow:schema message length.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
@@ -1203,8 +1230,8 @@ std::optional<std::string_view> decode_ipc_message(std::string_view const serial
 
   // Check if the read metadata (header) length is > zero
   if (metadata_len <= 0) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected metadata length.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered unexpected metadata length.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
@@ -1212,8 +1239,8 @@ std::optional<std::string_view> decode_ipc_message(std::string_view const serial
   // TODO: Since the arrow:schema message doesn't have a body,
   // the following check may be made tighter from < to ==
   if (message_size < metadata_len) {
-    CUDF_LOG_ERROR("Parquet reader encountered unexpected arrow:schema message length.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered unexpected arrow:schema message length.",
+                  "arrow:schema not processed.");
     return std::nullopt;
   }
 
@@ -1293,8 +1320,8 @@ arrow_schema_data_types decode_arrow_schema(std::string_view serialized_schema)
           schema_elem.type = duration_from_flatbuffer(type_data);
           arrow_type_col_seen |= (schema_elem.type.id() != type_id::EMPTY);
         } else {
-          CUDF_LOG_ERROR("Parquet reader encountered an invalid type_data pointer.",
-                         "arrow:schema not processed.");
+          CUDF_LOG_WARN("Parquet reader encountered an invalid type_data pointer.",
+                        "arrow:schema not processed.");
           return false;
         }
       }
@@ -1323,24 +1350,24 @@ arrow_schema_data_types decode_arrow_schema(std::string_view serialized_schema)
   auto verifier                    = ::flatbuffers::Verifier{
     reinterpret_cast<uint8_t const*>(metadata_buf->data()), metadata_buf->size(), verifier_options};
   if (not flatbuf::VerifyMessageBuffer(verifier)) {
-    CUDF_LOG_ERROR("Parquet reader encountered an invalid ipc:Message flatbuffer.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered an invalid ipc:Message flatbuffer.",
+                  "arrow:schema not processed.");
     return {};
   }
 
   // Check if the Message flatbuffer has a valid arrow:schema in its header
   auto const arrow_schema = flatbuf::GetMessage(metadata_buf->data())->header_as_Schema();
   if (arrow_schema == nullptr) {
-    CUDF_LOG_ERROR("Parquet reader encountered an invalid arrow:schema flatbuffer pointer.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered an invalid arrow:schema flatbuffer pointer.",
+                  "arrow:schema not processed.");
     return {};
   }
 
   // Get the vector of fields from arrow:schema flatbuffer object
   auto const fields = arrow_schema->fields();
   if (fields == nullptr) {
-    CUDF_LOG_ERROR("Parquet reader encountered an invalid fields pointer.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered an invalid fields pointer.",
+                  "arrow:schema not processed.");
     return {};
   }
 
@@ -1373,6 +1400,9 @@ void metadata::apply_arrow_schema()
   std::ranges::for_each(schema, [](auto& schema_elem) { schema_elem.arrow_type.reset(); });
 
   if (schema.empty()) { return; }
+
+  CUDF_EXPECTS(is_schema_initialized(schema),
+               "Cannot apply arrow:schema to an uninitialized Parquet schema");
 
   // Collect the arrow schema from the key value section of Parquet metadata
   auto const arrow_schema_kv =
@@ -1431,8 +1461,8 @@ void metadata::apply_arrow_schema()
 
   // verify equal number of children for both schemas at root level
   if (std::cmp_not_equal(pq_schema_root.num_children, arrow_schema_root.children.size())) {
-    CUDF_LOG_ERROR("Parquet reader encountered a mismatch between Parquet and arrow schema.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered a mismatch between Parquet and arrow schema.",
+                  "arrow:schema not processed.");
     return;
   }
 
@@ -1444,8 +1474,8 @@ void metadata::apply_arrow_schema()
   if (not std::all_of(schemas, schemas + pq_schema_root.num_children, [&](auto const& elem) {
         return validate_schemas(cuda::std::get<0>(elem), cuda::std::get<1>(elem));
       })) {
-    CUDF_LOG_ERROR("Parquet reader encountered a mismatch between Parquet and arrow schema.",
-                   "arrow:schema not processed.");
+    CUDF_LOG_WARN("Parquet reader encountered a mismatch between Parquet and arrow schema.",
+                  "arrow:schema not processed.");
     return;
   }
 
@@ -1637,12 +1667,14 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
       auto const& schema_tree = get_schema_tree(src_idx);
       auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
-      // Sources without an arrow:schema type for this column follow the zeroth source
-      auto const source_arrow_type = arrow_type(schema_idx, src_idx);
+      // Sources without an arrow:schema follow the zeroth source's arrow type
+      auto const has_arrow_schema =
+        std::ranges::any_of(per_file_metadata[src_idx]->key_value_metadata,
+                            [](auto const& kv) { return kv.key == ARROW_SCHEMA_KEY; });
+      auto const source_arrow_type =
+        has_arrow_schema ? arrow_type(schema_idx, src_idx) : col_arrow_type;
       if (src_idx == 0) { col_arrow_type = source_arrow_type; }
-      auto const source_dtype =
-        statistics_dtype(schema_tree[schema_idx],
-                         source_arrow_type.has_value() ? source_arrow_type : col_arrow_type);
+      auto const source_dtype = statistics_dtype(schema_tree[schema_idx], source_arrow_type);
 
       if (src_idx == 0) {
         dtype = source_dtype;

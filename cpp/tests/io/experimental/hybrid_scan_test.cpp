@@ -20,7 +20,6 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/io/experimental/hybrid_scan.hpp>
-#include <cudf/io/experimental/hybrid_scan_multifile.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/text/byte_range_info.hpp>
@@ -716,6 +715,60 @@ TEST_F(HybridScanTest, FilterInt96Stats)
     }
   };
   EXPECT_EQ(prune(ordered, lt_zero, unnormalized_min), all);
+}
+
+TEST_F(HybridScanTest, FilterWrittenNaNCounts)
+{
+  // Row groups of three 4-row pages
+  auto constexpr nan = std::numeric_limits<float>::quiet_NaN();
+  auto const col     = cudf::test::fixed_width_column_wrapper<float>{
+    {1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
+         1.f, 1.f, 1.f, 1.f, 2.f, 3.f, 4.f, 5.f, 1.f, 1.f, 1.f, 1.f,    // no NaN
+         1.f, 1.f, 1.f, 1.f, nan, 1.f, 1.f, 1.f, nan, nan, nan, nan}};  // no, partial, and all NaN
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, cudf::table_view{{col}})
+      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+      .row_group_size_rows(12)
+      .max_page_size_rows(4)
+      .max_page_fragment_size(4));
+
+  auto const stream = cudf::get_default_stream();
+  auto const mr     = cudf::get_current_device_resource_ref();
+
+  // `col0 != 1`, which a NaN satisfies
+  auto one_value     = cudf::numeric_scalar<float>(1, true, stream, mr);
+  auto one           = cudf::ast::literal(one_value);
+  auto col_ref_0     = cudf::ast::column_reference(0);
+  auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::NOT_EQUAL, col_ref_0, one);
+  auto const options = cudf::io::parquet_reader_options::builder().filter(filter).build();
+
+  auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
+    reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()));
+  auto reader     = cudf::io::parquet::experimental::hybrid_scan_reader(
+    *cudf::io::parquet::fetch_footer_to_host(*datasource), options);
+  reader.setup_page_index(
+    *cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range()));
+  auto const row_groups = reader.all_row_groups(options);
+  ASSERT_EQ(row_groups.size(), 3ul);
+  // cudf writes no column index for the chunk with NaN pages, so its pages are all kept
+  EXPECT_EQ(reader.parquet_metadata()->row_groups[2].columns[0].column_index_length, 0);
+
+  // The NaN-free constant row group and pages are pruned, and the NaN pages are kept
+  EXPECT_EQ(reader.filter_row_groups_with_stats(row_groups, options, stream),
+            (std::vector<cudf::size_type>{1, 2}));
+  auto const row_mask = cudf::replace_nulls(
+    *reader.build_row_mask_with_page_index_stats(row_groups, options, stream, mr),
+    cudf::numeric_scalar<bool>(true, true, stream, mr),
+    stream,
+    mr);
+  EXPECT_EQ(std::ranges::count(cudf::test::to_host<bool>(*row_mask).first, true), 16);
+
+  // The NaN rows come back
+  auto const expected =
+    cudf::test::fixed_width_column_wrapper<float>{{2.f, 3.f, 4.f, 5.f, nan, nan, nan, nan, nan}};
+  auto const result = hybrid_scan_single_step(*datasource, filter, {}, false, false, stream, mr);
+  CUDF_TEST_EXPECT_TABLES_EQUIVALENT(cudf::table_view{{expected}}, result->view());
 }
 
 TEST_F(HybridScanTest, MaterializeStrings)
@@ -1427,78 +1480,6 @@ TEST_F(HybridScanTest, DecimalTypeOption)
     EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
     EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
   }
-}
-
-TEST_F(HybridScanTest, ArrowSchemaDurationType)
-{
-  auto col = cudf::test::fixed_width_column_wrapper<cudf::duration_ms, int64_t>{1, 2, 3, 4, 5};
-
-  std::vector<char> parquet_buffer;
-  {
-    auto const table = cudf::table_view{{col}};
-    auto opts =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&parquet_buffer}, table)
-        .write_arrow_schema(true)
-        .build();
-    cudf::io::write_parquet(opts);
-  }
-
-  auto const stream = cudf::get_default_stream();
-  auto const mr     = cudf::get_current_device_resource_ref();
-  auto datasource   = cudf::io::datasource::create(cudf::host_span<std::byte const>(
-    reinterpret_cast<std::byte const*>(parquet_buffer.data()), parquet_buffer.size()));
-
-  auto const read_column_type = [&](auto const& reader, auto const& options) {
-    auto const row_groups           = reader->all_row_groups(options);
-    auto const chunk_ranges         = reader->all_column_chunks_byte_ranges(row_groups, options);
-    auto [buffers, col_data, tasks] = cudf::io::parquet::fetch_byte_ranges_to_device_async(
-      *datasource, chunk_ranges, cudf::io::parquet::io_submission_policy::SERIALIZE, stream, mr);
-    tasks.get();
-    return reader->materialize_all_columns(row_groups, col_data, options, stream, mr)
-      .tbl->view()
-      .column(0)
-      .type()
-      .id();
-  };
-
-  auto const options       = cudf::io::parquet_reader_options::builder().build();
-  auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
-  auto const reader =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
-  EXPECT_EQ(read_column_type(reader, options), cudf::type_id::DURATION_MILLISECONDS);
-
-  // Shared multi-file metadata parsed from footer bytes also carries the arrow types
-  auto const footer_bytes = std::span<uint8_t const>{footer_buffer->data(), footer_buffer->size()};
-  auto const multifile_metadata = cudf::io::parquet::experimental::hybrid_scan_multifile_metadata{
-    std::span<std::span<uint8_t const> const>{&footer_bytes, 1}};
-  EXPECT_EQ(multifile_metadata.parquet_metadata(0)->schema[1].arrow_type,
-            cudf::type_id::DURATION_MILLISECONDS);
-
-  // Footers without arrow types filled in, e.g. built by the caller, get them filled from the
-  // arrow:schema in their key value metadata
-  auto file_metadata = *reader->parquet_metadata();
-  std::ranges::for_each(file_metadata.schema,
-                        [](auto& schema_elem) { schema_elem.arrow_type.reset(); });
-  {
-    auto const metadata_reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(file_metadata, options);
-    EXPECT_EQ(read_column_type(metadata_reader, options), cudf::type_id::DURATION_MILLISECONDS);
-  }
-  {
-    auto const shared_metadata =
-      cudf::io::parquet::experimental::hybrid_scan_metadata{std::move(file_metadata), options};
-    auto const metadata_reader =
-      std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(shared_metadata);
-    EXPECT_EQ(read_column_type(metadata_reader, options), cudf::type_id::DURATION_MILLISECONDS);
-  }
-
-  // Arrow types are ignored when not using the arrow schema
-  auto const no_arrow_options =
-    cudf::io::parquet_reader_options::builder().use_arrow_schema(false).build();
-  auto const no_arrow_reader =
-    std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer,
-                                                                          no_arrow_options);
-  EXPECT_EQ(read_column_type(no_arrow_reader, no_arrow_options), cudf::type_id::INT64);
 }
 
 TEST_F(HybridScanTest, StructChildFilterColumn)

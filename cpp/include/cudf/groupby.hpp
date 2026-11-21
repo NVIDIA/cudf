@@ -400,9 +400,9 @@ class groupby {
  * one aggregation per request.
  *
  * `column_index` refers to the position of the value column in the `table_view` passed
- * to `streaming_groupby::aggregate()`.  Multiple aggregations on the same column are
- * expressed as separate requests (e.g., `[{col, sum}, {col, mean}]`).  Internal
- * deduplication ensures redundant computations are shared automatically.
+ * to `streaming_groupby::aggregate()` or `direct_groupby::aggregate()`.  Multiple aggregations
+ * on the same column are expressed as separate requests (e.g., `[{col, sum}, {col, mean}]`).
+ * Internal deduplication ensures redundant computations are shared automatically.
  */
 struct streaming_aggregation_request {
   size_type column_index;                            ///< Index of the value column
@@ -616,6 +616,119 @@ class streaming_groupby {
  * @return True if the combination is supported, false otherwise
  */
 [[nodiscard]] bool is_streaming_groupby_supported(data_type values_type, aggregation::Kind kind);
+
+/**
+ * @brief Stateful groupby that aggregates values by caller-supplied group IDs.
+ *
+ * `direct_groupby` is the aggregation step of `streaming_groupby` without its hash table. Use
+ * it when every row already has a dense integer group ID, for example the right row index
+ * returned by `distinct_hash_join::left_join`, so the keys need not be hashed again. Input
+ * arrives in batches through `aggregate()`, and `finalize()` returns one row per group ID.
+ * Keys are neither stored nor returned; the caller owns the mapping from group IDs to keys.
+ *
+ * Memory use depends on `num_groups`, the requested aggregations, and the batch size, not on
+ * the cumulative number of input rows.
+ *
+ * The supported aggregation kinds and value types are those of `streaming_groupby`; use
+ * `is_streaming_groupby_supported()` to query a specific (value type, aggregation kind)
+ * combination.
+ */
+class direct_groupby {
+ public:
+  direct_groupby() = delete;
+  ~direct_groupby();
+  direct_groupby(direct_groupby const&)            = delete;
+  direct_groupby& operator=(direct_groupby const&) = delete;
+
+  /** @brief Move constructor. */
+  direct_groupby(direct_groupby&&) noexcept;
+
+  /**
+   * @brief Move assignment operator.
+   * @return Reference to this object.
+   */
+  direct_groupby& operator=(direct_groupby&&) noexcept;
+
+  /**
+   * @brief Construct a direct groupby object for a fixed number of groups.
+   *
+   * No device memory is allocated before the first non-empty `aggregate()` call.
+   *
+   * @param num_groups Number of groups. Group IDs passed to `aggregate()` are in
+   *        `[0, num_groups)`.
+   * @param requests The aggregations to perform. `column_index` refers to the `values` table
+   *        passed to `aggregate()`.
+   * @param mr Device memory resource used to allocate the aggregate state. Temporary
+   *        allocations made by `aggregate()` use the current device memory resource.
+   *
+   * @throws std::invalid_argument if `num_groups <= 0`
+   * @throws std::invalid_argument if any requested aggregation kind is unsupported
+   */
+  explicit direct_groupby(size_type num_groups,
+                          host_span<streaming_aggregation_request const> requests,
+                          cuda::mr::any_resource<cuda::mr::device_accessible> mr =
+                            cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Aggregate a batch of values into the groups given by `group_ids`.
+   *
+   * Row `i` of `values` is aggregated into group `group_ids[i]`. A row with a negative group
+   * ID is skipped, so miss values such as `cudf::JoinNoMatch` can be passed through. The
+   * behavior is undefined if any group ID is not less than `num_groups`, or if the value
+   * columns of a batch do not have the types of the first non-empty batch.
+   *
+   * `group_ids` and the columns of `values` are read by work enqueued on `stream` and must
+   * stay valid until that work has completed.
+   *
+   * This function may be called concurrently from multiple host threads on the same object,
+   * and each call may supply a different stream. Callers do not need to serialize the calls
+   * or synchronize between them.
+   *
+   * If a call fails while it changes the aggregate state, later `aggregate()` calls throw.
+   * `finalize()` can still be called and returns the state accumulated so far, which may
+   * include part of the failed batch. It throws if the first allocation of that state failed.
+   *
+   * @param group_ids Group ID of each row of `values`
+   * @param values Table containing the value columns
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   *
+   * @throws std::invalid_argument if `group_ids.size() != values.num_rows()`
+   * @throws cudf::logic_error if the first non-empty batch has a MEAN aggregation on a value
+   *         column that is not fixed-width
+   * @throws std::invalid_argument if the first non-empty batch has any other unsupported
+   *         combination of value type and aggregation kind
+   * @throws cudf::logic_error if an earlier `aggregate()` call failed while it changed the
+   *         aggregate state
+   */
+  void aggregate(device_span<size_type const> group_ids,
+                 table_view const& values,
+                 cuda::stream_ref stream = cudf::get_default_stream());
+
+  /**
+   * @brief Finalize the accumulated aggregates into final results.
+   *
+   * Every result column has `num_groups` rows, and row `g` is the result of group ID `g`. No
+   * key columns are returned. A group that received no rows is 0 for COUNT_VALID, COUNT_ALL
+   * and M2, and null for every other aggregation.
+   *
+   * The results include every `aggregate()` call that returned before this call. This does
+   * not modify the internal state; `aggregate()` may be called again afterward. This function
+   * may be called concurrently with `aggregate()`.
+   *
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations and the returned columns
+   * @return A vector of aggregation_results (one per request)
+   *
+   * @throws cudf::logic_error if no non-empty batch has been aggregated
+   */
+  [[nodiscard]] std::vector<aggregation_result> finalize(
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
+
+ private:
+  struct impl;
+  std::unique_ptr<impl> _impl;
+};
 
 /** @} */
 }  // namespace groupby

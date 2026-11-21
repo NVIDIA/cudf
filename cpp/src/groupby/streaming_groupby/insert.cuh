@@ -27,7 +27,7 @@ namespace cudf::groupby {
 
 template <bool has_nested>
 cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
-  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream)
+  table_view const& batch_keys, cuda::stream_ref stream)
 {
   auto const batch_size = batch_keys.num_rows();
   auto const temp_mr    = cudf::get_current_device_resource_ref();
@@ -129,12 +129,10 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
   }
 
   if (!_agg_kinds.empty()) {
-    thrust::for_each_n(
-      rmm::exec_policy_nosync(stream, temp_mr),
-      cuda::counting_iterator<size_type>(0),
-      batch_size,
-      resolve_aggregate_targets{
-        base, target_indices.data(), _aggregate_capacity, use_partials ? _partials_per_group : 1});
+    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
+                       cuda::counting_iterator<size_type>(0),
+                       batch_size,
+                       resolve_group_ids{base, target_indices.data()});
   }
   return target_indices;
 }

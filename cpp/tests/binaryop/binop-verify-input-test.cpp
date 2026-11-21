@@ -25,8 +25,81 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
+
+#include <array>
+#include <utility>
+
+namespace {
+template <std::size_t Lhs, std::size_t Rhs>
+constexpr cudf::type_id common_type_id()
+{
+  if constexpr (Lhs != 0 && Rhs != 0) {
+    using L = cudf::id_to_type<static_cast<cudf::type_id>(Lhs)>;
+    using R = cudf::id_to_type<static_cast<cudf::type_id>(Rhs)>;
+    if constexpr (cudf::binary_op_has_common_type_v<L, R>) {
+      return cudf::type_to_id<cudf::binary_op_common_type_t<L, R>>();
+    }
+  }
+  return cudf::type_id::EMPTY;
+}
+
+template <std::size_t... I>
+constexpr auto common_type_matrix(std::index_sequence<I...>)
+{
+  constexpr auto n = static_cast<std::size_t>(cudf::type_id::NUM_TYPE_IDS);
+  return std::array{common_type_id<I / n, I % n>()...};
+}
+}  // namespace
 
 struct BinopVerifyInputTest : public cudf::test::BaseFixture {};
+
+TEST_F(BinopVerifyInputTest, CommonTypeSelectionPreservesPruningInvariants)
+{
+  // Input-conversion and logical-body pruning rely on these host-selection invariants.
+  // Include output types because they participate in selection and fallback.
+  auto const num_types  = static_cast<int>(cudf::type_id::NUM_TYPE_IDS);
+  constexpr auto matrix = common_type_matrix(std::make_index_sequence<num_types * num_types>{});
+  int resolved_fixed_point_inputs = 0;
+  int fallback_fixed_point_inputs = 0;
+  int decimal_common_cases        = 0;
+  for (int out = 1; out < num_types; ++out) {
+    for (int lhs = 1; lhs < num_types; ++lhs) {
+      for (int rhs = 1; rhs < num_types; ++rhs) {
+        auto const lhs_type = cudf::data_type{static_cast<cudf::type_id>(lhs)};
+        auto const rhs_type = cudf::data_type{static_cast<cudf::type_id>(rhs)};
+        // Match get_common_type's output-first resolution and input-only fallback.
+        auto common = matrix[out * num_types + lhs];
+        if (common != cudf::type_id::EMPTY) {
+          common = matrix[static_cast<int>(common) * num_types + rhs];
+        }
+        bool const used_fallback = common == cudf::type_id::EMPTY;
+        if (used_fallback) { common = matrix[lhs * num_types + rhs]; }
+        bool const has_fixed_point_input =
+          cudf::is_fixed_point(lhs_type) || cudf::is_fixed_point(rhs_type);
+        if (common != cudf::type_id::EMPTY && has_fixed_point_input) {
+          ++resolved_fixed_point_inputs;
+          fallback_fixed_point_inputs += used_fallback;
+        }
+        EXPECT_FALSE(common != cudf::type_id::EMPTY &&
+                     cudf::is_floating_point(cudf::data_type{common}) && has_fixed_point_input)
+          << "output=" << out << ", lhs=" << lhs << ", rhs=" << rhs;
+        // Logical operators require BOOL8 output; connect their decimal common-type
+        // specializations to the inputs rejected by host fixed-point validation.
+        if (out == static_cast<int>(cudf::type_id::BOOL8) && common != cudf::type_id::EMPTY &&
+            cudf::is_fixed_point(cudf::data_type{common})) {
+          ++decimal_common_cases;
+          EXPECT_TRUE(has_fixed_point_input) << "lhs=" << lhs << ", rhs=" << rhs;
+        }
+      }
+    }
+  }
+  // A broken common-type table must not make the invariant pass vacuously.
+  EXPECT_GT(resolved_fixed_point_inputs, 0);
+  EXPECT_GT(fallback_fixed_point_inputs, 0);
+  EXPECT_GT(decimal_common_cases, 0);
+}
 
 TEST_F(BinopVerifyInputTest, Vector_Scalar_ErrorOutputVectorType)
 {

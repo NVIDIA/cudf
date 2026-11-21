@@ -56,6 +56,23 @@ struct type_casted_accessor {
   }
 };
 
+// get_common_type never selects a floating common type for fixed-point inputs.
+// Excluding those conversions here avoids instantiating unreachable device code
+// without changing the generic accessor's behavior or identity.
+template <typename CastType>
+struct common_type_casted_accessor {
+  template <typename Element>
+  __forceinline__ __device__ CastType operator()(cudf::size_type i,
+                                                 column_device_view const& col,
+                                                 bool is_scalar) const
+  {
+    if constexpr (!(is_fixed_point<Element>() && cuda::std::is_floating_point_v<CastType>)) {
+      return type_casted_accessor<CastType>{}.template operator()<Element>(i, col, is_scalar);
+    }
+    return {};
+  }
+};
+
 /**
  * @brief Type casts value to column type and stores in `i`th row of the column
  *
@@ -88,6 +105,16 @@ struct typed_casted_writer {
 
 // Functors to launch only defined operations.
 
+// Host fixed-point validation rejects logical operations before kernel launch,
+// even when their contextual bool conversion makes the functor invocable.
+template <typename BinaryOperator, typename TypeLhs, typename TypeRhs>
+inline constexpr bool is_fixed_point_logical_op =
+  (is_fixed_point<TypeLhs>() || is_fixed_point<TypeRhs>()) &&
+  (cuda::std::is_same_v<BinaryOperator, ops::LogicalAnd> ||
+   cuda::std::is_same_v<BinaryOperator, ops::LogicalOr> ||
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalAnd> ||
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalOr>);
+
 /**
  * @brief Functor to launch only defined operations with common type.
  *
@@ -105,11 +132,11 @@ struct ops_wrapper {
   template <typename TypeCommon>
   __forceinline__ __device__ void operator()(size_type i)
   {
-    if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
-      TypeCommon x =
-        type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
-      TypeCommon y =
-        type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+    if constexpr (!is_fixed_point_logical_op<BinaryOperator, TypeCommon, TypeCommon> &&
+                  cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
+      using accessor = common_type_casted_accessor<TypeCommon>;
+      TypeCommon x   = type_dispatcher(lhs.type(), accessor{}, i, lhs, is_lhs_scalar);
+      TypeCommon y   = type_dispatcher(rhs.type(), accessor{}, i, rhs, is_rhs_scalar);
       if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
                     cuda::std::is_same_v<TypeCommon, float>) {
         // TrueDiv divides in double. When the result is stored as float anyway, a float division
@@ -166,7 +193,8 @@ struct ops2_wrapper {
   template <typename TypeLhs, typename TypeRhs>
   __device__ void operator()(size_type i)
   {
-    if constexpr (!has_common_type_v<TypeLhs, TypeRhs> and
+    if constexpr (!is_fixed_point_logical_op<BinaryOperator, TypeLhs, TypeRhs> &&
+                  !has_common_type_v<TypeLhs, TypeRhs> and
                   cuda::std::is_invocable_v<BinaryOperator, TypeLhs, TypeRhs>) {
       TypeLhs x   = lhs.element<TypeLhs>(is_lhs_scalar ? 0 : i);
       TypeRhs y   = rhs.element<TypeRhs>(is_rhs_scalar ? 0 : i);

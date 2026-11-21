@@ -48,7 +48,7 @@ namespace {
  */
 struct page_stats_caster : public stats_caster_base {
   cudf::size_type total_rows;
-  std::span<metadata_base const> per_file_metadata;
+  std::span<std::shared_ptr<metadata_base> const> per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
 
   /**
@@ -96,14 +96,14 @@ struct page_stats_caster : public stats_caster_base {
         // Compute timestamp scale factor for precision conversion from the mapped source schema
         auto const ts_scale = [&] {
           if constexpr (cudf::is_timestamp<T>()) {
-            auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+            auto const& schema = per_file_metadata[src_idx]->schema[mapped_schema_idx];
             return parquet::detail::calc_timestamp_scale(schema.logical_type,
                                                          static_cast<int32_t>(T::period::den));
           }
           return 0;
         }();
         // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
-        auto const& schema = per_file_metadata[src_idx].schema[mapped_schema_idx];
+        auto const& schema = per_file_metadata[src_idx]->schema[mapped_schema_idx];
         auto const is_narrowing_column =
           cuda::std::signed_integral<T> and
           parquet::detail::is_column_wider_than(schema.type, schema.type_length, sizeof(T));
@@ -111,7 +111,7 @@ struct page_stats_caster : public stats_caster_base {
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
         std::for_each(rg_indices.cbegin(), rg_indices.cend(), [&](auto rg_idx) {
-          auto const& row_group = per_file_metadata[src_idx].row_groups[rg_idx];
+          auto const& row_group = per_file_metadata[src_idx]->row_groups[rg_idx];
           // Find colchunk_iter in row_group.columns. Guaranteed to be found as already verified
           // in compute_page_row_offsets_and_colchunk_page_offsets()
           auto colchunk_iter =
@@ -121,7 +121,7 @@ struct page_stats_caster : public stats_caster_base {
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
           // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
           auto const ignore_int96_min_max = parquet::detail::is_unordered_int96(
-            per_file_metadata[src_idx],
+            *per_file_metadata[src_idx],
             colchunk.meta_data.type,
             std::distance(row_group.columns.begin(), colchunk_iter));
 

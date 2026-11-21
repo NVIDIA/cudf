@@ -284,7 +284,7 @@ TEST_F(HybridScanTest, PageIndexOverflowThrows)
     SCOPED_TRACE(
       std::format("Corrupt {} index byte range",
                   corruption_type == CorruptionType::COLUMN_INDEX ? "column" : "offset"));
-    auto file_metadata = reader->parquet_metadata();
+    auto file_metadata = *reader->parquet_metadata();
     auto& column       = file_metadata.row_groups.front().columns.front();
     if (corruption_type == CorruptionType::COLUMN_INDEX) {
       column.column_index_offset = std::numeric_limits<int64_t>::max() - 1;
@@ -445,7 +445,7 @@ TEST_F(HybridScanTest, FilterFloatsWithNanCounts)
   auto const page_index_buffer =
     cudf::io::parquet::fetch_page_index_to_host(*datasource, reader->page_index_byte_range());
   reader->setup_page_index(*page_index_buffer);
-  auto const metadata   = reader->parquet_metadata();
+  auto const metadata   = *reader->parquet_metadata();
   auto const row_groups = reader->all_row_groups(options);
 
   // `NOT(col0 < 1)` and `col0 != -100`, which a NaN satisfies, and `NOT(col0 < NaN)` and
@@ -597,7 +597,7 @@ TEST_F(HybridScanTest, FilterInt96Stats)
   auto const page_index_buffer =
     cudf::io::parquet::fetch_page_index_to_host(*datasource, reader->page_index_byte_range());
   reader->setup_page_index(*page_index_buffer);
-  auto const metadata   = reader->parquet_metadata();
+  auto const metadata   = *reader->parquet_metadata();
   auto const row_groups = reader->all_row_groups(options);
 
   // 9999-12-31, a common open-ended sentinel that overflows `timestamp_ns`
@@ -752,7 +752,7 @@ TEST_F(HybridScanTest, FilterWrittenNaNCounts)
   auto const row_groups = reader.all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 3ul);
   // cudf writes no column index for the chunk with NaN pages, so its pages are all kept
-  EXPECT_EQ(reader.parquet_metadata().row_groups[2].columns[0].column_index_length, 0);
+  EXPECT_EQ(reader.parquet_metadata()->row_groups[2].columns[0].column_index_length, 0);
 
   // The NaN-free constant row group and pages are pruned, and the NaN pages are kept
   EXPECT_EQ(reader.filter_row_groups_with_stats(row_groups, options, stream),
@@ -1605,7 +1605,7 @@ TEST_F(HybridScanTest, SharedMetadataFromFileMetaDataMatchesReadParquet)
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto const seed_reader =
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
-  auto file_metadata = seed_reader->parquet_metadata();
+  auto file_metadata = *seed_reader->parquet_metadata();
 
   // Build shared metadata from the FileMetaData by copy and by move
   auto const copied_metadata =
@@ -1673,8 +1673,8 @@ TEST_F(HybridScanTest, SharedMetadataConcurrentReadersMatchReadParquet)
   // The page index materialized through `reader_a` must be visible through `reader_b` since both
   // readers share the same underlying metadata.
   auto const metadata_from_b = reader_b->parquet_metadata();
-  ASSERT_GT(metadata_from_b.row_groups.size(), 1);
-  for (auto const& row_group : metadata_from_b.row_groups) {
+  ASSERT_GT(metadata_from_b->row_groups.size(), 1);
+  for (auto const& row_group : metadata_from_b->row_groups) {
     for (auto const& column_chunk : row_group.columns) {
       EXPECT_TRUE(column_chunk.column_index.has_value());
       EXPECT_TRUE(column_chunk.offset_index.has_value());

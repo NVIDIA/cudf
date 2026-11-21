@@ -233,7 +233,7 @@ std::tuple<cudf::io::parquet::FileMetaData, bool> read_parquet_file_metadata(
     std::cout << "The input parquet file does not contain a page index\n";
   }
 
-  return std::tuple{reader->parquet_metadata(), has_page_index};
+  return std::tuple{*reader->parquet_metadata(), has_page_index};
 }
 
 void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,

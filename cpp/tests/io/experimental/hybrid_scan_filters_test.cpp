@@ -84,7 +84,7 @@ TEST_F(HybridScanFiltersTest, Metadata)
     options);
 
   // Get Parquet file metadata from the reader
-  auto parquet_metadata = reader->parquet_metadata();
+  auto parquet_metadata = *reader->parquet_metadata();
 
   // Check that the offset and column indices are not present
   EXPECT_FALSE(parquet_metadata.row_groups[0].columns[0].offset_index.has_value());
@@ -102,7 +102,7 @@ TEST_F(HybridScanFiltersTest, Metadata)
     static_cast<uint8_t const*>(page_index_buffer->data()), page_index_buffer->size()});
 
   // Get Parquet file metadata from the reader again
-  parquet_metadata = reader->parquet_metadata();
+  parquet_metadata = *reader->parquet_metadata();
 
   // Check that the offset and column indices are now present
   EXPECT_TRUE(parquet_metadata.row_groups[0].columns[0].offset_index.has_value());
@@ -216,7 +216,7 @@ TEST_F(HybridScanFiltersTest, ExternalMetadata)
     reader->setup_page_index(cudf::host_span<uint8_t const>{
       static_cast<uint8_t const*>(page_index_buffer->data()), page_index_buffer->size()});
 
-    return reader->parquet_metadata();
+    return *reader->parquet_metadata();
   }();
 
   // Filtering AST - 100 > table[0]
@@ -237,7 +237,7 @@ TEST_F(HybridScanFiltersTest, ExternalMetadata)
     parquet_metadata, options);
 
   // Get Parquet file metadata from the reader
-  parquet_metadata = reader->parquet_metadata();
+  parquet_metadata = *reader->parquet_metadata();
 
   // Check that the offset and column indices are present
   EXPECT_TRUE(parquet_metadata.row_groups[0].columns[0].offset_index.has_value());
@@ -988,7 +988,7 @@ TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
     cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
   reader.setup_page_index(*page_index_buffer);
 
-  auto metadata = reader.parquet_metadata();
+  auto metadata = *reader.parquet_metadata();
   for (auto& row_group : metadata.row_groups) {
     for (auto& column : row_group.columns) {
       column.column_index.reset();
@@ -2134,13 +2134,14 @@ TYPED_TEST(DecimalWidthFiltering, FilterRowGroups)
     std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(*footer_buffer, options);
   auto const row_groups = reader->all_row_groups(options);
   ASSERT_EQ(row_groups.size(), 4);
-  ASSERT_TRUE(std::ranges::all_of(reader->parquet_metadata().row_groups, [](auto const& row_group) {
-    return std::ranges::any_of(row_group.columns.front().meta_data.encodings,
-                               [](auto const encoding) {
-                                 return encoding == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
-                                        encoding == cudf::io::parquet::Encoding::RLE_DICTIONARY;
-                               });
-  }));
+  ASSERT_TRUE(
+    std::ranges::all_of(reader->parquet_metadata()->row_groups, [](auto const& row_group) {
+      return std::ranges::any_of(
+        row_group.columns.front().meta_data.encodings, [](auto const encoding) {
+          return encoding == cudf::io::parquet::Encoding::PLAIN_DICTIONARY or
+                 encoding == cudf::io::parquet::Encoding::RLE_DICTIONARY;
+        });
+    }));
 
   auto const col_ref     = cudf::ast::column_reference(0);
   auto const test_filter = [&](cudf::ast::ast_operator op,
@@ -2623,7 +2624,7 @@ TEST_F(HybridScanFiltersTest, DictionaryPagesByteRangesIncludeUnboundedMatchesEx
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*datasource);
   auto const footer_reader = std::make_unique<cudf::io::parquet::experimental::hybrid_scan_reader>(
     *footer_buffer, cudf::io::parquet_reader_options::builder().build());
-  auto const footer_metadata = footer_reader->parquet_metadata();
+  auto const footer_metadata = *footer_reader->parquet_metadata();
 
   for (auto const drop_stats : {false, true}) {
     for (auto const hide_offsets : {false, true}) {

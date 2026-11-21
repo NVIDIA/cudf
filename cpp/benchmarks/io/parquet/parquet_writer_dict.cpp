@@ -214,7 +214,7 @@ void BM_parq_write_dict_encoding(nvbench::state& state)
     reader.setup_page_index(*page_index_buffer);
 
     auto const metadata       = reader.parquet_metadata();
-    auto const page_dict_bits = compute_page_dict_bits(datasource_ref, metadata);
+    auto const page_dict_bits = compute_page_dict_bits(datasource_ref, *metadata);
 
     CUDF_EXPECTS(not page_dict_bits.empty(), "No dictionary-encoded pages found");
 

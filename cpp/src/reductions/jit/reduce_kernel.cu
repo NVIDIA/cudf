@@ -49,6 +49,9 @@ __device__ errc cudf_all_true(bool* selected)
 
 __device__ errc cudf_all_true_indexed(size_type, bool* selected) { return cudf_all_true(selected); }
 
+static_assert(sizeof(CUDF_REDUCE_STATE) == CUDF_REDUCE_STATE_SIZE,
+              "sizeof(CUDF_REDUCE_STATE) does not match CUDF_REDUCE_STATE_SIZE");
+
 __global__ void cudf_kernel_entry(jit::reduce::phase phase,
                                   size_type num_rows,
                                   column_device_view_core const* __restrict__ inputs,
@@ -66,9 +69,9 @@ __global__ void cudf_kernel_entry(jit::reduce::phase phase,
     inputs,
     filter_inputs,
     outputs,
-    static_cast<CUDF_DISPATCH_REDUCE_STATE const*>(partials),
-    static_cast<CUDF_DISPATCH_REDUCE_STATE*>(results),
-    static_cast<CUDF_DISPATCH_REDUCE_STATE*>(scratch),
+    static_cast<CUDF_REDUCE_STATE const*>(partials),
+    static_cast<CUDF_REDUCE_STATE*>(results),
+    static_cast<CUDF_REDUCE_STATE*>(scratch),
     error,
     finalize_inline,
     cudf_reduce_init,

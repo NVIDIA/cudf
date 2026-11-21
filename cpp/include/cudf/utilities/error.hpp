@@ -11,11 +11,9 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
-#include <format>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
-#include <utility>
 
 /**
  * @file
@@ -235,7 +233,7 @@ struct evaluation_error : public std::exception {
  * @param ... This macro accepts either one or two arguments:
  *   - The first argument is an expression that produces the error message used to construct the
  *     `what` of the exception. This can be a string literal or a dynamic expression (e.g.,
- *     `std::format("{} is invalid", x)`).
+ *     `std::to_string(x) + " is invalid"`).
  *   - When given, the second argument is the exception to be thrown. When not
  *     specified, defaults to `cudf::logic_error`.
  * @throw `_exception_type` if the condition evaluates to 0 (false).
@@ -265,16 +263,13 @@ inline void throw_cuda_error(cudaError_t error, char const* file, unsigned int l
   // occurred if it still returns the same error after a cleanup.
   cudaGetLastError();
   auto const last = cudaFree(nullptr);
-  auto const msg  = std::format("CUDA error encountered at: {}:{}: {} {} {}",
-                               file,
-                               line,
-                               static_cast<int>(error),
-                               cudaGetErrorName(error),
-                               cudaGetErrorString(error));
+  auto const msg  = std::string{"CUDA error encountered at: " + std::string{file} + ":" +
+                               std::to_string(line) + ": " + std::to_string(error) + " " +
+                               cudaGetErrorName(error) + " " + cudaGetErrorString(error)};
   // Call cudaDeviceSynchronize to ensure `last` did not result from an asynchronous error.
   // between two calls.
   if (error == last && last == cudaDeviceSynchronize()) {
-    throw fatal_cuda_error{std::format("Fatal {}", msg), error};
+    throw fatal_cuda_error{"Fatal " + msg, error};
   } else {
     throw cuda_error{msg, error};
   }
@@ -282,17 +277,16 @@ inline void throw_cuda_error(cudaError_t error, char const* file, unsigned int l
 // @endcond
 
 // @cond
-template <typename Exception, typename MsgFunc, typename... Args>
+template <typename Exception, typename MsgFunc, typename... Context>
 [[noreturn]] void cudf_fail(MsgFunc&& msg_func,
                             int line_number,
                             char const* filename,
-                            Args&&... args)
+                            Context... context)
 {
   std::string const msg = std::forward<MsgFunc>(msg_func)();
-  throw Exception{
-    std::forward<Args>(args)...,
-    std::format(
-      "CUDF failure at: {}:{}: {}", filename, line_number, msg.empty() ? "(no message)" : msg)};
+  throw Exception{context...,
+                  std::string{"CUDF failure at: "} + filename + ":" + std::to_string(line_number) +
+                    ": " + (msg.empty() ? "(no message)" : msg)};
 }
 // @endcond
 }  // namespace detail

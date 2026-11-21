@@ -204,8 +204,7 @@ std::pair<std::vector<std::string>, std::string> reflect_outputs(
           rtcx::reflect_template("::cudf::jit::type_list", accessors)};
 }
 
-// Reserve a conservative ABI-independent bound: every field may need alignment padding.
-// is_optional contains one flag per state field; nonzero flags select optional storage.
+// Reflect the layout and types of the reduction state fields.
 std::tuple<detail::layout, std::vector<std::string>> reflect_state(
   std::span<data_type const> states, std::span<uint8_t const> is_optional)
 {
@@ -433,13 +432,15 @@ kernel get_kernel(kernel_reflection const& spec, reduce_udf const& udf, std::str
 
   auto source = std::format(
     R"CUDA(
-#define CUDF_DISPATCH_REDUCE_STATE {}
+#define CUDF_REDUCE_STATE {}
+#define CUDF_REDUCE_STATE_SIZE {}
 {}
 #define CUDF_REDUCE_UPDATE_INDEXED {}
 #define CUDF_REDUCE_FILTER_INDEXED {}
 #define CUDF_KERNEL_INSTANCE {}
   )CUDA",
     spec.state,
+    spec.state_layout.size,
     type_defines,
     udf.indexed_update,
     udf.indexed_filter,
@@ -746,6 +747,10 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
   CUDF_EXPECTS(filter_inputs.empty() || !udf.filter.empty(),
                "A filter symbol is required when filter inputs are specified",
                std::invalid_argument);
+  CUDF_EXPECTS(
+    !udf.init.empty() && !udf.update.empty() && !udf.merge.empty() && !udf.finalize.empty(),
+    "The init, update, merge, and finalize symbols are required",
+    std::invalid_argument);
 
   auto optional_values = udf.is_null_aware == null_aware::YES;
   auto shape           = validate_reduce(inputs, filter_inputs, state_types, types);

@@ -136,7 +136,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   [[nodiscard]] std::vector<std::vector<size_type>> filter_row_groups_with_stats(
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::bloom_filters_byte_ranges
@@ -164,7 +165,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @copydoc
@@ -174,7 +176,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
     std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
     std::span<std::vector<size_type> const> row_group_indices,
     parquet_reader_options const& options,
-    cuda::stream_ref stream);
+    cuda::stream_ref stream,
+    cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::io::parquet::experimental::hybrid_scan_multifile::build_all_true_row_mask
@@ -215,7 +218,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
   sparse_payload_pages_byte_ranges(std::span<std::vector<size_type> const> row_group_indices,
                                    cudf::column_view const& row_mask,
                                    parquet_reader_options const& options,
-                                   cuda::stream_ref stream);
+                                   cuda::stream_ref stream,
+                                   cudf::memory_resources mr);
 
   /**
    * @brief Materializes the specified columns
@@ -471,6 +475,7 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
    * @param dictionary_col_schemas Schema indices of output columns with (in)equality predicate
    * @param options Parquet reader options
    * @param stream CUDA stream
+   * @param mr Memory resources used for temporary allocations
    *
    * @return A tuple of a boolean indicating if any of the chunks have compressed data, a host
    * device vector of column chunk descriptors, and a host device vector of decoded dictionary page
@@ -483,7 +488,8 @@ class hybrid_scan_reader_impl : public parquet::detail::reader_impl {
                        std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
                        std::span<int const> dictionary_col_schemas,
                        parquet_reader_options const& options,
-                       cuda::stream_ref stream);
+                       cuda::stream_ref stream,
+                       cudf::memory_resources mr);
 
   /**
    * @brief Prepares the select input row groups and associated chunk information

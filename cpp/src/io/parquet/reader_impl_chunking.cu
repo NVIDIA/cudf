@@ -284,10 +284,15 @@ void reader_impl::setup_next_subpass(read_mode mode)
                                                            pass.num_rows,
                                                            _stream,
                                                            _mr.get_temporary_mr());
+      if (_nz_map_enabled) {
+        pass.nz_map_sizes = compute_nz_map_sizes(
+          pass.chunks, pass.pages, pass.skip_rows, pass.num_rows, _stream, _mr.get_temporary_mr());
+      }
     }
     include_scratch_size(pass.decomp_scratch_sizes, c_info, _stream);
     include_scratch_size(pass.string_offset_sizes, c_info, _stream);
     include_scratch_size(pass.level_decode_sizes, c_info, _stream);
+    if (_nz_map_enabled) { include_scratch_size(pass.nz_map_sizes, c_info, _stream); }
 
     auto iter               = cuda::counting_iterator<size_t>{0};
     auto const pass_max_row = pass.skip_rows + pass.num_rows;
@@ -490,12 +495,15 @@ void reader_impl::create_global_chunk_info()
         _strings_to_categorical and
         not _metadata->is_binary_leaf(mapped_schema_idx, rg.source_index);
 
-      auto [clock_rate, logical_type] = conversion_info(
-        to_type_id(
-          schema, strings_to_categorical, _options.timestamp_type.id(), _options.decimal_width),
-        _options.timestamp_type.id(),
-        schema.type,
-        schema.logical_type);
+      auto [clock_rate, logical_type] =
+        conversion_info(to_type_id(schema,
+                                   _metadata->arrow_type(col.schema_idx),
+                                   strings_to_categorical,
+                                   _options.timestamp_type.id(),
+                                   _options.decimal_width),
+                        _options.timestamp_type.id(),
+                        schema.type,
+                        schema.logical_type);
 
       // for lists, estimate the number of bytes per row. this is used by the subpass reader to
       // determine where to split the decompression boundaries

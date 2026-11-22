@@ -1589,7 +1589,8 @@ class orc_chunked_writer {
    * @param[in] options options used to write table
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    * @param[in] mr Memory resources used for temporary allocations by this constructor and by
-   * `write()` and `close()`
+   * `write()` and `close()`. The resources, including the current device resource when `mr` is
+   * defaulted, must stay valid and unchanged until the writer is closed or destroyed.
    *
    * @throw cudf::logic_error if the writer timezone is empty or does not resolve to a timezone
    * file

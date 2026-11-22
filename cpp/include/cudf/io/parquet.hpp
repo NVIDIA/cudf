@@ -2086,7 +2086,8 @@ class chunked_parquet_writer {
    * @param[in] options options used to write table
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
    * @param[in] mr Memory resources used for temporary allocations by this constructor and by
-   * `write()` and `close()`
+   * `write()` and `close()`. The resources, including the current device resource when `mr` is
+   * defaulted, must stay valid and unchanged until the writer is closed or destroyed.
    */
   chunked_parquet_writer(chunked_parquet_writer_options const& options,
                          cuda::stream_ref stream   = cudf::get_default_stream(),

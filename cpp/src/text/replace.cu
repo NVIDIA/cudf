@@ -25,6 +25,7 @@
 #include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/utility>

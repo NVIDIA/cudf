@@ -24,6 +24,7 @@
 #include <cooperative_groups.h>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>

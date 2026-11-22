@@ -7,8 +7,6 @@
 
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/mr/per_device_resource.hpp>
-
 #include <rapidsmpf/cuda_stream.hpp>
 #include <rapidsmpf/memory/buffer.hpp>
 #include <rapidsmpf/statistics.hpp>

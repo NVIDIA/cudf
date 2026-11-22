@@ -120,7 +120,7 @@ cpdef list fetch_bloom_filters_to_device(
             std_span[const_byte_range_info](ranges_vec.data(), ranges_vec.size()),
             policy,
             _stream.view().get(),
-            _mr.get_mr(),
+            _get_memory_resources(_mr),
         )
 
     cdef gpumemoryview owner_gv = _from_cuda_byte_buffer(

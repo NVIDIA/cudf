@@ -24,7 +24,7 @@ from pylibcudf.libcudf.types cimport mask_state, null_equality
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from pylibcudf.experimental._join_streams cimport join_streams
 from rmm.librmm.cuda_stream_ref cimport stream_ref
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 
 from pylibcudf.libcudf.asof_join import (
     asof_join_exact_matches as AsofJoinExactMatches,  # no-cython-lint
@@ -87,7 +87,7 @@ cdef extern from * nogil:
       cudf::table_view const& left_by, cudf::column_view const& left_on,
       cudf::experimental::asof_join_strategy strategy,
       cudf::experimental::asof_join_exact_matches exact_matches,
-      cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+      cuda::stream_ref stream, cudf::memory_resources mr)
     {
       auto indices = joiner.join(
         left_by, left_on, strategy, exact_matches, stream, mr);
@@ -105,7 +105,7 @@ cdef extern from * nogil:
         asof_join_strategy strategy,
         asof_join_exact_matches exact_matches,
         stream_ref stream,
-        device_async_resource_ref mr,
+        memory_resources mr,
     ) except +libcudf_exception_handler
 
 
@@ -149,7 +149,7 @@ cdef class AsofJoin:
         with nogil:
             self.c_obj.reset(
                 new cpp_asof_join.asof_join(
-                    c_right_by, c_right_on, _cs, self._mr.get_mr()
+                    c_right_by, c_right_on, _cs, _get_memory_resources(self._mr)
                 )
             )
 
@@ -204,7 +204,7 @@ cdef class AsofJoin:
             with nogil:
                 result = asof_join_indices(
                     dereference(self.c_obj), c_left_by, c_left_on,
-                    strategy, exact_matches, _cs, mr.get_mr()
+                    strategy, exact_matches, _cs, _get_memory_resources(mr)
                 )
         finally:
             if _stream is not self._stream:
@@ -1308,7 +1308,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).inner_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),
@@ -1346,7 +1346,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).left_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),
@@ -1384,7 +1384,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).full_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),

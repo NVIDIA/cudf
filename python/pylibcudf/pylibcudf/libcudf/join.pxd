@@ -104,19 +104,19 @@ cdef extern from "cudf/join/hash_join.hpp" namespace "cudf" nogil:
             const table_view&,
             optional[size_t],
             cudaStream_t stream,
-            device_async_resource_ref mr
+            memory_resources mr
         ) except +libcudf_exception_handler
         gather_map_pair_type left_join(
             const table_view&,
             optional[size_t],
             cudaStream_t stream,
-            device_async_resource_ref mr
+            memory_resources mr
         ) except +libcudf_exception_handler
         gather_map_pair_type full_join(
             const table_view&,
             optional[size_t],
             cudaStream_t stream,
-            device_async_resource_ref mr
+            memory_resources mr
         ) except +libcudf_exception_handler
 
 cdef extern from "cudf/join/conditional_join.hpp" namespace "cudf" nogil:

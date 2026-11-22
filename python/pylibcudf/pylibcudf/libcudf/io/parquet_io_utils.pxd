@@ -43,7 +43,7 @@ cdef extern from * nogil:
         std::span<cudf::io::text::byte_range_info const> byte_ranges,
         cudf::io::parquet::io_submission_policy policy,
         cudaStream_t stream,
-        rmm::device_async_resource_ref mr)
+        cudf::memory_resources mr)
     {
         auto [buffers, spans] = cudf::io::parquet::fetch_bloom_filters_to_device(
             datasource, byte_ranges, policy, cuda::stream_ref{stream}, mr);
@@ -82,7 +82,7 @@ cdef extern from * nogil:
             std_span[const_byte_range_info] byte_ranges,
             io_submission_policy policy,
             cudaStream_t stream,
-            device_async_resource_ref mr,
+            memory_resources mr,
         ) except +libcudf_exception_handler
 
     pair[vector[device_buffer], vector[device_span[const_uint8_t]]] \

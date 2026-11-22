@@ -281,6 +281,7 @@ struct column_sorted_order_fn {
   }
 
   template <typename T>
+    requires(not cuda::std::totally_ordered<T> and not cudf::concepts::dictionary<T>)
   void operator()(column_view const&,
                   mutable_column_view&,
                   bool,

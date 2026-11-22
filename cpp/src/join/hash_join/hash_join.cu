@@ -21,6 +21,7 @@
 #include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cub/device/device_scan.cuh>
 #include <cuda/buffer>
 #include <cuda/std/cstdint>
 

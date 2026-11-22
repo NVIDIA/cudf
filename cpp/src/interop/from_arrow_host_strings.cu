@@ -42,8 +42,6 @@ namespace cudf {
 namespace detail {
 namespace {
 
-constexpr int chars_buffer_idx = 2;
-
 std::unique_ptr<column> from_arrow_string(
   ArrowSchemaView const* schema,
   ArrowArray const* input,
@@ -64,8 +62,6 @@ std::unique_ptr<column> from_arrow_string(
                              null_count,
                              std::move(*mask));
 }
-
-constexpr int stringview_vector_idx = 1;
 
 std::unique_ptr<column> from_arrow_stringview(
   ArrowSchemaView const* schema,

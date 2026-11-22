@@ -222,7 +222,7 @@ void approx_distinct_count<Hasher>::add(table_view const& input,
   typename approx_distinct_count<Hasher>::hll_ref_type ref{sketch(), cuda::std::identity{}};
 
   auto const has_nulls = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
-  auto const temp_mr   = mr.get_temporary_mr();
+  auto const temp_mr   = mr.as_temporary();
   auto const preprocessed_input =
     cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const row_hasher = cudf::detail::row::hash::row_hasher(preprocessed_input);

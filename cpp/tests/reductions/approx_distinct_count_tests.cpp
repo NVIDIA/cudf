@@ -8,6 +8,7 @@
 #include <cudf_test/memory_resource_utilities.hpp>
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/reduction/approx_distinct_count.hpp>
 #include <cudf/reduction/distinct_count.hpp>
 #include <cudf/table/table_view.hpp>
@@ -151,6 +152,43 @@ TEST_F(ApproxDistinctCount, AddMemoryResources)
     cudf::distinct_count(input_col, null_policy::EXCLUDE, nan_policy::NAN_IS_VALID);
   EXPECT_TRUE(is_reasonable_approximation(approx_count, exact_count))
     << "Exact: " << exact_count << ", Approx: " << approx_count;
+}
+
+TEST_F(ApproxDistinctCount, AddNullableStructMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  auto data         = generate_data<int32_t>(2000, 100);
+  auto validity     = generate_validity(2000, 15);
+  // The child has a null mask but no nulls, so preprocessing ANDs the parent and child masks
+  // without counting child nulls in get_sliced_child, which allocates from the current resource.
+  auto const all_valid = thrust::host_vector<bool>(2000, true);
+  cudf::test::fixed_width_column_wrapper<int32_t> child(
+    data.begin(), data.end(), all_valid.begin());
+  cudf::test::fixed_width_column_wrapper<int32_t> parent_validity(
+    data.begin(), data.end(), validity.begin());
+  auto const parent_view = cudf::column_view{parent_validity};
+  cudf::column_view input_col{cudf::data_type{cudf::type_id::STRUCT},
+                              2000,
+                              nullptr,
+                              parent_view.null_mask(),
+                              parent_view.null_count(),
+                              0,
+                              {child}};
+  cudf::table_view input_table({input_col});
+
+  auto adc = cudf::approx_distinct_count(cudf::slice(input_table, {0, 0}).front(), 12);
+  {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    adc.add(input_table, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+
+  EXPECT_EQ(adc.estimate(stream), cudf::approx_distinct_count(input_table, 12).estimate(stream));
 }
 
 TEST_F(ApproxDistinctCount, IgnoreNull)

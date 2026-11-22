@@ -140,11 +140,6 @@ struct stripe_size_limits {
  *
  */
 struct intermediate_statistics {
-  explicit intermediate_statistics(cuda::stream_ref stream)
-    : stripe_stat_chunks(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
-  {
-  }
-
   intermediate_statistics(orc_table_view const& table,
                           cuda::stream_ref stream,
                           cudf::memory_resources mr);

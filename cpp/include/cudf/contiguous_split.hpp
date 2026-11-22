@@ -143,10 +143,10 @@ struct packed_metadata_access;
  * // Create a table_view
  * cudf::table_view tv = ...;
  *
- * // Choose a memory resource (optional). This memory resource is used for scratch/thrust temporary
+ * // Choose memory resources (optional). These are used for scratch/thrust temporary
  * // data. In memory constrained cases, this can be used to set aside scratch memory
  * // for `chunked_pack` at the beginning of a program.
- * auto mr = cudf::get_current_device_resource_ref();
+ * cudf::memory_resources mr = cudf::get_current_device_resource_ref();
  * cuda::stream_ref stream = cudf::get_default_stream();
  *
  * // Define a buffer size for each chunk: the larger the buffer is, the more SMs can be

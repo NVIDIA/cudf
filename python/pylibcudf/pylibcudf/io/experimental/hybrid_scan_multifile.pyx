@@ -43,8 +43,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources, _get_s
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from typing_extensions import Buffer
+    from collections.abc import Buffer, Sequence
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.io.parquet_metadata import FileMetaData

@@ -32,6 +32,7 @@
 #include <thrust/for_each.h>
 #include <thrust/scan.h>
 #include <thrust/scatter.h>
+#include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>

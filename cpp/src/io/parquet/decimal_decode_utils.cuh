@@ -8,7 +8,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/cstring>
@@ -51,6 +51,33 @@ template <typename T>
     }
   }
   return cuda::std::byteswap(big_endian);
+}
+
+/**
+ * @brief Store a decimal unscaled value at the output decimal width
+ *
+ * Computes the storage type `T` from `dtype_len` and stores
+ * `get_value.template operator()<T>()`, which sign extends or
+ * truncates the value to `T`, to `dst`.
+ *
+ * @param dst Pointer to the output value
+ * @param dtype_len Size in bytes of the output decimal storage type
+ * @param get_value Callable templated on the output storage type returning the value to store
+ */
+CUDF_HOST_DEVICE inline void store_decimal(void* dst, uint32_t dtype_len, auto&& get_value)
+{
+  switch (dtype_len) {
+    case sizeof(int32_t):
+      *static_cast<int32_t*>(dst) = get_value.template operator()<int32_t>();
+      break;
+    case sizeof(int64_t):
+      *static_cast<int64_t*>(dst) = get_value.template operator()<int64_t>();
+      break;
+    case sizeof(__int128_t):
+      *static_cast<__int128_t*>(dst) = get_value.template operator()<__int128_t>();
+      break;
+    default: break;
+  }
 }
 
 /**

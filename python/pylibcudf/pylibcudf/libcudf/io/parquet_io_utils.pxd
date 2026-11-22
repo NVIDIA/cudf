@@ -14,6 +14,9 @@ from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.io.datasource cimport datasource
 from pylibcudf.libcudf.io.text cimport byte_range_info
+from pylibcudf.libcudf.utilities.device_buffer cimport (
+    device_buffer as cuda_device_buffer,
+)
 from pylibcudf.libcudf.utilities.span cimport device_span
 
 ctypedef const uint8_t const_uint8_t
@@ -31,6 +34,25 @@ cdef extern from * nogil:
     #include <future>
     #include <cuda/stream>
     #include <cudf/io/parquet_io_utils.hpp>
+    #include <cudf/utilities/error.hpp>
+
+    static std::pair<std::unique_ptr<cuda::device_buffer<uint8_t>>,
+                     std::vector<cudf::device_span<uint8_t const>>>
+    cpp_fetch_bloom_filters_to_device(
+        cudf::io::datasource& datasource,
+        std::span<cudf::io::text::byte_range_info const> byte_ranges,
+        cudf::io::parquet::io_submission_policy policy,
+        cudaStream_t stream,
+        rmm::device_async_resource_ref mr)
+    {
+        auto [buffers, spans] = cudf::io::parquet::fetch_bloom_filters_to_device(
+            datasource, byte_ranges, policy, cuda::stream_ref{stream}, mr);
+        CUDF_EXPECTS(buffers.size() == 1,
+                     "Expected exactly one bloom filter device buffer");
+        return {std::make_unique<cuda::device_buffer<uint8_t>>(
+                    std::move(buffers.front())),
+                std::move(spans)};
+    }
 
     static std::pair<std::vector<rmm::device_buffer>,
                      std::vector<cudf::device_span<uint8_t const>>>
@@ -54,6 +76,15 @@ cdef extern from * nogil:
         return {std::move(buffers), std::move(spans)};
     }
     """
+    pair[unique_ptr[cuda_device_buffer[uint8_t]], vector[device_span[const_uint8_t]]] \
+        cpp_fetch_bloom_filters_to_device(
+            datasource& source,
+            std_span[const_byte_range_info] byte_ranges,
+            io_submission_policy policy,
+            cudaStream_t stream,
+            device_async_resource_ref mr,
+        ) except +libcudf_exception_handler
+
     pair[vector[device_buffer], vector[device_span[const_uint8_t]]] \
         cpp_fetch_byte_ranges_to_device(
             datasource& source,

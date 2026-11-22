@@ -71,7 +71,7 @@ TYPED_TEST(FilterNumericTest, NoAssertions)
 
   cudf::transform_input inputs[] = {a, b};
 
-  EXPECT_NO_THROW(
+  ASSERT_NO_THROW(
     results = transform_and_apply_retention_mask(
       std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());
@@ -122,7 +122,7 @@ TYPED_TEST(FilterFixedPointTest, NoAssertions)
   std::vector<std::unique_ptr<cudf::column>> results;
   cudf::transform_input inputs[] = {a, b};
 
-  EXPECT_NO_THROW(
+  ASSERT_NO_THROW(
     results = transform_and_apply_retention_mask(
       std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
 
@@ -140,7 +140,7 @@ TEST_F(FilterTestFixture, StringNoAssertions)
 
   std::vector<std::unique_ptr<cudf::column>> results;
   cudf::transform_input inputs[] = {a, b};
-  EXPECT_NO_THROW(
+  ASSERT_NO_THROW(
     results = transform_and_apply_retention_mask(
       std::span{inputs}, this->udf, cudf::table_view{{a}}, cudf::udf_source_type::CUDA));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results[0]->view());

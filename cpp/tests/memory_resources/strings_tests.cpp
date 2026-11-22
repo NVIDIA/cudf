@@ -47,8 +47,7 @@ TEST_F(StringsMemoryResourcesTest, DISABLED_ToUpper)
     temporary_allocation_expectation::SOME);
 }
 
-// Strings APIs create their column_device_view with the current resource.
-TEST_F(StringsMemoryResourcesTest, DISABLED_Contains)
+TEST_F(StringsMemoryResourcesTest, Contains)
 {
   auto input        = make_strings();
   auto const target = cudf::string_scalar{"o"};

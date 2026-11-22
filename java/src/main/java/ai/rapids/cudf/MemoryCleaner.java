@@ -399,6 +399,10 @@ public final class MemoryCleaner {
     all.put(cleaner.id, new CleanerWeakReference(filteredJoin, cleaner, collected, true));
   }
 
+  static void register(JoinMatchContext context, Cleaner cleaner) {
+    all.put(cleaner.id, new CleanerWeakReference(context, cleaner, collected, true));
+  }
+
   static void register(KeyRemapping keyRemapping, Cleaner cleaner) {
     all.put(cleaner.id, new CleanerWeakReference(keyRemapping, cleaner, collected, true));
   }

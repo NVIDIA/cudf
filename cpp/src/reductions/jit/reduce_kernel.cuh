@@ -80,12 +80,12 @@ __device__ void update_row(State& state,
   if (filter_error != errc::SUCCESS || !selected) { return; }
 
   auto update_error = Inputs::map([&]<typename... A> {
-    return [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
+    return [&]<int... I>(cuda::std::integer_sequence<int, I...>, auto... context) {
       return update(context...,
                     row,
                     &cuda::std::get<I>(state.values)...,
                     load.template operator()<A>(inputs)...);
-    }(State::types::indexed);
+    }(State::types::indexed, context...);
   });
   state.error       = cuda::std::max(state.error, update_error);
 }
@@ -199,10 +199,10 @@ __device__ void finalize(State const& state,
       }
     }();
 
-    auto err = [&]<int... I>(cuda::std::integer_sequence<int, I...>) {
+    auto err = [&]<int... I>(cuda::std::integer_sequence<int, I...>, auto... context) {
       return finalize(
         context..., &cuda::std::get<A::index>(values)..., cuda::std::get<I>(state.values)...);
-    }(State::types::indexed);
+    }(State::types::indexed, context...);
 
     auto assign = [&]<typename Out> {
       auto& value = cuda::std::get<Out::index>(values);

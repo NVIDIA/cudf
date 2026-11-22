@@ -326,15 +326,23 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
   helper().grouped_order(false, stream, mr);
   std::vector<std::unique_ptr<column>> results;
   auto const& group_offsets = helper().group_offsets(stream, mr);
-  std::transform(
-    cuda::counting_iterator<cudf::size_type>{0},
-    cuda::counting_iterator{values.num_columns()},
-    std::back_inserter(results),
-    [&](size_type i) {
-      auto grouped_values = helper().grouped_values(values.column(i), stream, mr.as_temporary());
-      return cudf::detail::segmented_shift(
-        grouped_values->view(), group_offsets, offsets[i], fill_values[i].get(), stream, mr);
-    });
+  std::transform(cuda::counting_iterator<cudf::size_type>{0},
+                 cuda::counting_iterator{values.num_columns()},
+                 std::back_inserter(results),
+                 [&](size_type i) {
+                   // Presorted keys leave the values in grouped order.
+                   auto const grouped_values =
+                     helper().is_presorted()
+                       ? nullptr
+                       : helper().grouped_values(values.column(i), stream, mr.as_temporary());
+                   return cudf::detail::segmented_shift(
+                     grouped_values ? grouped_values->view() : values.column(i),
+                     group_offsets,
+                     offsets[i],
+                     fill_values[i].get(),
+                     stream,
+                     mr);
+                 });
 
   return std::pair(helper().grouped_keys(stream, mr),
                    std::make_unique<cudf::table>(std::move(results)));

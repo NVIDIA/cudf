@@ -67,7 +67,8 @@ class murmur_device_row_hasher {
    */
   class element_hasher_adapter {
    public:
-    template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+    template <typename T>
+      requires(column_device_view::has_element_accessor<T>())
     __device__ hash_value_type operator()(column_device_view const& col,
                                           size_type row_index,
                                           Nullate const check_nulls,
@@ -81,7 +82,7 @@ class murmur_device_row_hasher {
       return hasher(col.element<T>(row_index));
     }
 
-    template <typename T, CUDF_ENABLE_IF(not column_device_view::has_element_accessor<T>())>
+    template <typename T>
     __device__ hash_value_type operator()(column_device_view const&,
                                           size_type,
                                           Nullate const,

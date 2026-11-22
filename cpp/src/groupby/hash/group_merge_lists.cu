@@ -10,7 +10,7 @@
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
-#include <thrust/gather.h>
+#include <thrust/transform.h>
 
 namespace cudf {
 namespace groupby {
@@ -30,7 +30,8 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
     data_type(type_id::INT32), num_groups + 1, mask_state::UNALLOCATED, stream, mr);
 
   // Generate offsets of the output lists column by gathering from the provided group offsets and
-  // the input list offsets.
+  // the input list offsets. The output child starts at the first list of the input, so the offsets
+  // are taken relative to it.
   //
   // For example:
   //   values        = [[2, 1], [], [4, -1, -2], [], [<NA>, 4, <NA>]]
@@ -39,11 +40,12 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
   //
   //   then, the output offsets_column is [0, 5, 8].
   //
-  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
-                 group_offsets.begin(),
-                 group_offsets.end(),
-                 lists_column_view(values).offsets_begin(),
-                 offsets_column->mutable_view().template begin<int32_t>());
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
+                    group_offsets.begin(),
+                    group_offsets.end(),
+                    offsets_column->mutable_view().template begin<int32_t>(),
+                    [list_offsets = lists_column_view(values).offsets_begin()] __device__(
+                      size_type row) -> size_type { return list_offsets[row] - list_offsets[0]; });
 
   // The child column of the output lists column is just copied from the input column.
   auto child_column =

@@ -20,6 +20,7 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
+    split_and_pack_cost,
     unpack_and_concat,
     unpack_and_concat_cost,
 )
@@ -352,7 +353,6 @@ async def extract_orderscheme_partitioning(
     boundaries, strict = _extract_boundaries_from_endpoint_rows(
         endpoint_table, num_partitions, stream
     )
-    del endpoint_table
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )
@@ -377,7 +377,7 @@ async def ensure_ordering_metadata(
     order_keys: Sequence[OrderKey],
     collective_id: int,
 ) -> None:
-    """Forward a channel, extracting ordering boundaries when metadata lacks them."""
+    """Forward a channel, extracting single-rank boundaries when needed."""
     metadata = await recv_metadata(ch_in, context)
     if order_keys:
         partitioning = metadata.partitioning or Partitioning()
@@ -391,7 +391,13 @@ async def ensure_ordering_metadata(
         )
     buffered_chunks: ChunkStore | None = None
 
-    if order_keys and not _metadata_has_ordering(metadata, order_keys):
+    # A sorted hint does not prove the rank ownership required by a flat
+    # Ordering. Preserve row ordering without extracting new boundaries.
+    if (
+        order_keys
+        and comm.nranks == 1
+        and not _metadata_has_ordering(metadata, order_keys)
+    ):
         if (
             extracted_metadata := _trivial_ordering_metadata(
                 context, comm, schema_ir, metadata, order_keys
@@ -817,6 +823,7 @@ class _OutputPartitionBuffer:
                         piece_pid,
                         _copy_to_owned_chunk(piece, stream, self.context.br()),
                     )
+            del chunk, table, piece
         return self.pending.pop(pid, None)
 
     async def assert_input_drained(self) -> None:
@@ -830,11 +837,7 @@ class _OutputPartitionBuffer:
             if msg is None:
                 self.input_done = True
                 break
-            rows = (
-                TableChunk.from_message(msg, br=self.context.br())
-                .table_view()
-                .num_rows()
-            )
+            rows = TableChunk.from_message(msg, br=self.context.br()).shape[0]
             if rows == 0:
                 continue
             raise RuntimeError(
@@ -890,18 +893,23 @@ async def _send_remote_partition(
         ir_context,
         chunks,
     )
+    # A single stored piece is returned as is and may be spilled.
+    chunk, _ = await make_table_chunks_available_or_wait(
+        context, chunk, reserve_extra=0, net_memory_delta=0
+    )
     stream = chunk.stream
+    table = chunk.table_view()
+    pack_bytes = (
+        split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0
+    )
+    # The packed copy replaces the chunk, which is freed on return.
+    with opaque_memory_usage(
+        await reserve_memory(context, size=pack_bytes, net_memory_delta=0)
+    ):
+        packed = pack(table, stream, mr=context.br().device_mr)
     exchange.insert(
         partition_owner(pid, comm.nranks, npartitions),
-        packed_data_from_cudf_packed_columns(
-            pack(
-                chunk.table_view(),
-                stream,
-                mr=context.br().device_mr,
-            ),
-            stream,
-            context.br(),
-        ),
+        packed_data_from_cudf_packed_columns(packed, stream, context.br()),
     )
 
 

@@ -441,9 +441,7 @@ std::unique_ptr<column> grouped_range_rolling_window(table_view const& group_key
       auto const& labels  = helper.group_labels(stream, mr);
       auto const& offsets = helper.group_offsets(stream, mr);
       auto per_group_nulls =
-        order_by_column.has_nulls()
-          ? detail::nulls_per_group(order_by_column, offsets, stream, mr.as_temporary())
-          : cuda::device_buffer<size_type>{stream, mr.get_temporary_mr(), 0, cuda::no_init};
+        detail::nulls_per_group(order_by_column, offsets, stream, mr.as_temporary());
       detail::rolling::preprocessed_group_info grouping{labels, offsets, per_group_nulls};
       auto null_order =
         deduce_null_order(order_by_column, order, offsets, per_group_nulls, stream, mr);

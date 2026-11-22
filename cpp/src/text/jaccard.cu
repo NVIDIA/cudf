@@ -24,10 +24,12 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cooperative_groups.h>
 #include <cub/device/device_segmented_sort.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/stream>

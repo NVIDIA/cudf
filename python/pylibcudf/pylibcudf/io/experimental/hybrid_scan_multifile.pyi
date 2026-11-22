@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Sequence
+from collections.abc import Buffer, Sequence
 
 from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 
@@ -13,11 +13,6 @@ from pylibcudf.io.text import ByteRangeInfo
 from pylibcudf.io.types import TableWithMetadata
 from pylibcudf.span import Span
 from pylibcudf.utils import CudaStreamLike
-
-try:
-    from collections.abc import Buffer
-except ImportError:
-    from typing_extensions import Buffer
 
 class RowGroupIndices:
     @staticmethod

@@ -10,6 +10,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/detail/utilities.hpp>
@@ -20,7 +21,6 @@
 #include <nvtext/normalize.hpp>
 
 #include <rmm/device_uvector.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -276,7 +276,7 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
   auto const input_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
   auto const temp_mr = mr.get_temporary_mr();
-  auto const policy  = rmm::exec_policy_nosync(stream, temp_mr);
+  auto const policy  = cudf::detail::exec_policy_nosync(stream, mr);
 
   auto const shift =
     static_cast<int64_t>(reinterpret_cast<std::uintptr_t>(d_input_chars) % bytes_per_thread);

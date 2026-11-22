@@ -374,3 +374,22 @@ TEST_F(DistinctCount, TableExplicitMemoryResources)
     {cudf::test::output_allocation_expectation::EXACT,
      cudf::test::temporary_allocation_expectation::SOME});
 }
+
+TEST_F(DistinctCount, ColumnExplicitMemoryResources)
+{
+  auto const input  = cudf::test::fixed_width_column_wrapper<double>({1, NAN, XXX}, nulls_at({2}));
+  auto const stream = cudf::test::get_default_stream();
+  for (auto const [null_handling, expected] :
+       {std::pair{null_policy::INCLUDE, 2}, std::pair{null_policy::EXCLUDE, 1}}) {
+    auto harness = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) {
+        return cudf::distinct_count(input, null_handling, nan_policy::NAN_IS_NULL, stream, mr);
+      },
+      [](auto) { return 0; },
+      [expected](auto result) { EXPECT_EQ(result, expected); },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME});
+  }
+}

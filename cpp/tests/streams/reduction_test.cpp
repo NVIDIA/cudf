@@ -142,8 +142,12 @@ TEST_F(ReductionTest, SegmentedReduceLto)
                              "tpch_q6_sales_segment_finalize",
                              {},
                              cudf::null_aware::YES,
+                             true,
+                             false,
+                             true,
+                             true,
                              true};
-  auto result = cudf::segmented_reduce_lto(
+  auto result = cudf::segmented_reduce(
     udf, inputs, offsets, states, outputs, 3, {}, cudf::fallible::YES, stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0],
                                  (cudf::test::fixed_width_column_wrapper<int64_t>{{0}, {false}}));

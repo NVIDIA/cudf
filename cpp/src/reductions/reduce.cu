@@ -349,15 +349,12 @@ std::string reflect_small_groups_segmented_reduce_kernel(kernel_reflection const
 
 callback_reflection reflect_callback(std::string_view target,
                                      std::string_view type_macro,
-                                     bool segmented,
-                                     bool indexed,
+                                     size_t num_indices,
                                      std::ranges::input_range auto&& first,
                                      std::span<std::string const> second,
                                      std::string_view symbol)
 {
-  std::vector<std::string> parameters;
-  if (segmented) { parameters.push_back("cudf::size_type"); }
-  if (indexed) { parameters.push_back("cudf::size_type"); }
+  std::vector<std::string> parameters(num_indices, "cudf::size_type");
   std::ranges::copy(first, std::back_inserter(parameters));
   parameters.insert(parameters.end(), second.begin(), second.end());
   auto signature = std::format("cudf::errc({})", detail::string_join(parameters, {}, ", "));
@@ -382,36 +379,31 @@ std::vector<callback_reflection> reflect_callbacks(std::span<std::string const> 
 
   return {reflect_callback("cudf_reduce_init",
                            "CUDF_REDUCE_INIT_UDF_TYPE",
-                           segmented,
-                           false,
+                           segmented && udf.indexed_init ? 1 : 0,
                            state_pointers,
                            {},
                            udf.init),
           reflect_callback("cudf_reduce_update",
                            "CUDF_REDUCE_UPDATE_UDF_TYPE",
-                           segmented,
-                           udf.indexed_update,
+                           udf.indexed_update ? (segmented ? 2 : 1) : 0,
                            state_pointers,
                            input_types,
                            udf.update),
           reflect_callback("cudf_reduce_merge",
                            "CUDF_REDUCE_MERGE_UDF_TYPE",
-                           segmented,
-                           false,
+                           segmented && udf.indexed_merge ? 1 : 0,
                            state_pointers,
                            state_types,
                            udf.merge),
           reflect_callback("cudf_reduce_finalize",
                            "CUDF_REDUCE_FINALIZE_UDF_TYPE",
-                           segmented,
-                           false,
+                           segmented && udf.indexed_finalize ? 1 : 0,
                            outputs,
                            state_types,
                            udf.finalize),
           reflect_callback("cudf_reduce_filter",
                            "CUDF_REDUCE_FILTER_UDF_TYPE",
-                           segmented,
-                           udf.indexed_filter,
+                           udf.indexed_filter ? (segmented ? 2 : 1) : 0,
                            filter_outputs,
                            filter_input_types,
                            udf.filter.empty()
@@ -492,6 +484,9 @@ kernel get_kernel(reduction_kind kind,
 #define CUDF_REDUCE_STATE_SIZE {}
 #define CUDF_REDUCE_STATE_ALIGNMENT {}
 {}
+#define CUDF_REDUCE_INIT_INDEXED {}
+#define CUDF_REDUCE_MERGE_INDEXED {}
+#define CUDF_REDUCE_FINALIZE_INDEXED {}
 #define CUDF_REDUCE_UPDATE_INDEXED {}
 #define CUDF_REDUCE_FILTER_INDEXED {}
 #define CUDF_KERNEL_INSTANCE {}
@@ -500,6 +495,9 @@ kernel get_kernel(reduction_kind kind,
     spec.state_layout.size,
     spec.state_layout.alignment,
     type_defines,
+    kind != reduction_kind::scalar && udf.indexed_init,
+    kind != reduction_kind::scalar && udf.indexed_merge,
+    kind != reduction_kind::scalar && udf.indexed_finalize,
     udf.indexed_update,
     udf.indexed_filter,
     instance);
@@ -953,17 +951,16 @@ std::vector<std::unique_ptr<column>> reduce(reduce_udf const& udf,
   return scope.finalize();
 }
 
-std::vector<std::unique_ptr<column>> segmented_reduce_lto(
-  reduce_udf const& udf,
-  std::span<reduce_input const> inputs,
-  device_span<size_type const> offsets,
-  std::span<data_type const> state_types,
-  std::span<data_type const> types,
-  std::optional<size_type> max_segment_size,
-  std::span<reduce_input const> filter_inputs,
-  fallible is_fallible,
-  cuda::stream_ref stream,
-  memory_resources mr)
+std::vector<std::unique_ptr<column>> segmented_reduce(reduce_udf const& udf,
+                                                      std::span<reduce_input const> inputs,
+                                                      device_span<size_type const> offsets,
+                                                      std::span<data_type const> state_types,
+                                                      std::span<data_type const> types,
+                                                      std::optional<size_type> max_segment_size,
+                                                      std::span<reduce_input const> filter_inputs,
+                                                      fallible is_fallible,
+                                                      cuda::stream_ref stream,
+                                                      memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 

@@ -288,21 +288,25 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  *
  * Parameters are ordered as follows; each ellipsis expands fields in specification order.
  *
- * | Callback | Parameters |
- * |----------|------------|
- * | init | state pointers... |
- * | filter | [row index,] bool* selected, filter input values... |
- * | update | [row index,] state pointers..., input values... |
- * | merge | destination state pointers..., source state values... |
- * | finalize | output pointers..., state values... |
+ * | Callback | Non-indexed parameters | Indexed segmented prefix |
+ * |----------|------------------------|--------------------------|
+ * | init | state pointers... | segment |
+ * | filter | bool* selected, filter input values... | segment, row |
+ * | update | state pointers..., input values... | segment, row |
+ * | merge | destination state pointers..., source state values... | segment |
+ * | finalize | output pointers..., state values... | segment |
  *
  * Initialize every independent state to its identity. Merge must be associative and preserve
  * that identity; update/merge order is unspecified. An empty filter symbol makes all rows pass and
- * requires an empty filter-input list. A false selection skips update. Row indices use
- * `cudf::size_type` and are passed only when `indexed_filter` or `indexed_update` is true for the
- * corresponding callback.
- * Every segmented callback also receives a leading zero-based segment ID, including for empty
- * segments. Initialization and merging can each run multiple times for the same segment.
+ * requires an empty filter-input list. A false selection skips update.
+ *
+ * Each callback's `indexed_*` flag controls whether it receives indices. Non-indexed callbacks
+ * receive no indices. In scalar reductions, indexed filter/update callbacks receive a leading
+ * row index; init/merge/finalize receive no indices and ignore their indexing flags. In segmented
+ * reductions, indexed callbacks receive a leading zero-based segment ID, and indexed filter/update
+ * callbacks additionally receive the input row index. All indices use `cudf::size_type`; row
+ * indices refer to the input views. Empty segments still invoke initialization and finalization.
+ * Initialization and merging can each run multiple times for the same segment.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
  * State and outputs support fixed-width types and strings.
@@ -312,7 +316,7 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * With @c null_aware::YES, inputs, state and outputs use @c cuda::std::optional<T>, with mutable
  * parameters passed as pointers to optionals. Empty optionals represent nulls. Callbacks define
  * null-state identities and output validity.
- * User-data pointers, row indices and the filter's `bool* selected` are never optional.
+ * User-data pointers, indices and the filter's `bool* selected` are never optional.
  * With @c null_aware::NO, use plain values; rows with any null column/scalar input are skipped
  * before filtering.
  */
@@ -324,10 +328,11 @@ struct reduce_udf {
   std::string_view finalize{};  ///< Writes output values
   std::string_view filter{};    ///< Row predicate; required when filter inputs are supplied
   null_aware is_null_aware = null_aware::NO;  ///< Whether values use optional wrappers
-  bool indexed_update =
-    false;  ///< Whether the update callback expects the row index as the first argument
-  bool indexed_filter =
-    false;  ///< Whether the filter callback expects the row index as the first argument
+  bool indexed_update      = false;           ///< Whether update receives logical indices
+  bool indexed_filter      = false;           ///< Whether filter receives logical indices
+  bool indexed_init        = false;           ///< Whether segmented init receives the segment ID
+  bool indexed_merge       = false;           ///< Whether segmented merge receives the segment ID
+  bool indexed_finalize    = false;  ///< Whether segmented finalize receives the segment ID
 };
 
 /**
@@ -366,7 +371,8 @@ std::vector<std::unique_ptr<column>> reduce(
  *
  * Results use result[segment * outputs.size() + output]. Zero segments return an empty vector;
  * empty or fully filtered segments finalize the identity. Other contracts follow @ref reduce,
- * with a leading segment ID on every callback. With no column inputs, offsets define row bounds.
+ * with indices supplied only to callbacks whose indexing flags are enabled.
+ * With no column inputs, offsets define row bounds.
  *
  * @throws std::invalid_argument for mismatched lengths, unsupported state/output types,
  * empty/oversized offsets, or a negative maximum-length hint
@@ -383,7 +389,7 @@ std::vector<std::unique_ptr<column>> reduce(
  * @param mr Output and temporary memory resources
  * @return One single-row column per segment/output pair
  */
-std::vector<std::unique_ptr<column>> segmented_reduce_lto(
+std::vector<std::unique_ptr<column>> segmented_reduce(
   reduce_udf const& udf,
   std::span<reduce_input const> inputs,
   device_span<size_type const> offsets,

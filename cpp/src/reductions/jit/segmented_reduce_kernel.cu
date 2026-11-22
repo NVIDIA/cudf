@@ -41,15 +41,15 @@ using reduce_finalize_udf_type = CUDF_REDUCE_FINALIZE_UDF_TYPE;
 
 __device__ reduce_finalize_udf_type cudf_reduce_finalize;
 
-__device__ errc cudf_all_true(size_type, bool* selected)
+__device__ errc cudf_all_true(bool* selected)
 {
   *selected = true;
   return errc::SUCCESS;
 }
 
-__device__ errc cudf_all_true_indexed(size_type segment, size_type, bool* selected)
+__device__ errc cudf_all_true_indexed(size_type, size_type, bool* selected)
 {
-  return cudf_all_true(segment, selected);
+  return cudf_all_true(selected);
 }
 
 static_assert(sizeof(CUDF_REDUCE_STATE) == CUDF_REDUCE_STATE_SIZE &&
@@ -82,23 +82,41 @@ __global__ void cudf_kernel_entry(jit::reduce::phase phase,
     static_cast<CUDF_REDUCE_STATE*>(scratch),
     segment_errors,
     finalize_inline,
-    cudf_reduce_init,
+    [](size_type segment, auto... args) {
+#if CUDF_REDUCE_INIT_INDEXED
+      return cudf_reduce_init(segment, args...);
+#else
+      return cudf_reduce_init(args...);
+#endif
+    },
     [](size_type segment, size_type row, auto... args) {
 #if CUDF_REDUCE_FILTER_INDEXED
       return cudf_reduce_filter(segment, row, args...);
 #else
-      return cudf_reduce_filter(segment, args...);
+      return cudf_reduce_filter(args...);
 #endif
     },
     [](size_type segment, size_type row, auto... args) {
 #if CUDF_REDUCE_UPDATE_INDEXED
       return cudf_reduce_update(segment, row, args...);
 #else
-      return cudf_reduce_update(segment, args...);
+      return cudf_reduce_update(args...);
 #endif
     },
-    cudf_reduce_merge,
-    cudf_reduce_finalize);
+    [](size_type segment, auto... args) {
+#if CUDF_REDUCE_MERGE_INDEXED
+      return cudf_reduce_merge(segment, args...);
+#else
+      return cudf_reduce_merge(args...);
+#endif
+    },
+    [](size_type segment, auto... args) {
+#if CUDF_REDUCE_FINALIZE_INDEXED
+      return cudf_reduce_finalize(segment, args...);
+#else
+      return cudf_reduce_finalize(args...);
+#endif
+    });
 }
 
 }  // extern "C"

@@ -17,7 +17,10 @@
 #include <cudf_test_fragments.hpp>
 
 #include <format>
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
@@ -238,6 +241,28 @@ TEST_F(TransformLTOTest, ToUpper)
   column_wrapper<uint8_t> expected{{65, 66, 65, 66, 48, 49, 32, 33, 127, 255}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
+}
+
+TEST_F(TransformLTOTest, OutputWithPreallocatedOffsets)
+{
+  auto input                     = cudf::test::strings_column_wrapper{"abc", "", "é", "猫", "xyz"};
+  cudf::transform_input inputs[] = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::ALL_VALID}};
+  std::vector<std::unique_ptr<cudf::column>> string_offsets;
+  string_offsets.push_back(column_wrapper<int32_t>{0, 3, 3, 5, 8, 11}.release());
+
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::copy_string),
+                                    cudf::lto_binary_type::FATBIN,
+                                    cudf::null_aware::NO,
+                                    std::nullopt,
+                                    inputs,
+                                    outputs,
+                                    std::move(string_offsets),
+                                    std::nullopt,
+                                    cudf::test::get_default_stream());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
 }
 
 TEST_F(TransformLTOTest, SumOfSquares)

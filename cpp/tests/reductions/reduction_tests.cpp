@@ -21,6 +21,7 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
 #include <cuda/iterator>
@@ -935,12 +936,12 @@ TEST_F(StableVarianceReductionTest, LargeOffsetAcrossTiles)
       auto const expected = static_cast<double>(m2 / (count - ddof));
       auto const [var, var_valid] =
         reduction_test<double>(col, *cudf::make_variance_aggregation<reduce_aggregation>(ddof));
-      auto const [std, std_valid] =
+      auto const [stddev, stddev_valid] =
         reduction_test<double>(col, *cudf::make_std_aggregation<reduce_aggregation>(ddof));
       EXPECT_TRUE(var_valid);
-      EXPECT_TRUE(std_valid);
+      EXPECT_TRUE(stddev_valid);
       EXPECT_NEAR(var, expected, 1e-4);
-      EXPECT_NEAR(std, std::sqrt(expected), 1e-4);
+      EXPECT_NEAR(stddev, std::sqrt(expected), 1e-4);
     }
   }
 }
@@ -977,6 +978,43 @@ TEST_F(StableVarianceReductionTest, InfinityPositionDoesNotChangeResult)
   EXPECT_EQ(std::isnan(first), std::isnan(middle));
   EXPECT_EQ(std::isinf(first), std::isinf(last));
   EXPECT_EQ(std::isinf(first), std::isinf(middle));
+}
+
+TEST_F(StableVarianceReductionTest, Float32Output)
+{
+  // A FLOAT32 output type selects the float merge path. Use enough rows that the top-level merges
+  // exceed 2^24 elements and also take the large-count fallback. The values repeat every 9 rows and
+  // the nulls every 33, so the size is a multiple of 99 and M2 has a closed form. Per 99 rows the
+  // values give a sum of 0 and a sum of squares of 660; the 3 null rows remove a sum of -3 and a
+  // sum of squares of 21, leaving 96 values.
+  constexpr cudf::size_type base_count_nullable     = 96;
+  constexpr cudf::size_type base_count_non_nullable = 99;
+  constexpr cudf::size_type periods                 = (1 << 24) / base_count_nullable + 1;
+  constexpr cudf::size_type size                    = base_count_non_nullable * periods;
+  auto const value_at     = [](cudf::size_type i) { return static_cast<float>(i % 9 - 4); };
+  auto const output_dtype = cudf::data_type{cudf::type_id::FLOAT32};
+  for (bool nullable : {false, true}) {
+    SCOPED_TRACE(nullable ? "nullable" : "non-nullable");
+    auto const valid_at   = [=](cudf::size_type i) { return !nullable || i % 33 != 0; };
+    auto const base_count = nullable ? base_count_nullable : base_count_non_nullable;
+    auto const count      = base_count * periods;
+    long double const m2  = periods * (nullable ? 639.0L - 9.0L / base_count_nullable : 660.0L);
+    auto values           = cudf::detail::make_counting_transform_iterator(0, value_at);
+    auto valids           = cudf::detail::make_counting_transform_iterator(0, valid_at);
+    cudf::test::fixed_width_column_wrapper<float> col(values, values + size, valids);
+    for (int ddof : {0, 1}) {
+      SCOPED_TRACE(ddof == 0 ? "ddof=0" : "ddof=1");
+      auto const expected         = static_cast<double>(m2 / (count - ddof));
+      auto const [var, var_valid] = reduction_test<float>(
+        col, *cudf::make_variance_aggregation<reduce_aggregation>(ddof), output_dtype);
+      auto const [stddev, stddev_valid] = reduction_test<float>(
+        col, *cudf::make_std_aggregation<reduce_aggregation>(ddof), output_dtype);
+      EXPECT_TRUE(var_valid);
+      EXPECT_TRUE(stddev_valid);
+      EXPECT_NEAR(var, expected, 1e-4 * expected);
+      EXPECT_NEAR(stddev, std::sqrt(expected), 1e-4 * std::sqrt(expected));
+    }
+  }
 }
 
 // ----------------------------------------------------------------------------
@@ -3893,36 +3931,36 @@ struct ReduceOverflowTest : public cudf::test::BaseFixture {
   static constexpr numeric::scale_type scale{0};
 
   cudf::test::fixed_width_column_wrapper<T> make_col(std::initializer_list<Rep> values)
-    requires(!cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_width_column_wrapper<T>(values);
   }
   cudf::test::fixed_point_column_wrapper<Rep> make_col(std::initializer_list<Rep> values)
-    requires(cudf::is_fixed_point<T>())
+    requires(cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_point_column_wrapper<Rep>(values, scale);
   }
 
   cudf::test::fixed_width_column_wrapper<T> make_null_col(std::initializer_list<Rep> values,
                                                           std::initializer_list<bool> validity)
-    requires(!cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_width_column_wrapper<T>(values, std::cbegin(validity));
   }
   cudf::test::fixed_point_column_wrapper<Rep> make_null_col(std::initializer_list<Rep> values,
                                                             std::initializer_list<bool> validity)
-    requires(cudf::is_fixed_point<T>())
+    requires(cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_point_column_wrapper<Rep>(values, std::cbegin(validity), scale);
   }
 
   cudf::test::fixed_width_column_wrapper<T> make_col_from_vec(std::vector<Rep> const& values)
-    requires(!cudf::is_fixed_point<T>())
+    requires(not cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_width_column_wrapper<T>(values.begin(), values.end());
   }
   cudf::test::fixed_point_column_wrapper<Rep> make_col_from_vec(std::vector<Rep> const& values)
-    requires(cudf::is_fixed_point<T>())
+    requires(cudf::concepts::fixed_point<T>)
   {
     return cudf::test::fixed_point_column_wrapper<Rep>(values.begin(), values.end(), scale);
   }

@@ -190,12 +190,14 @@ table_with_metadata read_parquet(
  * @param deletion_vector_info Information about the deletion vectors and the index column
  * @param max_chunk_rows Maximum number of rows to process at a time
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return Number of rows deleted by the specified 64-bit roaring bitmap deletion vectors
  */
 [[nodiscard]] size_t compute_num_deleted_rows(
   deletion_vector_info const& deletion_vector_info,
   cudf::size_type max_chunk_rows = std::numeric_limits<size_type>::max(),
-  cuda::stream_ref stream        = cudf::get_default_stream());
+  cuda::stream_ref stream        = cudf::get_default_stream(),
+  cudf::memory_resources mr      = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

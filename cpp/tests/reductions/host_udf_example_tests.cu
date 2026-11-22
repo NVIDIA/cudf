@@ -95,7 +95,7 @@ struct host_udf_reduction_example : cudf::reduce_host_udf {
         return InputType{0};
       }();
 
-      auto const input_dv_ptr = cudf::column_device_view::create(input, stream);
+      auto const input_dv_ptr = cudf::column_device_view::create(input, stream, mr.as_temporary());
       auto const result =
         thrust::transform_reduce(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                                  cuda::counting_iterator<cudf::size_type>{0},
@@ -242,7 +242,7 @@ struct host_udf_segmented_reduction_example : cudf::segmented_reduce_host_udf {
         return InputType{0};
       }();
 
-      auto const input_dv_ptr = cudf::column_device_view::create(input, stream);
+      auto const input_dv_ptr = cudf::column_device_view::create(input, stream, mr.as_temporary());
       auto output             = cudf::make_numeric_column(
         output_dtype, num_segments, cudf::mask_state::UNALLOCATED, stream, mr.as_temporary());
 

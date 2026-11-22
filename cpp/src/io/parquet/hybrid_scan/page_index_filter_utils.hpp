@@ -69,31 +69,35 @@ compute_page_row_offsets_and_colchunk_page_offsets(
 /**
  * @brief Checks whether every row is retained by the boolean row mask
  *
- * Null entries in the row mask are treated as surviving rows
+ * Null rows are treated as pruned
  *
  * @param retention_mask Boolean column indicating retained rows
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return Boolean indicating whether every row is retained
  */
 [[nodiscard]] bool are_all_rows_retained(cudf::column_view const& retention_mask,
-                                         cuda::stream_ref stream);
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr);
 
 /**
  * @brief Computes a mask indicating which row ranges contain at least one selected row
  *
- * Null entries in the row mask are treated as surviving rows
+ * Null rows are treated as pruned
  *
  * @param row_mask Boolean column indicating selected rows
  * @param page_row_offsets Page row offsets defining the row ranges
  * @param max_page_size Size of the largest page row range
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return Boolean vector with one entry for each consecutive row range
  */
 [[nodiscard]] thrust::host_vector<bool> compute_row_range_selection_mask(
   cudf::column_view const& row_mask,
   std::span<cudf::size_type const> page_row_offsets,
   cudf::size_type max_page_size,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Builds a row mask by evaluating page statistics on compact common page segments and

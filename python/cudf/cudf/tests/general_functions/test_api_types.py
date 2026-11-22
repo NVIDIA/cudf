@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -41,8 +41,8 @@ from cudf.api import types
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -147,8 +147,8 @@ def test_is_categorical_dtype(obj, expect):
         (np.float64(), True),
         (np.complex128(), True),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), True),
         (np.dtype("int"), True),
@@ -260,8 +260,8 @@ def test_is_numeric_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), True),
@@ -362,8 +362,8 @@ def test_is_integer_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -465,8 +465,8 @@ def test_is_integer(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), True),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -567,8 +567,8 @@ def test_is_string_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), True),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), True),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -669,8 +669,8 @@ def test_is_datetime_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -771,8 +771,8 @@ def test_is_list_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -876,8 +876,8 @@ def test_is_struct_dtype(obj, expect):
         (np.float64(), False),
         (np.complex128(), False),
         (np.str_(), False),
-        (np.datetime64(), False),
-        (np.timedelta64(), False),
+        (np.datetime64("NaT", "ns"), False),
+        (np.timedelta64(0, "ns"), False),
         # NumPy dtype objects.
         (np.dtype("bool"), False),
         (np.dtype("int"), False),
@@ -978,8 +978,8 @@ def test_is_decimal_dtype(obj, expect):
         np.float64(),
         np.complex128(),
         np.str_(),
-        np.datetime64(),
-        np.timedelta64(),
+        np.datetime64("NaT", "ns"),
+        np.timedelta64(0, "ns"),
         # NumPy dtype objects.
         np.dtype("bool"),
         np.dtype("int"),
@@ -1059,8 +1059,8 @@ def test_pandas_agreement(obj):
         np.float64(),
         np.complex128(),
         np.str_(),
-        np.datetime64(),
-        np.timedelta64(),
+        np.datetime64("NaT", "ns"),
+        np.timedelta64(0, "ns"),
         # NumPy dtype objects.
         np.dtype("bool"),
         np.dtype("int"),

@@ -39,8 +39,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from typing_extensions import Buffer
+    from collections.abc import Buffer, Sequence
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.span import is_span
@@ -676,6 +675,7 @@ cdef class HybridScanReader:
                 _stream.view().get(),
                 mr.get_mr()
             ))
+        row_mask.set_null_count(mask_view.null_count())
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
     def payload_column_chunks_byte_ranges(
@@ -968,6 +968,7 @@ cdef class HybridScanReader:
                 mask_view
             ))
             more_chunks = self.c_obj.get()[0].has_next_table_chunk()
+        row_mask.set_null_count(mask_view.null_count())
         if not more_chunks:
             self._filter_chunk_data = None
             self._filter = None

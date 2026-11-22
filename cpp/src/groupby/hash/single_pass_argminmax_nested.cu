@@ -6,7 +6,8 @@
 #include "reductions/nested_types_extrema_utils.cuh"
 #include "single_pass_argminmax_impl.cuh"
 
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 
 namespace cudf::groupby::detail::hash {
 

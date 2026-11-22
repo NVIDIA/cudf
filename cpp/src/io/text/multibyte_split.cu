@@ -32,6 +32,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/copy.h>

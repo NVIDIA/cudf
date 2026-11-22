@@ -8,8 +8,10 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/iterator_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/strings/extract.hpp>
 #include <cudf/strings/regex/regex_program.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -496,4 +498,33 @@ TEST_F(StringsExtractTests, CrlfLineAnchorExtNewline)
     h_expected.end(),
     cuda::transform_iterator(h_expected.begin(), [](auto str) { return str != nullptr; }));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(results->get_column(0), expected);
+}
+
+TEST_F(StringsExtractTests, SlicedWithNulls)
+{
+  // rows 0 and 7 are outside the slice and would match if the offset were ignored
+  auto const input = cudf::test::strings_column_wrapper(
+    {"a1 outside", "", "b22 c333", "", "", "d4", "no digits", "e5 outside"},
+    cudf::test::iterators::nulls_at({1, 4}));
+  auto const sliced = cudf::slice(input, {1, 7}).front();
+  auto const sv     = cudf::strings_column_view(sliced);
+
+  auto const prog = cudf::strings::regex_program::create("([a-z])(\\d+)");
+
+  // input nulls and rows with no match produce nulls
+  auto const no_match  = cudf::test::iterators::nulls_at({0, 2, 3, 5});
+  auto expected_letter = cudf::test::strings_column_wrapper({"", "b", "", "", "d", ""}, no_match);
+  auto expected_digits = cudf::test::strings_column_wrapper({"", "22", "", "", "4", ""}, no_match);
+
+  auto results        = cudf::strings::extract(sv, *prog);
+  auto expected_table = cudf::table_view({expected_letter, expected_digits});
+  CUDF_TEST_EXPECT_TABLES_EQUAL(*results, expected_table);
+
+  auto result = cudf::strings::extract_single(sv, *prog, 1);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_digits);
+
+  result    = cudf::strings::extract_all_record(sv, *prog);
+  using LCW = cudf::test::lists_column_wrapper<cudf::string_view>;
+  LCW expected_all({{}, {"b", "22", "c", "333"}, {}, {}, {"d", "4"}, {}}, no_match);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result, expected_all);
 }

@@ -120,7 +120,8 @@ struct column_fast_sort_fn {
                    stream.get());
   }
 
-  template <typename T, CUDF_ENABLE_IF(is_fast_sort_supported<T>())>
+  template <typename T>
+    requires(is_fast_sort_supported<T>())
   void operator()(column_view const& input,
                   column_view const& segment_offsets,
                   mutable_column_view& indices,
@@ -131,7 +132,7 @@ struct column_fast_sort_fn {
     fast_sort<T>(input, segment_offsets, indices, ascending, stream, mr);
   }
 
-  template <typename T, CUDF_ENABLE_IF(!is_fast_sort_supported<T>())>
+  template <typename T>
   void operator()(column_view const&,
                   column_view const&,
                   mutable_column_view&,

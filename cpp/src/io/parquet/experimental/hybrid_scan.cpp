@@ -171,7 +171,8 @@ std::vector<size_type> hybrid_scan_reader::filter_row_groups_with_byte_range(
 std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_stats(
   std::span<size_type const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -179,7 +180,7 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_stats(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->filter_row_groups_with_stats(input_row_group_indices, options, stream).front();
+  return _impl->filter_row_groups_with_stats(input_row_group_indices, options, stream, mr).front();
 }
 
 std::vector<text::byte_range_info> hybrid_scan_reader::bloom_filters_byte_ranges(
@@ -228,7 +229,8 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_dictiona
   std::span<cudf::device_span<uint8_t const> const> dictionary_page_data,
   std::span<size_type const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -238,7 +240,7 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_dictiona
 
   return _impl
     ->filter_row_groups_with_dictionary_pages(
-      dictionary_page_data, input_row_group_indices, options, stream)
+      dictionary_page_data, input_row_group_indices, options, stream, mr)
     .front();
 }
 
@@ -246,7 +248,8 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_bloom_fi
   std::span<cudf::device_span<uint8_t const> const> bloom_filter_data,
   std::span<size_type const> row_group_indices,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -256,7 +259,7 @@ std::vector<cudf::size_type> hybrid_scan_reader::filter_row_groups_with_bloom_fi
 
   return _impl
     ->filter_row_groups_with_bloom_filters(
-      bloom_filter_data, input_row_group_indices, options, stream)
+      bloom_filter_data, input_row_group_indices, options, stream, mr)
     .front();
 }
 
@@ -317,8 +320,10 @@ table_with_metadata hybrid_scan_reader::materialize_filter_columns(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->materialize_table<read_columns_mode::FILTER_COLUMNS>(
+  auto output = _impl->materialize_table<read_columns_mode::FILTER_COLUMNS>(
     input_row_group_indices, column_chunk_data, row_mask, mask_data_pages, options, stream, mr);
+  _impl->update_row_mask_null_count(row_mask);
+  return output;
 }
 
 [[nodiscard]] std::vector<text::byte_range_info>
@@ -340,7 +345,8 @@ std::vector<byte_range_info> hybrid_scan_reader::payload_pages_byte_ranges(
   std::span<size_type const> row_group_indices,
   cudf::column_view const& row_mask,
   parquet_reader_options const& options,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -348,7 +354,8 @@ std::vector<byte_range_info> hybrid_scan_reader::payload_pages_byte_ranges(
   auto const input_row_group_indices =
     std::vector<std::vector<size_type>>{{row_group_indices.begin(), row_group_indices.end()}};
 
-  return _impl->sparse_payload_pages_byte_ranges(input_row_group_indices, row_mask, options, stream)
+  return _impl
+    ->sparse_payload_pages_byte_ranges(input_row_group_indices, row_mask, options, stream, mr)
     .first;
 }
 
@@ -440,7 +447,9 @@ table_with_metadata hybrid_scan_reader::materialize_filter_columns_chunk(
 {
   CUDF_FUNC_RANGE();
 
-  return _impl->materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask);
+  auto output = _impl->materialize_table_chunk<read_columns_mode::FILTER_COLUMNS>(row_mask);
+  _impl->update_row_mask_null_count(row_mask);
+  return output;
 }
 
 void hybrid_scan_reader::setup_chunking_for_payload_columns(

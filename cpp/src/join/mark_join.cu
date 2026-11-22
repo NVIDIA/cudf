@@ -32,6 +32,7 @@
 #include <cuda/cmath>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.max.h>
 #include <thrust/copy.h>
 #include <thrust/sequence.h>
 

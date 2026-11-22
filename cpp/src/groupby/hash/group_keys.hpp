@@ -105,4 +105,26 @@ pair_buffers sort_pairs(pair_buffers input,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr);
 
+/**
+ * @brief Stably sorts rows by group label.
+ *
+ * Rows excluded from every group carry the label `num_groups` and sort after all groups.
+ *
+ * @param input Labels and rows to sort
+ * @param alternate Storage for `num_rows` labels and rows used while sorting
+ * @param num_rows Number of rows to sort
+ * @param num_groups Number of groups
+ * @param filtered Whether any row is excluded from every group
+ * @param stream CUDA stream used for device operations
+ * @param mr Memory resources whose temporary resource holds the sort scratch
+ * @return The buffers holding the sorted labels and rows
+ */
+pair_buffers sort_by_label(pair_buffers input,
+                           pair_buffers alternate,
+                           size_type num_rows,
+                           size_type num_groups,
+                           bool filtered,
+                           cuda::stream_ref stream,
+                           cudf::memory_resources mr);
+
 }  // namespace cudf::groupby::detail::hash

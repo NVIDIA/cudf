@@ -518,6 +518,8 @@ intersphinx_mapping = {
 numpydoc_show_inherited_class_members = {
     # option_context inherits undocumented members from the parent class
     "cudf.option_context": False,
+    # MemoryResources inherits undocumented members from rmm DeviceMemoryResource
+    "pylibcudf.memory_resources.MemoryResources": False,
 }
 
 # Rely on toctrees generated from autosummary on each of the pages we define

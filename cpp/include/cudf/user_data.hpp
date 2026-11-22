@@ -10,11 +10,12 @@
 namespace CUDF_EXPORT cudf {
 
 /// @brief Opaque pointer type for user-defined data.
+/// @ingroup udfs
 using voidptr_t = void*;
 
 /**
  * @brief A non-owning pointer to user-defined data passed to a UDF.
- *
+ * @ingroup udfs
  */
 struct user_data {
   voidptr_t ptr = nullptr;  ///< User-defined data pointer; may be null.

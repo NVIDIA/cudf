@@ -377,7 +377,8 @@ TEST_F(DistinctCount, TableExplicitMemoryResources)
 
 TEST_F(DistinctCount, ColumnExplicitMemoryResources)
 {
-  auto const input  = cudf::test::fixed_width_column_wrapper<double>({1, NAN, XXX}, nulls_at({2}));
+  auto const input =
+    cudf::test::fixed_width_column_wrapper<double>({1.0, std::nan(""), 0.0}, nulls_at({2}));
   auto const stream = cudf::test::get_default_stream();
   for (auto const [null_handling, expected] :
        {std::pair{null_policy::INCLUDE, 2}, std::pair{null_policy::EXCLUDE, 1}}) {

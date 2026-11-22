@@ -856,7 +856,8 @@ void sort_merge_join::preprocessed_table::populate_nonnull_filter(cuda::stream_r
       }
     }
   }
-  this->_num_nulls     = null_count(validity_mask.data(), 0, table.num_rows(), stream);
+  this->_num_nulls =
+    cudf::detail::null_count(validity_mask.data(), 0, table.num_rows(), stream, mr.as_temporary());
   this->_validity_mask = std::move(validity_mask);
 }
 
@@ -870,7 +871,9 @@ void sort_merge_join::preprocessed_table::apply_nonnull_filter(cuda::stream_ref 
     cudf::make_column_from_scalar(true_scalar, _table_view.num_rows(), stream, temp_mr);
   CUDF_EXPECTS(_validity_mask.has_value() && _num_nulls.has_value(),
                "Something went wrong while dropping nulls in the unprocessed tables");
-  bool_mask->set_null_mask(_validity_mask.value(), _num_nulls.value(), stream);
+  bool_mask->set_null_mask(
+    cuda::device_buffer<cudf::bitmask_type>{stream, temp_mr, _validity_mask.value()},
+    _num_nulls.value());
 
   // Use the internal apply_mask directly to avoid the public API overhead (NVTX range).
   _null_processed_table = detail::apply_mask(

@@ -198,6 +198,41 @@ TEST_F(StreamingGroupbyTest, AggregateAndMergeMemoryResources)
   verify_against_groupby(result_keys, results, {batch, batch}, KEY_COL, reqs);
 }
 
+TEST_F(StreamingGroupbyTest, NullableStructKeyMemoryResources)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  // The child has a null mask but no nulls, so preprocessing ANDs the parent and child masks
+  // without counting child nulls in get_sliced_child, which allocates from the current resource.
+  cudf::test::fixed_width_column_wrapper<int32_t> child{{1, 2, 3, 1, 4, 2}, {1, 1, 1, 1, 1, 1}};
+  cudf::test::fixed_width_column_wrapper<int32_t> parent_validity{{0, 0, 0, 0, 0, 0},
+                                                                  {1, 1, 1, 1, 0, 1}};
+  cudf::column_view keys{cudf::data_type{cudf::type_id::STRUCT},
+                         6,
+                         nullptr,
+                         cudf::column_view{parent_validity}.null_mask(),
+                         1,
+                         0,
+                         {child}};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{10, 20, 30, 40, 50, 60};
+  cudf::table_view batch{{keys, values}};
+  auto reqs = single_agg_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+
+  cudf::groupby::streaming_groupby streaming_agg(
+    KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS, cudf::null_policy::INCLUDE, harness.output_mr());
+  {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    streaming_agg.aggregate(batch, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_output_allocations_live(stream);
+  harness.expect_temporary_allocation_activity(stream);
+  harness.expect_temporary_allocations_released(stream);
+
+  auto [result_keys, results] = streaming_agg.finalize(stream);
+  verify_against_groupby(result_keys, results, {batch}, KEY_COL, reqs, cudf::null_policy::INCLUDE);
+}
+
 TEST_F(StreamingGroupbyTest, SumTwoBatches)
 {
   using K = int32_t;

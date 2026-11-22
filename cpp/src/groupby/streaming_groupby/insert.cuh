@@ -38,7 +38,7 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
 
   // Preprocess batch for row operators.
   auto preprocessed_batch =
-    cudf::detail::row::hash::preprocessed_table::create(batch_keys, stream, temp_mr);
+    cudf::detail::row::hash::preprocessed_table::create(batch_keys, stream, mr.as_temporary());
 
   // Skip hashing and insertion for rows excluded by the null policy.
   auto const skip_rows_with_nulls = _has_nullable_keys && _null_handling == null_policy::EXCLUDE;
@@ -108,8 +108,8 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
       stream,
       state_mr);
 
-    auto preprocessed_compacted = cudf::detail::row::hash::preprocessed_table::create(
-      compacted->view(), stream, state_mr.get_output_mr());
+    auto preprocessed_compacted =
+      cudf::detail::row::hash::preprocessed_table::create(compacted->view(), stream, state_mr);
 
     // Reserve both vectors before enqueueing/publishing the new persistent group IDs.
     _compacted_batches.reserve(_compacted_batches.size() + 1);

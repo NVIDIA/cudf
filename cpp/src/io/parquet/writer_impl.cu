@@ -2461,7 +2461,7 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    cuda::stream_ref stream,
                    cudf::memory_resources mr)
   : _stream(stream),
-    _mr(std::move(mr)),
+    _mr(mr.as_temporary()),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
     _max_row_group_rows{options.get_row_group_size_rows()},
@@ -2504,7 +2504,7 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
                    cuda::stream_ref stream,
                    cudf::memory_resources mr)
   : _stream(stream),
-    _mr(std::move(mr)),
+    _mr(mr.as_temporary()),
     _compression(options.get_compression()),
     _max_row_group_size{options.get_row_group_size_bytes()},
     _max_row_group_rows{options.get_row_group_size_rows()},
@@ -2609,7 +2609,7 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
                                   _write_arrow_schema,
                                   _out_sink,
                                   _stream,
-                                  _mr.as_temporary());
+                                  _mr);
 
   // Compression/encoding were all successful. Now write the intermediate results.
   write_parquet_data_to_sink(updated_agg_meta,

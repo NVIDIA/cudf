@@ -53,6 +53,16 @@ def test_scalar_subquery_is_broadcast(engine: pl.GPUEngine, frames):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_union_all_with_null_string_key(engine: pl.GPUEngine):
+    t = pl.LazyFrame({"g": ["x", "x", "y"], "v": [1.0, 2.0, 3.0]})
+    q = sql(
+        {"t": t},
+        "SELECT g, AVG(v) AS m FROM t GROUP BY g "
+        "UNION ALL SELECT NULL AS g, AVG(v) AS m FROM t",
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
 def test_left_join_on_constant_key(engine: pl.GPUEngine, frames):
     q = sql(frames, "SELECT g, k FROM t LEFT JOIN u ON w > 15 ORDER BY g, k")
     assert_gpu_result_equal(q, engine=engine)

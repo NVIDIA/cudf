@@ -343,7 +343,7 @@ struct PageNestingInfo {
  * The nz map producer walks a page's definition levels once up front and precomputes a valid-rank
  * map, so that the decode kernel can place values without decoding levels
  * itself. For now, only the DELTA encodings have a consumer for the map. See
- * `classify_nz_map_kind` in reader_impl_preprocess.cu.
+ * `classify_nz_map_kind` in reader_impl_chunking_utils.cuh.
  *
  * uint8_t to minimize the overhead in PageInfo
  */

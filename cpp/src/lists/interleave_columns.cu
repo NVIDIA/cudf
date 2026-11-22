@@ -14,6 +14,7 @@
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -120,7 +121,7 @@ std::unique_ptr<column> concatenate_and_gather_lists(host_span<column_view const
 }
 
 // Error case when no other overload or specialization is available
-template <typename T, typename Enable = void>
+template <typename T>
 struct interleave_list_entries_impl {
   template <typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
@@ -181,8 +182,8 @@ struct compute_string_sizes_and_interleave_lists_fn {
   }
 };
 
-template <typename T>
-struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
+template <cudf::concepts::string_view T>
+struct interleave_list_entries_impl<T> {
   std::unique_ptr<column> operator()(table_view const& input,
                                      column_view const& output_list_offsets,
                                      size_type num_output_lists,
@@ -206,8 +207,8 @@ struct interleave_list_entries_impl<T, std::enable_if_t<std::is_same_v<T, cudf::
   }
 };
 
-template <typename T>
-struct interleave_list_entries_impl<T, std::enable_if_t<cudf::is_fixed_width<T>()>> {
+template <cudf::concepts::fixed_width T>
+struct interleave_list_entries_impl<T> {
   std::unique_ptr<column> operator()(table_view const& input,
                                      column_view const& output_list_offsets,
                                      size_type num_output_lists,

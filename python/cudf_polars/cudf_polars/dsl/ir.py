@@ -24,6 +24,7 @@ import random
 import reprlib
 import sys
 import uuid
+import warnings
 from collections.abc import Sized
 from dataclasses import dataclass, field
 from functools import cache
@@ -61,6 +62,7 @@ from cudf_polars.dsl.utils.windows import (
     range_window_bounds,
 )
 from cudf_polars.utils import dtypes, sorting
+from cudf_polars.utils.config import RankLocalCPUComputeMode
 from cudf_polars.utils.cuda_stream import (
     get_cuda_stream,
     stream_ordered_after,
@@ -97,6 +99,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "IR",
+    "AsofJoin",
     "Cache",
     "CallbackSink",
     "ConditionalJoin",
@@ -148,6 +151,8 @@ class IRExecutionContext:
         Optional pre-actor Quent tracing context bound to a physical operator.
     tracer
         The actor tracer. Used to propagate statistics.
+    rank_local_cpu_compute
+        When the streaming executor evaluates IR nodes on the CPU with Polars.
     """
 
     py_executor: concurrent.futures.ThreadPoolExecutor | None = field(default=None)
@@ -156,6 +161,7 @@ class IRExecutionContext:
     actor_bound_quent_ir_execution_state: ActorBoundQuentIRExecutionState | None = None
     unbound_quent_ir_execution_state: UnboundQuentIRExecutionState | None = None
     tracer: ActorTracer | None = None
+    rank_local_cpu_compute: RankLocalCPUComputeMode = RankLocalCPUComputeMode.NEVER
 
     async def to_thread[**P, T](
         self, func: Callable[P, T], /, *args: P.args, **kwargs: P.kwargs
@@ -336,6 +342,14 @@ class IR(Node["IR"]):
     NotImplementedError
         If evaluation fails. Ideally this should not occur, since the
         translation phase should fail earlier.
+
+    Notes
+    -----
+    Implementations must not modify the device data of the input
+    dataframes, and must not add, remove or rename their columns. The
+    only permitted change to an input is recording sortedness metadata
+    that is true of the data, as :meth:`Column.check_sorted` does. The
+    result may share device memory with the inputs.
     """
 
     def evaluate(self, *, cache: CSECache, context: IRExecutionContext) -> DataFrame:
@@ -3168,6 +3182,7 @@ class ConditionalJoin(IR):
             self.predicate = predicate
             stream = get_cuda_stream()
             ast_result = to_ast(predicate, stream=stream)
+            # The AST's literal scalars are later read on other streams.
             stream.synchronize()
             if ast_result is None:
                 raise NotImplementedError(
@@ -3284,6 +3299,192 @@ class ConditionalJoin(IR):
             result = left_result.with_columns(right_result.columns, stream=stream)
 
         return result.slice(zlice)
+
+
+def _check_asof_sorted(key: Column, *, stream: Stream) -> bool:
+    """Validate ascending non-null keys. Return True only for nulls-first order."""
+    if key.null_count:
+        table = plc.Table([key.obj])
+        if plc.sorting.is_sorted(
+            table,
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.BEFORE],
+            stream=stream,
+        ):
+            return True
+        if plc.sorting.is_sorted(
+            table,
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.AFTER],
+            stream=stream,
+        ):
+            return False
+        non_null = plc.stream_compaction.drop_nulls(
+            table, [0], 1, stream=stream
+        ).columns()[0]
+        if plc.sorting.is_sorted(
+            plc.Table([non_null]),
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.BEFORE],
+            stream=stream,
+        ):
+            return False
+    elif key.check_sorted(
+        order=plc.types.Order.ASCENDING,
+        null_order=plc.types.NullOrder.BEFORE,
+        stream=stream,
+    ):
+        return True
+    raise pl.exceptions.InvalidOperationError(
+        "argument in operation 'asof_join' is not sorted, "
+        "please sort the 'expr/series/column' first"
+    )
+
+
+class AsofJoin(IR):
+    """Join each left row to the last matching right row at or before its key."""
+
+    __slots__ = ("left_by", "left_on", "options", "right_by", "right_on")
+    _non_child = ("schema", "left_on", "right_on", "left_by", "right_by", "options")
+    _n_non_child_args = 5
+
+    def __init__(
+        self,
+        schema: Schema,
+        left_on: expr.NamedExpr,
+        right_on: expr.NamedExpr,
+        left_by: tuple[str, ...],
+        right_by: tuple[str, ...],
+        options: tuple[Zlice | None, str, bool, bool],
+        left: IR,
+        right: IR,
+    ) -> None:
+        self.schema = schema
+        self.left_on = left_on
+        self.right_on = right_on
+        self.left_by = left_by
+        self.right_by = right_by
+        self.options = options
+        self.children = (left, right)
+        self._non_child_args = (left_on, right_on, left_by, right_by, options)
+
+    @classmethod
+    @log_do_evaluate
+    @nvtx_annotate_cudf_polars(message="AsofJoin")
+    def do_evaluate(
+        cls,
+        left_on: expr.NamedExpr,
+        right_on: expr.NamedExpr,
+        left_by: tuple[str, ...],
+        right_by: tuple[str, ...],
+        options: tuple[Zlice | None, str, bool, bool],
+        left: DataFrame,
+        right: DataFrame,
+        *,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Sort the right keys, probe them, and gather the matching payload."""
+        zlice, suffix, coalesce, check_sortedness = options
+        discarded = set(right_by)
+        if coalesce and left_on.name == right_on.name:
+            discarded.add(right_on.name)
+        has_payload = bool(right.column_names_set - discarded)
+        left_on_col = broadcast(
+            left_on.value.evaluate(left),
+            target_length=left.num_rows,
+            stream=left.stream,
+        )[0]
+        right_on_col = broadcast(
+            right_on.value.evaluate(right),
+            target_length=right.num_rows,
+            stream=right.stream,
+        )[0]
+        if right_by and check_sortedness:
+            warnings.warn(
+                "Sortedness of columns cannot be checked when 'by' groups provided",
+                UserWarning,
+                stacklevel=2,
+            )
+        if not has_payload and (right_by or not check_sortedness):
+            return left.slice(zlice)
+        if check_sortedness and not right_by:
+            _check_asof_sorted(left_on_col, stream=left.stream)
+            sorted_nulls_first = _check_asof_sorted(right_on_col, stream=right.stream)
+        else:
+            sorted_nulls_first = (
+                not right_by
+                and right_on_col.is_sorted == plc.types.Sorted.YES
+                and right_on_col.order == plc.types.Order.ASCENDING
+                and (
+                    right_on_col.null_count == 0
+                    or right_on_col.null_order == plc.types.NullOrder.BEFORE
+                )
+            )
+            if sorted_nulls_first and right_on_col.null_count:
+                sorted_nulls_first = plc.sorting.is_sorted(
+                    plc.Table([right_on_col.obj]),
+                    [plc.types.Order.ASCENDING],
+                    [plc.types.NullOrder.BEFORE],
+                    stream=right.stream,
+                )
+        if not has_payload:
+            return left.slice(zlice)
+
+        right_by_cols = [right.column_map[name].obj for name in right_by]
+        # TODO: Carry RowOrdering through to recognize composite (by..., on)
+        # ordering and avoid sorting the right side again.
+        if sorted_nulls_first:
+            joiner = plc.join.AsofJoin(
+                plc.Table([]), right_on_col.obj, stream=right.stream
+            )
+        else:
+            keys = plc.Table([*right_by_cols, right_on_col.obj])
+            columns = plc.sorting.stable_sort_by_key(
+                plc.Table([*right.table.columns(), *keys.columns()]),
+                keys,
+                [plc.types.Order.ASCENDING] * (len(right_by) + 1),
+                [plc.types.NullOrder.BEFORE] * (len(right_by) + 1),
+                stream=right.stream,
+            ).columns()
+            right = DataFrame.from_table(
+                plc.Table(columns[: right.num_columns]),
+                right.column_names,
+                right.dtypes,
+                stream=right.stream,
+            )
+            joiner = plc.join.AsofJoin(
+                plc.Table(columns[right.num_columns : -1]),
+                columns[-1],
+                stream=right.stream,
+            )
+
+        right_payload = right.discard_columns(discarded)
+
+        with context.stream_ordered_after(left, right) as stream:
+            gather_map = joiner.join(
+                plc.Table([left.column_map[name].obj for name in left_by]),
+                left_on_col.obj,
+                stream=stream,
+            )
+            gathered = DataFrame.from_table(
+                plc.copying.gather(
+                    right_payload.table,
+                    gather_map,
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
+                    stream=stream,
+                ),
+                right_payload.column_names,
+                right_payload.dtypes,
+                stream=stream,
+            )
+            gathered = gathered.rename_columns(
+                {
+                    name: f"{name}{suffix}"
+                    for name in gathered.column_names
+                    if name in left.column_names_set
+                }
+            )
+            return left.with_columns(gathered.columns, stream=stream).slice(zlice)
 
 
 class Join(IR):

@@ -12,6 +12,7 @@
 #include <cub/block/block_reduce.cuh>
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/functional>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 

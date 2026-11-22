@@ -59,7 +59,7 @@ value is read from the environment variable if present; otherwise the underlying
 its built-in default. `raise_on_fail` has no environment variable. The environment variables for
 `dynamic_planning`, `join_filter_pushdown`, and `quent_context` accept a boolean that enables or
 disables the feature; the nested fields of `dynamic_planning` and `join_filter_pushdown` have their
-own environment variables (e.g. `CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_CHUNK_COUNT`).
+own environment variables (e.g. `CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_BYTE_COUNT`).
 Boolean environment variables accept `{"1", "true", "yes", "y"}` as true and
 `{"0", "false", "no", "n"}` as false.
 
@@ -110,6 +110,7 @@ Environment variables follow these patterns:
 |--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
 | `num_py_executors`       | Workers for the internal Python `ThreadPoolExecutor`.                                                                                               | `8`         |
 | `fallback_mode`          | When an unsupported operation forces a fallback to CPU execution: `"warn"`, `"raise"`, `"silent"`.                                                  | `"warn"`    |
+| `rank_local_cpu_compute` | When to evaluate IR nodes on the CPU with Polars: `"never"` or `"always"`. With `"always"`, unsupported nodes still run on the GPU. | `"never"`   |
 | `max_rows_per_partition` | Maximum number of rows per partition. Only used for in-memory `DataFrame` sources, never for disk IO or dynamic planning.                           | `1_000_000` |
 | `broadcast_limit`        | Maximum number of bytes for broadcast joins.                                                                                                        | auto        |
 | `target_partition_size`  | Target partition size in bytes. Used for IO and dynamic planning. `0` means auto.                                                                   | auto        |

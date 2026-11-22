@@ -389,8 +389,12 @@ std::unique_ptr<column> boolean_mask_scatter(column_view const& input,
                    0);
 
   // The scatter map is actually a table with only one column, which is scatter map.
-  auto scatter_map = detail::apply_mask(
-    table_view{{indices->view()}}, boolean_mask, mask_type::RETENTION, stream, mr.as_temporary());
+  auto scatter_map  = detail::apply_mask(table_view{{indices->view()}},
+                                        boolean_mask,
+                                        mask_type::RETENTION,
+                                        null_policy::EXCLUDE,
+                                        stream,
+                                        mr.as_temporary());
   auto output_table = detail::scatter(
     table_view{{input}}, scatter_map->get_column(0).view(), table_view{{target}}, stream, mr);
 
@@ -440,8 +444,12 @@ std::unique_ptr<table> boolean_mask_scatter(table_view const& input,
                    mutable_indices.end<size_type>(),
                    0);
 
-  auto scatter_map = detail::apply_mask(
-    table_view{{indices->view()}}, boolean_mask, mask_type::RETENTION, stream, mr.as_temporary());
+  auto scatter_map = detail::apply_mask(table_view{{indices->view()}},
+                                        boolean_mask,
+                                        mask_type::RETENTION,
+                                        null_policy::EXCLUDE,
+                                        stream,
+                                        mr.as_temporary());
   return detail::scatter(input, scatter_map->get_column(0).view(), target, stream, mr);
 }
 

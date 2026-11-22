@@ -23,6 +23,7 @@
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -182,7 +183,9 @@ std::unique_ptr<cudf::column> clamp_dictionary_column(dictionary_column_view con
                                 input.null_count());
 }
 
-template <typename T, typename OptionalScalarIterator, typename ReplaceScalarIterator>
+template <cudf::concepts::fixed_width T,
+          typename OptionalScalarIterator,
+          typename ReplaceScalarIterator>
 std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       OptionalScalarIterator lo_itr,
                                       ReplaceScalarIterator lo_replace_itr,
@@ -190,7 +193,6 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       ReplaceScalarIterator hi_replace_itr,
                                       cuda::stream_ref stream,
                                       cudf::memory_resources mr)
-  requires(cudf::is_fixed_width<T>())
 {
   auto output =
     detail::allocate_like(input, input.size(), mask_allocation_policy::NEVER, stream, mr);
@@ -232,7 +234,9 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
   return output;
 }
 
-template <typename T, typename OptionalScalarIterator, typename ReplaceScalarIterator>
+template <cudf::concepts::string_view T,
+          typename OptionalScalarIterator,
+          typename ReplaceScalarIterator>
 std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       OptionalScalarIterator lo_itr,
                                       ReplaceScalarIterator lo_replace_itr,
@@ -240,7 +244,6 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
                                       ReplaceScalarIterator hi_replace_itr,
                                       cuda::stream_ref stream,
                                       cudf::memory_resources mr)
-  requires(std::is_same_v<T, string_view>)
 {
   return clamp_string_column(input, lo_itr, lo_replace_itr, hi_itr, hi_replace_itr, stream, mr);
 }

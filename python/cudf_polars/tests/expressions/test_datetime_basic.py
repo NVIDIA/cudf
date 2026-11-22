@@ -168,6 +168,54 @@ def test_strftime_timestamp(engine: pl.GPUEngine, format):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def _name_dates() -> pl.Series:
+    # Every weekday and month, in both halves of the day.
+    return pl.Series(
+        [
+            datetime.datetime(2024, 1, 1, 0, 30) + datetime.timedelta(days=i * 17)
+            for i in range(24)
+        ]
+    )
+
+
+@pytest.mark.parametrize("format", ["%A", "%a", "%B", "%b", "%A, %d %B %Y"])
+def test_strftime_names(engine: pl.GPUEngine, format):
+    dtypes = {
+        "date": pl.Date(),
+        "us": pl.Datetime("us"),
+        "ns_utc": pl.Datetime("ns", "UTC"),
+    }
+    ldf = pl.LazyFrame({name: _name_dates().cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("format", ["%p", "%a %b %d %I:%M %p"])
+def test_strftime_am_pm(engine: pl.GPUEngine, format):
+    # Half of the values fall before noon, half after.
+    values = _name_dates() + pl.Series(
+        [datetime.timedelta(hours=13 * (i % 2)) for i in range(24)]
+    )
+    dtypes = {"us": pl.Datetime("us"), "ns_utc": pl.Datetime("ns", "UTC")}
+    ldf = pl.LazyFrame({name: values.cast(t) for name, t in dtypes.items()})
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in dtypes)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("format", ["%A", "%b", "%H", "%A %H:%M"])
+def test_strftime_non_utc_time_zone(engine: pl.GPUEngine, format):
+    # 2023-12-31 16:30 in Los Angeles is already 2024-01-01 in UTC.
+    values = pl.Series(
+        [datetime.datetime(2023, 12, 31, 16, 30), datetime.datetime(2024, 7, 4, 1, 15)]
+    ).cast(pl.Datetime("us"))
+    zones = {"la": "America/Los_Angeles", "tokyo": "Asia/Tokyo"}
+    ldf = pl.LazyFrame(
+        {name: values.dt.replace_time_zone(tz) for name, tz in zones.items()}
+    )
+    q = ldf.select(pl.col(name).dt.strftime(format) for name in zones)
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("format", ["iso", "polars"])
 def test_strftime_duration(engine: pl.GPUEngine, format):
     ldf = pl.LazyFrame(
@@ -1291,3 +1339,150 @@ def test_datetime_combine_integer_time_unsupported(in_memory_engine: pl.GPUEngin
     ldf = pl.LazyFrame({"a": [datetime.date(2024, 1, 1)], "b": [1]})
     q = ldf.select(pl.col("a").dt.combine(pl.col("b")))
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+_OFFSET_BY_FIXED = [
+    # Durations finer than the storage unit are rounded toward zero.
+    "7ns",
+    "-1500us",
+    "1500us",
+    "999us999us",
+    "3us",
+    "500ms",
+    "90s",
+    "40m",
+    "-1h",
+    "1h30m",
+    "0m",
+    "24h",
+    "-36h",
+    "168h",
+]
+# Days and weeks are calendar days on time zone aware columns.
+_OFFSET_BY_NAIVE_ONLY = ["1d", "-1d1h", "1w", "2w3d"]
+
+
+@pytest.mark.parametrize(
+    "dtype, by",
+    [
+        *(
+            (pl.Datetime(time_unit, time_zone="America/New_York"), by)
+            for time_unit in cast("list[Literal['ms', 'ns']]", ["ms", "ns"])
+            for by in _OFFSET_BY_FIXED
+        ),
+        *((pl.Datetime("us"), by) for by in _OFFSET_BY_NAIVE_ONLY),
+    ],
+)
+def test_datetime_offset_by(engine: pl.GPUEngine, dtype: pl.DataType, by: str):
+    q = _truncate_frame(dtype).select(pl.col("datetimes").dt.offset_by(by))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_datetime_offset_by_then_truncate(engine: pl.GPUEngine):
+    q = _truncate_frame(pl.Datetime("us")).select(
+        pl.col("datetimes").dt.offset_by("1d").dt.truncate("5m")
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("time_unit", ["ms", "us", "ns"])
+@pytest.mark.parametrize(
+    "by", ["1h", "-1h", "1d", "-1d", "1w", "9223372036s854775807ns"]
+)
+def test_datetime_offset_by_extreme_values(
+    engine: pl.GPUEngine, time_unit: Literal["ms", "us", "ns"], by: str
+):
+    # polars' arithmetic wraps around at the limits of INT64.
+    int64_min, int64_max = -(2**63), 2**63 - 1
+    values = [int64_min, int64_min + 1, -1, 0, None, int64_max - 1, int64_max]
+    ldf = pl.LazyFrame(
+        {"datetimes": pl.Series(values, dtype=pl.Int64).cast(pl.Datetime(time_unit))}
+    )
+    q = ldf.select(pl.col("datetimes").dt.offset_by(by))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype, by",
+    [
+        # polars adds calendar months and years, and days and weeks that follow
+        # the time zone's clock.
+        (pl.Datetime("us"), "1mo"),
+        (pl.Datetime("us"), "1q"),
+        (pl.Datetime("us"), "1y"),
+        (pl.Datetime("us"), "1mo1d"),
+        (pl.Datetime("us", time_zone="UTC"), "1d"),
+        (pl.Datetime("us", time_zone="America/New_York"), "1d"),
+        (pl.Datetime("us", time_zone="America/New_York"), "1w"),
+        # polars floors sub-day offsets on a Date and nulls overflow.
+        (pl.Date(), "1d"),
+        (pl.Date(), "1h"),
+        # A duration of 2**63 nanoseconds or more wraps in polars' INT64
+        # nanoseconds before it is converted to the time unit, so on
+        # microsecond and millisecond columns even -2**63 ns flips its sign.
+        (pl.Datetime("ms"), "9223372036s854775808ns"),
+        (pl.Datetime("us"), "-9223372036s854775808ns"),
+        (pl.Datetime("ms"), "1000000000m"),
+        (pl.Datetime("us"), ""),
+    ],
+)
+def test_datetime_offset_by_unsupported(
+    in_memory_engine: pl.GPUEngine, dtype: pl.DataType, by: str
+):
+    q = _truncate_frame(dtype).select(pl.col("datetimes").dt.offset_by(by))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_datetime_offset_by_non_literal_offset_unsupported(
+    in_memory_engine: pl.GPUEngine,
+):
+    ldf = pl.LazyFrame({"datetimes": [datetime.datetime(2026, 1, 1)], "by": ["1h"]})
+    q = ldf.select(pl.col("datetimes").dt.offset_by(pl.col("by")))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("time_zone", ["Asia/Kathmandu", "America/New_York"])
+@pytest.mark.parametrize(
+    "func",
+    [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "weekday",
+        "ordinal_day",
+        "quarter",
+        "week",
+        "iso_year",
+        "date",
+        "is_leap_year",
+        "days_in_month",
+        "century",
+        "millennium",
+    ],
+)
+def test_datetime_fields_read_local_wall_clock(
+    engine: pl.GPUEngine, time_zone: str, func: str
+):
+    # Fields come from the local wall clock of the column's zone, so instants
+    # near midnight, a year end and a DST change land on different local values.
+    ldf = pl.LazyFrame(
+        {
+            "a": pl.Series(
+                [
+                    datetime.datetime(2020, 1, 1, 0, 0),
+                    datetime.datetime(2019, 12, 31, 23, 30),
+                    datetime.datetime(2020, 2, 29, 21, 15, 7),
+                    datetime.datetime(2021, 3, 14, 6, 59, 59),
+                    datetime.datetime(2021, 3, 14, 7, 0, 0),
+                    datetime.datetime(2021, 12, 31, 20, 0, 0),
+                    None,
+                ],
+                dtype=pl.Datetime("us", time_zone="UTC"),
+            )
+        }
+    )
+    local = pl.col("a").dt.convert_time_zone(time_zone)
+    assert_gpu_result_equal(ldf.select(getattr(local.dt, func)()), engine=engine)

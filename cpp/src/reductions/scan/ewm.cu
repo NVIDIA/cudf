@@ -18,6 +18,7 @@
 #include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/cmath>
 #include <cuda/std/concepts>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -49,7 +50,7 @@ class recurrence_functor {
 template <typename T>
 struct ewma_functor_base {
   T beta;
-  pair_type<T> const IDENTITY{1.0, 0.0};
+  pair_type<T> const IDENTITY{T{1}, T{0}};
 };
 
 template <typename T, bool is_numerator>
@@ -64,7 +65,7 @@ struct ewma_adjust_nulls_functor : public ewma_functor_base<T> {
     // The value is non-null, but nulls preceding it
     // must adjust the second element of the pair
     T const beta = this->beta;
-    return {beta * ((exp != 0) ? pow(beta, exp) : 1), input};
+    return {beta * ((exp != 0) ? cuda::std::pow(beta, static_cast<T>(exp)) : T{1}), input};
   }
 };
 
@@ -76,7 +77,7 @@ struct ewma_adjust_no_nulls_functor : public ewma_functor_base<T> {
     if constexpr (is_numerator) {
       return {beta, data};
     } else {
-      return {beta, 1.0};
+      return {beta, T{1}};
     }
   }
 };
@@ -105,10 +106,11 @@ struct ewma_noadjust_nulls_functor : public ewma_functor_base<T> {
     } else {
       if (!valid) { return this->IDENTITY; }
       // preceding value is valid, return normal pair
-      if (nullcnt == 0) { return {beta, (1.0 - beta) * input}; }
+      if (nullcnt == 0) { return {beta, (T{1} - beta) * input}; }
       // one or more preceding values is null, adjust by how many
-      T const factor = (1.0 - beta) + pow(beta, nullcnt + 1);
-      return {(beta * (pow(beta, nullcnt)) / factor), ((1.0 - beta) * input) / factor};
+      T const factor = (T{1} - beta) + cuda::std::pow(beta, static_cast<T>(nullcnt + 1));
+      return {(beta * cuda::std::pow(beta, static_cast<T>(nullcnt))) / factor,
+              ((T{1} - beta) * input) / factor};
     }
   }
 };
@@ -122,7 +124,7 @@ struct ewma_noadjust_no_nulls_functor : public ewma_functor_base<T> {
     if (index == 0) {
       return {beta, input};
     } else {
-      return {beta, (1.0 - beta) * input};
+      return {beta, (T{1} - beta) * input};
     }
   }
 };

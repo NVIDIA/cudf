@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,6 +23,7 @@ from cudf_streaming.channel_metadata import (
     RowOrderingScope,
 )
 from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataFrame
@@ -36,6 +38,7 @@ from cudf_polars.streaming.actor_graph.join import (
     _use_pwise_join,
 )
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
+from cudf_polars.streaming.actor_graph.utils import ChunkSampler, gather_in_task_group
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.parallel import lower_ir_graph
 from cudf_polars.streaming.shuffle import Shuffle
@@ -132,7 +135,7 @@ def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_fac
             broadcast_limit=1_024,
             target_partition_size=1 << 20,
             max_rows_per_partition=2 * right_row_count,
-            dynamic_planning={"sample_chunk_count": 1},
+            dynamic_planning={"sample_byte_count": 1},
         )
     )
     left = pl.scan_parquet(left_path / "*.parquet")
@@ -147,6 +150,38 @@ def test_join_with_underestimated_broadcast_input(tmp_path, streaming_engine_fac
         engine=engine,
         check_row_order=False,
     )
+
+
+def test_chunk_sampler_exceeds_chunk_estimate(spmd_engine):
+    context = spmd_engine.context
+    stream = context.br().stream_pool.get_stream()
+    chunks = [
+        TableChunk.from_pylibcudf_table(
+            DataFrame.from_polars(pl.DataFrame({"x": list(range(n))}), stream).table,
+            stream,
+            exclusive_view=True,
+            br=context.br(),
+        )
+        for n in (1, 1, 1, 100)
+    ]
+    ch_in = context.create_channel()
+    sampler = ChunkSampler(
+        context,
+        ch_in,
+        max_bytes=sum(chunk.data_alloc_size() for chunk in chunks[:3]) + 1,
+        ch_in_chunk_count=2,
+    )
+
+    async def produce():
+        for i, chunk in enumerate(chunks):
+            await ch_in.send(context, Message(i, chunk))
+        await ch_in.drain(context)
+
+    _, sample = asyncio.run(gather_in_task_group(produce(), sampler.sample()))
+    assert len(sample.local_sample.chunks) == sample.total_chunks == 4
+    assert sample.total_size == sample.local_sample.size
+    assert sample.total_rows == sample.local_sample.rows == 103
+    sample.local_sample.chunks.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +366,17 @@ def test_ordered_join_strategy_matches_exact_ordering_width(spmd_engine):
     partitioning = _order_partitioning(spmd_engine, (0, 1))
 
     assert _make_ordered_strategy(join_ir, partitioning, partitioning) is None
+
+
+def test_ordered_join_requires_flat_input_partitioning(spmd_engine):
+    left = pl.LazyFrame({"k": [1], "x": [2]})
+    right = pl.LazyFrame({"k": [1], "y": [3]})
+    join_ir = _join_ir(left.join(right, on="k", how="inner"))
+    flat = _order_partitioning(spmd_engine, (0,))
+    rank_only = NormalizedPartitioning(flat.inter_rank_scheme, None)
+
+    assert _make_ordered_strategy(join_ir, rank_only, flat) is None
+    assert _make_ordered_strategy(join_ir, flat, rank_only) is None
 
 
 def test_ordered_join_strategy_checks_order_key_semantics(spmd_engine):

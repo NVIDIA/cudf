@@ -5,6 +5,7 @@
 
 api_docs/index
 10min
+10min_dask_cudf
 pandas-comparison
 data-types
 io/index

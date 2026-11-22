@@ -112,7 +112,7 @@ filtered_join::filtered_join(cudf::table_view const& right,
     _right{right},
     _nulls_equal{compare_nulls},
     _preprocessed_right{
-      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())}
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr)}
 {
   cudf::scoped_range range{"filtered_join::filtered_join"};
   if (_right.num_rows() == 0) return;

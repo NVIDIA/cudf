@@ -518,7 +518,7 @@ std::unique_ptr<key_remap_table_interface> create_key_remap_table(cudf::table_vi
   if (right.num_rows() == 0 || right.num_columns() == 0) { return nullptr; }
 
   auto preprocessed_right =
-    cudf::detail::row::equality::preprocessed_table::create(right, stream, mr.get_output_mr());
+    cudf::detail::row::equality::preprocessed_table::create(right, stream, mr);
 
   if (cudf::detail::is_primitive_row_op_compatible(right)) {
     auto const d_hasher = cudf::detail::row::primitive::row_hasher{

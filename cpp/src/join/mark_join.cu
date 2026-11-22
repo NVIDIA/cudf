@@ -610,8 +610,7 @@ mark_join::mark_join(cudf::table_view const& left,
     _nulls_equal{compare_nulls},
     _prefilter{prefilter},
     _mr{mr},
-    _preprocessed_left{
-      cudf::detail::row::equality::preprocessed_table::create(left, stream, _mr.get_output_mr())},
+    _preprocessed_left{cudf::detail::row::equality::preprocessed_table::create(left, stream, _mr)},
     _bucket_storage{
       cuco::extent<std::size_t>{compute_mark_join_capacity(left, checked_load_factor(load_factor))},
       rmm::mr::polymorphic_allocator<char>{_mr.get_output_mr()},

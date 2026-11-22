@@ -94,7 +94,7 @@ hash_join<Hasher>::hash_join(cudf::table_view const& right,
     _right{right},
     _mr{mr},
     _preprocessed_right{
-      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())},
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr)},
     _impl{std::make_unique<impl>(hash_csr_capacity(right.num_rows(), load_factor),
                                  right.num_rows(),
                                  stream,

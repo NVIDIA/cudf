@@ -160,7 +160,7 @@ distinct_hash_join::distinct_hash_join(cudf::table_view const& right,
     _right{right},
     _mr{mr},
     _preprocessed_right{
-      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr.get_output_mr())},
+      cudf::detail::row::equality::preprocessed_table::create(_right, stream, _mr)},
     _hash_table{cuco::extent{static_cast<std::size_t>(right.num_rows())},
                 checked_load_factor(load_factor),
                 cuco::empty_key{cuco::pair{std::numeric_limits<hash_value_type>::max(),

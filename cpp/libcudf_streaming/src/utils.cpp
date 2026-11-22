@@ -9,6 +9,7 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/wrappers/dictionary.hpp>
 
 #include <cudf_streaming/utils.hpp>
@@ -24,14 +25,12 @@
 
 #include <numeric>
 #include <sstream>
-#include <type_traits>
 
 namespace cudf_streaming {
 
 namespace {
 struct str_cudf_column_scalar_fn {
-  template <typename T>
-    requires(cudf::is_numeric<T>())
+  template <cudf::concepts::arithmetic T>
   std::string operator()(cudf::column_view col,
                          cudf::size_type index,
                          cuda::stream_ref stream,
@@ -45,7 +44,6 @@ struct str_cudf_column_scalar_fn {
   }
 
   template <typename T>
-    requires(!cudf::is_numeric<T>())
   std::string operator()(cudf::column_view /* col */,
                          cudf::size_type /* index */,
                          cuda::stream_ref /* stream */,
@@ -57,8 +55,7 @@ struct str_cudf_column_scalar_fn {
 };
 
 struct cudf_column_data_size_fn {
-  template <typename T>
-    requires(cudf::is_fixed_width<T>())
+  template <cudf::concepts::fixed_width T>
   std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
   {
     return rapidsmpf::safe_cast<std::size_t>(col.size()) * cudf::size_of(col.type()) +
@@ -66,17 +63,16 @@ struct cudf_column_data_size_fn {
   }
 
   // string type specialization
-  template <typename T>
-    requires(std::is_same_v<T, cudf::string_view>)
+  template <cudf::concepts::string_view T>
   std::size_t operator()(cudf::column_view const& col, cuda::stream_ref stream)
   {
     cudf::strings_column_view sv(col);
     return rapidsmpf::safe_cast<std::size_t>(sv.chars_size(stream)) + bitmask_size(col);
   }
 
-  // compound type specialization except string
-  template <typename T>
-    requires(!std::is_same_v<T, cudf::string_view> && cudf::is_compound<T>())
+  // compound type specialization except string; `string_view` also satisfies `compound`, but
+  // the more constrained `string_view` overload above is selected for it
+  template <cudf::concepts::compound T>
   std::size_t operator()(cudf::column_view const& col, cuda::stream_ref)
   {
     // compound types (except string) ie. list, dict, structs dont have a

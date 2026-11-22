@@ -229,6 +229,8 @@ void build_column_metadata(metadata_builder& mb,
     });
 }
 
+}  // anonymous namespace
+
 table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)
 {
   // gpu data can be null if everything is empty but the metadata must always be valid
@@ -267,7 +269,12 @@ table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)
   return table_view{cols};
 }
 
-}  // anonymous namespace
+table_view unpack(std::span<uint8_t const> metadata, uint8_t const* gpu_data)
+{
+  if (metadata.empty()) { return table_view{}; }
+  std::ignore = packed_metadata_view{metadata};  // validate the metadata before unpacking
+  return unpack(metadata.data(), gpu_data);
+}
 
 /**
  * @copydoc cudf::detail::pack
@@ -379,11 +386,13 @@ void metadata_builder::clear() { impl->clear(); }
 
 packed_metadata_view::column_view::column_view(std::span<uint8_t const> buffer) : _buffer(buffer)
 {
-  auto const entry = detail::read_entry(_buffer.data(), _buffer.data() + _buffer.size());
-  _type            = entry.type;
-  _size            = entry.size;
-  _null_count      = entry.null_count;
-  _num_children    = entry.num_children;
+  auto const entry  = detail::read_entry(_buffer.data(), _buffer.data() + _buffer.size());
+  _type             = entry.type;
+  _size             = entry.size;
+  _null_count       = entry.null_count;
+  _data_offset      = entry.data_offset;
+  _null_mask_offset = entry.null_mask_offset;
+  _num_children     = entry.num_children;
 }
 
 data_type packed_metadata_view::column_view::type() const { return _type; }
@@ -422,9 +431,15 @@ packed_metadata_view::packed_metadata_view(std::span<uint8_t const> buffer)
   // Walk the top-level columns once to validate two things: every top-level column's size agrees
   // with the recorded row count and the column tree exactly fills the buffer.
   auto const* ptr = entries;
+  auto const num_entries =
+    (buffer.size() - sizeof(detail::serialized_table_header)) / sizeof(detail::serialized_column);
+  CUDF_EXPECTS(std::cmp_less_equal(_num_columns, num_entries),
+               "packed metadata header has more columns than column entries");
+  _column_offsets.reserve(_num_columns);
   for (size_type i = 0; i < _num_columns; ++i) {
     auto const entry = detail::read_entry(ptr, end);
     CUDF_EXPECTS(entry.size == _num_rows, "packed metadata row count does not match the columns");
+    _column_offsets.push_back(static_cast<std::size_t>(ptr - entries));
     ptr = detail::skip_subtrees(ptr, 1, end);
   }
   CUDF_EXPECTS(ptr == end, "packed metadata buffer size does not match the encoded column tree");
@@ -438,9 +453,7 @@ size_type packed_metadata_view::num_rows() const { return _num_rows; }
 packed_metadata_view::column_view packed_metadata_view::column(size_type i) const
 {
   CUDF_EXPECTS(i >= 0 && i < _num_columns, "column index out of range", std::out_of_range);
-  auto const* end    = _entries.data() + _entries.size();
-  auto const* target = detail::skip_subtrees(_entries.data(), i, end);
-  return packed_metadata_view::column_view{{target, end}};
+  return packed_metadata_view::column_view{_entries.subspan(_column_offsets[i])};
 }
 
 /**
@@ -483,9 +496,7 @@ table_view unpack(packed_columns const& input)
 table_view unpack(std::span<uint8_t const> const metadata, uint8_t const* gpu_data)
 {
   CUDF_FUNC_RANGE();
-  if (metadata.empty()) { return table_view{}; }
-  std::ignore = packed_metadata_view{metadata};  // validate the metadata before unpacking
-  return detail::unpack(metadata.data(), gpu_data);
+  return detail::unpack(metadata, gpu_data);
 }
 
 table_view unpack(uint8_t const* metadata, uint8_t const* gpu_data)

@@ -39,6 +39,53 @@ _TIMESTAMP_TO_DURATION = {
     plc.TypeId.TIMESTAMP_NANOSECONDS: plc.TypeId.DURATION_NANOSECONDS,
 }
 
+# libcudf reads the weekday and month names for the "%a", "%A", "%b" and "%B"
+# specifiers from a 40 element names column, after the AM/PM strings (it yields
+# empty strings if the column is empty). Polars formats with chrono, which
+# always uses English names regardless of the process locale.
+_STRFTIME_NAMES = [
+    "AM",
+    "PM",
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sun",
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+]
+
 
 def _find_tzif_dir(zone: str | None) -> str | None:
     if zone is None or zone == "UTC":
@@ -521,6 +568,7 @@ _ROUNDING_FREQUENCIES = (
     (_NANOSECONDS_PER_UNIT["ns"], plc.datetime.RoundingFrequency.NANOSECOND, False),
 )
 _INT64 = plc.DataType(plc.TypeId.INT64)
+_INT64_DTYPE = DataType(pl.Int64())
 _UINT64 = plc.DataType(plc.TypeId.UINT64)
 _AST = plc.expressions.ASTOperator
 
@@ -746,6 +794,53 @@ def _plan_unit_truncate(
     if every_ticks > _MAX_TRUNCATE_TICKS:
         raise NotImplementedError(f"dt.truncate with every={every!r}")
     return _TruncatePlan(method, every_ticks, day, on_date)
+
+
+def _plan_offset_by(dtype: DataType, by: str) -> int:
+    """
+    Translate ``dt.offset_by(by)`` into a number of ticks to add.
+
+    Parameters
+    ----------
+    dtype
+        Dtype of the column being offset.
+    by
+        Duration string such as ``"40m"`` or ``"-1d1h"``.
+
+    Returns
+    -------
+    The ticks of the column's time unit to add, which is negative for a
+    negative duration. A duration finer than the time unit is rounded toward
+    zero, as polars does.
+
+    Raises
+    ------
+    NotImplementedError
+        If the offset is not a fixed length on this dtype: calendar units,
+        ``Date`` columns, and days or weeks on a time zone aware column, where
+        polars adds calendar days.
+    """
+    polars_type = dtype.polars_type
+    if not isinstance(polars_type, pl.Datetime):
+        raise NotImplementedError(f"dt.offset_by on {polars_type}")
+    negative = by.startswith("-")
+    parsed = _parse_duration_string(by.removeprefix("-"))
+    if parsed is None:
+        raise NotImplementedError(f"Unsupported offset: {by!r}")
+    months, weeks, days, nanoseconds = parsed
+    if months > 0:
+        raise NotImplementedError(f"dt.offset_by with calendar units: {by!r}")
+    if polars_type.time_zone is not None and (weeks > 0 or days > 0):
+        raise NotImplementedError(
+            f"dt.offset_by with days or weeks on a time zone aware column: {by!r}"
+        )
+    total_nanoseconds = (7 * weeks + days) * _NANOSECONDS_PER_DAY + nanoseconds
+    # polars holds the duration in INT64 nanoseconds, where a longer one wraps
+    # before it is converted to the column's time unit.
+    if total_nanoseconds >= 2**63:
+        raise NotImplementedError(f"Offset too large to evaluate: {by!r}")
+    ticks = total_nanoseconds // _NANOSECONDS_PER_UNIT[polars_type.time_unit]
+    return -ticks if negative else ticks
 
 
 def _int64_literal(value: int, stream: Stream) -> plc.expressions.Literal:
@@ -1102,9 +1197,25 @@ class TemporalFunction(Expr):
         Name.Millennium: 1_000,
         Name.Century: 100,
     }
+    # Functions that read calendar fields; on a time-zone-aware column polars
+    # reads them from the local wall clock, not from the UTC instant.
+    _LOCAL_FIELDS: ClassVar[frozenset[Name]] = frozenset(
+        {
+            *_COMPONENT_MAP.keys(),
+            Name.Date,
+            Name.DaysInMonth,
+            Name.IsLeapYear,
+            Name.IsoYear,
+            Name.OrdinalDay,
+            Name.Quarter,
+            Name.Week,
+            *_CENTURY_MILLENNIUM_DIVISOR.keys(),
+        }
+    )
     _valid_ops: ClassVar[set[Name]] = {
         *_COMPONENT_MAP.keys(),
         Name.Combine,
+        Name.OffsetBy,
         Name.Round,
         Name.IsLeapYear,
         Name.OrdinalDay,
@@ -1133,6 +1244,30 @@ class TemporalFunction(Expr):
         options: tuple[Any, ...],
         *children: Expr,
     ) -> None:
+        """
+        Create a temporal function expression.
+
+        Parameters
+        ----------
+        dtype
+            Result dtype.
+        name
+            Temporal function to apply.
+        options
+            Options from the polars plan. For ``Round``, ``Truncate`` and
+            ``OffsetBy`` they are replaced by the plan for the device.
+        *children
+            Expressions the function applies to.
+
+        Raises
+        ------
+        NotImplementedError
+            If the function or its arguments are not supported.
+        SchemaError
+            If an argument has the wrong dtype.
+        InvalidOperationError
+            If an argument has an invalid value.
+        """
         self.dtype = dtype
         self.options = options
         self.name = name
@@ -1174,6 +1309,14 @@ class TemporalFunction(Expr):
                 "pl.Datetime", self.children[0].dtype.polars_type
             ).time_zone
             self.tz_descs = (_get_tz_desc(from_zone), _get_tz_desc(self.options[0]))
+        elif (
+            self.name in self._LOCAL_FIELDS
+            or self.name is TemporalFunction.Name.ToString
+        ):
+            # Calendar fields and formatted datetimes use the column's local wall clock.
+            child_dtype = self.children[0].dtype.polars_type
+            if isinstance(child_dtype, pl.Datetime):
+                self.tz_descs = (_get_tz_desc(child_dtype.time_zone), None)
         elif self.name is TemporalFunction.Name.Time:
             child_dtype = self.children[0].dtype.polars_type
             if isinstance(child_dtype, pl.Datetime):
@@ -1188,6 +1331,13 @@ class TemporalFunction(Expr):
                 raise NotImplementedError(f"dt.combine with {time_dtype} time input")
             if isinstance(date_dtype, pl.Datetime):
                 self.tz_descs = (_get_tz_desc(date_dtype.time_zone), None)
+        elif self.name is TemporalFunction.Name.OffsetBy:
+            from cudf_polars.dsl.expressions.literal import Literal
+
+            by_expr = self.children[1]
+            if not isinstance(by_expr, Literal) or not isinstance(by_expr.value, str):
+                raise NotImplementedError("dt.offset_by with a non-literal offset")
+            self.options = (_plan_offset_by(self.children[0].dtype, by_expr.value),)
         elif self.name in {
             TemporalFunction.Name.Truncate,
             TemporalFunction.Name.Round,
@@ -1214,6 +1364,14 @@ class TemporalFunction(Expr):
     ) -> Column:
         """Evaluate this expression given a dataframe for context."""
         columns = [child.evaluate(df, context=context) for child in self.children]
+        if self.name in self._LOCAL_FIELDS and self.tz_descs[0] is not None:
+            (column,) = columns
+            columns = [
+                Column(
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
+                    dtype=column.dtype,
+                )
+            ]
         if self.name is TemporalFunction.Name.ConvertTimeZone:
             (column,) = columns
             return Column(
@@ -1429,6 +1587,19 @@ class TemporalFunction(Expr):
                 ),
                 dtype=self.dtype,
             )
+        elif self.name is TemporalFunction.Name.OffsetBy:
+            (column, _) = columns
+            # polars adds the ticks with INT64 arithmetic, wrapping on overflow.
+            (ticks,) = self.options
+            shifted = _wrapping(
+                plc.binaryop.BinaryOperator.ADD,
+                column.astype(_INT64_DTYPE, stream=df.stream).obj,
+                ticks,
+                df.stream,
+            )
+            return Column(shifted, dtype=_INT64_DTYPE).astype(
+                self.dtype, stream=df.stream
+            )
         elif self.name is TemporalFunction.Name.Truncate:
             (column, _) = columns
             return Column(
@@ -1520,10 +1691,10 @@ class TemporalFunction(Expr):
                 )
             return Column(
                 plc.strings.convert.convert_datetime.from_timestamps(
-                    column.obj,
+                    _local_wall_clock(column.obj, self.tz_descs[0], df.stream),
                     format_string,
                     plc.Column.from_iterable_of_py(
-                        [], dtype=self.dtype.plc_type, stream=df.stream
+                        _STRFTIME_NAMES, dtype=self.dtype.plc_type, stream=df.stream
                     ),
                     stream=df.stream,
                 ),

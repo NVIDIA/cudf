@@ -54,7 +54,7 @@ from pylibcudf.libcudf.io.parquet_schema import (
 from pylibcudf.types import TypeId
 
 if TYPE_CHECKING:
-    from typing_extensions import Buffer
+    from collections.abc import Buffer
     from pylibcudf.typing import CudaStreamLike
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource

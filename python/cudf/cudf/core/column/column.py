@@ -671,6 +671,20 @@ class _ColumnAccessContext:
         return False
 
 
+def _nan_is_missing_against(col: ColumnBase, other: ColumnBase) -> bool:
+    """Whether NaN values in ``col`` match missing values in ``other``.
+
+    The NaN-backed ``str`` dtype uses NaN as its missing value, so pandas
+    matches a float NaN and a missing string in ``isin``.
+    """
+    return (
+        col.dtype.kind == "f"
+        and isinstance(other.dtype, pd.StringDtype)
+        and other.dtype.na_value is np.nan
+        and col.nan_count > 0
+    )
+
+
 class ColumnBase(Serializable, BinaryOperand, Reducible):
     """
     A ColumnBase stores columnar data in device memory.
@@ -1190,7 +1204,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         -------
         numpy.ndarray
         """
-        if is_dtype_obj_numeric(self.dtype):
+        if is_dtype_obj_numeric(self.dtype) and not (
+            self.has_nulls()
+            and is_pandas_nullable_extension_dtype(self.dtype)
+            and pd.options.future.distinguish_nan_and_na
+        ):
             return self.values.get()
         return self.to_pandas().to_numpy()
 
@@ -2181,7 +2199,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         """
         lhs, rhs = self._process_values_for_isin(values)
         if lhs.dtype != rhs.dtype:
-            if lhs.null_count and rhs.null_count:
+            if (
+                (lhs.null_count and rhs.null_count)
+                or (rhs.null_count and _nan_is_missing_against(lhs, rhs))
+                or (lhs.null_count and _nan_is_missing_against(rhs, lhs))
+            ):
                 return lhs.isnull()
             else:
                 return as_column(
@@ -2210,9 +2232,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         """
         lhs = self
         rhs = as_column(values, nan_as_null=False)
-        if lhs.is_all_null:
+        # Keep an all-null NaN-backed ``str`` column as is, so that its
+        # missing values can still match NaN in the other column.
+        if lhs.is_all_null and not _nan_is_missing_against(rhs, lhs):
             lhs = lhs.astype(rhs.dtype)
-        elif rhs.is_all_null:
+        elif rhs.is_all_null and not _nan_is_missing_against(lhs, rhs):
             rhs = rhs.astype(lhs.dtype)
         return lhs, rhs
 

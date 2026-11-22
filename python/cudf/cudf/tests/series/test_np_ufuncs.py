@@ -326,7 +326,7 @@ def test_unary_ufunc_plain_numpy_dtype_unchanged(ufunc):
         datetime.timedelta(days=768),
         datetime.timedelta(seconds=768),
         datetime.timedelta(microseconds=7),
-        np.timedelta64("nat"),
+        np.timedelta64("nat", "ns"),
         np.timedelta64(1, "s"),
         np.timedelta64(1, "ms"),
         np.timedelta64(1, "us"),

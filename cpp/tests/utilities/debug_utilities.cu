@@ -12,6 +12,7 @@
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
@@ -20,7 +21,7 @@
 
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/type_traits>
+#include <cuda/std/concepts>
 #include <thrust/transform.h>
 
 #include <iomanip>
@@ -100,16 +101,14 @@ std::vector<std::string> to_strings(
 
 namespace {
 
-template <typename T>
+template <cuda::std::integral T>
 static auto numeric_to_string_precise(T value)
-  requires(cuda::std::is_integral_v<T>)
 {
   return std::to_string(value);
 }
 
-template <typename T>
+template <cuda::std::floating_point T>
 static auto numeric_to_string_precise(T value)
-  requires(std::is_floating_point_v<T>)
 {
   std::ostringstream o;
   o << std::setprecision(std::numeric_limits<T>::max_digits10) << value;
@@ -184,13 +183,12 @@ std::string nested_offsets_to_string(NestedColumnView const& c,
 }
 
 struct column_view_printer {
-  template <typename Element>
+  template <cudf::concepts::arithmetic Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const&,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(is_numeric<Element>())
   {
     auto h_data = cudf::test::to_host<Element>(col, stream, mr);
 
@@ -213,13 +211,12 @@ struct column_view_printer {
     }
   }
 
-  template <typename Element>
+  template <cudf::concepts::timestamp Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const& indent,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(is_timestamp<Element>())
   {
     //  For timestamps, convert timestamp column to column of strings, then
     //  call string version
@@ -243,13 +240,12 @@ struct column_view_printer {
     this->template operator()<cudf::string_view>(*col_as_strings, out, indent, stream, mr);
   }
 
-  template <typename Element>
+  template <cudf::concepts::fixed_point Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const&,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(cudf::is_fixed_point<Element>())
   {
     auto const h_data = cudf::test::to_host<Element>(col, stream, mr);
     if (col.nullable()) {
@@ -269,13 +265,12 @@ struct column_view_printer {
     }
   }
 
-  template <typename Element>
+  template <cudf::concepts::string_view Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const&,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<Element, cudf::string_view>)
   {
     //
     //  Implementation for strings, call special to_host variant
@@ -312,13 +307,12 @@ struct column_view_printer {
                    });
   }
 
-  template <typename Element>
+  template <cudf::concepts::dictionary Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const&,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<Element, cudf::dictionary32>)
   {
     cudf::dictionary_column_view dictionary(col);
     if (col.is_empty()) return;
@@ -341,13 +335,12 @@ struct column_view_printer {
   }
 
   // Print the tick counts with the units
-  template <typename Element>
+  template <cudf::concepts::duration Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const&,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(is_duration<Element>())
   {
     auto h_data = cudf::test::to_host<Element>(col, stream, mr);
 
@@ -371,13 +364,12 @@ struct column_view_printer {
     }
   }
 
-  template <typename Element>
+  template <cudf::concepts::list_view Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const& indent,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<Element, cudf::list_view>)
   {
     lists_column_view lcv(col);
 
@@ -406,13 +398,12 @@ struct column_view_printer {
     out.push_back(tmp);
   }
 
-  template <typename Element>
+  template <cudf::concepts::struct_view Element>
   void operator()(cudf::column_view const& col,
                   std::vector<std::string>& out,
                   std::string const& indent,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
-    requires(std::is_same_v<Element, cudf::struct_view>)
   {
     structs_column_view view{col};
 

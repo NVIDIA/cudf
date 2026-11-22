@@ -112,7 +112,7 @@ std::unique_ptr<scalar> reduce(
   reduce_aggregation const& agg,
   data_type output_type,
   cuda::stream_ref stream      = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 // clang-format on
 
 /**
@@ -123,7 +123,7 @@ std::unique_ptr<scalar> reduce(
  * detection is performed throughout the entire computation.
  *
  * @see cudf::reduce(column_view const&,reduce_aggregation
- * const&,data_type,cuda::stream_ref,rmm::device_async_resource_ref) for more details
+ * const&,data_type,cuda::stream_ref,cudf::memory_resources) for more details
  *
  * @throw std::invalid_argument if reduction is not `sum`, `product`, `min`, `max`, `any`, `all`,
  * or `sum_overflow` and `init` is specified.
@@ -136,13 +136,12 @@ std::unique_ptr<scalar> reduce(
  * @param mr Device memory resource used to allocate the returned scalar's device memory
  * @returns Output scalar with reduce result
  */
-std::unique_ptr<scalar> reduce(
-  column_view const& col,
-  reduce_aggregation const& agg,
-  data_type output_type,
-  std::optional<std::reference_wrapper<scalar const>> init,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<scalar> reduce(column_view const& col,
+                               reduce_aggregation const& agg,
+                               data_type output_type,
+                               std::optional<std::reference_wrapper<scalar const>> init,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Compute reduction of each segment in the input column
@@ -193,8 +192,8 @@ std::unique_ptr<column> segmented_reduce(
   segmented_reduce_aggregation const& agg,
   data_type output_type,
   null_policy null_handling,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Compute reduction of each segment in the input column with an initial value. Only SUM,
@@ -220,8 +219,8 @@ std::unique_ptr<column> segmented_reduce(
   data_type output_type,
   null_policy null_handling,
   std::optional<std::reference_wrapper<scalar const>> init,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief  Computes the scan of a column.
@@ -241,13 +240,12 @@ std::unique_ptr<column> segmented_reduce(
  * @param[in] mr Device memory resource used to allocate the returned scalar's device memory
  * @returns Scanned output column
  */
-std::unique_ptr<column> scan(
-  column_view const& input,
-  scan_aggregation const& agg,
-  scan_type inclusive,
-  null_policy null_handling         = null_policy::EXCLUDE,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> scan(column_view const& input,
+                             scan_aggregation const& agg,
+                             scan_type inclusive,
+                             null_policy null_handling = null_policy::EXCLUDE,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Determines the minimum and maximum values of a column.
@@ -261,8 +259,8 @@ std::unique_ptr<column> scan(
  */
 std::pair<std::unique_ptr<scalar>, std::unique_ptr<scalar>> minmax(
   column_view const& col,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reduction namespace
@@ -293,28 +291,30 @@ using reduce_input = std::variant<column_view, scalar_column_view, user_data>;
  * | Callback | Parameters |
  * |----------|------------|
  * | init | state pointers... |
- * | filter | row index, bool* selected, input values... |
- * | update | row index, state pointers..., input values... |
+ * | filter | [row index,] bool* selected, filter input values... |
+ * | update | [row index,] state pointers..., input values... |
  * | merge | destination state pointers..., source state values... |
  * | finalize | output pointers..., state values... |
  *
  * Initialize every independent state to its identity. Merge must be associative and preserve
- * that identity; update/merge order is unspecified. An empty filter symbol selects all rows.
- * A false selection or filter error skips update. Row indices refer to the input views.
+ * that identity; update/merge order is unspecified. An empty filter symbol makes all rows pass and
+ * requires an empty filter-input list. A false selection skips update. Row indices use
+ * `cudf::size_type` and are passed only when `indexed_filter` or `indexed_update` is true for the
+ * corresponding callback.
  * Every segmented callback also receives a leading zero-based segment ID, including for empty
  * segments. Initialization and merging can each run multiple times for the same segment.
  *
  * Inputs follow transform's decoded types, including dictionary keys and @c cudf::string_view.
- * State and outputs support fixed-width types and strings. Keep referenced string characters
- * alive until stream work completes; returned string columns own a copy.
+ * State and outputs support fixed-width types and strings.
+ * Update receives only `inputs`; filter receives only `filter_inputs`. Column lengths must match
+ * across both input lists. Scalars and user data are broadcast to every row.
  *
  * With @c null_aware::YES, inputs, state and outputs use @c cuda::std::optional<T>, with mutable
  * parameters passed as pointers to optionals. Empty optionals represent nulls. Callbacks define
- * null-state identities and output validity. With @c null_aware::NO, use plain values; rows with
- * any null column/scalar input are skipped before filtering. Indices, the filter's bool pointer
- * and @c void* user-data inputs are never optional. Filter and update share one set of row loads.
- *
- * Fragment bytes and symbol names are non-owning and must outlive the call. See @ref lto_fragment.
+ * null-state identities and output validity.
+ * User-data pointers, row indices and the filter's `bool* selected` are never optional.
+ * With @c null_aware::NO, use plain values; rows with any null column/scalar input are skipped
+ * before filtering.
  */
 struct reduce_udf {
   lto_fragments fragments{};    ///< Device-code fragments
@@ -322,35 +322,40 @@ struct reduce_udf {
   std::string_view update{};    ///< Incorporates a selected row
   std::string_view merge{};     ///< Combines partial states
   std::string_view finalize{};  ///< Writes output values
-  std::string_view filter{};    ///< Optional row predicate
+  std::string_view filter{};    ///< Row predicate; required when filter inputs are supplied
+  null_aware is_null_aware = null_aware::NO;  ///< Whether values use optional wrappers
+  bool indexed_update =
+    false;  ///< Whether the update callback expects the row index as the first argument
+  bool indexed_filter =
+    false;  ///< Whether the filter callback expects the row index as the first argument
 };
 
 /**
- * @brief Reduces rows into one single-row column per requested output, in specification order.
+ * @brief Reduces rows into one single-row column per requested output.
  *
- * Column lengths must match; scalars and user data broadcast. With no column input there are
- * zero rows. Empty inputs and selections finalize the identity state; callbacks determine
- * values and validity. Input/state/output types and callback signatures follow @ref reduce_udf.
- *
- * @throws std::invalid_argument for mismatched input lengths or unsupported state/output types
- * @throws cudf::evaluation_error for callback failures
+ * @throws std::invalid_argument for mismatched input lengths, unsupported state/output types, or
+ * filter inputs supplied without a filter symbol
+ * @throws cudf::evaluation_error for callback failures when `is_fallible` is `fallible::YES`
  * @param udf Compiled fragments and callback symbols
- * @param is_null_aware Whether values use optional wrappers
  * @param inputs Inputs in callback order
  * @param state_types State fields in callback order
  * @param outputs Returned types in finalization order
+ * @param filter_inputs Inputs for the filter callback; empty by default. Supplying inputs requires
+ * a nonempty `udf.filter`.
+ * @param is_fallible Whether to check and propagate callback errors.
  * @param stream Execution stream
  * @param mr Output and temporary memory resources
  * @return One single-row column per output
  */
-std::vector<std::unique_ptr<column>> reduce_lto(
+std::vector<std::unique_ptr<column>> reduce(
   reduce_udf const& udf,
-  null_aware is_null_aware,
   std::span<reduce_input const> inputs,
   std::span<data_type const> state_types,
   std::span<data_type const> outputs,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  std::span<reduce_input const> filter_inputs = {},
+  fallible is_fallible                        = fallible::YES,
+  cuda::stream_ref stream                     = cudf::get_default_stream(),
+  cudf::memory_resources mr                   = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Reduces each segment, returning independent single-row columns in segment/output order.
@@ -360,33 +365,35 @@ std::vector<std::unique_ptr<column>> reduce_lto(
  * bounds. The first offset may be nonzero and the last need not cover every input row.
  *
  * Results use result[segment * outputs.size() + output]. Zero segments return an empty vector;
- * empty or fully filtered segments finalize the identity. Other contracts follow @ref reduce_lto,
+ * empty or fully filtered segments finalize the identity. Other contracts follow @ref reduce,
  * with a leading segment ID on every callback. With no column inputs, offsets define row bounds.
  *
  * @throws std::invalid_argument for mismatched lengths, unsupported state/output types,
  * empty/oversized offsets, or a negative maximum-length hint
  * @throws cudf::evaluation_error for callback failures
  * @param udf Compiled fragments and callback symbols
- * @param is_null_aware Whether values use optional wrappers
  * @param inputs Inputs in callback order
  * @param offsets Device segment boundaries, with num_segments + 1 entries
  * @param state_types State fields in callback order
  * @param outputs Returned types in finalization order
  * @param max_segment_size Upper bound on every segment length, or std::nullopt when unknown
+ * @param filter_inputs Inputs for the filter callback; empty by default
+ * @param is_fallible Whether to check and propagate callback errors
  * @param stream Execution stream
  * @param mr Output and temporary memory resources
  * @return One single-row column per segment/output pair
  */
 std::vector<std::unique_ptr<column>> segmented_reduce_lto(
   reduce_udf const& udf,
-  null_aware is_null_aware,
   std::span<reduce_input const> inputs,
   device_span<size_type const> offsets,
   std::span<data_type const> state_types,
   std::span<data_type const> outputs,
   std::optional<size_type> max_segment_size,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+  std::span<reduce_input const> filter_inputs = {},
+  fallible is_fallible                        = fallible::YES,
+  cuda::stream_ref stream                     = cudf::get_default_stream(),
+  cudf::memory_resources mr                   = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

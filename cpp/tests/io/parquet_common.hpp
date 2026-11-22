@@ -17,6 +17,9 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/utility>
+
+#include <functional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -133,6 +136,18 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                  cudf::io::parquet::FileMetaData* file_meta_data);
 
 /**
+ * @brief Rewrites the footer of an in-memory Parquet file
+ *
+ * Decodes the trailing footer of `buffer`, applies `edit` to it, and replaces it with the
+ * re-encoded footer, keeping the data pages as is.
+ *
+ * @param buffer Parquet file bytes to update in place
+ * @param edit Callable that modifies the decoded footer
+ */
+void edit_footer(std::vector<char>& buffer,
+                 std::function<void(cudf::io::parquet::FileMetaData&)> const& edit);
+
+/**
  * @brief Returns the number of bits used for dictionary encoding the uncompressed page at
  * `page_loc`
  *
@@ -161,6 +176,14 @@ cudf::io::parquet::OffsetIndex read_offset_index(
  * @brief Returns the statistics of a column chunk
  */
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk);
+
+/**
+ * @brief Encodes an INT96 timestamp as in Parquet statistics
+ *
+ * @param int96 Nanoseconds of the day and Julian day number
+ * @return The 12 bytes of the INT96 value
+ */
+std::vector<uint8_t> to_int96_bytes(cuda::std::pair<int64_t, int32_t> int96);
 
 /**
  * @brief Reads and parses the page header at `page_loc`

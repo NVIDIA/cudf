@@ -42,6 +42,7 @@
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/replace.hpp>
 #include <cudf/strings/detail/replace.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -164,12 +165,12 @@ CUDF_KERNEL void replace_kernel(cudf::column_device_view input,
  *        `replace_kernel` with the appropriate data types.
  */
 struct replace_kernel_forwarder {
-  template <typename col_type, std::enable_if_t<cudf::is_fixed_width<col_type>()>* = nullptr>
+  template <cudf::concepts::fixed_width col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const& input_col,
                                            cudf::column_view const& values_to_replace,
                                            cudf::column_view const& replacement_values,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
   {
     cudf::detail::device_scalar<cudf::size_type> valid_counter(
       0, stream, cudf::get_current_device_resource_ref());
@@ -214,12 +215,12 @@ struct replace_kernel_forwarder {
     return output;
   }
 
-  template <typename col_type, std::enable_if_t<not cudf::is_fixed_width<col_type>()>* = nullptr>
+  template <typename col_type>
   std::unique_ptr<cudf::column> operator()(cudf::column_view const&,
                                            cudf::column_view const&,
                                            cudf::column_view const&,
                                            cuda::stream_ref,
-                                           rmm::device_async_resource_ref)
+                                           cudf::memory_resources)
   {
     CUDF_FAIL("No specialization exists for this type");
   }
@@ -231,7 +232,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::string_
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return cudf::strings::detail::find_and_replace_all(
     input_col, values_to_replace, replacement_values, stream, mr);
@@ -243,7 +244,7 @@ std::unique_ptr<cudf::column> replace_kernel_forwarder::operator()<cudf::diction
   cudf::column_view const& values_to_replace,
   cudf::column_view const& replacement_values,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto input        = cudf::dictionary_column_view(input_col);
   auto values       = cudf::dictionary_column_view(values_to_replace);
@@ -285,7 +286,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   CUDF_EXPECTS(values_to_replace.size() == replacement_values.size(),
                "values_to_replace and replacement_values size mismatch.");
@@ -328,7 +329,7 @@ std::unique_ptr<cudf::column> find_and_replace_all(cudf::column_view const& inpu
                                                    cudf::column_view const& values_to_replace,
                                                    cudf::column_view const& replacement_values,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   return detail::find_and_replace_all(input_col, values_to_replace, replacement_values, stream, mr);
 }

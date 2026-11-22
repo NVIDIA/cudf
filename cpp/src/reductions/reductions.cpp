@@ -18,6 +18,7 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
 #include <cuda/std/concepts>
@@ -41,14 +42,14 @@ struct reduction_parameters {
   data_type const output_dtype;
   std::optional<std::reference_wrapper<scalar const>> init;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   reduction_parameters(reduce_aggregation const& agg,
                        column_view const& col,
                        data_type const output_dtype,
                        std::optional<std::reference_wrapper<scalar const>> init,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr)
+                       cudf::memory_resources mr)
     : agg(agg), col(col), output_dtype(output_dtype), init(init), stream(stream), mr(std::move(mr))
   {
   }
@@ -437,7 +438,8 @@ struct reduction_function<Source, cudf::aggregation::HOST_UDF> : public base_red
     auto const udf_ptr = dynamic_cast<reduce_host_udf const*>(udf_base_ptr.get());
     CUDF_EXPECTS(
       udf_ptr != nullptr, "Invalid HOST_UDF instance for reduction.", std::invalid_argument);
-    return (*udf_ptr)(params.col, params.output_dtype, params.init, params.stream, params.mr);
+    return (*udf_ptr)(
+      params.col, params.output_dtype, params.init, params.stream, params.mr.get_output_mr());
   }
 };
 
@@ -472,7 +474,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_EXPECTS(!init.has_value() || cudf::have_same_types(col, init.value().get()),
                "column and initial value must be the same type",
@@ -514,7 +516,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                reduce_aggregation const& agg,
                                data_type output_dtype,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return reduction::detail::reduce(col, agg, output_dtype, std::nullopt, stream, mr);
@@ -525,7 +527,7 @@ std::unique_ptr<scalar> reduce(column_view const& col,
                                data_type output_dtype,
                                std::optional<std::reference_wrapper<scalar const>> init,
                                cuda::stream_ref stream,
-                               rmm::device_async_resource_ref mr)
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return reduction::detail::reduce(col, agg, output_dtype, init, stream, mr);

@@ -42,7 +42,12 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/memory_resource>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.binary_search.h>
+#include <cuda/std/algorithm.copy_n.h>
+#include <cuda/std/algorithm.lower_bound.h>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/algorithm.rotate.h>
+#include <cuda/std/algorithm.upper_bound.h>
 #include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
@@ -1049,7 +1054,8 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
   // If none found the column is already normalized and we can just return a copy.
   if (p.form == unicode_normalization_form::NFC || p.form == unicode_normalization_form::NFKC) {
     auto nfc_qc_fn = detail::nfc_quick_check_fn{chars_span, p.ccc_table, p.compat_decomp_flags};
-    if (!cudf::detail::any_of(byte_iter, byte_iter + chars_size, nfc_qc_fn, stream)) {
+    if (!cudf::detail::any_of(
+          byte_iter, byte_iter + chars_size, nfc_qc_fn, stream, mr.as_temporary())) {
       return std::make_unique<cudf::column>(input.parent(), stream, output_mr);
     }
   }

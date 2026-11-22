@@ -41,7 +41,7 @@ cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl(
   auto const skip_rows_with_nulls = _has_nullable_keys && _null_handling == null_policy::EXCLUDE;
   auto [bitmask_buffer, batch_bitmask] =
     skip_rows_with_nulls
-      ? detail::compute_row_bitmask(batch_keys, stream)
+      ? detail::compute_row_bitmask(batch_keys, stream, cudf::get_current_device_resource_ref())
       : std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*>{
           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream), nullptr};
 

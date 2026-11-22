@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <reductions/jit/reduce.cuh>
+#include <reductions/jit/reduce_kernel.cuh>
 
 namespace cudf::jit {
 
@@ -41,6 +41,7 @@ namespace cudf::jit {
  *
  * @tparam NullAware Whether callbacks receive nullable input/output values
  * @tparam Inputs Type list of input accessors in update-parameter order
+ * @tparam FilterInputs Type list of input accessors in filter-parameter order
  * @tparam Outputs Type list of output accessors in finalization-parameter order
  * @tparam BlockSize Number of threads per block
  * @tparam UseWarpReduce Use warp shuffles and shared warp leaders; otherwise use global scratch
@@ -56,6 +57,7 @@ namespace cudf::jit {
  * @param num_segments Nonnegative number of segments
  * @param offsets Device array of `num_segments + 1` boundaries; read only in `REDUCE`
  * @param inputs Device input views consumed by the input accessors in `REDUCE`
+ * @param filter_inputs Device input views consumed by the filter accessors
  * @param outputs Device array of `num_segments * Outputs::size` single-row views, in segment order
  * @param blocks_per_segment Number of partial states produced or consumed per segment
  * @param partials Source array of `num_segments * blocks_per_segment` states in `MERGE`, or
@@ -75,6 +77,7 @@ namespace cudf::jit {
  */
 template <bool NullAware,
           typename Inputs,
+          typename FilterInputs,
           typename Outputs,
           int BlockSize,
           bool UseWarpReduce,
@@ -90,6 +93,7 @@ __device__ void segmented_reduce_kernel(reduce::phase phase,
                                         size_type num_segments,
                                         size_type const* __restrict__ offsets,
                                         column_device_view_core const* __restrict__ inputs,
+                                        column_device_view_core const* __restrict__ filter_inputs,
                                         mutable_column_device_view_core const* __restrict__ outputs,
                                         size_type blocks_per_segment,
                                         State const* __restrict__ partials,
@@ -137,7 +141,8 @@ __device__ void segmented_reduce_kernel(reduce::phase phase,
                       static_cast<thread_index_type>(rank) * BlockSize + threadIdx.x;
            row < end;
            row += stride) {
-        reduce::update_row<NullAware, Inputs>(local, inputs, row, filter, update, segment);
+        reduce::update_row<NullAware, Inputs, FilterInputs>(
+          local, inputs, filter_inputs, row, filter, update, segment);
       }
     } else {
       auto const base = segment * blocks_per_segment;

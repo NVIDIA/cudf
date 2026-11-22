@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/error.hpp>
@@ -65,12 +66,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   std::optional<size_t> start_row,
   size_type num_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_row_groups = static_cast<size_type>(row_group_num_rows.size());
 
   if (row_group_offsets.empty()) {
-    auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr);
+    auto row_indices = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
     auto row_indices_iter = static_cast<size_t*>(row_indices.data());
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      row_indices_iter,
@@ -94,7 +95,7 @@ std::unique_ptr<cudf::column> compute_row_index_column(
                "Encountered a mismatch in the number of rows in the row index column and the "
                "number of rows in the row group(s)");
 
-  auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr);
+  auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
   auto row_indices_iter = static_cast<size_t*>(row_indices.data());
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                row_indices_iter,
@@ -150,7 +151,7 @@ std::unique_ptr<cudf::column> compute_partial_row_index_column(
   size_type num_rows,
   bool is_unspecified_row_group_data,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   if (is_unspecified_row_group_data) {
     return compute_row_index_column({}, {}, start_row, num_rows, stream, mr);
@@ -257,7 +258,7 @@ std::unique_ptr<cudf::column> compute_row_mask_column(
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> rows_per_deletion_vector,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const num_rows  = row_index_column.size();
   auto row_mask_column = cudf::make_fixed_width_column(
@@ -274,18 +275,15 @@ size_t compute_deleted_row_count(
   cudf::column_view const& row_index_column,
   cudf::host_span<std::reference_wrapper<cudf::roaring_bitmap const> const> deletion_vector_refs,
   cudf::host_span<size_type const> deletion_vector_row_counts,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  auto row_mask_column = compute_row_mask_column(row_index_column,
-                                                 deletion_vector_refs,
-                                                 deletion_vector_row_counts,
-                                                 stream,
-                                                 cudf::get_current_device_resource_ref());
-  return static_cast<size_t>(
-    thrust::count(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                  row_mask_column->view().begin<bool>(),
-                  row_mask_column->view().end<bool>(),
-                  true));
+  auto row_mask_column = compute_row_mask_column(
+    row_index_column, deletion_vector_refs, deletion_vector_row_counts, stream, mr.as_temporary());
+  return static_cast<size_t>(thrust::count(cudf::detail::exec_policy_nosync(stream, mr),
+                                           row_mask_column->view().begin<bool>(),
+                                           row_mask_column->view().end<bool>(),
+                                           true));
 }
 
 namespace {
@@ -360,7 +358,7 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
   std::queue<cudf::roaring_bitmap>& deletion_vectors,
   std::queue<size_type>& deletion_vector_row_counts,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto [_, dv_refs, dv_row_counts] =
     consume_deletion_vectors(row_index_column.size(), deletion_vectors, deletion_vector_row_counts);
@@ -370,11 +368,12 @@ std::unique_ptr<cudf::column> compute_partial_row_mask_column(
 size_t compute_partial_deleted_row_count(cudf::column_view const& row_index_column,
                                          std::queue<cudf::roaring_bitmap>& deletion_vectors,
                                          std::queue<size_type>& deletion_vector_row_counts,
-                                         cuda::stream_ref stream)
+                                         cuda::stream_ref stream,
+                                         cudf::memory_resources mr)
 {
   auto [_, dv_refs, dv_row_counts] =
     consume_deletion_vectors(row_index_column.size(), deletion_vectors, deletion_vector_row_counts);
-  return compute_deleted_row_count(row_index_column, dv_refs, dv_row_counts, stream);
+  return compute_deleted_row_count(row_index_column, dv_refs, dv_row_counts, stream, mr);
 }
 
 }  // namespace cudf::io::parquet::experimental

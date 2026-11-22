@@ -30,13 +30,14 @@ namespace {
 template <typename Op>
 std::unique_ptr<column> scan_inclusive(column_view const& input,
                                        cuda::stream_ref stream,
-                                       rmm::device_async_resource_ref mr)
+                                       cudf::memory_resources mr)
 {
   // Create a gather map containing indices of the prefix min/max elements.
   cuda::device_buffer<size_type> gather_map(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  auto const binop_generator =
-    cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(input, stream);
+  cudf::memory_resources mrs(mr);
+  auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
+    input, stream, mrs.as_temporary());
   thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                          cuda::counting_iterator<size_type>{0},
                          cuda::counting_iterator<size_type>{input.size()},
@@ -74,11 +75,11 @@ std::unique_ptr<column> scan_inclusive(column_view const& input,
 
 template std::unique_ptr<column> scan_inclusive<DeviceMin>(column_view const& input_view,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 template std::unique_ptr<column> scan_inclusive<DeviceMax>(column_view const& input_view,
                                                            cuda::stream_ref stream,
-                                                           rmm::device_async_resource_ref mr);
+                                                           cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace structs

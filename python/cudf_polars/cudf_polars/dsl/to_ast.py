@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, localcontext
 from functools import partial, reduce, singledispatch
 from typing import TYPE_CHECKING, NamedTuple, TypedDict, cast
 
@@ -190,6 +191,59 @@ def _(node: expr.Literal, self: Transformer) -> plc_expr.Expression:
     )
 
 
+def _with_polars_nan_semantics(
+    op: plc.binaryop.BinaryOperator,
+    left: plc_expr.Expression,
+    right: plc_expr.Expression,
+    result: plc_expr.Expression,
+) -> plc_expr.Expression:
+    """
+    Make an AST float comparison treat NaN the way Polars does.
+
+    Polars orders NaN above every other value and considers it equal to
+    itself, but an AST comparison follows IEEE 754.
+    """
+    # TODO: Use NaN-aware comparison operators once libcudf has them, and
+    # remove this workaround. https://github.com/NVIDIA/cudf/issues/18930
+    binop = plc.binaryop.BinaryOperator
+
+    def is_nan(operand: plc_expr.Expression) -> plc_expr.Expression:
+        # NaN is the only value that is not equal to itself.
+        if op == binop.NULL_EQUALS:
+            # A null-aware comparison is never null, so a null must not make
+            # the NaN test null. Nulls are equal to themselves here.
+            return plc_expr.Operation(
+                plc_expr.ASTOperator.NOT,
+                plc_expr.Operation(plc_expr.ASTOperator.NULL_EQUAL, operand, operand),
+            )
+        return plc_expr.Operation(plc_expr.ASTOperator.NOT_EQUAL, operand, operand)
+
+    def logical(
+        astop: plc_expr.ASTOperator, *operands: plc_expr.Expression
+    ) -> plc_expr.Expression:
+        return plc_expr.Operation(astop, *operands)
+
+    AND, OR, NOT = (
+        plc_expr.ASTOperator.LOGICAL_AND,
+        plc_expr.ASTOperator.LOGICAL_OR,
+        plc_expr.ASTOperator.NOT,
+    )
+    left_nan, right_nan = is_nan(left), is_nan(right)
+    if op == binop.GREATER:
+        return logical(OR, result, logical(AND, left_nan, logical(NOT, right_nan)))
+    if op == binop.GREATER_EQUAL:
+        return logical(OR, result, left_nan)
+    if op == binop.LESS:
+        return logical(OR, result, logical(AND, right_nan, logical(NOT, left_nan)))
+    if op == binop.LESS_EQUAL:
+        return logical(OR, result, right_nan)
+    both_nan = logical(AND, left_nan, right_nan)
+    if op in {binop.EQUAL, binop.NULL_EQUALS}:
+        return logical(OR, result, both_nan)
+    assert op == binop.NOT_EQUAL
+    return logical(AND, result, logical(NOT, both_nan))
+
+
 @_to_ast.register
 def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
     if node.op == plc.binaryop.BinaryOperator.NULL_NOT_EQUALS:
@@ -205,6 +259,15 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
             ),
         )
     c1, c2 = node.children
+    if (
+        node.op == plc.binaryop.BinaryOperator.BITWISE_XOR
+        and c1.dtype.id() == plc.TypeId.BOOL8
+    ):
+        # libcudf's AST rejects boolean BITWISE_XOR. Boolean NOT_EQUAL has the
+        # same truth table and null propagation.
+        ast_op = plc_expr.ASTOperator.NOT_EQUAL
+    else:
+        ast_op = BINOP_TO_ASTOP[node.op]
     if c1.dtype != c2.dtype:
         if isinstance(c1, expr.Literal):  # pragma: no cover
             c1 = c1.astype(c2.dtype)
@@ -222,8 +285,15 @@ def _(node: expr.BinOp, self: Transformer) -> plc_expr.Expression:
             raise NotImplementedError(
                 "BinOp with mismatching dtypes"
             )  # pragma: no cover
-    children = (c1, c2)
-    return plc_expr.Operation(BINOP_TO_ASTOP[node.op], *map(self, children))
+    left, right = map(self, (c1, c2))
+    result = plc_expr.Operation(ast_op, left, right)
+    if (
+        node.op in expr.BinOp._NAN_AWARE_COMPARISONS
+        and plc.traits.is_floating_point(c1.dtype.plc_type)
+        and plc.traits.is_floating_point(c2.dtype.plc_type)
+    ):
+        return _with_polars_nan_semantics(node.op, left, right, result)
+    return result
 
 
 @_to_ast.register
@@ -497,6 +567,115 @@ class JoinPredicate(NamedTuple):
     """Columns appended to the right table, evaluated on the right input."""
 
 
+def _sides(node: expr.Expr, state: JoinPredicateState) -> set[plc_expr.TableReference]:
+    return {
+        state["columns"][col.name][0]
+        for col in traversal([node])
+        if isinstance(col, expr.Col)
+    }
+
+
+def _is_float_to_decimal_cast(node: expr.Expr) -> bool:
+    return (
+        isinstance(node, expr.Cast)
+        and node.dtype.id() in _DECIMAL_IDS
+        and node.children[0].dtype.id() == plc.TypeId.FLOAT64
+    )
+
+
+# 10**22 is the largest power of ten that a Float64 holds exactly.
+_MAX_EXACT_POWER_OF_TEN = 22
+_MAX_DECIMAL_DIGITS = 38
+# 10**15 is below 2**53, so a decimal with at most 15 digits is exact in Float64.
+_MAX_EXACT_DECIMAL_DIGITS = 15
+
+
+def _converts_exactly_to_float64(operand: expr.Expr, scale: int) -> bool:
+    if _is_float_to_decimal_cast(operand):
+        return True
+    if isinstance(operand, expr.Literal):
+        if operand.value is None:
+            return True
+        # Polars gives a Decimal for a decimal literal, but Literal.value is
+        # untyped, so leave anything else to the fallback.
+        if not isinstance(operand.value, Decimal):
+            return False
+        with localcontext(prec=2 * _MAX_DECIMAL_DIGITS):
+            unscaled = operand.value.scaleb(scale)
+            return unscaled == int(float(unscaled))
+    polars_type = operand.dtype.polars_type
+    precision = polars_type.precision if isinstance(polars_type, pl.Decimal) else None
+    return (precision or _MAX_DECIMAL_DIGITS) <= _MAX_EXACT_DECIMAL_DIGITS
+
+
+def _emulate_decimal_comparison(node: expr.BinOp) -> expr.Expr | None:
+    """
+    Rewrite a comparison with an operand cast from a float to a decimal.
+
+    libcudf's AST cannot cast to a decimal, and comparing the floats before the
+    cast gives a different answer when two floats round to the same decimal.
+    Polars rounds a float to a decimal by rounding ``x * 10**scale`` to the
+    nearest integer, ties to even, in Float64, which is the AST's ``RINT``.
+    So compare the two operands as ``RINT(x * 10**scale)``, which holds the
+    unscaled decimal, instead.
+
+    The operand that is not a cast is converted to Float64 first. Float64 only
+    holds integers exactly below 2**53, so two different decimals above that
+    could compare equal. The rewrite is skipped unless that operand is a
+    literal that converts exactly or a column with at most 15 digits.
+
+    Parameters
+    ----------
+    node
+        Comparison to rewrite.
+
+    Returns
+    -------
+    The rewritten comparison, or None when it is not a comparison of two
+    decimals with the same scale where one is cast from a float, or when the
+    other operand does not convert exactly to Float64.
+    """
+    left, right = node.children
+    if not (_is_float_to_decimal_cast(left) or _is_float_to_decimal_cast(right)):
+        return None
+    # libcudf stores the scale as a negative exponent.
+    scales = {
+        -child.dtype.plc_type.scale() if child.dtype.id() in _DECIMAL_IDS else None
+        for child in node.children
+    }
+    if (
+        len(scales) > 1
+        or (scale := scales.pop()) is None
+        or scale > _MAX_EXACT_POWER_OF_TEN
+    ):
+        return None
+    if not all(_converts_exactly_to_float64(child, scale) for child in node.children):
+        return None
+    float64 = DataType(pl.Float64())
+
+    def unscaled(operand: expr.Expr) -> expr.Expr:
+        if isinstance(operand, expr.Literal):
+            if operand.value is None:
+                return expr.Literal(float64, None)
+            # The default context rounds to 28 digits, fewer than a decimal has.
+            with localcontext(prec=2 * _MAX_DECIMAL_DIGITS):
+                return expr.Literal(float64, float(operand.value.scaleb(scale)))
+        value = (
+            operand.children[0]
+            if _is_float_to_decimal_cast(operand)
+            else expr.Cast(float64, True, operand)  # noqa: FBT003
+        )
+        scaled = expr.BinOp(
+            float64,
+            plc.binaryop.BinaryOperator.MUL,
+            value,
+            expr.Literal(float64, 10.0**scale),
+        )
+        return expr.UnaryFunction(float64, "rint", (), scaled)
+
+    return expr.BinOp(node.dtype, node.op, unscaled(left), unscaled(right))
+
+
 def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> expr.Expr:
     state = rec.state
     if isinstance(node, expr.Col):
@@ -507,11 +686,7 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
             table_ref,
             expr.Col(node.dtype, name),
         )
-    sides = {
-        state["columns"][col.name][0]
-        for col in traversal([node])
-        if isinstance(col, expr.Col)
-    }
+    sides = _sides(node, state)
     if len(sides) == 1:
         (table_ref,) = sides
         if not node.all_pointwise():
@@ -529,7 +704,53 @@ def _split_join_predicate(node: expr.Expr, rec: JoinPredicateTransformer) -> exp
         return expr.ColRef(
             node.dtype, index, table_ref, expr.Col(node.dtype, extras[local])
         )
+    if isinstance(node, expr.BinOp) and node.op in expr.BinOp._COMPARISONS:
+        # The AST has no conditional, so compare each branch of a conditional
+        # whose condition only uses one input, and select with AND and OR.
+        for position, child in enumerate(node.children):
+            if (
+                isinstance(child, expr.Ternary)
+                and len(_sides(child.children[0], state)) <= 1
+            ):
+                return rec(_distribute_comparison(node, position))
+        if (emulated := _emulate_decimal_comparison(node)) is not None:
+            return rec(emulated)
     return reuse_if_unchanged(node, rec)
+
+
+def _distribute_comparison(node: expr.BinOp, position: int) -> expr.Expr:
+    """
+    Rewrite a comparison with a conditional operand as AND and OR.
+
+    ``(when c then x otherwise y) < z`` becomes
+    ``(c and x < z) or (not c and y < z)``, where a null ``c`` counts as false,
+    as it does in the conditional.
+    """
+    ternary = node.children[position]
+    other = node.children[1 - position]
+    when, then, otherwise = ternary.children
+    boolean = when.dtype
+    true = expr.Literal(boolean, True)  # noqa: FBT003
+    false = expr.Literal(boolean, False)  # noqa: FBT003
+
+    def compare(branch: expr.Expr) -> expr.Expr:
+        operands = (branch, other) if position == 0 else (other, branch)
+        return expr.BinOp(node.dtype, node.op, *operands)
+
+    def select(condition: expr.Expr, branch: expr.Expr) -> expr.Expr:
+        return expr.BinOp(
+            node.dtype,
+            plc.binaryop.BinaryOperator.NULL_LOGICAL_AND,
+            condition,
+            compare(branch),
+        )
+
+    return expr.BinOp(
+        node.dtype,
+        plc.binaryop.BinaryOperator.NULL_LOGICAL_OR,
+        select(expr.Ternary(boolean, when, true, false), then),
+        select(expr.Ternary(boolean, when, false, true), otherwise),
+    )
 
 
 def split_join_predicate(

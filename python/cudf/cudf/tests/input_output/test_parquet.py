@@ -29,6 +29,7 @@ from cudf.io.parquet import (
     is_supported_read_parquet,
     is_supported_write_parquet,
     merge_parquet_filemetadata,
+    translate_filters_to_ast,
 )
 from cudf.testing import (
     assert_arrow_table_equal,
@@ -424,6 +425,23 @@ def test_parquet_read_metadata(tmp_path, pdf):
         assert a == b
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["a", 1, 1.25, datetime.date(2026, 1, 1), datetime.timedelta(days=1)],
+)
+def test_parquet_filter_ast_supported_scalar(value):
+    from pylibcudf.expressions import Operation
+
+    result = translate_filters_to_ast([[("x", "in", [value])]])
+    assert isinstance(result, Operation)
+
+
+@pytest.mark.parametrize("value", [object(), b"a", ["a"], None])
+def test_parquet_filter_ast_unsupported_scalar(value):
+    with pytest.raises(NotImplementedError, match="Only numeric, string"):
+        translate_filters_to_ast([[("x", "==", value)]])
+
+
 def test_parquet_read_filtered(set_decomp_env_vars, tmp_path):
     # Generate data
     fname = tmp_path / "filtered.parquet"
@@ -611,6 +629,207 @@ def test_parquet_reader_spark_decimals(datadir):
     got = cudf.read_parquet(fname)
 
     assert_eq(expect, got)
+
+
+def test_parquet_reader_file_logical_type(datadir):
+    # Written with arrow-rs (parquet 60.1.0), one column per way a FILE value
+    # can appear: inline_only {inline, content_type}, external_whole {uri,
+    # content_type, checksum}, external_prefix {uri, size}, external_range
+    # {uri, offset, size}, inline_and_locator (all six fields, inline first),
+    # repeated_file (legacy `repeated group (FILE)`), file_list (list<FILE>),
+    # nested {id, file: FILE} and required_file (a REQUIRED FILE group).
+    # pyarrow cannot open FILE groups yet, so read from a buffer to skip its
+    # dataset discovery.
+    fname = datadir / "file_logical_type.parquet"
+    got = cudf.read_parquet(BytesIO(fname.read_bytes()))
+
+    # FILE groups read as structs with the `inline` child read as binary
+    field_types = {
+        "uri": pa.string(),
+        "offset": pa.int64(),
+        "size": pa.int64(),
+        "content_type": pa.string(),
+        "checksum": pa.string(),
+        "inline": pa.list_(pa.uint8()),
+    }
+
+    def file_type(*names):
+        return pa.struct([(name, field_types[name]) for name in names])
+
+    sha = "SHA-256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    archive = "s3://bucket/archive.tar"
+    columns = {
+        "inline_only": (
+            file_type("inline", "content_type"),
+            [
+                {"inline": list(b"hello"), "content_type": "text/plain"},
+                {"inline": [], "content_type": "application/octet-stream"},
+                None,
+                {"inline": [0x89, 0x50, 0x4E, 0x47]},
+            ],
+        ),
+        "external_whole": (
+            file_type("uri", "content_type", "checksum"),
+            [
+                {
+                    "uri": "s3://bucket/a.png",
+                    "content_type": "image/png",
+                    "checksum": sha,
+                },
+                {"uri": ""},
+                {
+                    "uri": "https://example.com/b.pdf",
+                    "content_type": "application/pdf",
+                },
+                None,
+            ],
+        ),
+        "external_prefix": (
+            file_type("uri", "size"),
+            [
+                {"uri": "file:///data/blob.bin", "size": 1024},
+                {"uri": "file:///data/empty.bin", "size": 0},
+                None,
+                {"uri": "s3://bucket/c.bin"},
+            ],
+        ),
+        "external_range": (
+            file_type("uri", "offset", "size"),
+            [
+                {"uri": archive, "offset": 0, "size": 512},
+                {"uri": archive, "offset": 512, "size": 2048},
+                {"uri": archive, "offset": 4096, "size": 0},
+                None,
+            ],
+        ),
+        "inline_and_locator": (
+            file_type(
+                "inline", "checksum", "size", "content_type", "offset", "uri"
+            ),
+            [
+                {
+                    "inline": list(b"hello"),
+                    "checksum": sha,
+                    "size": 5,
+                    "content_type": "text/plain",
+                    "offset": 0,
+                    "uri": "s3://bucket/hello.txt",
+                },
+                None,
+                {
+                    "inline": [],
+                    "size": 0,
+                    "offset": 0,
+                    "uri": "s3://bucket/empty.txt",
+                },
+                {"inline": [0xFF]},
+            ],
+        ),
+        "repeated_file": (
+            pa.list_(file_type("uri", "inline")),
+            [
+                [{"uri": "s3://x/1"}, {"inline": list(b"a")}],
+                [],
+                [{"inline": [0xFE]}],
+                [{"uri": "s3://x/2"}],
+            ],
+        ),
+        "file_list": (
+            pa.list_(file_type("uri", "size")),
+            [
+                [{"uri": "s3://l/1", "size": 10}, None],
+                None,
+                [],
+                [{"uri": "s3://l/2"}],
+            ],
+        ),
+        "nested": (
+            pa.struct(
+                [("id", pa.int32()), ("file", file_type("uri", "inline"))]
+            ),
+            [
+                {"id": 1, "file": {"uri": "s3://n/1"}},
+                {"id": 2, "file": None},
+                None,
+                {"id": 4, "file": {"inline": list(b"xyz")}},
+            ],
+        ),
+        "required_file": (
+            file_type("uri", "inline"),
+            [
+                {"uri": "s3://r/0"},
+                {"inline": list(b"r1")},
+                {"uri": "s3://r/2"},
+                {"uri": "", "inline": []},
+            ],
+        ),
+    }
+    expect = pa.table(
+        {
+            name: pa.array(rows, type=type_)
+            for name, (type_, rows) in columns.items()
+        }
+    )
+
+    assert_eq(cudf.DataFrame.from_arrow(expect), got)
+
+
+@pytest.mark.parametrize(
+    "filename, columns",
+    [
+        ("file_logical_type.parquet", None),
+        ("variant_multirow.parquet", None),
+        ("variant_nested_unshredded.parquet", None),
+        ("variant_nested_shredded.parquet", None),
+        # Skip the shredded `v.typed_value.{n,k}.value` leaves, which are still
+        # hashed as their parents aren't annotated VARIANT (see #25425)
+        (
+            "duckdb_variant_sample.parquet",
+            [
+                "id",
+                "v.metadata",
+                "v.value",
+                "v.typed_value.n.typed_value",
+                "v.typed_value.k.typed_value",
+            ],
+        ),
+    ],
+)
+def test_parquet_reader_logical_group_binary_not_categorized(
+    datadir, filename, columns
+):
+    # Binary children of FILE (`inline`) and VARIANT (`metadata`, `value`)
+    # groups stay `list<uint8>` when strings are converted to categories, while
+    # all other strings are read as INT32 hashes
+    import pylibcudf as plc
+
+    def read_types(convert_strings_to_categories):
+        source = plc.io.SourceInfo([str(datadir / filename)])
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(source)
+            .convert_strings_to_categories(convert_strings_to_categories)
+            .build()
+        )
+        if columns is not None:
+            options.set_column_names(columns)
+        return plc.io.parquet.read_parquet(options).tbl.to_arrow().schema.types
+
+    def categorized(typ):
+        if pa.types.is_string(typ) or pa.types.is_large_string(typ):
+            return pa.int32()
+        if pa.types.is_struct(typ):
+            return pa.struct([f.with_type(categorized(f.type)) for f in typ])
+        if pa.types.is_list(typ):
+            return pa.list_(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        if pa.types.is_large_list(typ):
+            return pa.large_list(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        return typ
+
+    assert read_types(True) == [categorized(t) for t in read_types(False)]
 
 
 @pytest.mark.parametrize("columns", [["a"], ["b", "a"], None])
@@ -3249,9 +3468,30 @@ def test_parquet_bss_round_trip(tmp_path):
     i64_data = pa.array(list(range(num_rows)), type=pa.int64())
     f32_data = pa.array([float(i) for i in range(num_rows)], type=pa.float32())
     f64_data = pa.array([float(i) for i in range(num_rows)], type=pa.float64())
+
+    # 8- and 16-bit integers are stored as INT32. Every third value is null.
+    def narrow(pa_type, value):
+        return pa.array(
+            [None if i % 3 == 0 else value(i) for i in range(num_rows)],
+            type=pa_type,
+        )
+
+    narrow_data = {
+        "i8": narrow(pa.int8(), lambda i: i - 100),
+        "u8": narrow(pa.uint8(), lambda i: i),
+        "i16": narrow(pa.int16(), lambda i: 300 * i - 30000),
+        "u16": narrow(pa.uint16(), lambda i: 300 * i),
+    }
     padf = pa.Table.from_arrays(
-        [fixed_data, i32_data, i64_data, f32_data, f64_data],
-        names=["flba", "i32", "i64", "f32", "f64"],
+        [
+            fixed_data,
+            i32_data,
+            i64_data,
+            f32_data,
+            f64_data,
+            *narrow_data.values(),
+        ],
+        names=["flba", "i32", "i64", "f32", "f64", *narrow_data],
     )
     padf_fname = tmp_path / "padf.parquet"
     pq.write_table(
@@ -3274,13 +3514,19 @@ def test_parquet_bss_round_trip(tmp_path):
             "i64": "BYTE_STREAM_SPLIT",
             "f32": "BYTE_STREAM_SPLIT",
             "f64": "BYTE_STREAM_SPLIT",
+            "i8": "BYTE_STREAM_SPLIT",
+            "u8": "BYTE_STREAM_SPLIT",
+            "i16": "BYTE_STREAM_SPLIT",
+            "u16": "BYTE_STREAM_SPLIT",
         },
         row_group_size_rows=rows_per_rowgroup,
     )
 
-    # now read back in with pyarrow to test it was written properly by cudf
+    # now read back in with pyarrow to test it was written properly by cudf.
+    # Drop the pandas metadata that cudf writes, which would convert the
+    # nullable 8- and 16-bit columns to nullable pandas types, unlike padf2.
     padf2 = pq.read_table(padf_fname)
-    padf3 = pq.read_table(cdf_fname)
+    padf3 = pq.read_table(cdf_fname).replace_schema_metadata()
     assert_eq(padf2, padf3)
     assert_eq(padf2.schema[0].type, padf3.schema[0].type)
 
@@ -3494,6 +3740,77 @@ def test_parquet_empty_columns_nrows_exceeds_num_rows(tmp_path, low_memory):
         got = cudf.read_parquet(path, columns=[], nrows=10)
 
     assert got.shape == (6 if PYARROW_GE_26 else 0, 0)
+
+
+@pytest.mark.parametrize(
+    "index",
+    [
+        pd.RangeIndex(0, 6),
+        pd.RangeIndex(100, 106, name="a"),
+        pd.RangeIndex(0, 12, 2),
+        pd.RangeIndex(10, -2, -2, name="a"),
+    ],
+)
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"nrows": 2}, slice(0, 2)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, None)),
+        ({"nrows": 10}, slice(None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_range_index(index, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]}, index=index)
+    buffer = BytesIO()
+    pdf.to_parquet(buffer, row_group_size=2)
+
+    expected = pdf.iloc[rows]
+    got = cudf.read_parquet(buffer, **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"skip_rows": 1}, slice(1, None)),
+        ({"skip_rows": 1, "nrows": 2}, slice(1, 3)),
+        ({"skip_rows": 4, "nrows": 5}, slice(4, 9)),
+        ({"skip_rows": 8, "nrows": 10}, slice(8, None)),
+    ],
+)
+def test_parquet_skip_rows_nrows_multiple_files(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3, 4, 5, 6]})
+    fname = tmp_path / "default_index.parquet"
+    pdf.to_parquet(fname)
+
+    expected = pd.concat([pdf, pdf], ignore_index=True).iloc[rows]
+    got = cudf.read_parquet([fname, fname], **kwargs)
+
+    assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "kwargs, rows",
+    [
+        ({"row_groups": [1]}, [2, 3]),
+        ({"row_groups": [2, 0]}, [4, 5, 0, 1]),
+        ({"filters": [("x", ">", 4)]}, [4, 5]),
+    ],
+)
+def test_parquet_row_groups_stepped_range_index(tmp_path, kwargs, rows):
+    pdf = pd.DataFrame(
+        {"x": [1, 2, 3, 4, 5, 6]}, index=pd.RangeIndex(0, 12, 2)
+    )
+    fname = tmp_path / "stepped_index.parquet"
+    pdf.to_parquet(fname, row_group_size=2)
+
+    # Row groups are indexed by row position, as for a default index
+    expected = pdf.reset_index(drop=True).iloc[rows]
+    got = cudf.read_parquet(fname, **kwargs)
+
+    assert_eq(expected, got)
 
 
 def test_parquet_nested_struct_list():
@@ -5404,3 +5721,77 @@ def test_parquet_pyarrow_engine_native_filesystem(tmp_path):
     )
 
     assert_eq(cudf.read_parquet(tmp_path), df, check_index_type=False)
+
+
+def test_dataset_writer_closes_rotated(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    for _ in range(4):
+        writer.write_table(df)
+
+    # Writers from earlier appends were closed once their files rotated out
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert len(open_writers) == 1
+
+    # Footer metadata of early-closed writers is still returned
+    meta = writer.close(return_metadata=True)
+    assert pq.ParquetFile(BytesIO(meta)).metadata.num_rows == 4 * len(df)
+    expect = cudf.concat([df] * 4).sort_values("x").reset_index(drop=True)
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)
+
+
+def test_dataset_writer_stale_partition(tmp_path):
+    centroids = 16
+    df = cudf.DataFrame(
+        {
+            "x": np.random.default_rng(0).standard_normal(64_000),
+            "centroid": np.arange(64_000) % centroids,
+        }
+    )
+    df0 = df[df["centroid"] == 0]
+
+    path = tmp_path / "dataset"
+    writer = ParquetDatasetWriter(
+        str(path),
+        partition_cols=["centroid"],
+        index=False,
+        max_file_size="10 KB",
+        file_name_prefix="part",
+    )
+    writer.write_table(df)
+    for _ in range(3):
+        writer.write_table(df0)
+
+    # Partitions 1..15 never rotate, so the first writer stays open until
+    # close(); writers holding only partition 0 are closed as it rotates
+    open_writers = [cw for cw in writer._chunked_writers if cw is not None]
+    assert len(writer._chunked_writers) == 4
+    assert writer._chunked_writers[0] is not None
+    assert len(open_writers) == 2
+
+    writer.close()
+    expect = (
+        cudf.concat([df, df0, df0, df0])
+        .sort_values("x")
+        .reset_index(drop=True)
+    )
+    got = cudf.read_parquet(path).sort_values("x").reset_index(drop=True)
+    got["centroid"] = got["centroid"].astype(df["centroid"].dtype)
+    assert_eq(expect, got)

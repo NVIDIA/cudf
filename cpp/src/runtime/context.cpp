@@ -15,9 +15,12 @@
 
 #include <unistd.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <stdexcept>
+#include <system_error>
 
 namespace cudf {
 
@@ -82,6 +85,7 @@ void context::initialize_jit()
 
   _nvrtc_version     = rtcx::nvrtc_version();
   _nvjitlink_version = rtcx::nvjitlink_version();
+  rtcx::set_nvrtc_pch_heap_size(_config.jit_pch_heap_size);
 
   auto limits = rtcx::cache_limits{.num_mem_blobs     = _config.kernel_cache_limit_process,
                                    .num_mem_libraries = _config.kernel_cache_limit_process};
@@ -155,40 +159,39 @@ std::filesystem::path get_cudf_kernel_cache_dir()
     return (!ec || ec == std::errc::file_exists) && is_accessible_dir(p);
   };
 
-  if (auto path = detail::getenv_optional<std::string>("LIBCUDF_KERNEL_CACHE_PATH");
-      path.has_value()) {
+  if (auto const* path = std::getenv("LIBCUDF_KERNEL_CACHE_PATH"); path != nullptr) {
     // - if $LIBCUDF_KERNEL_CACHE_PATH exists, return it, otherwise create it
     // - if creation fails, warn and continue to next option
     // - check that we have read/write permissions to the directory, otherwise warn and continue
     // to next option
-    if (try_create_dirs(*path)) {
-      return *path;
+    if (try_create_dirs(path)) {
+      return path;
     } else {
       CUDF_LOG_WARN(
         std::format("Environment variable {} is set to {}, but the process "
                     "could not create the directory. Ignoring.",
                     "LIBCUDF_KERNEL_CACHE_PATH",
-                    *path));
+                    path));
     }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("XDG_CACHE_HOME"); base.has_value()) {
-    auto path = std::filesystem::path(*base) / "libcudf";
+  if (auto const* base = std::getenv("XDG_CACHE_HOME"); base != nullptr) {
+    auto path = std::filesystem::path(base) / "libcudf";
     if (try_create_dirs(path)) { return path; }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("HOME"); base.has_value()) {
-    if (is_accessible_dir(*base)) {
+  if (auto const* base = std::getenv("HOME"); base != nullptr) {
+    if (is_accessible_dir(base)) {
       // attempt to create the subdirectories if non-existent
-      auto path = std::filesystem::path(*base) / ".cache" / "libcudf";
+      auto path = std::filesystem::path(base) / ".cache" / "libcudf";
       if (try_create_dirs(path)) { return path; }
     }
   }
 
-  if (auto base = detail::getenv_optional<std::string>("TMPDIR"); base.has_value()) {
-    if (is_accessible_dir(*base)) {
+  if (auto const* base = std::getenv("TMPDIR"); base != nullptr) {
+    if (is_accessible_dir(base)) {
       // attempt to create the subdirectory if non-existent
-      auto path = std::filesystem::path(*base) / "libcudf";
+      auto path = std::filesystem::path(base) / "libcudf";
       if (try_create_dirs(path)) { return path; }
     }
   }
@@ -208,6 +211,19 @@ std::filesystem::path get_cudf_kernel_cache_dir()
     std::runtime_error);
 }
 
+/**
+ * @brief Returns the PCH heap size in bytes, validating an optional byte-size override.
+ */
+std::size_t get_jit_pch_heap_size()
+{
+  constexpr auto identifier = "LIBCUDF_JIT_PCH_HEAP_SIZE";
+  auto const* value         = std::getenv(identifier);
+  return value == nullptr ? default_jit_pch_heap_size
+                          : detail::parse_size(value, identifier, false);
+}
+
+// Runtime environment variables are documented in
+// docs/cudf/source/libcudf/environment_variables.md.
 context make_context(detail::init_flags flags)
 {
   auto const dump_codegen       = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_CODEGEN", false);
@@ -217,6 +233,7 @@ context make_context(detail::init_flags flags)
   auto const clear_jit_cache    = detail::get_bool_env_or("LIBCUDF_KERNEL_CACHE_CLEAR", false);
   auto const disable_cuda_cache = detail::get_bool_env_or("LIBCUDF_JIT_DISABLE_CUDA_CACHE", false);
   auto const jit_verbose        = detail::get_bool_env_or("LIBCUDF_JIT_VERBOSE", false);
+  auto const jit_pch_heap_size  = get_jit_pch_heap_size();
   auto const dump_jit_trace     = detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TRACE", false);
   auto const dump_jit_time_profile =
     detail::get_bool_env_or("LIBCUDF_JIT_DUMP_TIME_PROFILE", false);
@@ -241,6 +258,7 @@ context make_context(detail::init_flags flags)
                      .jit_verbose                = jit_verbose,
                      .dump_jit_trace             = dump_jit_trace,
                      .dump_jit_time_profile      = dump_jit_time_profile,
+                     .jit_pch_heap_size          = jit_pch_heap_size,
                      .rtcx_cache_dir             = rtcx_cache_dir,
                      .jit_bundle_dir             = jit_bundle_dir,
                      .jit_tmp_dir                = jit_tmp_dir,

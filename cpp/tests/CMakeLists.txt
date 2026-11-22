@@ -14,6 +14,29 @@ include(rapids-test)
 rapids_test_init()
 rapids_cmake_install_lib_dir(lib_dir)
 
+# ##################################################################################################
+# **Note about test memory usage:**
+#
+# We design the test suite to run in CI with max parallelism on GPUs with 16 GB of memory or more.
+# Tests are assigned GPU memory percentages to enable safe parallel execution. We draw an arbitrary
+# line that tests are allowed to run in parallel if they consume less than 1 GB of peak GPU memory,
+# and are run serially otherwise. This allows up to 14 tests in parallel on a 16 GB GPU with a bit
+# of room for overhead. (14 * 7% is 98%, and we are required to use integer percentages.) Therefore,
+# tests are assigned 7% of the GPU by default, and 100% if they use >=1 GB of memory. ctest won't
+# schedule more than 100% of the GPU, so at most 14 tests in parallel. This means on a 16 GB GPU, we
+# can safely run `ctest -jN` with N>=14.
+#
+# **Guidelines:**
+#
+# * Tests using <=1 GB: Use default (no GPUS/PERCENT parameters, defaults to 7%)
+# * Tests using >1 GB: Mark as "GPUS 1 PERCENT 100" to reserve the entire GPU
+#
+# Marking large tests with PERCENT 100 prevents memory oversubscription and ensures only one large
+# test runs at a time, while smaller tests can still run in parallel.
+#
+# The peak memory usage of all tests can be determined with cpp/scripts/gtest_memory_usage.sh.
+# ##################################################################################################
+
 # This function takes in a test name and test source and handles setting all of the associated
 # properties and linking to build the test
 function(ConfigureTest CMAKE_TEST_NAME)
@@ -24,7 +47,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   if(NOT DEFINED _CUDF_TEST_GPUS AND NOT DEFINED _CUDF_TEST_PERCENT)
     set(_CUDF_TEST_GPUS 1)
-    set(_CUDF_TEST_PERCENT 15)
+    set(_CUDF_TEST_PERCENT 7)
   endif()
 
   if(NOT DEFINED _CUDF_TEST_GPUS)
@@ -162,19 +185,17 @@ ConfigureTest(
   groupby/tdigest_tests.cpp
   groupby/topk_tests.cpp
   groupby/var_tests.cpp
-  GPUS 1
-  PERCENT 100
 )
 
 # ##################################################################################################
 # * join tests ------------------------------------------------------------------------------------
 ConfigureTest(
   JOIN_TEST
+  join/asof_join_tests.cpp
   join/join_tests.cpp
   join/conditional_join_tests.cu
   join/cross_join_tests.cpp
   join/semi_anti_join_tests.cpp
-  join/mixed_join_tests.cu
   join/direct_join_tests.cpp
   join/distinct_join_tests.cpp
   join/key_remapping_tests.cpp
@@ -182,6 +203,8 @@ ConfigureTest(
   GPUS 1
   PERCENT 100
 )
+
+ConfigureTest(MIXED_JOIN_TEST join/mixed_join_tests.cu)
 
 # ##################################################################################################
 # * is_sorted tests -------------------------------------------------------------------------------
@@ -214,8 +237,6 @@ ConfigureTest(
 ConfigureTest(
   PARTITIONING_TEST partitioning/hash_partition_test.cpp partitioning/round_robin_test.cpp
   partitioning/partition_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -223,29 +244,18 @@ ConfigureTest(
 ConfigureTest(
   QUANTILES_TEST quantiles/percentile_approx_test.cpp quantiles/quantile_test.cpp
   quantiles/quantiles_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
 # * reduction tests -------------------------------------------------------------------------------
-rtcx_add_embed(cudf_reduce_lto_test_fragments)
-foreach(fragment IN ITEMS sum_count filtering strings input_output errors tpch_q6_sales wide_state)
-  add_fragment(
-    cudf_reduce_lto_test_fragments FRAGMENT ${fragment} SOURCE reductions/udfs/${fragment}.cu
-  )
-endforeach()
+rtcx_add_embed(cudf_reduce_test_embed)
+add_fragment(cudf_reduce_test_embed FRAGMENT fragment SOURCE reductions/udfs/udf.cu)
 rtcx_embed_blob(
-  cudf_reduce_lto_test_fragments
-  FILE
-  "${CMAKE_CURRENT_SOURCE_DIR}/reductions/udfs/tpch_q6_sales.cu"
-  DEST
-  fragments/tpch_q6_sales.cu
-  ID
-  tpch_q6_sales_source
+  cudf_reduce_test_embed FILE "${CMAKE_CURRENT_SOURCE_DIR}/reductions/udfs/udf.cu" DEST
+  cudf/src/reductions/udfs/udf.cu ID udf_cuda
 )
 rtcx_embed(
-  cudf_reduce_lto_test_fragments COMPRESSION none OUTPUT_DIRECTORY
+  cudf_reduce_test_embed COMPRESSION none OUTPUT_DIRECTORY
   "${CMAKE_CURRENT_BINARY_DIR}/reduce_lto_embed"
 )
 ConfigureTest(
@@ -264,8 +274,6 @@ ConfigureTest(
   reductions/segmented_reduction_tests.cpp
   reductions/tdigest_tests.cpp
   reductions/unique_count_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -305,6 +313,8 @@ ConfigureTest(
   binaryop/binop-compiled-fixed_point-test.cpp
   binaryop/binop-generic-ptx-test.cpp
   binaryop/operator_parity_test.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -346,11 +356,7 @@ ConfigureTest(COMPRESSION_TEST io/comp/comp_test.cpp)
 ConfigureTest(ROW_SELECTION_TEST io/row_selection_test.cpp)
 ConfigureTest(FILEPATH_SOURCE_TEST io/filepath_source_test.cpp)
 
-ConfigureTest(
-  CSV_TEST io/csv_test.cpp
-  GPUS 1
-  PERCENT 30
-)
+ConfigureTest(CSV_TEST io/csv_test.cpp)
 ConfigureTest(
   ORC_TEST io/orc_chunked_reader_test.cu io/orc_test.cpp
   GPUS 1
@@ -402,8 +408,6 @@ ConfigureTest(
 ConfigureTest(
   JSON_TEST io/json/json_chunked_reader.cpp io/json/json_test.cpp io/json/json_type_cast_test.cpp
   io/json/json_utils.cu
-  GPUS 1
-  PERCENT 30
 )
 ConfigureTest(JSON_WRITER_TEST io/json/json_writer.cpp)
 ConfigureTest(NESTED_JSON_TEST io/json/nested_json_test.cpp io/json/json_tree.cpp)
@@ -411,11 +415,7 @@ ConfigureTest(MULTIBYTE_SPLIT_TEST io/text/multibyte_split_test.cpp)
 ConfigureTest(JSON_QUOTE_NORMALIZATION_TEST io/json/json_quote_normalization_test.cpp)
 ConfigureTest(JSON_WHITESPACE_NORMALIZATION_TEST io/json/json_whitespace_normalization_test.cpp)
 ConfigureTest(JSON_TREE_CSR_TEST io/json/json_tree_csr.cu)
-ConfigureTest(
-  DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp
-  GPUS 1
-  PERCENT 100
-)
+ConfigureTest(DATA_CHUNK_SOURCE_TEST io/text/data_chunk_source_test.cpp)
 target_link_libraries(DATA_CHUNK_SOURCE_TEST PRIVATE ZLIB::ZLIB)
 ConfigureTest(LOGICAL_STACK_TEST io/fst/logical_stack_test.cu)
 ConfigureTest(FST_TEST io/fst/fst_test.cu)
@@ -433,8 +433,6 @@ ConfigureTest(
   sort/stable_sort_tests.cpp
   sort/string_sort_prefix_test.cpp
   sort/top_k_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -483,6 +481,7 @@ ConfigureTest(
   utilities_tests/io_utilities_tests.cpp
   utilities_tests/lists_column_wrapper_tests.cpp
   utilities_tests/memory_resource_tests.cpp
+  utilities_tests/parse_size_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
   utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp
@@ -519,11 +518,7 @@ ConfigureTest(DEVICE_ATOMICS_TEST device_atomics/device_atomics_test.cu)
 
 # ##################################################################################################
 # * transpose tests -------------------------------------------------------------------------------
-ConfigureTest(
-  TRANSPOSE_TEST transpose/transpose_test.cpp
-  GPUS 1
-  PERCENT 70
-)
+ConfigureTest(TRANSPOSE_TEST transpose/transpose_test.cpp)
 
 # ##################################################################################################
 # * table tests -----------------------------------------------------------------------------------
@@ -574,8 +569,6 @@ ConfigureTest(
   rolling/range_window_bounds_test.cpp
   rolling/range_window_type_test.cpp
   rolling/rolling_test.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -596,6 +589,8 @@ ConfigureTest(
 ConfigureTest(
   RESHAPE_TEST reshape/byte_cast_tests.cpp reshape/interleave_columns_tests.cpp
   reshape/table_to_array_tests.cpp reshape/tile_tests.cpp
+  GPUS 1
+  PERCENT 100
 )
 
 # ##################################################################################################
@@ -653,10 +648,15 @@ ConfigureTest(
 # ##################################################################################################
 # * large strings test ----------------------------------------------------------------------------
 ConfigureTest(
+  LARGE_STRINGS_CSV_TEST large_strings/csv_tests.cpp large_strings/large_strings_fixture.cpp
+  GPUS 1
+  PERCENT 100
+)
+ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
-  large_strings/csv_tests.cpp
+  large_strings/find_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
   large_strings/bpe_tests.cpp
@@ -751,6 +751,12 @@ add_fragment(
 
 add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
 
+add_fragment(cudf_test_fragments FRAGMENT copy_string SOURCE transform/fragments/copy_string.cu)
+
+add_fragment(
+  cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
+)
+
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )
@@ -761,6 +767,13 @@ ConfigureTest(
 )
 add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
 target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+
+# AST JIT expressions in these tests call LTO callees from the same fragments.
+foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
+  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+  add_dependencies(${test} cudf_test_fragments)
+  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endforeach()
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------
@@ -781,8 +794,6 @@ ConfigureTest(
   lists/sort_lists_tests.cpp
   lists/stream_compaction/apply_mask_tests.cpp
   lists/stream_compaction/distinct_tests.cpp
-  GPUS 1
-  PERCENT 70
 )
 
 # ##################################################################################################
@@ -909,9 +920,7 @@ ConfigureTest(
 rapids_test_install_relocatable(INSTALL_COMPONENT_SET testing DESTINATION bin/gtests/libcudf)
 
 foreach(target IN ITEMS REDUCTIONS_TEST STREAM_REDUCTION_TEST)
-  target_sources(
-    ${target} PRIVATE ${cudf_reduce_lto_test_fragments_SOURCE_DIR}/cudf_reduce_lto_test_fragments.s
-  )
-  target_include_directories(${target} PRIVATE ${cudf_reduce_lto_test_fragments_SOURCE_DIR})
-  add_dependencies(${target} cudf_reduce_lto_test_fragments)
+  target_sources(${target} PRIVATE ${cudf_reduce_test_embed_SOURCE_DIR}/cudf_reduce_test_embed.s)
+  target_include_directories(${target} PRIVATE ${cudf_reduce_test_embed_SOURCE_DIR})
+  add_dependencies(${target} cudf_reduce_test_embed)
 endforeach()

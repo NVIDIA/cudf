@@ -14,18 +14,13 @@
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <cudf_reduce_lto_test_fragments.hpp>
+#include <cudf_reduce_test_embed.hpp>
 
 namespace {
 cudf::lto_fragments reduction_fragments()
 {
-  auto bytes = [](size_t id) {
-    auto const range = cudf_reduce_lto_test_fragments::file_ranges[id];
-    return cudf_reduce_lto_test_fragments::files.subspan(range[0], range[1]);
-  };
   static cudf::lto_fragment const fragments[]{
-    {cudf::lto_binary_type::FATBIN, bytes(cudf_reduce_lto_test_fragments::sum_count)},
-    {cudf::lto_binary_type::FATBIN, bytes(cudf_reduce_lto_test_fragments::tpch_q6_sales)}};
+    {cudf::lto_binary_type::FATBIN, cudf_reduce_test_embed::get(cudf_reduce_test_embed::fragment)}};
   return fragments;
 }
 }  // namespace
@@ -119,12 +114,14 @@ TEST_F(ReductionTest, ReduceLto)
                                  cudf::data_type{cudf::type_id::INT64}};
   cudf::data_type const outputs[]{states[0], states[1], cudf::data_type{cudf::type_id::FLOAT64}};
   cudf::reduce_udf const udf{reduction_fragments(),
-                             "tpch_q6_sales_init",
+                             "sum_count_avg_init",
                              "sum_update",
-                             "tpch_q6_sales_merge",
-                             "tpch_q6_sales_finalize"};
-  auto result = cudf::reduce_lto(
-    udf, cudf::null_aware::YES, inputs, states, outputs, cudf::test::get_default_stream());
+                             "sum_count_avg_merge",
+                             "sum_count_avg_finalize",
+                             {},
+                             cudf::null_aware::YES};
+  auto result = cudf::reduce(
+    udf, inputs, states, outputs, {}, cudf::fallible::YES, cudf::test::get_default_stream());
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0],
                                  (cudf::test::fixed_width_column_wrapper<int64_t>{{6}, {true}}));
 }
@@ -142,9 +139,12 @@ TEST_F(ReductionTest, SegmentedReduceLto)
                              "tpch_q6_sales_segment_init",
                              "sum_segment_update",
                              "tpch_q6_sales_segment_merge",
-                             "tpch_q6_sales_segment_finalize"};
+                             "tpch_q6_sales_segment_finalize",
+                             {},
+                             cudf::null_aware::YES,
+                             true};
   auto result = cudf::segmented_reduce_lto(
-    udf, cudf::null_aware::YES, inputs, offsets, states, outputs, 3, stream);
+    udf, inputs, offsets, states, outputs, 3, {}, cudf::fallible::YES, stream);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[0],
                                  (cudf::test::fixed_width_column_wrapper<int64_t>{{0}, {false}}));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*result[3],

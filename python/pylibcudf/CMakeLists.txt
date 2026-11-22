@@ -24,6 +24,9 @@ project(
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Find C++ libraries from RAPIDS wheels in site-packages.
+set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS TRUE)
+
 find_package(cudf "${RAPIDS_VERSION}" REQUIRED)
 
 # an installed version of libcudf doesn't provide the dlpack headers so we need to download dlpack

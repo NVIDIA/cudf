@@ -36,6 +36,8 @@
 #include <cuda/iterator>
 #include <cuda/std/limits>
 
+#include <src/io/orc/orc.hpp>
+
 #include <algorithm>
 #include <array>
 #include <numeric>
@@ -675,6 +677,10 @@ constexpr int64_t phoenix_offset      = cudf::duration_s{cudf::duration_h{-7}}.c
 constexpr int64_t kolkata_offset      = cudf::duration_s{cudf::duration_m{5 * 60 + 30}}.count();
 constexpr int64_t kathmandu_offset    = cudf::duration_s{cudf::duration_m{5 * 60 + 45}}.count();
 
+// UTC instants falling in New York's standard and daylight saving periods, respectively
+constexpr cudf::timestamp_s::rep during_est = 1421323200;  // 2015-01-15T12:00:00Z
+constexpr cudf::timestamp_s::rep during_edt = 1435752000;  // 2015-07-01T12:00:00Z
+
 std::vector<char> write_orc_with_timezone(cudf::table_view const& table,
                                           std::optional<std::string> const& timezone)
 {
@@ -685,14 +691,19 @@ std::vector<char> write_orc_with_timezone(cudf::table_view const& table,
   return buffer;
 }
 
-// File-level timestamp statistics of the table's first column. Entry zero of the schema is the
-// root struct that wraps the table, so that column is entry one.
-cudf::io::timestamp_statistics timestamp_stats(std::vector<char> const& buffer)
+// File-level statistics of one column, by its index in the file's schema. Entry zero is the root
+// struct that wraps the table, so the table's first column is entry one.
+cudf::io::column_statistics column_stats(std::vector<char> const& buffer, size_t column = 1)
 {
   auto const stats =
     cudf::io::read_parsed_orc_statistics(cudf::io::source_info{cudf::host_span<std::byte const>{
       reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}});
-  return std::get<cudf::io::timestamp_statistics>(stats.file_stats[1].type_specific_stats);
+  return stats.file_stats[column];
+}
+
+cudf::io::timestamp_statistics timestamp_stats(std::vector<char> const& buffer, size_t column = 1)
+{
+  return std::get<cudf::io::timestamp_statistics>(column_stats(buffer, column).type_specific_stats);
 }
 
 cudf::io::table_with_metadata read_orc_buffer(std::vector<char> const& buffer,
@@ -800,9 +811,6 @@ TEST_F(OrcWriterTest, WriterTimezoneFractionalOffset)
 
 TEST_F(OrcWriterTest, WriterTimezoneUsesFixedEpochOffsetAcrossDst)
 {
-  // UTC instants falling in New York's standard and daylight saving periods, respectively
-  auto const during_est = cudf::timestamp_s::rep{1421323200};  // 2015-01-15T12:00:00Z
-  auto const during_edt = cudf::timestamp_s::rep{1435752000};  // 2015-07-01T12:00:00Z
   auto const timestamps =
     column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{during_est, during_edt};
 
@@ -840,24 +848,99 @@ TEST_F(OrcWriterTest, WriterTimezoneNegativeTimestampsNano)
 
 TEST_F(OrcWriterTest, WriterTimezoneStatistics)
 {
-  auto const timestamps = column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 1421323200};
-  table_view input({timestamps});
+  auto const top_level =
+    column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{during_est, during_edt};
+  cudf::test::lists_column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep> const nested{
+    {during_est}, {during_edt, during_est}};
+  table_view input({top_level, nested});
 
-  // Statistics stay on the input instants regardless of the timezone; only the stream is re-based
-  for (auto const& timezone : std::vector<std::optional<std::string>>{
-         std::nullopt, "UTC", "Asia/Shanghai", "America/New_York"}) {
-    SCOPED_TRACE(timezone.value_or("default"));
+  auto const bounds_shift_with_the_values =
+    [&](std::optional<std::string> const& timezone, int64_t min_offset, int64_t max_offset) {
+      SCOPED_TRACE(timezone.value_or("default"));
+      auto const buffer = write_orc_with_timezone(input, timezone);
 
-    auto const stats = timestamp_stats(write_orc_with_timezone(input, timezone));
-    ASSERT_TRUE(stats.minimum.has_value());
-    ASSERT_TRUE(stats.maximum.has_value());
-    ASSERT_TRUE(stats.minimum_utc.has_value());
-    ASSERT_TRUE(stats.maximum_utc.has_value());
-    EXPECT_EQ(*stats.minimum, 0);
-    EXPECT_EQ(*stats.maximum, 1421323200L * 1000);
-    // Unlike Apache, which omits the legacy pair, both are written in the same frame
-    EXPECT_EQ(*stats.minimum_utc, *stats.minimum);
-    EXPECT_EQ(*stats.maximum_utc, *stats.maximum);
+      // Entries one and two are the table's columns, three is the list's timestamp child
+      for (auto const column : {1, 3}) {
+        auto const stats = timestamp_stats(buffer, column);
+        EXPECT_EQ(stats.minimum_utc, (during_est + min_offset) * 1000);
+        EXPECT_EQ(stats.maximum_utc, (during_edt + max_offset) * 1000);
+        // The legacy pair holds instants, which only match the wall clock when writing UTC
+        if (min_offset == 0 and max_offset == 0) {
+          EXPECT_EQ(stats.minimum, stats.minimum_utc);
+          EXPECT_EQ(stats.maximum, stats.maximum_utc);
+        } else {
+          EXPECT_FALSE(stats.minimum.has_value());
+          EXPECT_FALSE(stats.maximum.has_value());
+        }
+      }
+    };
+
+  bounds_shift_with_the_values(std::nullopt, 0, 0);
+  bounds_shift_with_the_values("UTC", 0, 0);
+  bounds_shift_with_the_values("Asia/Shanghai", shanghai_offset, shanghai_offset);
+  bounds_shift_with_the_values("America/New_York", new_york_offset, new_york_dst_offset);
+}
+
+TEST_F(OrcWriterTest, WriterTimezoneStatisticsSlicedSubsecond)
+{
+  // Sub-second resolution and a value before the epoch, whose fractional part makes the second it
+  // falls in one lower, so the offset is looked up for the right second only when the division
+  // rounds towards negative infinity. Sliced, and the last row of the slice is null, pinning the
+  // rows the statistics cover to the ones the slice holds.
+  auto constexpr negative_ms = cudf::timestamp_ms::rep{-1'500};  // 1969-12-31T23:59:58.500Z
+  auto const timestamps      = column_wrapper<cudf::timestamp_ms, cudf::timestamp_ms::rep>{
+    {0L, negative_ms, during_est * 1000, during_edt * 1000, 0L}, {true, true, true, true, false}};
+  auto const sliced = cudf::slice(static_cast<cudf::column_view>(timestamps), {1, 5}).front();
+
+  auto const stats =
+    column_stats(write_orc_with_timezone(table_view({sliced}), "America/New_York"));
+  EXPECT_EQ(stats.number_of_values, 3);
+  EXPECT_EQ(stats.has_null, true);
+
+  auto const ts_stats = std::get<cudf::io::timestamp_statistics>(stats.type_specific_stats);
+  EXPECT_EQ(ts_stats.minimum_utc, negative_ms + new_york_offset * 1000);
+  EXPECT_EQ(ts_stats.maximum_utc, (during_edt + new_york_dst_offset) * 1000);
+  EXPECT_FALSE(ts_stats.minimum.has_value());
+  EXPECT_FALSE(ts_stats.maximum.has_value());
+}
+
+TEST_F(OrcWriterTest, WriterTimezoneStatisticsOutsideNanosecondRange)
+{
+  // The outermost whole seconds an int64 nanosecond count holds
+  auto constexpr highest_s = cudf::timestamp_s::rep{9'223'372'036};   // 2262-04-11T23:47:16Z
+  auto constexpr lowest_s  = cudf::timestamp_s::rep{-9'223'372'036};  // 1677-09-21T00:12:44Z
+
+  // Fixed-offset zones, because the offset a named zone had in 1677 is local mean time and varies
+  // between tzdata releases. One entry each, with a non-zero offset, so the shift still runs.
+  auto constexpr east_offset = cudf::duration_s{cudf::duration_h{8}}.count();   // Etc/GMT-8
+  auto constexpr west_offset = cudf::duration_s{cudf::duration_h{-5}}.count();  // Etc/GMT+5
+
+  // Shifting these onto the wall clock leaves the range an int64 nanosecond count covers, in one
+  // direction or the other, so bounds reduced as absolute nanoseconds wrap and change sign
+  auto const bounds_survive_the_shift = [](auto const& input, auto timezone, int64_t expected_ms) {
+    SCOPED_TRACE(timezone);
+    auto const stats = timestamp_stats(write_orc_with_timezone(table_view({input}), timezone));
+    EXPECT_EQ(stats.minimum_utc, expected_ms);
+    EXPECT_EQ(stats.maximum_utc, expected_ms);
+  };
+
+  for (auto const value : {highest_s, lowest_s}) {
+    SCOPED_TRACE(value);
+    // Every resolution holds the value, and all three are encoded as the same millisecond bound
+    auto const seconds = column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{value};
+    auto const micros =
+      column_wrapper<cudf::timestamp_us, cudf::timestamp_us::rep>{value * 1'000'000};
+    auto const nanos =
+      column_wrapper<cudf::timestamp_ns, cudf::timestamp_ns::rep>{value * 1'000'000'000};
+
+    // The eastern offset leaves the range at the top, the western one at the bottom
+    for (auto const [timezone, offset] :
+         {std::pair{"Etc/GMT-8", east_offset}, std::pair{"Etc/GMT+5", west_offset}}) {
+      auto const expected_ms = (value + offset) * 1000;
+      bounds_survive_the_shift(seconds, timezone, expected_ms);
+      bounds_survive_the_shift(micros, timezone, expected_ms);
+      bounds_survive_the_shift(nanos, timezone, expected_ms);
+    }
   }
 }
 
@@ -888,6 +971,14 @@ TEST_F(OrcChunkedWriterTest, WriterTimezone)
     shanghai_offset, 1421323200 + shanghai_offset, -3000 + shanghai_offset, 1 + shanghai_offset};
   // Equivalent rather than equal because the chunked writer makes the column nullable
   CUDF_TEST_EXPECT_TABLES_EQUIVALENT(table_view({expected}), read_orc_buffer(buffer).tbl->view());
+
+  // The file statistics merge the per-stripe chunks each write produced, and the writes share one
+  // transition table, loaded on the first write
+  auto const stats = timestamp_stats(buffer);
+  EXPECT_EQ(stats.minimum_utc, (-3000 + shanghai_offset) * 1000);
+  EXPECT_EQ(stats.maximum_utc, (1421323200 + shanghai_offset) * 1000);
+  EXPECT_FALSE(stats.minimum.has_value());
+  EXPECT_FALSE(stats.maximum.has_value());
 }
 
 TEST_F(OrcChunkedWriterTest, WriterTimezoneInvalid)
@@ -2587,6 +2678,100 @@ TEST_F(OrcStatisticsTest, AllNulls)
   check_all_null_stats<cudf::io::integer_statistics>(stats.file_stats[1]);
   check_all_null_stats<cudf::io::double_statistics>(stats.file_stats[2]);
   check_all_null_stats<cudf::io::string_statistics>(stats.file_stats[3]);
+}
+
+namespace {
+
+// Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
+std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
+  std::vector<char> const& file)
+{
+  using namespace cudf::io::orc::detail;
+  auto const data    = reinterpret_cast<uint8_t const*>(file.data());
+  auto const ps_len  = data[file.size() - 1];
+  auto const ps_data = data + file.size() - 1 - ps_len;
+  PostScript ps;
+  protobuf_reader(ps_data, ps_len).read(ps);
+  Footer footer;
+  protobuf_reader(ps_data - ps.footerLength, ps.footerLength).read(footer);
+  auto const& stripe = footer.stripes.at(0);
+  StripeFooter stripe_footer;
+  protobuf_reader(data + stripe.offset + stripe.indexLength + stripe.dataLength,
+                  stripe.footerLength)
+    .read(stripe_footer);
+
+  // Streams are laid out in the order the stripe footer lists them
+  auto const& streams  = stripe_footer.streams;
+  auto const row_index = std::ranges::find_if(streams, [](auto const& stream) {
+    return stream.kind == cudf::io::orc::ROW_INDEX and stream.column_id == 1;
+  });
+  CUDF_EXPECTS(row_index != streams.end(), "Row index not found");
+  auto const preceding =
+    std::ranges::subrange(streams.begin(), row_index) | std::views::transform(&Stream::length);
+  auto const stream_data =
+    data + stripe.offset + std::accumulate(preceding.begin(), preceding.end(), uint64_t{0});
+
+  // RowIndex { repeated RowIndexEntry entry = 1; }
+  // RowIndexEntry { repeated uint64 positions = 1 [packed]; ColumnStatistics statistics = 2; }
+  // All are length-delimited fields with one-byte keys
+  auto const next_field = [](uint8_t const*& cur) {
+    // Protobuf varint: 7 payload bits per byte, high bit means more bytes follow
+    auto constexpr payload_bits = 7;
+    auto constexpr payload_mask = 0x7f;
+    auto constexpr more_bytes   = 0x80;
+    uint64_t len                = 0;
+    ++cur;
+    for (int shift = 0;; shift += payload_bits) {
+      len |= static_cast<uint64_t>(*cur & payload_mask) << shift;
+      if ((*cur++ & more_bytes) == 0) { break; }
+    }
+    cur += len;
+    return std::pair{cur - len, static_cast<size_t>(len)};
+  };
+  std::vector<cudf::io::minmax_statistics<double>> result;
+  for (auto cur = stream_data; cur < stream_data + row_index->length;) {
+    auto entry = next_field(cur).first;
+    next_field(entry);  // positions
+    auto const [stats, stats_len] = next_field(entry);
+    column_statistics col_stats;
+    protobuf_reader(stats, stats_len).read(col_stats);
+    auto& minmax = result.emplace_back();
+    if (col_stats.double_stats) {
+      minmax.minimum = col_stats.double_stats->minimum;
+      minmax.maximum = col_stats.double_stats->maximum;
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST_F(OrcStatisticsTest, RowGroupNaN)
+{
+  auto constexpr stride = 512;
+  auto constexpr nan    = std::numeric_limits<double>::quiet_NaN();
+  // Row groups: no NaN, half NaN, all NaN
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    if (i < stride) { return static_cast<double>(i); }
+    if (i < 2 * stride) { return i % 2 == 0 ? nan : -static_cast<double>(i); }
+    return nan;
+  });
+  float64_col col(values, values + 3 * stride);
+  table_view const tbl({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::write_orc(cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, tbl)
+                        .compression(cudf::io::compression_type::NONE)
+                        .row_index_stride(stride));
+
+  auto const row_groups = read_row_index_double_minmax(out_buffer);
+  ASSERT_EQ(row_groups.size(), 3ul);
+  EXPECT_EQ(row_groups[0].minimum, 0.);
+  EXPECT_EQ(row_groups[0].maximum, stride - 1.);
+  EXPECT_EQ(row_groups[1].minimum, -(2 * stride - 1.));
+  EXPECT_EQ(row_groups[1].maximum, -(stride + 1.));
+  EXPECT_FALSE(row_groups[2].minimum.has_value());
+  EXPECT_FALSE(row_groups[2].maximum.has_value());
 }
 
 TEST_F(OrcWriterTest, UnorderedDictionary)

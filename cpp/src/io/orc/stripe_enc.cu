@@ -20,8 +20,6 @@
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cuda/buffer>
@@ -1364,8 +1362,12 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
   CUDF_CUDA_TRY(cudaGetLastError());
 
   // Copy streams in a batched manner.
-  cudf::detail::batched_memcpy_async(
-    srcs.begin(), dsts.begin(), lengths.begin(), lengths.size(), stream);
+  cudf::detail::batched_memcpy_async(srcs.begin(),
+                                     dsts.begin(),
+                                     lengths.begin(),
+                                     lengths.size(),
+                                     stream,
+                                     cudf::get_current_device_resource_ref());
 }
 
 std::optional<writer_compression_statistics> compress_orc_data_streams(

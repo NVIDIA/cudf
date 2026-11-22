@@ -45,6 +45,7 @@ class column_view;
 class mutable_column_view;
 class string_view;
 class list_view;
+class mutable_string_view;
 class struct_view;
 class scalar;
 
@@ -214,6 +215,14 @@ enum class type_id : int32_t {
   STRUCT,                  ///< Struct elements
   // `NUM_TYPE_IDS` must be last!
   NUM_TYPE_IDS  ///< Total number of type ids
+};
+
+/**
+ * @brief Whether an operation checks and propagates device evaluation errors to the host.
+ */
+enum class fallible : bool {
+  NO  = 0,  ///< Do not check or propagate device evaluation errors to the host
+  YES = 1   ///< Check and propagate device evaluation errors to the host
 };
 
 /**

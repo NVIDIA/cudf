@@ -12,6 +12,7 @@
 
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
@@ -22,7 +23,6 @@ void test_single_agg(cudf::column_view const& keys,
                      cudf::column_view const& expect_keys,
                      cudf::column_view const& expect_vals,
                      std::unique_ptr<cudf::groupby_aggregation>&& agg,
-                     force_use_sort_impl use_sort,
                      cudf::null_policy include_null_keys,
                      cudf::sorted keys_are_sorted,
                      std::vector<cudf::order> const& column_order,
@@ -57,12 +57,6 @@ void test_single_agg(cudf::column_view const& keys,
     requests[0].aggregations.push_back(std::unique_ptr<cudf::groupby_aggregation>{
       dynamic_cast<cudf::groupby_aggregation*>(agg->clone().release())});
 
-    if (use_sort == force_use_sort_impl::YES) {
-      // WAR to force cudf::groupby to use sort implementation
-      requests[0].aggregations.push_back(
-        cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0));
-    }
-
     // since the default behavior of cudf::groupby(...) for an empty null_precedence vector is
     // null_order::AFTER whereas for cudf::sorted_order(...) it's null_order::BEFORE
     auto const precedence = null_precedence.empty()
@@ -74,21 +68,20 @@ void test_single_agg(cudf::column_view const& keys,
 
     auto result = gb_obj.aggregate(requests, cudf::test::get_default_stream());
 
-    if (use_sort == force_use_sort_impl::YES && keys_are_sorted == cudf::sorted::NO) {
-      CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, result.first->view());
-      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
-                                          *result.second[0].results[0]);
+    // Group order is unspecified. Some aggregations, like multiple quantiles, produce a contiguous
+    // block of values for each key, so sort the values by their repeated keys.
+    auto const result_keys = result.first->view();
+    auto const result_vals = result.second[0].results[0]->view();
+    auto const per_key =
+      result_keys.num_rows() == 0 ? 1 : result_vals.size() / result_keys.num_rows();
+    auto const repeated_keys = cudf::repeat(result_keys, per_key);
+    auto const sorted_vals   = cudf::stable_sort_by_key(
+      cudf::table_view{{result_vals}}, repeated_keys->view(), column_order, precedence);
+    auto const sorted_keys = cudf::sort(result_keys, column_order, precedence);
 
-    } else {
-      auto const sort_order  = cudf::sorted_order(result.first->view(), column_order, precedence);
-      auto const sorted_keys = cudf::gather(result.first->view(), *sort_order);
-      auto const sorted_vals =
-        cudf::gather(cudf::table_view({result.second[0].results[0]->view()}), *sort_order);
-
-      CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, *sorted_keys);
-      CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
-                                          sorted_vals->get_column(0));
-    }
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*sorted_expect_keys, *sorted_keys);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sorted_expect_vals->get_column(0),
+                                        sorted_vals->get_column(0));
   }
 
   // --- Streaming groupby path (single-batch, validates against same expected output) ---
@@ -141,23 +134,18 @@ void test_sum_agg(cudf::column_view const& keys,
                   cudf::column_view const& expected_values,
                   std::source_location const& location)
 {
-  auto const do_test = [&](auto const use_sort_option) {
-    test_single_agg(keys,
-                    values,
-                    expected_keys,
-                    expected_values,
-                    cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
-                    use_sort_option,
-                    cudf::null_policy::INCLUDE,
-                    cudf::sorted::NO,
-                    {},
-                    {},
-                    cudf::sorted::NO,
-                    test_streaming::YES,
-                    location);
-  };
-  do_test(force_use_sort_impl::YES);
-  do_test(force_use_sort_impl::NO);
+  test_single_agg(keys,
+                  values,
+                  expected_keys,
+                  expected_values,
+                  cudf::make_sum_aggregation<cudf::groupby_aggregation>(),
+                  cudf::null_policy::INCLUDE,
+                  cudf::sorted::NO,
+                  {},
+                  {},
+                  cudf::sorted::NO,
+                  test_streaming::YES,
+                  location);
 }
 
 void test_single_scan(cudf::column_view const& keys,
@@ -182,9 +170,22 @@ void test_single_scan(cudf::column_view const& keys,
   cudf::groupby::groupby gb_obj(
     cudf::table_view({keys}), include_null_keys, keys_are_sorted, column_order, null_precedence);
 
-  // cudf::groupby scan uses sort implementation
   auto result = gb_obj.scan(requests);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({expect_keys}), result.first->view());
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect_vals, *result.second[0].results[0]);
+  if (keys_are_sorted == cudf::sorted::YES) {
+    CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view({expect_keys}), result.first->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect_vals, *result.second[0].results[0]);
+  } else {
+    // Group order is unspecified; preserve each group's row order when normalizing it.
+    auto const actual_order   = cudf::stable_sorted_order(result.first->view());
+    auto const expected_order = cudf::stable_sorted_order(cudf::table_view{{expect_keys}});
+    auto const actual_keys    = cudf::gather(result.first->view(), *actual_order);
+    auto const actual_values =
+      cudf::gather(cudf::table_view{{result.second[0].results[0]->view()}}, *actual_order);
+    auto const expected_keys   = cudf::gather(cudf::table_view{{expect_keys}}, *expected_order);
+    auto const expected_values = cudf::gather(cudf::table_view{{expect_vals}}, *expected_order);
+    CUDF_TEST_EXPECT_TABLES_EQUAL(*expected_keys, *actual_keys);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_values->get_column(0),
+                                        actual_values->get_column(0));
+  }
 }

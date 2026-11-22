@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 import threading
+from contextlib import nullcontext
 from decimal import Decimal
 
 import pytest
@@ -14,7 +15,8 @@ import pylibcudf as plc
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr as ir_expr
-from cudf_polars.dsl.ir import ConditionalJoin
+from cudf_polars.dsl.ir import ConditionalJoin, IRExecutionContext
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
@@ -29,6 +31,211 @@ MISMATCHED_DECIMAL_SCALE_XFAIL = pytest.mark.xfail(
     POLARS_VERSION_LT_21,
     reason="Polars 2.0 cannot join decimals with different scales on CPU",
 )
+
+
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+@pytest.mark.parametrize("by", [None, "sym"])
+@pytest.mark.parametrize("coalesce", [False, True])
+def test_asof_join_backward(engine: pl.GPUEngine, by: str | None, coalesce):
+    left = pl.LazyFrame(
+        {
+            "sym": ["a", "a", "b", "b", "b"],
+            "time": [0, 3, 2, 5, 6],
+            "trade": [10, 11, 12, 13, 14],
+        }
+    ).sort(["sym", "time"] if by else "time")
+    right = pl.LazyFrame(
+        {
+            "sym": ["a", "a", "a", "b", "b"],
+            "time": [1, 3, 3, 3, 4],
+            "quote": [20, 21, 22, 23, 24],
+        }
+    ).sort(["sym", "time"] if by else "time")
+    query = left.join_asof(right, on="time", by=by, coalesce=coalesce)
+    with (
+        pytest.warns(UserWarning, match="Sortedness of columns cannot be checked")
+        if by
+        else nullcontext()
+    ):
+        assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+def test_asof_join_empty_right(engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame(
+        {"time": pl.Series([], dtype=pl.Int64), "value": pl.Series([], dtype=pl.Int64)}
+    )
+    assert_gpu_result_equal(left.join_asof(right, on="time"), engine=engine)
+
+
+@pytest.mark.engine_params(["in-memory", "spmd-small"])
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_no_right_payload(engine: pl.GPUEngine, *, check_sortedness: bool):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [1, 2]})
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", check_sortedness=check_sortedness).slice(1, 1),
+        engine=engine,
+    )
+
+
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_grouped_sortedness_warning(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"group": ["a", "b"], "time": [1, 2]})
+    right = pl.LazyFrame(
+        {
+            "group": ["a", "b"],
+            "time": [1, 2],
+            **({"value": [10, 20]} if payload else {}),
+        }
+    )
+    with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
+        left.join_asof(right, on="time", by="group").collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("invalid_side", ["left", "right"])
+def test_asof_join_no_payload_evaluates_keys(
+    in_memory_engine: pl.GPUEngine, invalid_side: str
+):
+    left = pl.LazyFrame({"g": ["bad" if invalid_side == "left" else "1"]})
+    right = pl.LazyFrame({"g": ["bad" if invalid_side == "right" else "1"]})
+    query = left.join_asof(right, on=pl.col("g").cast(pl.Int64), by="g")
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="conversion from"):
+        query.collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_checks_right_sortedness(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [2, 1], **({"value": [20, 10]} if payload else {})})
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        left.join_asof(right, on="time").collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("payload", [False, True])
+def test_asof_join_checks_left_sortedness(in_memory_engine: pl.GPUEngine, payload):
+    left = pl.LazyFrame({"time": [2, 1]})
+    right = pl.LazyFrame({"time": [1, 2], **({"value": [10, 20]} if payload else {})})
+    with pytest.raises(pl.exceptions.InvalidOperationError, match="not sorted"):
+        left.join_asof(right, on="time").collect(engine=in_memory_engine)
+
+
+@pytest.mark.parametrize("check_sortedness", [False, True])
+@pytest.mark.parametrize("set_sorted", [False, True])
+def test_asof_join_right_nulls_last(
+    in_memory_engine: pl.GPUEngine, check_sortedness, set_sorted
+):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [1, 2, None], "value": [10, 20, 30]})
+    right = (
+        right.set_sorted("time") if set_sorted else right.sort("time", nulls_last=True)
+    )
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", check_sortedness=check_sortedness),
+        engine=in_memory_engine,
+    )
+
+
+def test_asof_join_right_nulls_first(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [None, 1, 2], "value": [30, 10, 20]})
+    assert_gpu_result_equal(left.join_asof(right, on="time"), engine=in_memory_engine)
+
+
+def test_asof_join_right_interleaved_nulls(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2, 3]})
+    right = pl.LazyFrame({"time": [1, None, 2], "value": [10, 20, 30]})
+    result = left.join_asof(right, on="time").collect(engine=in_memory_engine)
+    assert result["value"].to_list() == [10, 30, 30]
+
+
+def test_asof_join_unordered_left(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [2, 1]})
+    right = pl.LazyFrame({"time": [1, 2], "value": [10, 20]}).sort("time")
+    result = left.join_asof(right, on="time", check_sortedness=False).collect(
+        engine=in_memory_engine
+    )
+    assert result.to_dict(as_series=False) == {"time": [2, 1], "value": [20, 10]}
+
+
+def test_asof_join_unchecked_right_is_sorted(in_memory_engine: pl.GPUEngine):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame({"time": [2, 1], "value": [20, 10]})
+    result = left.join_asof(right, on="time", check_sortedness=False).collect(
+        engine=in_memory_engine
+    )
+    assert result["value"].to_list() == [10, 20]
+
+
+@pytest.mark.engine_params(["in-memory"])
+def test_asof_join_distinct_temporal_keys(engine: pl.GPUEngine):
+    dtype = pl.Duration("ns")
+    left = pl.LazyFrame({"sym_l": ["a", "b"], "time_l": pl.Series([2, 3], dtype=dtype)})
+    right = pl.LazyFrame(
+        {"sym_r": ["a", "b"], "time_r": pl.Series([1, 2], dtype=dtype), "v": [20, 21]}
+    )
+    query = (
+        left.sort(["sym_l", "time_l"])
+        .join_asof(
+            right.sort(["sym_r", "time_r"]),
+            left_on="time_l",
+            right_on="time_r",
+            by_left="sym_l",
+            by_right="sym_r",
+        )
+        .slice(1, 1)
+    )
+    with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
+        assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"strategy": "forward"},
+        {"tolerance": 1},
+        {"allow_exact_matches": False},
+    ],
+)
+def test_asof_join_unsupported_options(kwargs, in_memory_engine: pl.GPUEngine):
+    frame = pl.LazyFrame({"time": [1, 2]}).sort("time")
+    translator = Translator(
+        frame.join_asof(frame, on="time", **kwargs)._ldf.visit(), in_memory_engine
+    )
+    translator.translate_ir()
+    assert any(
+        isinstance(error, NotImplementedError)
+        and str(error).startswith("Only backward as-of joins")
+        for error in translator.errors
+    )
+
+
+@pytest.mark.parametrize(
+    "left,right,by",
+    [
+        ({"time": [1.0]}, {"time": [1.0]}, None),
+        (
+            {"time": [1], "sym": pl.Series(["a"], dtype=pl.Categorical)},
+            {"time": [1], "sym": pl.Series(["a"], dtype=pl.Categorical)},
+            "sym",
+        ),
+        ({"time": [1], "sym": [1]}, {"time": [1], "sym": ["a"]}, "sym"),
+    ],
+)
+def test_asof_join_unsupported_keys(left, right, by, in_memory_engine: pl.GPUEngine):
+    query = pl.LazyFrame(left).join_asof(pl.LazyFrame(right), on="time", by=by)
+    translator = Translator(query._ldf.visit(), in_memory_engine)
+    translator.translate_ir()
+    message = (
+        "Unsupported as-of ordered key dtype"
+        if by is None
+        else "Unsupported as-of grouping key dtype"
+    )
+    assert any(
+        isinstance(error, NotImplementedError) and str(error) == message
+        for error in translator.errors
+    )
 
 
 @pytest.fixture(params=[False, True], ids=["nulls_not_equal", "nulls_equal"])
@@ -298,7 +505,10 @@ def test_join_maintain_order_with_slice(
         pl.col("foo") == pl.col("bar"),
         pytest.param(
             pl.col("foo") != pl.col("bar"),
-            marks=pytest.mark.xfail(reason="nested loop join"),
+            marks=pytest.mark.xfail(
+                POLARS_VERSION_LT_21,
+                reason="Polars 2.0 plans this as a nested loop join, which its visitor does not expose",
+            ),
         ),
     ],
 )
@@ -443,3 +653,41 @@ def test_conditional_join_cuda_context_initialized():
     t = threading.Thread(target=ConditionalJoin.Predicate, args=(predicate_expr,))
     t.start()
     t.join()
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+def test_cross_join_maintain_order(engine: pl.GPUEngine, maintain_order):
+    left = pl.LazyFrame({"x": [0, 1, 2], "a": ["p", "q", "r"]})
+    right = pl.LazyFrame({"y": [5, 6], "a": ["s", "t"]})
+    q = left.join(right, how="cross", maintain_order=maintain_order)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=maintain_order != "none")
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+@pytest.mark.parametrize("empty", ["left", "right", "both"])
+def test_cross_join_maintain_order_empty(engine: pl.GPUEngine, maintain_order, empty):
+    schema = {"k": pl.Int64, "a": pl.Int64}
+    left_rows = [] if empty in {"left", "both"} else [0, 1, 2]
+    right_rows = [] if empty in {"right", "both"} else [5, 6]
+    left = pl.LazyFrame({"k": left_rows, "a": left_rows}, schema=schema)
+    right = pl.LazyFrame({"k": right_rows, "a": right_rows}, schema=schema)
+    q = left.join(right, how="cross", maintain_order=maintain_order, suffix="_r")
+    assert_gpu_result_equal(q, engine=engine, check_row_order=maintain_order != "none")
+
+
+@pytest.mark.parametrize(
+    "maintain_order", ["none", "left", "right", "left_right", "right_left"]
+)
+def test_cross_join_left_sortedness(maintain_order):
+    left = pl.LazyFrame({"x": [0, 1]}).set_sorted("x")
+    right = pl.LazyFrame({"y": [10, 20]})
+    q = left.join(right, how="cross", maintain_order=maintain_order)
+    node = Translator(q._ldf.visit(), pl.GPUEngine()).translate_ir()
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+    swapped = maintain_order.startswith("right")
+    expected = plc.types.Sorted.NO if swapped else plc.types.Sorted.YES
+    assert result.column_map["x"].is_sorted == expected

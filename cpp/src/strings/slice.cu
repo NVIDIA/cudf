@@ -26,7 +26,7 @@
 #include <cooperative_groups/reduce.h>
 #include <cuda/buffer>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/limits>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -241,7 +241,7 @@ std::unique_ptr<column> compute_substrings_from_fn(strings_column_view const& in
                                                    IndexIterator starts,
                                                    IndexIterator stops,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
   auto results = cuda::device_buffer<string_index_pair>(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
@@ -273,7 +273,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& stop,
                                       numeric_scalar<size_type> const& step,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -321,7 +321,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       std::optional<size_type> stop,
                                       std::optional<size_type> step,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -367,7 +367,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       column_view const& starts_column,
                                       column_view const& stops_column,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   if (input.size() == input.null_count()) {
     return std::make_unique<column>(input.parent(), stream, mr);
@@ -394,7 +394,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       numeric_scalar<size_type> const& stop,
                                       numeric_scalar<size_type> const& step,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::slice_strings(input, start, stop, step, stream, mr);
@@ -405,7 +405,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       std::optional<size_type> stop,
                                       std::optional<size_type> step,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::slice_strings(input, start, stop, step, stream, mr);
@@ -415,7 +415,7 @@ std::unique_ptr<column> slice_strings(strings_column_view const& input,
                                       column_view const& starts_column,
                                       column_view const& stops_column,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::slice_strings(input, starts_column, stops_column, stream, mr);

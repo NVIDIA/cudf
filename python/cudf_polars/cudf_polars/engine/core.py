@@ -464,7 +464,7 @@ class StreamingEngine(pl.GPUEngine):
         -------
         A :class:`kvikio.Summary` per rank, keyed by rank index and in rank
         order. A rank that is not counting is absent, so the result is empty
-        unless the ``statistics`` option is enabled.
+        unless the ``kvikio_statistics`` option is enabled.
 
         Examples
         --------
@@ -1000,7 +1000,10 @@ def _evaluate_on_rank(
         )
         quent_operator_map = build_quent_operator_map(ir, physical_op_by_id)
     ir_context = IRExecutionContext(
-        py_executor, get_cuda_stream=ctx.br().stream_pool.get_stream, query_id=query_id
+        py_executor,
+        get_cuda_stream=ctx.br().stream_pool.get_stream,
+        query_id=query_id,
+        rank_local_cpu_compute=config_options.executor.rank_local_cpu_compute,
     )
 
     prefetch_file_metadata = config_options.parquet_options.prefetch_file_metadata

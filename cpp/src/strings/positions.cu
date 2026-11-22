@@ -26,7 +26,7 @@ namespace cudf::strings::detail {
 std::unique_ptr<column> create_offsets_from_positions(strings_column_view const& input,
                                                       device_span<int64_t const> const& positions,
                                                       cuda::stream_ref stream,
-                                                      rmm::device_async_resource_ref mr)
+                                                      cudf::memory_resources mr)
 {
   auto const d_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());

@@ -35,6 +35,7 @@ namespace cudf::jit {
  *
  * @tparam NullAware Whether callbacks receive nullable input/output values
  * @tparam Inputs Type list of input accessors in update-parameter order
+ * @tparam FilterInputs Type list of input accessors in filter-parameter order
  * @tparam Outputs Type list of output accessors in finalization-parameter order
  * @tparam BlockSize Number of threads per block
  * @tparam GroupSize Number of contiguous lanes cooperating on one segment
@@ -49,6 +50,7 @@ namespace cudf::jit {
  * @param num_segments Nonnegative number of segments
  * @param offsets Device array of `num_segments + 1` segment boundaries
  * @param inputs Device input views consumed by the input accessors
+ * @param filter_inputs Device input views consumed by the filter accessors
  * @param outputs Device array of `num_segments * Outputs::size` single-row views, in segment order
  * @param segment_errors Device array of `num_segments` final error codes
  * @param init State initialization callback
@@ -60,6 +62,7 @@ namespace cudf::jit {
  */
 template <bool NullAware,
           typename Inputs,
+          typename FilterInputs,
           typename Outputs,
           int BlockSize,
           int GroupSize,
@@ -76,6 +79,7 @@ __device__ void small_groups_segmented_reduce_kernel(
   size_type num_segments,
   size_type const* __restrict__ offsets,
   column_device_view_core const* __restrict__ inputs,
+  column_device_view_core const* __restrict__ filter_inputs,
   mutable_column_device_view_core const* __restrict__ outputs,
   errc* __restrict__ segment_errors,
   Init&& init,
@@ -110,7 +114,8 @@ __device__ void small_groups_segmented_reduce_kernel(
       for (auto row = static_cast<thread_index_type>(offsets[segment]) + rank;
            row < offsets[segment + 1];
            row += GroupSize) {
-        reduce::update_row<NullAware, Inputs>(local, inputs, row, filter, update, segment);
+        reduce::update_row<NullAware, Inputs, FilterInputs>(
+          local, inputs, filter_inputs, row, filter, update, segment);
       }
     }
 

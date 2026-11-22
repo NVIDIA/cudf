@@ -1,11 +1,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import gc
+import weakref
+
 import numpy as np
 import pyarrow as pa
 import pytest
 from utils import assert_table_eq
 
+import rmm
 from rmm.pylibrmm.stream import Stream
 
 import pylibcudf as plc
@@ -221,6 +225,32 @@ def test_filtered_join(join_keys, compare_nulls, join_type):
         else set(range(left.num_rows())) - matched_left
     )
     assert sorted(result.to_pylist()) == sorted(expected)
+
+
+# A Python subclass supports weak references; rmm's resource types do not.
+class _WeakReferenceableResource(rmm.mr.CudaMemoryResource):
+    pass
+
+
+@pytest.mark.parametrize("join_class", ["HashJoin", "FilteredJoin"])
+def test_join_object_keeps_memory_resource_alive(join_class):
+    left = plc.Table([plc.Column.from_arrow(pa.array([0, 1, 2], pa.int32()))])
+    right = plc.Table([plc.Column.from_arrow(pa.array([2, 0], pa.int32()))])
+    mr = _WeakReferenceableResource()
+    mr_ref = weakref.ref(mr)
+    joiner = getattr(plc.join, join_class)(right, mr=mr)
+    del mr
+    gc.collect()
+    assert mr_ref() is not None
+    if join_class == "HashJoin":
+        lg, rg = joiner.inner_join(left)
+        result = sorted(zip(lg.to_pylist(), rg.to_pylist(), strict=True))
+        assert result == [(0, 1), (2, 0)]
+    else:
+        assert sorted(joiner.semi_join(left).to_pylist()) == [0, 2]
+    del joiner
+    gc.collect()
+    assert mr_ref() is None
 
 
 @pytest.mark.parametrize("join_type", ["inner", "left", "full"])

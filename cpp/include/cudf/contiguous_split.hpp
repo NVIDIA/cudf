@@ -193,8 +193,7 @@ class chunked_pack {
    * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
    *                         at least 1MB
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resources. `chunked_pack` returns no device memory, so only the
-   * temporary resource is used, for its scratch and state allocations.
+   * @param mr Device memory resources.
    */
   explicit chunked_pack(cudf::table_view const& input,
                         std::size_t user_buffer_size,
@@ -278,8 +277,7 @@ class chunked_pack {
    * @param user_buffer_size buffer size (in bytes) that will be passed on `next`. Must be
    *                         at least 1MB
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resources. `chunked_pack` returns no device memory, so only the
-   * temporary resource is used, for its scratch and state allocations.
+   * @param mr Device memory resources.
    * @return a unique_ptr of chunked_pack
    */
   [[nodiscard]] static std::unique_ptr<chunked_pack> create(
@@ -344,8 +342,7 @@ packed_columns pack(cudf::table_view const& input,
  *
  * @param input View of the table to compute the packed size for
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resources. Only the temporary resource is used, as no device memory is
- * returned.
+ * @param mr Device memory resources.
  * @return The size in bytes required to store the packed table data (not including metadata)
  */
 std::size_t packed_size(cudf::table_view const& input,

@@ -115,8 +115,6 @@ inline __device__ void gpuStoreOutput(uint2* dst,
 template <typename state_buf>
 inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos, int64_t* dst)
 {
-  using cuda::std::chrono::duration_cast;
-
   uint8_t const* src8;
   uint32_t dict_pos, dict_size = s->stream.dict_size, ofs;
 
@@ -142,7 +140,6 @@ inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos,
   }
 
   uint3 v;
-  int64_t nanos, days;
   v.x = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 0);
   v.y = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 4);
   v.z = *reinterpret_cast<uint32_t const*>(src8 + dict_pos + 8);
@@ -152,29 +149,8 @@ inline __device__ void read_int96_timestamp(auto* s, state_buf* sb, int src_pos,
     v.y           = __funnelshift_r(v.y, v.z, ofs);
     v.z           = __funnelshift_r(v.z, next, ofs);
   }
-  nanos = v.y;
-  nanos <<= 32;
-  nanos |= v.x;
-  // Convert from Julian day at noon to UTC seconds
-  days = static_cast<int32_t>(v.z);
-  // TBD: Should be noon instead of midnight, but this matches pyarrow
-  cudf::duration_D d_d{days - julian_day_unix_epoch};
-
-  *dst = [&]() {
-    switch (s->setup.col.ts_clock_rate) {
-      case 1:  // seconds
-        return duration_cast<duration_s>(d_d).count() +
-               duration_cast<duration_s>(duration_ns{nanos}).count();
-      case 1'000:  // milliseconds
-        return duration_cast<duration_ms>(d_d).count() +
-               duration_cast<duration_ms>(duration_ns{nanos}).count();
-      case 1'000'000:  // microseconds
-        return duration_cast<duration_us>(d_d).count() +
-               duration_cast<duration_us>(duration_ns{nanos}).count();
-      case 1'000'000'000:  // nanoseconds
-      default: return duration_cast<cudf::duration_ns>(d_d).count() + nanos;
-    }
-  }();
+  auto const nanos = static_cast<int64_t>((static_cast<uint64_t>(v.y) << 32) | v.x);
+  *dst = int96_to_timestamp(nanos, static_cast<int32_t>(v.z), s->setup.col.ts_clock_rate);
 }
 
 /**
@@ -340,6 +316,44 @@ inline __device__ void read_nbyte_fixed_width_value(
 }
 
 /**
+ * @brief Output a PLAIN or dictionary encoded INT32, INT64 or FIXED_LEN_BYTE_ARRAY decimal at the
+ * output decimal width
+ *
+ * @param[in,out] s Page state input/output
+ * @param[out] sb Page state buffer output
+ * @param[in] src_pos Source position
+ * @param[in] dst Pointer to row output data
+ */
+template <typename state_buf>
+__device__ inline void read_fixed_width_decimal(auto* s, state_buf* sb, int src_pos, void* dst)
+{
+  auto const dtype_len = s->output_cvt.dtype_len;
+  switch (s->setup.col.physical_type) {
+    case Type::INT32: {
+      uint32_t raw;
+      read_fixed_width_value_fast(s, sb, src_pos, &raw);
+      store_decimal(dst, dtype_len, [value = static_cast<int32_t>(raw)]<typename T>() {
+        return static_cast<T>(value);
+      });
+    } break;
+    case Type::INT64: {
+      uint2 raw;
+      read_fixed_width_value_fast(s, sb, src_pos, &raw);
+      store_decimal(dst, dtype_len, [value = cuda::std::bit_cast<int64_t>(raw)]<typename T>() {
+        return static_cast<T>(value);
+      });
+    } break;
+    default:
+      store_decimal(dst, dtype_len, [&]<typename T>() {
+        T value;
+        read_fixed_width_byte_array_as_int(s, sb, src_pos, &value);
+        return value;
+      });
+      break;
+  }
+}
+
+/**
  * Output a BYTE_STREAM_SPLIT value of type `T`.
  *
  * Data is encoded as N == sizeof(T) streams of length M, forming an NxM sized matrix.
@@ -354,6 +368,38 @@ __device__ inline void gpuOutputByteStreamSplit(uint8_t* dst, uint8_t const* src
 {
   for (int i = 0; i < sizeof(T); i++) {
     dst[i] = src[i * stride];
+  }
+}
+
+/**
+ * @brief Output a BYTE_STREAM_SPLIT encoded INT32, INT64 or FIXED_LEN_BYTE_ARRAY decimal at the
+ * output decimal width
+ *
+ * @param[in,out] s Page state input/output
+ * @param[in] src Pointer to first byte of input data in stream 0
+ * @param[in] stride Number of bytes per input stream
+ * @param[in] dst Pointer to row output data
+ */
+__device__ inline void read_byte_stream_split_decimal(auto* s,
+                                                      uint8_t const* src,
+                                                      size_type stride,
+                                                      void* dst)
+{
+  auto const dtype_len         = s->output_cvt.dtype_len;
+  auto const store_int_decimal = [&]<typename P>() {
+    P value;
+    gpuOutputByteStreamSplit<P>(reinterpret_cast<uint8_t*>(&value), src, stride);
+    store_decimal(dst, dtype_len, [value]<typename T>() { return static_cast<T>(value); });
+  };
+  switch (s->setup.col.physical_type) {
+    case Type::INT32: store_int_decimal.template operator()<int32_t>(); break;
+    case Type::INT64: store_int_decimal.template operator()<int64_t>(); break;
+    case Type::FIXED_LEN_BYTE_ARRAY:
+      store_decimal(dst, dtype_len, [&]<typename T>() {
+        return decode_big_endian_decimal<T>(src, s->output_cvt.dtype_len_in, stride);
+      });
+      break;
+    default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
   }
 }
 

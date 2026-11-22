@@ -15,5 +15,6 @@ mod generated_python {
 
 #[pymodule]
 fn cudf_polars_quent(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    generated_python::register(module)
+    generated_python::register(module)?;
+    Ok(())
 }

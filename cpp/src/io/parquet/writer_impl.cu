@@ -1192,7 +1192,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   if (chunks.is_empty()) { return cudf::detail::hostdevice_vector<size_type>{}; }
 
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
 
   chunks.host_to_device_async(stream);
   // Calculate number of pages and store in respective chunks
@@ -1498,7 +1498,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
 {
   cuda::device_buffer<statistics_merge_group> page_stats_mrg(
     stream, cudf::get_current_device_resource_ref(), num_stats_bfr, cuda::no_init);
-  kernel_error error_code(stream);
+  kernel_error error_code(stream, cudf::get_current_device_resource_ref());
   chunks.host_to_device_async(stream);
   InitEncoderPages(chunks,
                    pages,
@@ -1635,9 +1635,10 @@ size_t column_index_buffer_size(EncColumnChunk* ck,
   //   (ck_max_stats_len + 4) * num_pages * 2 for min/max values
   //     (each binary requires 4 bytes length + ck_max_stats_len)
   //   sizeof(int64_t) * num_pages for null_counts
+  //   6 bytes overhead + 5 bytes * num_pages for nan_counts (floating point only)
   //
-  // so 26 bytes overhead + sizeof(char) +
-  //    (sizeof(bool) + sizeof(int64_t) + 2 * (4 + ck_max_stats_len)) * num_pages
+  // so 32 bytes overhead + sizeof(char) +
+  //    (sizeof(bool) + sizeof(int64_t) + 5 + 2 * (4 + ck_max_stats_len)) * num_pages
   //
   // we already have ck->ck_stat_size = 48 + 2 * ck_max_stats_len
   // all of the overhead and non-stats data can fit in under 48 bytes

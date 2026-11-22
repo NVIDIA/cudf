@@ -205,17 +205,17 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
 // Builds the output UDF from the same parser so both CUDA passes use identical ranges.
 std::string const url_component_output_udf = std::string{R"***(
 // Copies the six parsed URL components into their preallocated string buffers.
-__device__ int write_url_components(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+__device__ int write_url_components(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input) {
 )***"} + parse_url_udf + R"***(
   url_ranges ranges;
   if (!parse_url(&ranges)) { return 0; }
-  cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
+  cudf::mutable_string_view* outputs[] = {protocol, host, port, path, query, fragment};
   range32 components[]     = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
   for (auto component = 0; component < 6; ++component) {
@@ -418,15 +418,13 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
   std::unique_ptr<cudf::table> sizes;
 
   if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_sizes];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
-    sizes         = cudf::transform_lto(fragment,
+    sizes = cudf::transform_lto(url_log_fragments::get(url_log_fragments::url_component_sizes),
                                 cudf::lto_binary_type::FATBIN,
                                 cudf::null_aware::NO,
                                 std::nullopt,
                                 inputs,
                                 size_outputs,
-                                        {},
+                                {},
                                 std::nullopt,
                                 stream,
                                 mr);
@@ -462,9 +460,7 @@ __device__ int transform(int32_t* output, cudf::string_view input) {
                                            cudf::output_nullability::ALL_VALID};
   std::vector<cudf::transform_output> const outputs(output_count, output_spec);
   if (use_lto) {
-    auto range    = url_log_fragments::file_ranges[url_log_fragments::url_component_output];
-    auto fragment = url_log_fragments::files.subspan(range[0], range[1]);
-    return cudf::transform_lto(fragment,
+    return cudf::transform_lto(url_log_fragments::get(url_log_fragments::url_component_output),
                                cudf::lto_binary_type::FATBIN,
                                cudf::null_aware::NO,
                                std::nullopt,

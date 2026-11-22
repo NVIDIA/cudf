@@ -26,7 +26,10 @@
 
 #include <cuda/buffer>
 #include <cuda/std/concepts>
+#include <cuda/std/utility>
 
+#include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <concepts>
@@ -34,6 +37,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 
@@ -49,6 +53,18 @@ auto constexpr stats_cols_per_column = 4;
 [[nodiscard]] std::optional<bool> has_nans(std::optional<int64_t> nan_count);
 
 /**
+ * @brief Checks whether a column chunk is INT96 without `INT96_TIMESTAMP_ORDER`
+ *
+ * @param metadata File metadata
+ * @param physical_type Physical type of the column chunk
+ * @param leaf_idx Leaf column index
+ * @return Whether the column chunk's min/max statistics must be ignored
+ */
+[[nodiscard]] bool is_unordered_int96(FileMetaData const& metadata,
+                                      Type physical_type,
+                                      std::size_t leaf_idx);
+
+/**
  * @brief Base utilities for converting and casting stats values
  *
  * Derived classes handle row group or page-level statistics as needed.
@@ -60,14 +76,12 @@ class stats_caster_base {
   static inline T decode_fixed_width_decimal(uint8_t const* stats_val, size_t stats_size)
   {
     // Decimal statistics with physical BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY are stored as
-    // signed two's-complement values using big-endian byte order. The physical width may be
-    // smaller than the selected cudf storage width, so sign extend while decoding
+    // signed two's-complement values using big-endian byte order. Sign extend if the physical
+    // width is smaller than the cudf storage width, or keep the low bytes to narrow.
 
     CUDF_EXPECTS(cudf::is_signed<T>(),
                  "FLBA/BYTE_ARRAY decimals must have signed representation types");
     CUDF_EXPECTS(stats_size > 0, "Parquet reader encountered an empty decimal statistics vector");
-    CUDF_EXPECTS(stats_size <= sizeof(T),
-                 "Parquet reader encountered a statistics vector larger than the type's size");
 
     return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
   }
@@ -82,6 +96,45 @@ class stats_caster_base {
     auto value = T{};
     std::memcpy(&value, stats_val, std::min(stats_size, sizeof(T)));
     return value;
+  }
+
+  /// Decodes an INT96 statistics value into nanoseconds of the day and Julian day
+  static inline cuda::std::pair<int64_t, int32_t> decode_int96_value(uint8_t const* stats_val,
+                                                                     size_t stats_size)
+  {
+    CUDF_EXPECTS(stats_size == static_cast<size_t>(int96_size),
+                 "Parquet reader encountered an invalid INT96 statistics vector size");
+    auto nanos = int64_t{};
+    auto days  = int32_t{};
+    std::memcpy(&nanos, stats_val, sizeof(nanos));
+    std::memcpy(&days, stats_val + sizeof(nanos), sizeof(days));
+    return {nanos, days};
+  }
+
+  /**
+   * @brief Checks whether INT96 min/max statistics cannot bound the timestamps of type `T`
+   *
+   * This is the case if either bound is missing, has nanoseconds outside of a day so that it no
+   * longer orders like the converted values, or overflows `T` so that its rows would wrap around.
+   */
+  template <typename T>
+  [[nodiscard]] static bool int96_minmax_unusable(Type type,
+                                                  std::optional<std::vector<uint8_t>> const& min,
+                                                  std::optional<std::vector<uint8_t>> const& max)
+  {
+    if constexpr (cudf::is_timestamp<T>()) {
+      if (type != Type::INT96) { return false; }
+      return std::ranges::any_of(std::array{&min, &max}, [](auto const* value) {
+        if (not value->has_value()) { return true; }
+        auto const [nanos, days] = decode_int96_value(value->value().data(), value->value().size());
+        auto const nanos_per_day =
+          cuda::std::chrono::duration_cast<cudf::duration_ns>(cudf::duration_D{1}).count();
+        return nanos < 0 or nanos >= nanos_per_day or
+               not int96_fits_duration<typename T::duration>(nanos, days);
+      });
+    } else {
+      return false;
+    }
   }
 
   template <typename ToType, typename FromType>
@@ -136,10 +189,12 @@ class stats_caster_base {
         return stats_caster_base::target_type<T>(
           decode_fixed_width_value<int64_t>(stats_val, stats_size), ts_scale);
       case Type::INT96:  // Deprecated in parquet specification
-        return stats_caster_base::target_type<T>(
-          static_cast<__int128_t>(decode_fixed_width_value<int64_t>(stats_val, stats_size)) << 32 |
-            decode_fixed_width_value<int32_t>(stats_val + sizeof(int64_t), stats_size),
-          ts_scale);
+        if constexpr (cudf::is_timestamp<T>()) {
+          auto const [nanos, days] = decode_int96_value(stats_val, stats_size);
+          return T{typename T::duration{int96_to_duration<typename T::duration>(nanos, days)}};
+        } else {
+          CUDF_FAIL("INT96 statistics are only supported for timestamp columns");
+        }
       case Type::BYTE_ARRAY: [[fallthrough]];
       case Type::FIXED_LEN_BYTE_ARRAY:
         // Handle chronos, decimals and UUIDs here
@@ -215,47 +270,47 @@ class stats_caster_base {
     {
     }
 
-    void inline set_index(size_type index,
-                          std::optional<std::vector<uint8_t>> const& binary_value,
-                          Type const type,
-                          int32_t ts_scale = 0)
+    /**
+     * @brief Sets the min and max statistics
+     *
+     * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
+     * order, so if the column can truncate, both are nulled unless both are present and fit in `T`
+     *
+     * @param min Min statistics column
+     * @param max Max statistics column
+     * @param index Row of the column chunk or page in this column
+     * @param min_value Optional binary min value
+     * @param max_value Optional binary max value
+     * @param is_narrowing_column Whether values may be truncated to `T`
+     * @param type Parquet physical type
+     * @param ts_scale Timestamp scale
+     */
+    static inline void set_min_max(host_column& min,
+                                   host_column& max,
+                                   size_type index,
+                                   std::optional<std::span<uint8_t const>> min_value,
+                                   std::optional<std::span<uint8_t const>> max_value,
+                                   bool is_narrowing_column,
+                                   Type const type,
+                                   int32_t ts_scale = 0)
     {
-      // Helper to set the stat value to null (ignore)
-      auto const set_to_null = [&] {
-        clear_bit_unsafe(null_mask.data(), index);
-        null_count++;
+      // Truncated values lose their order, so use the stats only if both bounds are present and fit
+      auto const value_fits_in_type = [&](auto const& value) {
+        if constexpr (cuda::std::signed_integral<T>) {
+          return value.has_value() and
+                 cuda::std::in_range<T>(convert<__int128_t>(value->data(), value->size(), type));
+        }
+        return true;
       };
 
-      // Return early if the binary value isn't set
-      if (not binary_value.has_value()) {
-        set_to_null();
-        return;
-      }
-
-      // For strings, also insert the characters
-      if constexpr (std::is_same_v<T, string_view>) {
-        // Create a temporary string view from the binary value
-        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                     binary_value.value().size()};
-        // Current offset into the chars vector
-        auto const current_chars_offset = chars.size();
-        chars.insert(chars.end(), input_value.begin(), input_value.end());
-        // Convert to the target type
-        val[index] = stats_caster_base::convert<T>(
-          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-          binary_value.value().size(),
-          type);
+      auto const are_stats_usable = not is_narrowing_column or (value_fits_in_type(min_value) and
+                                                                value_fits_in_type(max_value));
+      if (are_stats_usable) {
+        min.set_index(index, min_value, type, ts_scale);
+        max.set_index(index, max_value, type, ts_scale);
       } else {
-        val[index] = stats_caster_base::convert<T>(
-          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
-        if constexpr (cudf::is_floating_point<T>()) {
-          if (std::isnan(val[index])) {
-            val[index] = T{};  // No non-empty nulls
-            set_to_null();
-            return;
-          }
-        }
+        min.set_index(index, std::nullopt, type);
+        max.set_index(index, std::nullopt, type);
       }
     }
 
@@ -333,6 +388,51 @@ class stats_caster_base {
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
+    }
+
+   private:
+    void inline set_index(size_type index,
+                          std::optional<std::span<uint8_t const>> binary_value,
+                          Type const type,
+                          int32_t ts_scale = 0)
+    {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
+        clear_bit_unsafe(null_mask.data(), index);
+        null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
+      }
     }
   };
 };

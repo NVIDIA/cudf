@@ -985,8 +985,8 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
     }
   }
   for (auto& cnt_in : validity_check_inputs) {
-    auto const valid_counts =
-      cudf::detail::segmented_valid_count(cnt_in.second.mask, cnt_in.second.indices, stream);
+    auto const valid_counts = cudf::detail::segmented_valid_count(
+      cnt_in.second.mask, cnt_in.second.indices, stream, mr.as_temporary());
     CUDF_EXPECTS(
       std::none_of(valid_counts.cbegin(),
                    valid_counts.cend(),
@@ -2376,8 +2376,10 @@ stripe_dictionaries build_dictionaries(orc_table_view& orc_table,
   if (stripe_dicts.count() == 0) return {std::move(stripe_dicts), {}, {}};
 
   // Create a single bulk storage to use for all sub-dictionaries
-  auto map_storage = std::make_unique<storage_type>(
-    total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get());
+  auto map_storage =
+    std::make_unique<storage_type>(total_map_storage_size,
+                                   rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
+                                   stream.get());
 
   // Largest stripe row count, used to size the grids of the dictionary kernels
   size_type max_dict_rows = 0;
@@ -2577,7 +2579,7 @@ auto convert_table_to_orc_data(table_view const& input,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
-  auto const input_tview = table_device_view::create(input, stream);
+  auto const input_tview = table_device_view::create(input, stream, mr.as_temporary());
 
   auto orc_table = make_orc_table_view(input, *input_tview, table_meta, stream, mr);
 

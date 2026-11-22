@@ -1377,8 +1377,9 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
   if (total_map_storage_size == 0) { return {std::move(dict_data), std::move(dict_index)}; }
 
   // Create a single bulk storage used by all sub-dictionaries
-  auto map_storage =
-    storage_type{total_map_storage_size, rmm::mr::polymorphic_allocator<char>{}, stream.get()};
+  auto map_storage = storage_type{total_map_storage_size,
+                                  rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
+                                  stream.get()};
   // Create a span of non-const map_storage as map_storage_ref takes in a non-const pointer.
   device_span<slot_type> const map_storage_data{map_storage.data(), total_map_storage_size};
 
@@ -1827,7 +1828,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
 
   // Create table_device_view so that corresponding column_device_view data
   // can be written into col_desc members
-  auto parent_column_table_device_view = table_device_view::create(single_streams_table, stream);
+  auto parent_column_table_device_view =
+    table_device_view::create(single_streams_table, stream, mr);
   auto leaf_column_views =
     cuda::device_buffer<column_device_view>(stream, mr.get_temporary_mr(), 0, cuda::no_init);
   auto d_col_desc =

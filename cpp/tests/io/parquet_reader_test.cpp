@@ -2481,7 +2481,8 @@ TEST_F(ParquetReaderTest, NzMapRejectsShortDeltaStream)
 TEST_F(ParquetReaderTest, NzMapDeltaByteArrayRejectsMalformed)
 {
   // Each DELTA_BYTE_ARRAY page here, except the control, is malformed, and the nz map consumer must
-  // reject it instead of reading outside the page.
+  // reject it instead of reading outside the page. Each case reaches the consumer: it fails with
+  // the decode error the consumer's own check sets, not in header parsing or the string size pass.
   namespace pq = cudf::io::parquet;
   tmp_env_var const env{nz_map_env_var, "1"};
   auto const dba_file = [](std::vector<int64_t> const& prefixes,

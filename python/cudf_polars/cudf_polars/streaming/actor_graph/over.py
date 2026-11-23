@@ -355,12 +355,14 @@ def _split_off_origin_rank(
 
     stream = result.stream
     columns = result.table.columns()
+    # Pass-through and stamp columns can be views of the evaluated partition,
+    # so the chunks do not own their data exclusively.
     return (
         TableChunk.from_pylibcudf_table(
-            plc.Table(columns[:-1]), stream, exclusive_view=True, br=br
+            plc.Table(columns[:-1]), stream, exclusive_view=False, br=br
         ),
         TableChunk.from_pylibcudf_table(
-            plc.Table([columns[-1]]), stream, exclusive_view=True, br=br
+            plc.Table([columns[-1]]), stream, exclusive_view=False, br=br
         ),
     )
 
@@ -504,13 +506,18 @@ async def _distribute_by_group(
     await ch_in.shutdown_metadata(context)
 
     sequence_numbers: list[int] = []
-    chunk_index = 0
     async with forward_shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
+            chunk_index = len(sequence_numbers)
+            sequence_numbers.append(msg.sequence_number)
+            if skip_insert:
+                # Insert duplicated input only once so each logical row
+                # participates once in its window group. The return shuffle
+                # restores the result to all ranks owning the input rows.
+                del msg
+                continue
             chunk = TableChunk.from_message(msg, br=context.br())
-            stamp_bytes = (
-                0 if skip_insert else _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
-            )
+            stamp_bytes = _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
             # The chunk's data moves into shuffler-owned packed buffers, so the
             # stamp columns _append_origin_stamps allocates below are both the
             # extra we need and the only lasting addition.
@@ -520,24 +527,17 @@ async def _distribute_by_group(
                 reserve_extra=stamp_bytes,
                 net_memory_delta=stamp_bytes,
             )
-            sequence_numbers.append(msg.sequence_number)
-            if not skip_insert:
-                # Insert duplicated input only once so each logical row
-                # participates once in its window group. The return shuffle
-                # restores the result to all ranks owning the input rows.
-                with opaque_memory_usage(extra):
-                    stamped = await ir_context.to_thread(
-                        _append_origin_stamps,
-                        chunk,
-                        chunk_index,
-                        comm.rank,
-                        chunk.stream,
-                        context.br(),
-                    )
-                await inserter.insert_hash(stamped, key_indices)
-                del stamped
-            del chunk
-            chunk_index += 1
+            with opaque_memory_usage(extra):
+                stamped = await ir_context.to_thread(
+                    _append_origin_stamps,
+                    chunk,
+                    chunk_index,
+                    comm.rank,
+                    chunk.stream,
+                    context.br(),
+                )
+            await inserter.insert_hash(stamped, key_indices)
+            del stamped, chunk
     return sequence_numbers
 
 
@@ -600,7 +600,7 @@ async def _evaluate_and_route_to_origin(
                         )
                     del payload
                 else:
-                    await inserter.insert_index(*routed)
+                    await inserter.insert_index(*routed, ir_context=ir_context)
             del routed
 
 
@@ -621,11 +621,13 @@ async def _reassemble_input_chunks(
     n_exprs = len(ir.exprs)
     chunk_index_column = n_exprs
 
-    # TODO: thread ir_context through repartition_by_index so each
-    # PackedData piece moves on its own pool stream rather than sharing one.
+    # TODO: unpack each PackedData piece in repartition_by_index on its own
+    # pool stream rather than sharing one.
     async with LocalRepartitioner(return_shuffle, local_count=n_chunks) as local:
         await local.repartition_by_index(
-            partition_col=chunk_index_column, stream=ir_context.get_cuda_stream()
+            partition_col=chunk_index_column,
+            stream=ir_context.get_cuda_stream(),
+            ir_context=ir_context,
         )
 
         for chunk_index, sequence_number in zip(
@@ -649,7 +651,8 @@ async def _reassemble_input_chunks(
                         net_memory_delta=0,
                     )
                 ):
-                    sorted_tbl = plc.sorting.stable_sort_by_key(
+                    sorted_tbl = await ir_context.to_thread(
+                        plc.sorting.stable_sort_by_key,
                         tbl,
                         plc.Table([tbl.columns()[n_exprs]]),
                         [plc.types.Order.ASCENDING],

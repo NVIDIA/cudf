@@ -33,7 +33,9 @@
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/chrono>
+#include <cuda/std/climits>
 #include <cuda/std/concepts>
+#include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/transform.h>
 #include <thrust/uninitialized_fill.h>
@@ -126,7 +128,11 @@ __device__ bool probe_key(BloomFilter const& filter,
   // Decimals are big-endian two's complement, sign-extended to the column's `type_length`,
   // so the value is the trailing `type_length` bytes of the byte-swapped 128-bit integer
   else if constexpr (physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-    auto const big_endian = cuda::std::byteswap(static_cast<__int128_t>(literal.value<Rep>()));
+    auto const value = static_cast<__int128_t>(literal.value<Rep>());
+    // No stored value can equal a wider literal that does not fit in `type_length` bytes
+    auto const magnitude = static_cast<__uint128_t>(value < 0 ? ~value : value);
+    if (cuda::std::bit_width(magnitude) >= type_length * CHAR_BIT) { return false; }
+    auto const big_endian = cuda::std::byteswap(value);
     auto const bytes      = reinterpret_cast<char const*>(&big_endian);
     return filter.contains(
       cudf::string_view{bytes + sizeof(__int128_t) - type_length, type_length});
@@ -134,7 +140,13 @@ __device__ bool probe_key(BloomFilter const& filter,
 
   // INT32, INT64 and BYTE_ARRAY
   else {
-    return filter.contains(static_cast<typename BloomFilter::key_type>(literal.value<Rep>()));
+    using key_type   = typename BloomFilter::key_type;
+    auto const value = literal.value<Rep>();
+    // No stored value can equal a wider literal that does not fit the physical type
+    if constexpr (cuda::std::is_integral_v<key_type> and sizeof(Rep) > sizeof(key_type)) {
+      if (not cuda::std::in_range<key_type>(value)) { return false; }
+    }
+    return filter.contains(static_cast<key_type>(value));
   }
 }
 
@@ -265,14 +277,18 @@ struct bloom_filter_caster {
     auto const physical_type = parquet_types[equality_col_idx];
     auto const d_literal     = literal->get_value();
 
-    // INT32 also stores 8 and 16-bit integers, and TIME(MILLIS) which is read as a 64-bit duration
-    if constexpr (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>()) {
-      if (physical_type == Type::INT32) {
+    // INT32 also stores 8 and 16-bit integers, TIME(MILLIS) which is read as a 64-bit duration and
+    // decimals read with a wider `decimal_width`
+    if constexpr (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>() or
+                  cuda::std::signed_integral<T>) {
+      if (physical_type == Type::INT32 and
+          (sizeof(rep_type) <= sizeof(int32_t) or cudf::is_duration<T>() or
+           cudf::is_fixed_point(dtype))) {
         return query_bloom_filter<rep_type, Type::INT32>(equality_col_idx, d_literal, stream, mr);
       }
     }
-    // INT64 values are stored as 64-bit integers
-    if constexpr (sizeof(rep_type) == sizeof(int64_t)) {
+    // INT64 also stores decimals read with a wider `decimal_width`
+    if constexpr (sizeof(rep_type) >= sizeof(int64_t)) {
       if (physical_type == Type::INT64) {
         return query_bloom_filter<rep_type, Type::INT64>(equality_col_idx, d_literal, stream, mr);
       }
@@ -313,24 +329,22 @@ struct bloom_filter_caster {
  * @param col_idx Output column index
  * @param literal Literal compared against the column
  * @param output_dtypes Output data types of columns
- * @param mismatched_timestamp_mask Boolean span indicating if an output column is a timestamp
- * with mismatched precision in any source
+ * @param bloom_hash_mismatch_mask Boolean span indicating if an output column cannot use bloom
+ * filters
  * @return Whether the bloom filter can be queried
  */
 [[nodiscard]] bool is_bloom_filterable(ast::ast_operator op,
                                        cudf::size_type col_idx,
                                        ast::literal const& literal,
                                        std::span<cudf::data_type const> output_dtypes,
-                                       std::span<bool const> mismatched_timestamp_mask)
+                                       std::span<bool const> bloom_hash_mismatch_mask)
 {
   // A bloom filter only answers "value may be present", so only equality can be evaluated
   if (op != ast::ast_operator::EQUAL) { return false; }
 
-  // A timestamp literal of another precision than the column's native one would never match the
+  // A timestamp literal of another precision, or a narrowed decimal literal, may not match the
   // values hashed into the bloom filters
-  if (not mismatched_timestamp_mask.empty() and mismatched_timestamp_mask[col_idx]) {
-    return false;
-  }
+  if (not bloom_hash_mismatch_mask.empty() and bloom_hash_mismatch_mask[col_idx]) { return false; }
 
   return is_membership_queryable(output_dtypes[col_idx], literal);
 }
@@ -526,7 +540,7 @@ aggregate_reader_metadata::read_bloom_filters(
   return {std::move(bloom_filter_buffers), std::move(bloom_filter_data)};
 }
 
-thrust::host_vector<bool> aggregate_reader_metadata::calc_mismatched_timestamp_mask(
+thrust::host_vector<bool> aggregate_reader_metadata::calc_bloom_hash_mismatch_mask(
   std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const
 {
   CUDF_EXPECTS(output_column_schemas.size() == output_dtypes.size(),
@@ -535,10 +549,9 @@ thrust::host_vector<bool> aggregate_reader_metadata::calc_mismatched_timestamp_m
   thrust::host_vector<bool> mismatched(output_dtypes.size(), false);
   for (std::size_t col_idx = 0; col_idx < output_dtypes.size(); ++col_idx) {
     auto const dtype = output_dtypes[col_idx];
-    if (not cudf::is_timestamp(dtype)) { continue; }
-    auto const clockrate = cudf::io::detail::to_clockrate(dtype.id());
-    // Sources may store the column with different precisions as their logical types are not
-    // required to match
+    if (not cudf::is_timestamp(dtype) and not cudf::is_fixed_point(dtype)) { continue; }
+    auto const width = cudf::size_of(dtype);
+    // Sources may store the column with different precisions or widths across sources
     mismatched[col_idx] =
       std::any_of(cuda::counting_iterator<std::size_t>{0},
                   cuda::counting_iterator{per_file_metadata.size()},
@@ -546,8 +559,13 @@ thrust::host_vector<bool> aggregate_reader_metadata::calc_mismatched_timestamp_m
                     auto const& schema = get_schema(
                       map_schema_index(output_column_schemas[col_idx], static_cast<int>(src_idx)),
                       static_cast<int>(src_idx));
+                    // Narrowing may truncate values to the literal, but their hashes won't match
+                    if (cudf::is_fixed_point(dtype)) {
+                      return is_column_wider_than(schema.type, schema.type_length, width);
+                    }
                     return schema.logical_type.has_value() and
-                           calc_timestamp_scale(schema.logical_type, clockrate) != 0;
+                           calc_timestamp_scale(schema.logical_type,
+                                                cudf::io::detail::to_clockrate(dtype.id())) != 0;
                   });
   }
   return mismatched;
@@ -632,13 +650,13 @@ std::optional<std::vector<std::vector<size_type>>> aggregate_reader_metadata::ap
 }
 
 equality_literals_collector::equality_literals_collector(
-  std::span<cudf::data_type const> output_dtypes, std::span<bool const> mismatched_timestamp_mask)
+  std::span<cudf::data_type const> output_dtypes, std::span<bool const> bloom_hash_mismatch_mask)
   : parquet_expression_simplifier{output_dtypes},
-    _mismatched_timestamp_mask{mismatched_timestamp_mask}
+    _bloom_hash_mismatch_mask{bloom_hash_mismatch_mask}
 {
   CUDF_EXPECTS(
-    _mismatched_timestamp_mask.empty() or _mismatched_timestamp_mask.size() == output_dtypes.size(),
-    "mismatched_timestamp_mask must have the same size as output_dtypes when provided");
+    _bloom_hash_mismatch_mask.empty() or _bloom_hash_mismatch_mask.size() == output_dtypes.size(),
+    "bloom_hash_mismatch_mask must have the same size as output_dtypes when provided");
   _literals.resize(static_cast<size_type>(output_dtypes.size()));
   _operators.resize(static_cast<size_type>(output_dtypes.size()));
 }
@@ -646,8 +664,8 @@ equality_literals_collector::equality_literals_collector(
 equality_literals_collector::equality_literals_collector(
   ast::expression const& expr,
   std::span<cudf::data_type const> output_dtypes,
-  std::span<bool const> mismatched_timestamp_mask)
-  : equality_literals_collector{output_dtypes, mismatched_timestamp_mask}
+  std::span<bool const> bloom_hash_mismatch_mask)
+  : equality_literals_collector{output_dtypes, bloom_hash_mismatch_mask}
 {
   collect(expr);
 }
@@ -689,7 +707,7 @@ simplified_expression_opt equality_literals_collector::simplify_comparison(
   auto const col_idx = col_ref.get_column_index();
 
   // Do not collect non-bloom-filterable literals
-  if (not is_bloom_filterable(op, col_idx, literal, _output_dtypes, _mismatched_timestamp_mask)) {
+  if (not is_bloom_filterable(op, col_idx, literal, _output_dtypes, _bloom_hash_mismatch_mask)) {
     return std::nullopt;
   }
 

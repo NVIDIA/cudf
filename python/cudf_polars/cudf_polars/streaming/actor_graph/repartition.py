@@ -222,7 +222,8 @@ async def concatenate_node(
                             net_memory_delta=0,
                         )
                         with opaque_memory_usage(extra):
-                            df = _concat(
+                            df = await ir_context.to_thread(
+                                _concat,
                                 *(
                                     DataFrame.from_table(
                                         chunk.table_view(),

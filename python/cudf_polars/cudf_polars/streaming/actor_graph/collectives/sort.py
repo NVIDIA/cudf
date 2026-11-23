@@ -322,7 +322,8 @@ async def _insert_chunks_into_shuffle(
                 # TODO: Pre-sort chunks if they do not originate from the
                 # ChunkStore. (Not possible until we use _global_sort outside
                 # of sort_actor.)
-                splits = find_sort_splits(
+                splits = await ir_context.to_thread(
+                    find_sort_splits,
                     sort_cols_tbl,
                     sort_boundaries_df.table,
                     seq_num,

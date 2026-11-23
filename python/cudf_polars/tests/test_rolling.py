@@ -75,6 +75,25 @@ def test_rolling_integral_orderby(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+def test_rolling_min_max_nan(engine: pl.GPUEngine, dtype):
+    # Rolling min/max skip NaN in a window that holds other values
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "orderby": [1, 2, 3, 4, 5, 6, 7],
+            "values": pl.Series([1.0, nan, 3.0, nan, 2.0, None, -1.0], dtype=dtype),
+        }
+    )
+    q = df.rolling("orderby", period="2i").agg(
+        pl.col("values").min().alias("min"),
+        pl.col("values").sum().alias("sum"),
+        pl.col("values").max().alias("max"),
+    )
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_rolling_collect_list_raises(in_memory_engine):
     df = pl.LazyFrame(
         {

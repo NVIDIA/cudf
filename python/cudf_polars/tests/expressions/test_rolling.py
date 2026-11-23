@@ -198,6 +198,24 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("agg", ["min", "max"])
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+def test_rolling_min_max_nan(engine: pl.GPUEngine, agg: str, dtype) -> None:
+    # Range-based rolling min/max skip NaN in a window that holds other values, unlike
+    # fixed-size rolling, which propagates NaN
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "g": [1, 1, 1, 1, 2, 2, 2, 2],
+            "orderby": [1, 2, 3, 4, 5, 6, 7, 8],
+            "x": pl.Series([1.0, nan, 3.0, nan, 2.0, None, -1.0, nan], dtype=dtype),
+        }
+    )
+    rolling = getattr(pl.col("x"), agg)().rolling("orderby", period="2i")
+    q = df.select(rolling.alias("rolling"), rolling.over("g").alias("over"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
     df = (
         pl.LazyFrame(

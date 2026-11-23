@@ -180,6 +180,30 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
 @pytest.mark.parametrize(
     "by",
     [
+        [0.0, -0.0, -1.0],
+        [-0.0, 0.0, -1.0],
+        [0.0, -0.0, 1.0],
+        [-0.0, 0.0, 1.0],
+        [None, -0.0, 0.0],
+        [float("nan"), 0.0, -0.0],
+    ],
+)
+def test_max_min_by_signed_zero(engine: pl.GPUEngine, expr: str, by) -> None:
+    # Polars treats -0.0 and +0.0 as equal and selects the first of tied rows
+    df = pl.LazyFrame(
+        {
+            "a": pl.Series([10, 20, 30], dtype=pl.Int64),
+            "b": pl.Series(by, dtype=pl.Float64),
+        }
+    )
+    q = df.select(getattr(pl.col("a"), expr)("b"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+@pytest.mark.parametrize(
+    "by",
+    [
         pl.col("b").filter(pl.col("b") > 20),
         pl.col("b").head(2),
     ],

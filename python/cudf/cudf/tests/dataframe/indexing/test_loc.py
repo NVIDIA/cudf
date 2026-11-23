@@ -953,21 +953,18 @@ def test_dataframe_loc_inplace_update_string_index():
     assert_eq(expected, actual)
 
 
-def test_dataframe_loc_iloc_inplace_update_with_RHS_dataframe():
-    loc_key = ([0, 2], ["x", "y"])
-    iloc_key = [0, 2]
-    data = {"x": [10, 20], "y": [30, 40]}
-    index = [0, 2]
-    gdf = cudf.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
-    pdf = gdf.to_pandas()
+@pytest.mark.parametrize("indexer, rows", [("loc", [9, 5]), ("iloc", [0, 2])])
+def test_dataframe_loc_iloc_inplace_update_with_RHS_dataframe(indexer, rows):
+    pdf = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]}, index=[9, 7, 5])
+    gdf = cudf.from_pandas(pdf)
+    ps, gs = pdf["x"], gdf["x"]
+    rhs = pd.DataFrame({"x": [10, 20], "y": [30, 40]}, index=[9, 5])
 
-    actual = gdf.loc[loc_key] = cudf.DataFrame(data, index=cudf.Index(index))
-    expected = pdf.loc[loc_key] = pd.DataFrame(data, index=pd.Index(index))
-    assert_eq(expected, actual)
+    getattr(pdf, indexer)[rows, :] = rhs
+    getattr(gdf, indexer)[rows, :] = cudf.from_pandas(rhs)
 
-    actual = gdf.iloc[iloc_key] = cudf.DataFrame(data, index=cudf.Index(index))
-    expected = pdf.iloc[iloc_key] = pd.DataFrame(data, index=pd.Index(index))
-    assert_eq(expected, actual)
+    assert_eq(pdf, gdf)
+    assert_eq(ps, gs)
 
 
 def test_dataframe_loc_inplace_update_with_invalid_RHS_df_columns():

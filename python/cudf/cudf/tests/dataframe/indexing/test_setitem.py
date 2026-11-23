@@ -91,7 +91,6 @@ def test_series_setitem_index():
     assert_eq(df, gdf, check_dtype=False)
 
 
-@pytest.mark.xfail(reason="Copy-on-Write should make a copy")
 @pytest.mark.parametrize(
     "index",
     [
@@ -185,29 +184,49 @@ def test_string_set_scalar(scalar):
     assert_eq(pdf, gdf)
 
 
-def test_dataframe_cow_slice_setitem():
-    df = cudf.DataFrame({"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]})
-    slice_df = df[1:4]
+@pytest.mark.parametrize("first", [10.0, None], ids=["unmasked", "masked"])
+@pytest.mark.parametrize("value", [None, 1111.0])
+@pytest.mark.parametrize("target", ["series", "dataframe"])
+def test_dataframe_cow_slice_setitem(first, value, target):
+    pdf = pd.DataFrame({"a": [first, 11.0, 12.0, 13.0]})
+    gdf = cudf.from_pandas(pdf)
+    pslice, gslice = pdf[1:3], gdf[1:3]
+    ps, gs = pslice["a"], gslice["a"]
 
-    assert_eq(
-        slice_df,
-        cudf.DataFrame(
-            {"a": [11, 12, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
-        ),
-    )
+    if target == "series":
+        ps[2] = value
+        gs[2] = value
+    else:
+        pslice.loc[2, "a"] = value
+        gslice.loc[2, "a"] = value
 
-    slice_df["a"][2] = 1111
+    assert_eq(ps, gs)
+    assert_eq(pslice, gslice)
+    assert_eq(pdf, gdf)
 
-    assert_eq(
-        slice_df,
-        cudf.DataFrame(
-            {"a": [11, 1111, 13], "b": [30, 40, 50]}, index=[1, 2, 3]
-        ),
-    )
-    assert_eq(
-        df,
-        cudf.DataFrame({"a": [10, 11, 12, 13, 14], "b": [20, 30, 40, 50, 60]}),
-    )
+
+def test_dataframe_cow_slice_assign_none():
+    pdf = pd.DataFrame({"a": [1.0, 2.0]})
+    gdf = cudf.from_pandas(pdf)
+    pslice, gslice = pdf[:1], gdf[:1]
+
+    pslice["a"] = None
+    gslice["a"] = None
+
+    assert_eq(pslice, gslice)
+    assert_eq(pdf, gdf)
+
+
+def test_dataframe_cow_empty_slice_setitem():
+    pdf = pd.DataFrame({"a": pd.Series(dtype="int64")})
+    gdf = cudf.from_pandas(pdf)
+    pslice, gslice = pdf[:1], gdf[:1]
+
+    pslice["a"] = 1.5
+    gslice["a"] = 1.5
+
+    assert_eq(pslice, gslice)
+    assert_eq(pdf, gdf)
 
 
 def test_multiindex_row_shape():

@@ -1523,8 +1523,8 @@ def test_dataframe_constructor_column_index_only():
     index = ["r1", "r2", "r3"]
 
     gdf = cudf.DataFrame(index=index, columns=columns)
-    assert gdf["a"]._column is not gdf["b"]._column
-    assert gdf["b"]._column is not gdf["c"]._column
+    assert gdf._data["a"] is not gdf._data["b"]
+    assert gdf._data["b"] is not gdf._data["c"]
 
 
 @pytest.mark.parametrize(

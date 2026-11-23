@@ -495,30 +495,19 @@ class _GroupByContextManager:
         return False
 
 
-def _collect_series_key_column_names(obj, by) -> dict[int, Hashable]:
-    """For each Series grouping key in ``by``, map ``id`` of the Series'
-    underlying column to the name of the matching column in ``obj`` (when
-    one exists by object identity). Mirrors pandas' behavior of excluding
-    such columns from aggregation values.
-
-    Only applies when ``obj`` is a DataFrame: for Series inputs, the single
-    column *is* the value column, so identity-based exclusion would empty
-    the aggregation result. Keying by ``id(series._column)`` makes the
-    match robust to ordering, the presence of non-Series keys, and to
-    repeated Series keys.
-    """
+def _collect_series_key_column_names(obj, by) -> list[Hashable]:
+    """Find extracted Series keys that still reference their frame column."""
     import cudf
 
-    result: dict[int, Hashable] = {}
+    result = []
     if not isinstance(obj, cudf.DataFrame):
         return result
     by_list = by if isinstance(by, list) else [by]
     for key in by_list:
-        if isinstance(key, cudf.Series):
-            for col_name, col in obj._column_labels_and_values:
-                if col is key._column:
-                    result[id(key._column)] = col_name
-                    break
+        if isinstance(key, cudf.Series) and key.name in obj._data:
+            col = obj._data[key.name]
+            if col._copy_origin is key._column._copy_origin:
+                result.append(key.name)
     return result
 
 
@@ -616,8 +605,7 @@ class GroupBy(Serializable, Reducible, Scannable):
             If True (default), do not include the "null" group.
         """
         # Determine which column names in `obj` correspond to the grouping
-        # key Series by column identity (mirrors pandas' behavior).
-        # Must be done before ``nans_to_nulls`` which breaks identity.
+        # Series before ``nans_to_nulls`` may copy those columns.
         by_series_col_names = _collect_series_key_column_names(obj, by)
 
         # Row-filter operations (``nth``) must return the original values,
@@ -4512,12 +4500,7 @@ class _Grouping(Serializable):
 
         # Need to keep track of named key columns
         # to support `as_index=False` correctly
-        self._named_columns = []
-        # ``id(series._column)`` -> name of the matching ``obj`` column,
-        # for each Series-typed grouping key that is identical (by object
-        # identity) to one of ``obj``'s columns. Used by ``_handle_series``
-        # to mirror pandas' exclusion of such columns from value columns.
-        self._series_key_column_names = dict(series_key_column_names or {})
+        self._named_columns = list(series_key_column_names or [])
         self._handle_by_or_level(by, level)
 
         # pandas treats NaN and null group keys identically, and labels an
@@ -4620,17 +4603,9 @@ class _Grouping(Serializable):
         self.__init__(self._obj, by)
 
     def _handle_series(self, by):
-        # Mirror pandas: if the grouping Series' underlying column was one
-        # of the obj's columns (identity captured pre-transformation),
-        # exclude that column name from value columns during aggregation.
-        # Look up by ``id`` of the original column *before* alignment may
-        # produce a fresh column object.
-        matched = self._series_key_column_names.get(id(by._column))
         by = by._align_to_index(self._obj.index, how="right")
         self._key_columns.append(by._column)
         self.names.append(by.name)
-        if matched is not None:
-            self._named_columns.append(matched)
 
     def _handle_index(self, by):
         self._key_columns.extend(by._columns)

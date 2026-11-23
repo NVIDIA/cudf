@@ -1399,15 +1399,31 @@ def test_groupby_series_identity_column_exclusion():
     assert_eq(expect, got)
 
 
-def test_groupby_series_copy_no_column_exclusion():
+@pytest.mark.parametrize("deep", [False, True])
+def test_groupby_series_copy_column_exclusion(deep):
     pdf = pd.DataFrame(
         {"a": [1, 1, 2, 2, 3, 3], "b": [10, 20, 30, 40, 50, 60]}
     )
     gdf = cudf.from_pandas(pdf)
     with cudf.option_context("mode.pandas_compatible", True):
-        got = gdf.groupby(gdf["a"].copy()).sum()
-    expect = pdf.groupby(pdf["a"].copy()).sum()
+        got = gdf.groupby(gdf["a"].copy(deep=deep)).sum()
+    expect = pdf.groupby(pdf["a"].copy(deep=deep)).sum()
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize("target", ["series", "dataframe"])
+def test_groupby_modified_series_no_column_exclusion(target):
+    pdf = pd.DataFrame({"a": [1, 1, 2], "b": [10, 20, 30]})
+    gdf = cudf.from_pandas(pdf)
+    ps, gs = pdf["a"], gdf["a"]
+    if target == "series":
+        ps.iloc[0] = 2
+        gs.iloc[0] = 2
+    else:
+        pdf.loc[0, "a"] = 2
+        gdf.loc[0, "a"] = 2
+
+    assert_eq(pdf.groupby(ps).sum(), gdf.groupby(gs, sort=True).sum())
 
 
 def test_groupby_series_self_does_not_exclude():

@@ -64,11 +64,12 @@ DASK_CUDF_BUILD_DIR=${REPODIR}/python/dask_cudf/build
 PYLIBCUDF_BUILD_DIR=${REPODIR}/python/pylibcudf/build
 CUSTREAMZ_BUILD_DIR=${REPODIR}/python/custreamz/build
 CUDF_JAR_JAVA_BUILD_DIR="$REPODIR/java/target"
-CUDF_POLARS_QUENT_BUILD_DIR=${REPODIR}/python/cudf_polars/quent/bridge/target
+CUDF_POLARS_QUENT_BUILD_DIR=${REPODIR}/python/cudf_polars/quent/target
 
 BUILD_DIRS="${LIB_BUILD_DIR} ${CUDF_BUILD_DIR} ${DASK_CUDF_BUILD_DIR} ${KAFKA_LIB_BUILD_DIR} ${CUDF_KAFKA_BUILD_DIR} ${CUSTREAMZ_BUILD_DIR} ${CUDF_JAR_JAVA_BUILD_DIR} ${PYLIBCUDF_BUILD_DIR} ${STREAMING_LIB_BUILD_DIR} ${CUDF_POLARS_QUENT_BUILD_DIR}"
 
-CUDA_VERSION="${RAPIDS_CUDA_VERSION:-$(nvcc --version | sed -E -n 's/^.*release ([0-9]+\.[0-9]+).*$/\1/p')}"
+RAPIDS_CUDA_VERSION_MAJOR_MINOR="${RAPIDS_CUDA_VERSION%.*}"
+CUDA_VERSION="${RAPIDS_CUDA_VERSION_MAJOR_MINOR:-$(nvcc --version | sed -E -n 's/^.*release ([0-9]+\.[0-9]+).*$/\1/p')}"
 if [[ -z "$CUDA_VERSION" ]]; then
     echo "Could not determine CUDA version. Please set RAPIDS_CUDA_VERSION or make sure your \$PATH contains a valid nvcc."
     exit 1
@@ -358,6 +359,7 @@ fi
 #    The version comes from Cargo.toml (see ci/utils/set_cargo_version.sh); the stub is left alone.
 if hasArg cudf_polars_quent; then
     cd "${REPODIR}/python/cudf_polars/quent/bridge"
+    QUENT_TARGET_DIR="${REPODIR}/python/cudf_polars/quent/target"
 
     if hasArg --release; then
         # maturin is the build backend, so the rapidsai config-settings in
@@ -375,7 +377,7 @@ if hasArg cudf_polars_quent; then
         python -m maturin develop
 
         shopt -s nullglob
-        generated_stubs=(target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
+        generated_stubs=("${QUENT_TARGET_DIR}"/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
         shopt -u nullglob
         if ((${#generated_stubs[@]} == 0)); then
             echo "No generated Quent stub found" >&2

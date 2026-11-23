@@ -12,6 +12,7 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 
 #include <optional>
 #include <type_traits>
@@ -27,7 +28,7 @@ struct binary_op_common_type {};
 template <typename L, typename R>
   requires(has_common_type_v<L, R>)
 struct binary_op_common_type<L, R> {
-  using type = std::common_type_t<L, R>;
+  using type = cuda::std::common_type_t<L, R>;
 };
 
 template <cudf::concepts::fixed_point L, cuda::std::floating_point R>

@@ -90,6 +90,28 @@ def patch_testing_functions():
     pytest.raises = replace_kwargs({"match": None})(pytest.raises)
 
 
+# TODO: Remove this fixture once we test with pandas 3.1 or later.
+# https://github.com/pandas-dev/pandas/pull/68071
+@pytest.fixture(autouse=True)
+def restore_plotting_options(request):
+    """Restore pandas plotting options after tests that use ``mpl_cleanup``."""
+    # pandas' matplotlib cleanup restores figures and Matplotlib settings,
+    # but plotting options are a separate mutable global. Preserve them so
+    # tests that change xaxis.compat do not affect later plots on a worker.
+    if "mpl_cleanup" not in request.fixturenames:
+        yield
+        return
+
+    from pandas.plotting import plot_params
+
+    original = plot_params.copy()
+    try:
+        yield
+    finally:
+        plot_params.clear()
+        plot_params.update(original)
+
+
 # Node ids (matched by substring) whose only discrepancy from pandas is a
 # small (~1e-6) GPU-vs-CPU floating-point difference in transcendental numpy
 # ufuncs. Matching tests are tagged with the ``tolerant_index_compare`` marker
@@ -213,7 +235,6 @@ NODEIDS_THAT_FAIL = {
     "tests/arrays/floating/test_construction.py::test_to_array_none_is_nan[False-a3-b3]": "AssertionError: ExtensionArray NA mask are different",
     "tests/arrays/floating/test_construction.py::test_to_array_none_is_nan[False-a4-b4]": "AssertionError: ExtensionArray NA mask are different",
     "tests/arrays/floating/test_repr.py::test_frame_repr[Float32Dtype]": "AssertionError: assert '            ...  0.100000001' == '      A\n0  <NA>\n1   0.1'",
-    "tests/arrays/floating/test_to_numpy.py::test_to_numpy[False-series]": "AssertionError: numpy array are different",
     "tests/arrays/floating/test_to_numpy.py::test_to_numpy_copy": "TODO: Add a reason for failure",
     "tests/arrays/integer/test_arithmetic.py::test_values_multiplying_large_series_by_NA": "TODO: Add a reason for failure",
     "tests/arrays/integer/test_comparison.py::TestComparisonOps::test_ufunc_with_out[Int16Dtype]": "TODO: Add a reason for failure",
@@ -605,27 +626,6 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummax-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cummin-True]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_accumulate_series[bool-cumprod-True]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-eq]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-ne]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-ge]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-gt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-le]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-lt]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-ne]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_groupby_agg_extension[decimal128(7, 3)]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-False]": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::TestArrowArray::test_reduce_frame[decimal128(7, 3)-mean-True]": "cudf returns float to match duckdb/Polars",
@@ -682,7 +682,6 @@ NODEIDS_THAT_FAIL = {
     "tests/extension/test_arrow.py::test_str_extract_non_symbolic": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_str_repeat_unsupported": "TODO: Add a reason for failure",
     "tests/extension/test_arrow.py::test_str_replace_unsupported[pat-b]": "TODO: Add a reason for failure",
-    "tests/extension/test_arrow.py::test_timestamp_vs_dt64_comparison": "AssertionError: Attributes of Series are different",
     "tests/extension/test_categorical.py::Test2DCompat::test_copy_order": "TODO: Add a reason for failure",
     "tests/extension/test_categorical.py::TestCategorical::test_astype_own_type[False]": "TODO: Add a reason for failure",
     "tests/extension/test_categorical.py::TestCategorical::test_memory_usage": "AssertionError",
@@ -5376,9 +5375,6 @@ NODEIDS_TO_SKIP: dict[str, str] = {
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint32-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint32), but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint64-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint64), but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_arith_series_with_scalar[uint8-__rpow__]": "pandas xfails (reason: GH#29997: 1**pandas.NA == 1 while 1**pyarrow.NA == NULL for uint8), but xpasses with cudf.pandas",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ms]-eq]": "Flaky/order-dependent",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[s]-eq]": "Flaky/order-dependent",
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[us]-eq]": "Flaky/order-dependent",
     "tests/extension/test_arrow.py::TestArrowArray::test_concat_mixed_dtypes[decimal128(7, 3)]": "pandas xfails, but xpasses with cudf.pandas",
     "tests/extension/test_arrow.py::TestArrowArray::test_from_sequence_pa_array[binary]": "Tests private pandas APIs, for example the _pa_array attribute",
     "tests/extension/test_arrow.py::TestArrowArray::test_from_sequence_pa_array[bool]": "Tests private pandas APIs, for example the _pa_array attribute",
@@ -12228,7 +12224,6 @@ NODEIDS_TO_SKIP: dict[str, str] = {
 #: unsharded nightly and local runs keep exercising them -- skipping them
 #: everywhere would quietly drop the coverage instead of narrowing it.
 NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
-    "tests/extension/test_arrow.py::TestArrowArray::test_compare_array[timestamp[ns]-eq]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     # Failing in sharded pandas-tests CI run 32294121723 (shard 1, job
     # 96216291366). Nondeterministic rather than a deterministic
     # incompatibility: test_stack_multiple_out_of_bounds[True] and the
@@ -12248,81 +12243,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[python]-min-False-False-0]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[python]-min-True-False-1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/indexes/multi/test_formats.py::TestRepr::test_tuple_width": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[120min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[3M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[60min]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_plot_period_index_makes_no_right_shift[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_scatter_line_xticks": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame.py::TestDataFramePlots::test_xcompat_plot_period": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/frame/test_frame_subplots.py::TestDataFramePlotsSubplots::test_subplots_timeseries[area]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/frame/test_frame_subplots.py::TestDataFramePlotsSubplots::test_subplots_timeseries[line]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_axis_limits[obj1]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_business_freq": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_check_xticks_rot": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_annual": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_daily": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_hourly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_monthly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_monthly_long": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_finder_quarterly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_format_timedelta_ticks_wide[s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_format_timedelta_ticks_wide[us]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[1B30Min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[D]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[QE-DEC]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[W]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[YE]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[min]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_frame[s]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[1B30Min]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[ME]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[W]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[YE]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_datetime_series[s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[D]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[ME]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_inferred_freq[s]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[D]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[ME]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[QE]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[W]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[min]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_frame[s]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[1s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[3s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[4D]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[5min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_frame[8W]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[11M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[1s]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[3Y]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[3s]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[4D]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[5min]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_mlt_series[7h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[M]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[Q]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[W]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[Y]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[h]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_line_plot_period_series[min]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_hf_first": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_lf_first": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_lf_first_hourly": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_regular_first": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_mixed_freq_shared_ax": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_upsample": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_secondary_y_ts": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_to_weekly_resampling_disallow_how_kwd": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_ts_plot_format_coord[D-t = 2014-01-01  y = 1.000000]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_datetimelike.py::TestTSPlot::test_ts_plot_format_coord[YE-DEC-t = 2014  y = 1.000000]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/plotting/test_series.py::TestSeriesPlots::test_ts_area_lim": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-partition2-object]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",

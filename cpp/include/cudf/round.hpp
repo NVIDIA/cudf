@@ -40,6 +40,10 @@ enum class rounding_method : int32_t { HALF_UP, HALF_EVEN };
  * `decimal32` and `decimal64` numbers. For `decimal32` and `decimal64` numbers, negated
  * `numeric::scale` is equivalent to `decimal_places`.
  *
+ * For integer columns, if the requested power of ten is too large for the column's type, the
+ * result is zero. For example, rounding an INT8 value of 100 to the nearest 1000 returns 0.
+ * Null values remain null.
+ *
  * Example:
  * ```
  * using namespace cudf;
@@ -78,6 +82,10 @@ enum class rounding_method : int32_t { HALF_UP, HALF_EVEN };
  *
  * Supports HALF_UP and HALF_EVEN rounding for integer and fixed-point (decimal)
  * numbers. For decimal numbers, negated `numeric::scale` is equivalent to `decimal_places`.
+ *
+ * For integer columns, if the requested power of ten is too large for the column's type, the
+ * result is zero. For example, rounding an INT8 value of 100 to the nearest 1000 returns 0.
+ * Null values remain null.
  *
  * Example:
  * ```

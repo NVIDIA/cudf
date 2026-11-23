@@ -16,7 +16,7 @@ namespace datetime {
  * @brief Types of datetime components that may be extracted.
  * @ingroup datetime_extract
  */
-enum class datetime_component : int8_t {
+enum class datetime_component : uint8_t {
   YEAR        = 0,
   MONTH       = 1,
   DAY         = 2,
@@ -33,7 +33,7 @@ enum class datetime_component : int8_t {
  * @brief Fixed frequencies supported by datetime rounding functions ceil, floor, round.
  * @ingroup datetime_compute
  */
-enum class rounding_frequency : int8_t {
+enum class rounding_frequency : int32_t {
   DAY         = 0,
   HOUR        = 1,
   MINUTE      = 2,

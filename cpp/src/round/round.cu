@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/concepts>
+#include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -150,9 +151,20 @@ std::unique_ptr<column> round_with(column_view const& input,
                                               mr);
 
   auto out_view = result->mutable_view();
+  // An unrepresentable rounding increment produces zero, as for fixed-point inputs.
+  // Compare before negating decimal_places so INT32_MIN is also handled safely.
+  if (cuda::std::integral<T> && decimal_places < -cuda::std::numeric_limits<T>::digits10) {
+    thrust::uninitialized_fill(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      out_view.begin<T>(),
+      out_view.end<T>(),
+      T{0});
+    return result;
+  }
+
   T n;
   if constexpr (cuda::std::integral<T>) {
-    n = numeric::detail::ipow<T, numeric::Radix::BASE_10>(std::abs(decimal_places));
+    n = numeric::detail::ipow<T, numeric::Radix::BASE_10>(-decimal_places);
   } else {
     n = std::pow(10, std::abs(decimal_places));
   }

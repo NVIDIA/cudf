@@ -519,6 +519,27 @@ jobs:
             jq '{status, errors, differences: (.differences | map_values({added: (.added | length), lost_gpu_execution: (.lost_gpu_execution | length), stale: (.stale | length)}))}' audit/run-list-drift.json
             exit 1
           }
+  cudf-polars-run-list-update:
+    needs: cudf-polars-test-summary
+    if: ${{ inputs.build_type == 'nightly' && !cancelled() && needs.cudf-polars-test-summary.result != 'skipped' }}
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+      - name: Propose a run list update
+        env:
+          # The proposal is authored by the identity of this token. Use the
+          # rapids-bot token when the secret exists, else the workflow's own.
+          GH_TOKEN: ${{ secrets.RAPIDS_BOT_TOKEN || github.token }}
+          TESTED_SHA: ${{ inputs.sha }}
+        run: ci/propose_cudf_polars_run_list_update.sh
   narwhals-tests:
     permissions:
       actions: read

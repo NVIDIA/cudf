@@ -260,7 +260,16 @@ cudf::size_type expression_parser::visit(operation const& expr)
     }
   });
   // Resolve expression type
-  auto const data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  CUDF_EXPECTS(op != ast_operator::CAST_TO_DECIMAL128,
+               "CAST_TO_DECIMAL128 is not supported by the AST interpreter.",
+               cudf::data_type_error);
+  auto data_type = cudf::ast::detail::ast_operator_return_type(op, operand_types);
+  if (op == ast_operator::RESCALE) {
+    CUDF_EXPECTS(expr.get_target_scale().has_value(),
+                 "RESCALE requires target scale metadata.",
+                 std::invalid_argument);
+    data_type = cudf::data_type{data_type.id(), expr.get_target_scale().value()};
+  }
   _operators.push_back(op);
   _operator_arities.push_back(cudf::ast::detail::ast_operator_arity(op));
   // Push data reference
@@ -278,8 +287,7 @@ cudf::size_type expression_parser::visit(operation const& expr)
       if (!cudf::is_fixed_width(data_type)) {
         CUDF_FAIL(
           "The output data type is not a fixed-width type but must be stored in an intermediate.");
-      } else if (cudf::size_of(data_type) > (_has_nulls ? sizeof(IntermediateDataType<true>)
-                                                        : sizeof(IntermediateDataType<false>))) {
+      } else if (cudf::size_of(data_type) > sizeof(IntermediateDataType<false>)) {
         CUDF_FAIL("The output data type is too large to be stored in an intermediate.");
       }
       return detail::device_data_reference(

@@ -6,8 +6,8 @@
 package ai.rapids.cudf;
 
 /**
- * Join semantics to apply when filtering equality-join gather maps of the corresponding kind.
- * See {@link Table#filterJoinGatherMaps} for the input-map contract.
+ * The type of equality join. It sets the join semantics for {@link Table#filterJoinGatherMaps}
+ * and the type of {@link JoinMatchContext} to create.
  */
 public enum JoinKind {
   /** Retain only row pairs that satisfy the condition. */

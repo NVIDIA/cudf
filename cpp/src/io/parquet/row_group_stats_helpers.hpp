@@ -145,7 +145,7 @@ struct row_group_stats_caster : public stats_caster_base {
             auto const ignore_inexact_min_max =
               ignore_inexact_stats and
               (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
-              stats.min_value.has_value() and stats.min_value == stats.max_value;
+              min_value->has_value() and *min_value == *max_value;
             if (ignore_int96_min_max or ignore_inexact_min_max) {
               host_column<T>::set_min_max(
                 min, max, stats_idx, std::nullopt, std::nullopt, false, {});

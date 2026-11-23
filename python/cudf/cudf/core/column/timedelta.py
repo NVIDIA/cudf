@@ -262,6 +262,33 @@ class TimeDeltaColumn(TemporalBaseColumn):
             )
         if isinstance(dtype, np.dtype) and dtype.kind == "U":
             dtype = np.dtype("object")
+        if isinstance(self.dtype, pd.ArrowDtype) and isinstance(
+            dtype, pd.StringDtype
+        ):
+            # pandas formats each Arrow duration as a Timedelta scalar, including
+            # the time on whole days and a positive time after a negative day.
+            ticks = self.as_numerical_column(self._UNDERLYING_DTYPE)
+            ticks = ticks.copy_if_else(
+                plc.Scalar.from_py(None, dtype=plc.DataType(plc.TypeId.INT64)),
+                ticks != pd.NaT.value,
+            )
+            ticks_per_day = (
+                unit_to_nanoseconds_conversion["D"]
+                // unit_to_nanoseconds_conversion[self.time_unit]
+            )
+            days = (ticks // ticks_per_day).as_string_column(dtype)
+            time_of_day = (ticks % ticks_per_day).as_timedelta_column(
+                self.dtype.numpy_dtype
+            )
+            clock = time_of_day._as_string_pandas_compat(
+                dtype,
+                "%H:%M:%S",
+                has_fraction=self.time_unit != "s",
+                has_nanos=self.time_unit == "ns",
+            )
+            return days.concatenate(
+                [clock], " days ", None
+            ).replace_with_backrefs(r"^(-\d+ days )", r"\1+")
         components = self.components
         has_hours = components["hours"].any()
         has_minutes = components["minutes"].any()
@@ -277,7 +304,7 @@ class TimeDeltaColumn(TemporalBaseColumn):
         has_fraction = has_millis or has_micros or has_nanos
         return self._as_string_pandas_compat(
             dtype,
-            has_subday=has_subday,
+            "%D days %H:%M:%S" if has_subday or has_fraction else "%D days",
             has_fraction=has_fraction,
             has_nanos=has_nanos,
         )
@@ -285,17 +312,12 @@ class TimeDeltaColumn(TemporalBaseColumn):
     def _as_string_pandas_compat(
         self,
         dtype: DtypeObj,
+        fmt: str,
         *,
-        has_subday: bool,
         has_fraction: bool,
         has_nanos: bool,
     ) -> StringColumn:
         """Convert to string using pandas-compatible formatting."""
-        if not (has_subday or has_fraction):
-            fmt = "%D days"
-        else:
-            fmt = "%D days %H:%M:%S"
-
         with self.access(mode="read", scope="internal"):
             # Determine which pylibcudf column to format: for ms we
             # cast to us so %S natively outputs 6 fractional digits.

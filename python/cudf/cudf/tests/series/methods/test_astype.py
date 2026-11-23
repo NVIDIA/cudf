@@ -1060,6 +1060,33 @@ def test_series_astype_datetime_to_string(inp):
     assert expect == got
 
 
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+def test_arrow_duration_astype_nullable_string(unit, storage):
+    ticks_per_day = int(np.timedelta64(1, "D") / np.timedelta64(1, unit))
+    bounds = np.iinfo(np.int64)
+    ticks = [
+        bounds.min,
+        bounds.min + 1,
+        -ticks_per_day,
+        -1,
+        0,
+        1,
+        1000,
+        ticks_per_day,
+        bounds.max,
+        None,
+    ]
+    durations = pa.array(ticks, type=pa.duration(unit))
+    series = pd.Series(durations, dtype=pd.ArrowDtype(durations.type))
+    dtype = pd.StringDtype(storage=storage)
+
+    result = cudf.from_pandas(series).astype(dtype)
+
+    assert result.dtype == dtype
+    assert_eq(series.astype(dtype), result)
+
+
 @pytest.mark.parametrize(
     "as_dtype",
     [

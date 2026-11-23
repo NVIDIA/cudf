@@ -306,6 +306,7 @@ hybrid_scan_reader_impl::prepare_dictionaries(
 
       auto const [clock_rate, logical_type] = parquet::detail::conversion_info(
         parquet::detail::to_type_id(schema,
+                                    _extended_metadata->arrow_type(col_schema_idx),
                                     options.is_enabled_convert_strings_to_categories(),
                                     options.get_timestamp_type().id(),
                                     options.get_decimal_width()),

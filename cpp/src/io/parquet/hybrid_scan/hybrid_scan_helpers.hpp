@@ -40,7 +40,6 @@ using parquet::detail::simplified_expression_opt;
  */
 struct metadata : public metadata_base {
   explicit metadata(std::span<uint8_t const> footer_bytes);
-  explicit metadata(FileMetaData const& other) { static_cast<FileMetaData&>(*this) = other; }
   metadata(metadata const& other)            = delete;
   metadata(metadata&& other)                 = default;
   metadata& operator=(metadata const& other) = delete;

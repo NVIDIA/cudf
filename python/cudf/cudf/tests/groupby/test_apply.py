@@ -657,6 +657,20 @@ def test_groupby_apply_return_df(func):
     assert_groupby_results_equal(expect, got)
 
 
+def test_groupby_apply_return_input_frame():
+    pdf = pd.DataFrame({"a": [1, 1, 2, 2], "b": [1, 2, 3, 4]})
+    gdf = cudf.from_pandas(pdf)
+
+    expect = pdf.groupby("a", group_keys=False).apply(
+        lambda group: group, include_groups=False
+    )
+    got = gdf.groupby("a", group_keys=False).apply(
+        lambda group: group, engine="auto", include_groups=False
+    )
+
+    assert_groupby_results_equal(expect, got)
+
+
 @pytest.mark.parametrize("as_index", [True, False])
 def test_groupby_apply_return_reindexed_series(as_index):
     def gdf_func(df):

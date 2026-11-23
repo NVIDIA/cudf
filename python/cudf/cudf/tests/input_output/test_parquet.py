@@ -3965,6 +3965,63 @@ def test_parquet_roundtrip_time_delta(store_schema):
         assert_eq(df, pd.read_parquet(buffer))
 
 
+@pytest.mark.parametrize(
+    "time_type, ticks",
+    [
+        (pa.time32("ms"), [1, None, 86_399_999]),
+        # fastparquet writes signed and multi-day timedeltas as TIME_MICROS.
+        (pa.time64("us"), [234_334_353, None, -1, 86_400_000_001]),
+        (pa.time64("ns"), [1, None, 86_399_999_999_999]),
+    ],
+    ids=["ms", "us", "ns"],
+)
+@pytest.mark.parametrize("engine", ["cudf", "pyarrow"])
+def test_parquet_reader_time_as_duration(time_type, ticks, engine):
+    table = pa.table(
+        {
+            "elapsed": pa.array(ticks, type=time_type),
+            "all_null": pa.nulls(len(ticks), type=time_type),
+        }
+    )
+    buffer = BytesIO()
+    pq.write_table(table, buffer, row_group_size=2)
+
+    with _hide_pyarrow_parquet_cpu_warnings(engine):
+        actual = cudf.read_parquet(buffer, engine=engine)
+
+    dtype = f"timedelta64[{time_type.unit}]"
+    expected = pd.DataFrame(
+        {
+            "elapsed": np.array(ticks, dtype=dtype),
+            "all_null": np.full(len(ticks), "NaT", dtype=dtype),
+        }
+    )
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize("engine", ["cudf", "pyarrow"])
+def test_parquet_reader_time_index_projection(engine):
+    ticks = [1, None, 3]
+    expected = pd.DataFrame(
+        {"value": [10, 20, 30], "other": [0, 0, 0]},
+        index=pd.Index(
+            np.array(ticks, dtype="timedelta64[ns]"), name="elapsed"
+        ),
+    )
+    table = pa.Table.from_pandas(expected)
+    table = table.set_column(
+        table.schema.get_field_index("elapsed"),
+        "elapsed",
+        pa.array(ticks, type=pa.time64("ns")),
+    )
+    buffer = BytesIO()
+    pq.write_table(table, buffer)
+
+    with _hide_pyarrow_parquet_cpu_warnings(engine):
+        actual = cudf.read_parquet(buffer, columns=["value"], engine=engine)
+    assert_eq(expected[["value"]], actual)
+
+
 def test_parquet_reader_malformed_file(datadir):
     fname = datadir / "nested-unsigned-malformed.parquet"
 
@@ -4034,16 +4091,32 @@ def test_parquet_reader_multiindex():
         {"A": [1, 2, 3]},
         index=pd.MultiIndex.from_tuples([("a", 1), ("a", 2), ("b", 1)]),
     )
+    expected.attrs = {"source": "pandas"}
     file_obj = BytesIO()
     expected.to_parquet(file_obj, engine="pyarrow")
     with pytest.warns(UserWarning):
         actual = cudf.read_parquet(file_obj, engine="pyarrow")
     assert_eq(actual, expected)
+    assert actual.attrs == expected.attrs
 
 
 def test_parquet_reader_engine_error():
     with pytest.raises(ValueError):
         cudf.read_parquet(BytesIO(), engine="abc")
+
+
+def test_parquet_pyarrow_single_file_without_partitioning(tmp_path):
+    directory = tmp_path / "value=100"
+    directory.mkdir()
+    path = directory / "data.parquet"
+    expected = pd.DataFrame({"value": np.array([33, 55], dtype="uint16")})
+    expected.to_parquet(path, engine="pyarrow", index=False)
+
+    with _hide_pyarrow_parquet_cpu_warnings("pyarrow"):
+        actual = cudf.read_parquet(
+            path, engine="pyarrow", dataset_kwargs={"partitioning": None}
+        )
+    assert_eq(actual, expected)
 
 
 @pytest.mark.skipif(

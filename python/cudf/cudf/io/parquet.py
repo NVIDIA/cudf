@@ -8,6 +8,7 @@ import itertools
 import json
 import math
 import operator
+import os
 import shutil
 import tempfile
 import warnings
@@ -1535,21 +1536,58 @@ def _read_parquet(
                 )
             return df
     else:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        from pandas.io._util import arrow_table_to_pandas
+        from pandas.util._validators import check_dtype_backend
+
         if (
             isinstance(filepaths_or_buffers, list)
             and len(filepaths_or_buffers) == 1
         ):
             filepaths_or_buffers = filepaths_or_buffers[0]
-
-        return DataFrame(
-            pd.read_parquet(
-                filepaths_or_buffers,
-                columns=columns,
-                engine=engine,
+        pandas_kwargs = {
+            key: kwargs.pop(key)
+            for key in ("dtype_backend", "to_pandas_kwargs")
+            if key in kwargs
+        }
+        if "dtype_backend" in pandas_kwargs:
+            check_dtype_backend(pandas_kwargs["dtype_backend"])
+        with ExitStack() as stack:
+            source = filepaths_or_buffers
+            if isinstance(source, str) and os.path.isfile(source):
+                # Partition discovery is already handled by _process_dataset.
+                # As in pandas, read a single local file without its directory.
+                source = stack.enter_context(open(source, "rb"))
+            elif isinstance(source, bytes):
+                source = pa.BufferReader(source)
+            table = pq.read_table(
+                source,
                 *args,
+                columns=columns,
+                use_pandas_metadata=True,
                 **kwargs,
             )
-        )
+        for i, field in enumerate(table.schema):
+            if pa.types.is_time(field.type):
+                # The native Parquet reader represents TIME as a duration.
+                # Convert the stored ticks before pandas boxes them as
+                # datetime.time, which cannot represent days or nanoseconds.
+                ticks = table.column(i)
+                if pa.types.is_time32(field.type):
+                    ticks = ticks.cast(pa.int32())
+                duration = pa.duration(field.type.unit)
+                table = table.set_column(
+                    i,
+                    field.with_type(duration),
+                    ticks.cast(pa.int64()).cast(duration),
+                )
+
+        attrs = (table.schema.metadata or {}).get(b"PANDAS_ATTRS")
+        result = DataFrame(arrow_table_to_pandas(table, **pandas_kwargs))
+        if attrs is not None:
+            result.attrs = json.loads(attrs)
+        return result
 
 
 @ioutils.doc_to_parquet()

@@ -233,6 +233,8 @@ Notes
   low memory parquet reader being used. This can make it easier to read large
   parquet datasets on systems with limited GPU memory. See all :ref:`available options
   <api.options>`.
+- Both engines read top-level Parquet ``TIME`` columns as timedeltas in the
+  unit stored in the file (milliseconds, microseconds, or nanoseconds).
 
 Examples
 --------

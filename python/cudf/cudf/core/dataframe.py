@@ -1391,12 +1391,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if second_columns is not None:
+            nrows = col_accessor.nrows if col_accessor else len(index)
             new_data = {
                 second_label: col_accessor[second_label]
                 if second_label in col_accessor
-                else column_empty(
-                    col_accessor.nrows, dtype=DEFAULT_STRING_DTYPE
-                )
+                else column_empty(nrows, dtype=DEFAULT_STRING_DTYPE)
                 for second_label in second_columns
             }
             col_accessor = ColumnAccessor(

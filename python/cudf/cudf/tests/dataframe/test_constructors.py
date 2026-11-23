@@ -157,12 +157,17 @@ def test_init_dict_selected_columns_preserve_labels(label):
 
 
 @pytest.mark.parametrize("labels", [[None, 1], [None], [1, None]])
-def test_init_dict_selected_columns_object_index_inference(labels):
+@pytest.mark.parametrize("index", [None, [10, 20]])
+def test_init_dict_selected_columns_object_index_inference(labels, index):
     data = {None: [10, 20], 1: [30, 40]}
     columns = pd.Index(labels, dtype=object)
 
-    expected = pd.DataFrame(data, columns=columns, dtype="float64")
-    result = cudf.DataFrame(data, columns=columns, dtype="float64")
+    expected = pd.DataFrame(
+        data, index=index, columns=columns, dtype="float64"
+    )
+    result = cudf.DataFrame(
+        data, index=index, columns=columns, dtype="float64"
+    )
 
     assert_eq(expected, result)
 

@@ -72,7 +72,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         void enable_use_pandas_metadata(bool val) except +libcudf_exception_handler
         void set_timestamp_type(data_type type) except +libcudf_exception_handler
-        void set_decimal_width(type_id width) noexcept
+        void set_decimal_width(type_id width) except +libcudf_exception_handler
         void enable_case_sensitive_names(bool val) noexcept
         void enable_prepend_source_index_column(bool val) noexcept
         void enable_output_dict_columns(bool val) noexcept
@@ -122,7 +122,7 @@ cdef extern from "cudf/io/parquet.hpp" namespace "cudf::io" nogil:
         ) except +libcudf_exception_handler
         parquet_reader_options_builder& decimal_width(
             type_id width
-        ) noexcept
+        ) except +libcudf_exception_handler
         parquet_reader_options_builder& filter(
             const expression & f
         ) except +libcudf_exception_handler

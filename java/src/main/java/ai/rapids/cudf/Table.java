@@ -2830,7 +2830,7 @@ public final class Table implements AutoCloseable {
         target.getNativeView()));
   }
 
-  private static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
+  static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
     long bufferSize = gatherMapData[0];
     long leftAddr = gatherMapData[1];
     long leftHandle = gatherMapData[2];
@@ -3040,6 +3040,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = leftHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a left equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext leftJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.LEFT);
   }
 
   /**
@@ -3333,6 +3344,17 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Probes this table once for an inner equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext innerJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.INNER);
+  }
+
+  /**
    * Computes the number of rows from the result of an inner join between two tables when a
    * conditional expression is true. It is assumed this table instance holds the columns from
    * the left table, and the table argument represents the columns from the right table.
@@ -3578,6 +3600,19 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = fullHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a full equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval. Collect the partition results and call
+   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[]...)}
+   * to append the unmatched right rows.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext fullJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.FULL);
   }
 
   /**

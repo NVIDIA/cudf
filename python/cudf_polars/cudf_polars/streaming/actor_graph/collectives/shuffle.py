@@ -53,7 +53,7 @@ from cudf_polars.streaming.shuffle import Shuffle
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import Iterator
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.packed_data import PackedData
@@ -185,7 +185,11 @@ class ShuffleManager:
             )
 
         async def insert_index(
-            self, chunk: TableChunk, partition_map: TableChunk
+            self,
+            chunk: TableChunk,
+            partition_map: TableChunk,
+            *,
+            ir_context: IRExecutionContext,
         ) -> None:
             """
             Partition chunk by a separate single-column partition-map and insert.
@@ -199,6 +203,8 @@ class ShuffleManager:
                 Single-column ``TableChunk`` whose integer values give the
                 target partition ID for each row. Must be row-aligned with
                 ``chunk``.
+            ir_context
+                The IR execution context.
             """
             br = self._manager.context.br()
             # As in `insert_hash_keys`, this covers the reorder plus the pack.
@@ -213,7 +219,7 @@ class ShuffleManager:
                 chunk.table_view(), chunk.stream, br
             )
             with stream_ordered_after(
-                br.stream_pool.get_stream,
+                ir_context.get_cuda_stream,
                 upstreams=(chunk.stream, partition_map.stream),
             ) as stream:
                 partition_map_col = partition_map.table_view().columns()[0]
@@ -345,23 +351,24 @@ class LocalRepartitioner:
             shuffle.collective_id,
         )
 
-    async def _iter_chunks(self, stream: Stream) -> AsyncGenerator[plc.Table, None]:
+    def _iter_pieces(self) -> Iterator[Any]:
         for partition_id in self._global_shuffle.local_partitions():
-            for piece in self._global_shuffle.extract_pieces(partition_id):
-                # TODO: batch pieces up to target_partition_size before unpacking
-                pieces = [piece]
-                reservation = await reserve_memory(
-                    self._global_shuffle.context,
-                    py_unpack_and_concat_cost(pieces),
-                    # Representation change: the packed input is consumed as the
-                    # unpacked table is produced, at roughly the same size.
-                    net_memory_delta=0,
-                )
-                table = py_unpack_and_concat(
-                    pieces, stream=stream, br=self._br, reservation=reservation
-                )
-                if table.num_rows() > 0:
-                    yield table
+            yield from self._global_shuffle.extract_pieces(partition_id)
+
+    async def _unpack_table(self, piece: Any, stream: Stream) -> plc.Table | None:
+        # TODO: batch pieces up to target_partition_size before unpacking
+        pieces = [piece]
+        reservation = await reserve_memory(
+            self._global_shuffle.context,
+            py_unpack_and_concat_cost(pieces),
+            # Representation change: the packed input is consumed as the
+            # unpacked table is produced, at roughly the same size.
+            net_memory_delta=0,
+        )
+        table = py_unpack_and_concat(
+            pieces, stream=stream, br=self._br, reservation=reservation
+        )
+        return None if table.num_rows() == 0 else table
 
     async def repartition_by_hash(
         self, *, columns_to_hash: tuple[int, ...], stream: Stream
@@ -377,19 +384,22 @@ class LocalRepartitioner:
             CUDA stream for the unpack operation.
         """
         async with self._local_shuffle.inserting() as inserter:
-            async for table in self._iter_chunks(stream):
-                await inserter.insert_hash(
-                    TableChunk.from_pylibcudf_table(
+            for piece in self._iter_pieces():
+                table = await self._unpack_table(piece, stream)
+                if table is not None:
+                    chunk = TableChunk.from_pylibcudf_table(
                         table, stream, exclusive_view=True, br=self._br
-                    ),
-                    columns_to_hash,
-                )
+                    )
+                    del table
+                    await inserter.insert_hash(chunk, columns_to_hash)
+                    del chunk
 
     async def repartition_by_index(
         self,
         *,
         partition_col: int,
         stream: Stream,
+        ir_context: IRExecutionContext,
         drop_partition_col: bool = True,
     ) -> None:
         """
@@ -402,29 +412,41 @@ class LocalRepartitioner:
             local partition ID for each row.
         stream
             CUDA stream for the unpack operation.
+        ir_context
+            The IR execution context that provides the stream for the
+            reorder in ``insert_index``.
         drop_partition_col
             If ``True`` (default), the partition column is stripped from the
             payload before inserting. If ``False``, it is kept in the output.
         """
         async with self._local_shuffle.inserting() as inserter:
-            async for table in self._iter_chunks(stream):
+            for piece in self._iter_pieces():
+                table = await self._unpack_table(piece, stream)
+                if table is None:
+                    continue
                 cols = table.columns()
-                payload = plc.Table(
-                    [
-                        c
-                        for i, c in enumerate(cols)
-                        if not drop_partition_col or i != partition_col
-                    ]
+                payload = TableChunk.from_pylibcudf_table(
+                    plc.Table(
+                        [
+                            c
+                            for i, c in enumerate(cols)
+                            if not drop_partition_col or i != partition_col
+                        ]
+                    ),
+                    stream,
+                    exclusive_view=False,
+                    br=self._br,
                 )
-                partition_map = plc.Table([cols[partition_col]])
+                partition_map = TableChunk.from_pylibcudf_table(
+                    plc.Table([cols[partition_col]]),
+                    stream,
+                    exclusive_view=False,
+                    br=self._br,
+                )
                 await inserter.insert_index(
-                    TableChunk.from_pylibcudf_table(
-                        payload, stream, exclusive_view=True, br=self._br
-                    ),
-                    TableChunk.from_pylibcudf_table(
-                        partition_map, stream, exclusive_view=True, br=self._br
-                    ),
+                    payload, partition_map, ir_context=ir_context
                 )
+                del cols, table, payload, partition_map
 
     def local_partitions(self) -> list[int]:
         """Return the local partition IDs."""

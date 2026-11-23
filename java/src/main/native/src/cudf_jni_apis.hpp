@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,8 +8,21 @@
 #include "jni_utils.hpp"
 
 #include <cudf/contiguous_split.hpp>
+#include <cudf/join/join.hpp>
+#include <cudf/types.hpp>
+
+#include <rmm/device_uvector.hpp>
+
+#include <memory>
+#include <utility>
 
 namespace cudf::jni {
+
+// The JNI code casts ai.rapids.cudf.JoinKind.nativeId directly to cudf::join_kind.
+static_assert(static_cast<int32_t>(cudf::join_kind::INNER_JOIN) == 0 &&
+                static_cast<int32_t>(cudf::join_kind::LEFT_JOIN) == 1 &&
+                static_cast<int32_t>(cudf::join_kind::FULL_JOIN) == 2,
+              "cudf::join_kind values must match ai.rapids.cudf.JoinKind");
 
 /**
  * @brief Detach all columns from the specified table, and pointers to them as an array.
@@ -61,6 +74,23 @@ jlongArray convert_table_with_row_count_for_return(
   JNIEnv* env,
   std::unique_ptr<cudf::table>&& table_result,
   std::vector<std::unique_ptr<cudf::column>>&& extra_columns = {});
+
+/**
+ * @brief Convert a cudf gather map pair into the form that Java expects.
+ *
+ * @param env The JNI environment
+ * @param maps the left and right gather maps to release to Java
+ * @return a Java long array containing, at each index:
+ *   0: Size of each gather map in bytes
+ *   1: Device address of the gather map for the left table
+ *   2: Host address of the rmm::device_buffer instance that owns the left gather map data
+ *   3: Device address of the gather map for the right table
+ *   4: Host address of the rmm::device_buffer instance that owns the right gather map data
+ */
+jlongArray gather_maps_to_java(
+  JNIEnv* env,
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps);
 
 //
 // ContiguousTable APIs

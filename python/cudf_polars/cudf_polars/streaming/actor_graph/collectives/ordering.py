@@ -20,6 +20,7 @@ from cudf_streaming.channel_metadata import (
 )
 from cudf_streaming.partition_utils import (
     packed_data_from_cudf_packed_columns,
+    split_and_pack_cost,
     unpack_and_concat,
     unpack_and_concat_cost,
 )
@@ -193,6 +194,7 @@ def _trivial_ordering_metadata(
     context: Context,
     comm: Communicator,
     schema_ir: IR,
+    ir_context: IRExecutionContext,
     metadata: ChannelMetadata,
     keys: Sequence[OrderKey],
 ) -> ChannelMetadata | None:
@@ -207,7 +209,7 @@ def _trivial_ordering_metadata(
         existing_orderings = list(partitioning.inter_rank.orderings)
 
     dtypes = tuple(schema_ir.schema.values())
-    stream = context.br().stream_pool.get_stream()
+    stream = ir_context.get_cuda_stream()
     boundaries = TableChunk.from_pylibcudf_table(
         plc.Table(
             [make_empty_column(dtypes[key.column_index], stream) for key in keys]
@@ -352,7 +354,6 @@ async def extract_orderscheme_partitioning(
     boundaries, strict = _extract_boundaries_from_endpoint_rows(
         endpoint_table, num_partitions, stream
     )
-    del endpoint_table
     boundaries_chunk = TableChunk.from_pylibcudf_table(
         boundaries, stream, exclusive_view=True, br=context.br()
     )
@@ -400,7 +401,7 @@ async def ensure_ordering_metadata(
     ):
         if (
             extracted_metadata := _trivial_ordering_metadata(
-                context, comm, schema_ir, metadata, order_keys
+                context, comm, schema_ir, ir_context, metadata, order_keys
             )
         ) is not None:
             metadata = extracted_metadata
@@ -451,6 +452,7 @@ class _RoutingPlan:
         cls,
         context: Context,
         comm: Communicator,
+        ir_context: IRExecutionContext,
         input_ordering: Ordering,
         output_ordering: Ordering,
         output_boundaries: TableChunk,
@@ -464,7 +466,7 @@ class _RoutingPlan:
         else:
             input_boundary_chunk = input_ordering.get_boundaries(context.br())
             with stream_ordered_after(
-                context.br().stream_pool.get_stream,
+                ir_context.get_cuda_stream,
                 upstreams=(input_boundary_chunk.stream, output_boundaries.stream),
             ) as stream:
                 lower_positions, upper_positions = _boundary_search_positions(
@@ -738,6 +740,7 @@ class _OutputPartitionBuffer:
     def __init__(
         self,
         context: Context,
+        ir_context: IRExecutionContext,
         ch_in: Channel[TableChunk],
         boundary_chunk: TableChunk,
         input_ordering: Ordering,
@@ -746,6 +749,7 @@ class _OutputPartitionBuffer:
         input_rows_ordered: bool,
     ) -> None:
         self.context = context
+        self.ir_context = ir_context
         self.ch_in = ch_in
         self.boundary_chunk = boundary_chunk
         self.input_ordering = input_ordering
@@ -794,7 +798,7 @@ class _OutputPartitionBuffer:
             with (
                 opaque_memory_usage(extra),
                 stream_ordered_after(
-                    self.context.br().stream_pool.get_stream,
+                    self.ir_context.get_cuda_stream,
                     upstreams=(chunk.stream, self.boundary_chunk.stream),
                 ) as stream,
             ):
@@ -823,6 +827,7 @@ class _OutputPartitionBuffer:
                         piece_pid,
                         _copy_to_owned_chunk(piece, stream, self.context.br()),
                     )
+            del chunk, table, piece
         return self.pending.pop(pid, None)
 
     async def assert_input_drained(self) -> None:
@@ -836,11 +841,7 @@ class _OutputPartitionBuffer:
             if msg is None:
                 self.input_done = True
                 break
-            rows = (
-                TableChunk.from_message(msg, br=self.context.br())
-                .table_view()
-                .num_rows()
-            )
+            rows = TableChunk.from_message(msg, br=self.context.br()).shape[0]
             if rows == 0:
                 continue
             raise RuntimeError(
@@ -896,18 +897,23 @@ async def _send_remote_partition(
         ir_context,
         chunks,
     )
+    # A single stored piece is returned as is and may be spilled.
+    chunk, _ = await make_table_chunks_available_or_wait(
+        context, chunk, reserve_extra=0, net_memory_delta=0
+    )
     stream = chunk.stream
+    table = chunk.table_view()
+    pack_bytes = (
+        split_and_pack_cost(table, stream, context.br()) if table.num_rows() > 0 else 0
+    )
+    # The packed copy replaces the chunk, which is freed on return.
+    with opaque_memory_usage(
+        await reserve_memory(context, size=pack_bytes, net_memory_delta=0)
+    ):
+        packed = pack(table, stream, mr=context.br().device_mr)
     exchange.insert(
         partition_owner(pid, comm.nranks, npartitions),
-        packed_data_from_cudf_packed_columns(
-            pack(
-                chunk.table_view(),
-                stream,
-                mr=context.br().device_mr,
-            ),
-            stream,
-            context.br(),
-        ),
+        packed_data_from_cudf_packed_columns(packed, stream, context.br()),
     )
 
 
@@ -950,10 +956,11 @@ async def _adjust_ordering_impl(
     """Adjust ordering while using exchange only for remote dependencies."""
     output_boundaries = output_ordering.get_boundaries(context.br())
     plan = _RoutingPlan.from_orderings(
-        context, comm, input_ordering, output_ordering, output_boundaries
+        context, comm, ir_context, input_ordering, output_ordering, output_boundaries
     )
     buffer = _OutputPartitionBuffer(
         context,
+        ir_context,
         ch_in,
         output_boundaries,
         input_ordering,
@@ -1025,7 +1032,7 @@ async def _adjust_ordering_impl(
     if exchange is not None:
         for source_rank in plan.remote_sources:
             remote_pieces: dict[int, ChunkStore] = {}
-            stream = context.br().stream_pool.get_stream()
+            stream = ir_context.get_cuda_stream()
             expected_pids = _remote_pids_from_source(plan, source_rank, comm.rank)
             for pid, packed in zip(
                 expected_pids,

@@ -840,7 +840,7 @@ class _OrderedGroupBy:
         keys: tuple[OrderKey, ...],
         stream: Stream,
         boundaries: TableChunk | None,
-        context: Context,
+        ir_context: IRExecutionContext,
     ) -> dict[int, int]:
         """Route leading runs using gathered keys and optional rank boundaries."""
         first_keys = plc.Table(gathered.columns()[1:])
@@ -859,7 +859,7 @@ class _OrderedGroupBy:
             }
 
         with stream_ordered_after(
-            context.br().stream_pool.get_stream,
+            ir_context.get_cuda_stream,
             upstreams=(stream, boundaries.stream),
         ) as search_stream:
             boundary_table = boundaries.table_view()
@@ -920,7 +920,12 @@ class _OrderedGroupBy:
             return {}, chunk
         if self.inter_rank_ordering is None:
             routes = await self.ir_context.to_thread(
-                self._route_first_keys, gathered, self.keys, stream, None, self.context
+                self._route_first_keys,
+                gathered,
+                self.keys,
+                stream,
+                None,
+                self.ir_context,
             )
             return routes, chunk
 
@@ -937,7 +942,7 @@ class _OrderedGroupBy:
                 self.keys,
                 stream,
                 boundaries,
-                self.context,
+                self.ir_context,
             )
         return routes, chunk
 
@@ -1404,7 +1409,7 @@ async def groupby_actor(
         # RapidsMPF permits ID reuse after AllGather.extract_all completes.
         # Any strategy-selection AllGather finishes before reduction starts.
         if output_count == 1:
-            await _tree_reduce(
+            tree_reduce = _tree_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1416,6 +1421,8 @@ async def groupby_actor(
                 aggregated=aggregated,
                 tracer=tracer,
             )
+            del aggregated
+            await tree_reduce
         elif ordered_keys is not None:
             local_count = (
                 min(2, max(1, aggregated.shape[0]))
@@ -1456,7 +1463,7 @@ async def groupby_actor(
             del aggregated
             await ordered_run
         else:
-            await _shuffle_reduce(
+            shuffle_reduce = _shuffle_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1472,6 +1479,8 @@ async def groupby_actor(
                 input_drained=input_drained,
                 tracer=tracer,
             )
+            del aggregated
+            await shuffle_reduce
 
 
 @generate_ir_sub_network.register(GroupBy)

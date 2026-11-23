@@ -626,6 +626,23 @@ std::vector<cudf::null_order> resolve_null_precedence(JNIEnv* env,
   return null_precedence;
 }
 
+jlongArray gather_maps_to_java(
+  JNIEnv* env,
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
+{
+  // release the underlying device buffer to Java
+  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
+  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
+  cudf::jni::native_jlongArray result(env, 5);
+  result[0] = static_cast<jlong>(left_map_buffer->size());
+  result[1] = ptr_as_jlong(left_map_buffer->data());
+  result[2] = release_as_jlong(left_map_buffer);
+  result[3] = ptr_as_jlong(right_map_buffer->data());
+  result[4] = release_as_jlong(right_map_buffer);
+  return result.get_jArray();
+}
+
 namespace {
 
 int set_column_metadata(cudf::io::column_in_metadata& column_metadata,
@@ -757,30 +774,6 @@ bool valid_window_parameters(native_jintArray const& values,
 {
   return values.size() == ops.size() && values.size() == min_periods.size() &&
          values.size() == preceding.size() && values.size() == following.size();
-}
-
-// Convert a cudf gather map pair into the form that Java expects
-// The resulting Java long array contains the following at each index:
-//   0: Size of each gather map in bytes
-//   1: Device address of the gather map for the left table
-//   2: Host address of the rmm::device_buffer instance that owns the left gather map data
-//   3: Device address of the gather map for the right table
-//   4: Host address of the rmm::device_buffer instance that owns the right gather map data
-jlongArray gather_maps_to_java(
-  JNIEnv* env,
-  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
-            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
-{
-  // release the underlying device buffer to Java
-  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
-  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
-  cudf::jni::native_jlongArray result(env, 5);
-  result[0] = static_cast<jlong>(left_map_buffer->size());
-  result[1] = ptr_as_jlong(left_map_buffer->data());
-  result[2] = release_as_jlong(left_map_buffer);
-  result[3] = ptr_as_jlong(right_map_buffer->data());
-  result[4] = release_as_jlong(right_map_buffer);
-  return result.get_jArray();
 }
 
 // Convert a cudf gather map into the form that Java expects

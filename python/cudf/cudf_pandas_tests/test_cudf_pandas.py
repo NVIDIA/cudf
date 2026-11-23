@@ -1695,6 +1695,24 @@ def test_at_setitem_empty():
     tm.assert_frame_equal(df, expected)
 
 
+@pytest.mark.parametrize("closed", ["left", "right", "both", "neither"])
+@pytest.mark.parametrize("tz", ["US/Eastern", "Asia/Kolkata"])
+def test_timezone_interval_fast_to_slow(monkeypatch, closed, tz):
+    breaks = pd.DatetimeIndex(
+        list(pd.date_range("2025-03-08", periods=4, tz=tz))
+    )
+    expected = pd.IntervalIndex.from_breaks(
+        breaks, closed=closed, name="intervals"
+    )
+    monkeypatch.setenv("CUDF_PANDAS_FAIL_ON_FALLBACK", "1")
+
+    result = xpd.IntervalIndex.from_breaks(
+        breaks, closed=closed, name="intervals"
+    )
+
+    pd.testing.assert_index_equal(result.as_cpu_object(), expected)
+
+
 @pytest.mark.parametrize(
     "index",
     [

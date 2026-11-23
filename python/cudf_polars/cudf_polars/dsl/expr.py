@@ -25,6 +25,7 @@ from cudf_polars.dsl.expressions.binaryop import BinOp
 from cudf_polars.dsl.expressions.bitwise import BitwiseFunction
 from cudf_polars.dsl.expressions.boolean import BooleanFunction
 from cudf_polars.dsl.expressions.datetime import TemporalFunction
+from cudf_polars.dsl.expressions.list import ListFunction
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.expressions.rolling import (
     FixedSizeRollingWindow,
@@ -56,6 +57,7 @@ __all__ = [
     "Item",
     "Kurtosis",
     "Len",
+    "ListFunction",
     "Literal",
     "LiteralColumn",
     "NamedExpr",

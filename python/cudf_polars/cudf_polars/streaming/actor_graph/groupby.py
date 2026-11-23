@@ -840,7 +840,7 @@ class _OrderedGroupBy:
         keys: tuple[OrderKey, ...],
         stream: Stream,
         boundaries: TableChunk | None,
-        context: Context,
+        ir_context: IRExecutionContext,
     ) -> dict[int, int]:
         """Route leading runs using gathered keys and optional rank boundaries."""
         first_keys = plc.Table(gathered.columns()[1:])
@@ -859,7 +859,7 @@ class _OrderedGroupBy:
             }
 
         with stream_ordered_after(
-            context.br().stream_pool.get_stream,
+            ir_context.get_cuda_stream,
             upstreams=(stream, boundaries.stream),
         ) as search_stream:
             boundary_table = boundaries.table_view()
@@ -920,7 +920,12 @@ class _OrderedGroupBy:
             return {}, chunk
         if self.inter_rank_ordering is None:
             routes = await self.ir_context.to_thread(
-                self._route_first_keys, gathered, self.keys, stream, None, self.context
+                self._route_first_keys,
+                gathered,
+                self.keys,
+                stream,
+                None,
+                self.ir_context,
             )
             return routes, chunk
 
@@ -937,7 +942,7 @@ class _OrderedGroupBy:
                 self.keys,
                 stream,
                 boundaries,
-                self.context,
+                self.ir_context,
             )
         return routes, chunk
 

@@ -404,6 +404,34 @@ reconciled through this command.
    are acknowledged. Recovery files and private diagnostics must stay out of
    public comments, artifacts, and logs.
 
+## Preview new issue routing
+
+`triage.py` proposes a component label and one first contact for each open
+issue. Run it with a GitHub login that can read the codeowner team rosters:
+
+```sh
+python3 ci/repo_queue/triage.py --numbers 20188 --output /tmp/cudf-queue/issue-triage.json
+```
+
+Existing component labels take precedence. Otherwise the script checks the
+title and issue body for component-specific identifiers, such as import paths
+or C++ namespaces. Weak or conflicting evidence leaves the issue for manual
+triage. The output includes the matched signals. For a single known component,
+the script selects a team member consistently per issue, excluding the author
+and bots. Existing assignees suppress a contact suggestion.
+
+Local previews use read-only GitHub calls and write the proposal to a private
+JSON file. The separate `issue-triage.yml` workflow reads the
+`issues.opened` event, fetches the current issue, and sends one preview to the
+configured primary contact's bot DM. Suggested contacts appear as plain text.
+The workflow does not label or assign the issue. A manual rerun can send
+another preview.
+
+The workflow reuses the tracking bot token and the Project GitHub token.
+The latter needs to be able to read the component codeowner rosters. If a
+roster lookup fails, the DM still shows the component and explains why there
+is no suggested contact.
+
 ## Scheduled DM delivery
 
 [scheduled.json](scheduled.json) limits unattended runs to an explicit selection of up to 50

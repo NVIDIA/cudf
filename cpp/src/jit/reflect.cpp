@@ -63,11 +63,20 @@ struct reflect_output_element_fn {
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
+  /**
+   * @brief Returns the element storage type for a string output accessor.
+   *
+   * @tparam T String-view type selected by output type dispatch
+   * @param spec Output specification indicating whether string offsets are preallocated
+   * @param use_physical_type Unused because string element storage has no physical-type variant
+   * @return `cudf::mutable_string_view` for preallocated offsets, otherwise
+   * `cudf::repr_element<cudf::string_view>` for assigning a string view
+   */
   template <cudf::concepts::string_view T>
   std::string operator()(transform_output_spec const& spec,
                          [[maybe_unused]] bool use_physical_type) const
   {
-    return spec.has_string_offsets ? "cuda::std::span<char>"
+    return spec.has_string_offsets ? "cudf::mutable_string_view"
                                    : "cudf::repr_element<cudf::string_view>";
   }
 
@@ -112,11 +121,20 @@ struct reflect_output_value_fn {
     return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
   }
 
+  /**
+   * @brief Returns the string value type exposed to a transform UDF for an output.
+   *
+   * @tparam T String-view type selected by output type dispatch
+   * @param spec Output specification indicating whether string offsets are preallocated
+   * @param use_physical_type Unused because string values have no physical-type variant
+   * @return `cudf::mutable_string_view` for writing into preallocated storage, otherwise
+   * `cudf::string_view` for returning a view of existing string data
+   */
   template <cudf::concepts::string_view T>
   std::string operator()(transform_output_spec const& spec,
                          [[maybe_unused]] bool use_physical_type) const
   {
-    return spec.has_string_offsets ? "cuda::std::span<char>" : "cudf::string_view";
+    return spec.has_string_offsets ? "cudf::mutable_string_view" : "cudf::string_view";
   }
 
   template <typename T>

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import textwrap
@@ -7,7 +7,6 @@ import cupy as cp
 import numpy as np
 import pandas as pd
 import pytest
-from hypothesis import given, settings, strategies as st
 
 import cudf
 
@@ -56,22 +55,30 @@ def test_full_series(nrows, all_supported_types_as_str):
         assert repr(ps) == repr(sr)
 
 
-@given(
-    st.lists(
-        st.integers(-9223372036854775808, 9223372036854775807), max_size=1000
-    )
-)
-@settings(deadline=None, max_examples=20)
-def test_integer_series(x):
+@pytest.mark.parametrize("size", [0, 1, 10, 1000])
+def test_integer_series(size):
+    rng = np.random.default_rng(seed=0)
+    iinfo = np.iinfo(np.int64)
+    x = rng.integers(iinfo.min, iinfo.max, size=size, endpoint=True).tolist()
     sr = cudf.Series(x, dtype=int)
     ps = pd.Series(data=x, dtype=int)
 
     assert repr(sr) == repr(ps)
 
 
-@given(st.lists(st.floats()))
-@settings(deadline=None, max_examples=20)
-def test_float_series(x):
+@pytest.mark.parametrize("size", [0, 1, 10, 100])
+def test_float_series(size):
+    rng = np.random.default_rng(seed=0)
+    finfo = np.finfo(np.float64)
+    x = [
+        *(rng.standard_normal(size) * 10.0 ** rng.integers(-300, 300, size)),
+        np.nan,
+        np.inf,
+        -np.inf,
+        -0.0,
+        finfo.max,
+        finfo.smallest_subnormal,
+    ]
     sr = cudf.Series(x, dtype=float, nan_as_null=False)
     ps = pd.Series(data=x, dtype=float)
     assert repr(sr) == repr(ps)

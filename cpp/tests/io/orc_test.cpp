@@ -36,6 +36,8 @@
 #include <cuda/iterator>
 #include <cuda/std/limits>
 
+#include <src/io/orc/orc.hpp>
+
 #include <algorithm>
 #include <array>
 #include <numeric>
@@ -932,7 +934,7 @@ TEST_F(OrcWriterTest, WriterTimezoneStatisticsOutsideNanosecondRange)
       column_wrapper<cudf::timestamp_ns, cudf::timestamp_ns::rep>{value * 1'000'000'000};
 
     // The eastern offset leaves the range at the top, the western one at the bottom
-    for (auto const [timezone, offset] :
+    for (auto const& [timezone, offset] :
          {std::pair{"Etc/GMT-8", east_offset}, std::pair{"Etc/GMT+5", west_offset}}) {
       auto const expected_ms = (value + offset) * 1000;
       bounds_survive_the_shift(seconds, timezone, expected_ms);
@@ -3050,6 +3052,100 @@ TEST_F(OrcStatisticsTest, AllNulls)
   check_all_null_stats<cudf::io::integer_statistics>(stats.file_stats[1]);
   check_all_null_stats<cudf::io::double_statistics>(stats.file_stats[2]);
   check_all_null_stats<cudf::io::string_statistics>(stats.file_stats[3]);
+}
+
+namespace {
+
+// Reads the row index min/max of the first column in the only stripe of an uncompressed ORC file
+std::vector<cudf::io::minmax_statistics<double>> read_row_index_double_minmax(
+  std::vector<char> const& file)
+{
+  using namespace cudf::io::orc::detail;
+  auto const data    = reinterpret_cast<uint8_t const*>(file.data());
+  auto const ps_len  = data[file.size() - 1];
+  auto const ps_data = data + file.size() - 1 - ps_len;
+  PostScript ps;
+  protobuf_reader(ps_data, ps_len).read(ps);
+  Footer footer;
+  protobuf_reader(ps_data - ps.footerLength, ps.footerLength).read(footer);
+  auto const& stripe = footer.stripes.at(0);
+  StripeFooter stripe_footer;
+  protobuf_reader(data + stripe.offset + stripe.indexLength + stripe.dataLength,
+                  stripe.footerLength)
+    .read(stripe_footer);
+
+  // Streams are laid out in the order the stripe footer lists them
+  auto const& streams  = stripe_footer.streams;
+  auto const row_index = std::ranges::find_if(streams, [](auto const& stream) {
+    return stream.kind == cudf::io::orc::ROW_INDEX and stream.column_id == 1;
+  });
+  CUDF_EXPECTS(row_index != streams.end(), "Row index not found");
+  auto const preceding =
+    std::ranges::subrange(streams.begin(), row_index) | std::views::transform(&Stream::length);
+  auto const stream_data =
+    data + stripe.offset + std::accumulate(preceding.begin(), preceding.end(), uint64_t{0});
+
+  // RowIndex { repeated RowIndexEntry entry = 1; }
+  // RowIndexEntry { repeated uint64 positions = 1 [packed]; ColumnStatistics statistics = 2; }
+  // All are length-delimited fields with one-byte keys
+  auto const next_field = [](uint8_t const*& cur) {
+    // Protobuf varint: 7 payload bits per byte, high bit means more bytes follow
+    auto constexpr payload_bits = 7;
+    auto constexpr payload_mask = 0x7f;
+    auto constexpr more_bytes   = 0x80;
+    uint64_t len                = 0;
+    ++cur;
+    for (int shift = 0;; shift += payload_bits) {
+      len |= static_cast<uint64_t>(*cur & payload_mask) << shift;
+      if ((*cur++ & more_bytes) == 0) { break; }
+    }
+    cur += len;
+    return std::pair{cur - len, static_cast<size_t>(len)};
+  };
+  std::vector<cudf::io::minmax_statistics<double>> result;
+  for (auto cur = stream_data; cur < stream_data + row_index->length;) {
+    auto entry = next_field(cur).first;
+    next_field(entry);  // positions
+    auto const [stats, stats_len] = next_field(entry);
+    column_statistics col_stats;
+    protobuf_reader(stats, stats_len).read(col_stats);
+    auto& minmax = result.emplace_back();
+    if (col_stats.double_stats) {
+      minmax.minimum = col_stats.double_stats->minimum;
+      minmax.maximum = col_stats.double_stats->maximum;
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+TEST_F(OrcStatisticsTest, RowGroupNaN)
+{
+  auto constexpr stride = 512;
+  auto constexpr nan    = std::numeric_limits<double>::quiet_NaN();
+  // Row groups: no NaN, half NaN, all NaN
+  auto const values = cudf::detail::make_counting_transform_iterator(0, [](auto i) {
+    if (i < stride) { return static_cast<double>(i); }
+    if (i < 2 * stride) { return i % 2 == 0 ? nan : -static_cast<double>(i); }
+    return nan;
+  });
+  float64_col col(values, values + 3 * stride);
+  table_view const tbl({col});
+
+  std::vector<char> out_buffer;
+  cudf::io::write_orc(cudf::io::orc_writer_options::builder(cudf::io::sink_info{&out_buffer}, tbl)
+                        .compression(cudf::io::compression_type::NONE)
+                        .row_index_stride(stride));
+
+  auto const row_groups = read_row_index_double_minmax(out_buffer);
+  ASSERT_EQ(row_groups.size(), 3ul);
+  EXPECT_EQ(row_groups[0].minimum, 0.);
+  EXPECT_EQ(row_groups[0].maximum, stride - 1.);
+  EXPECT_EQ(row_groups[1].minimum, -(2 * stride - 1.));
+  EXPECT_EQ(row_groups[1].maximum, -(stride + 1.));
+  EXPECT_FALSE(row_groups[2].minimum.has_value());
+  EXPECT_FALSE(row_groups[2].maximum.has_value());
 }
 
 TEST_F(OrcWriterTest, UnorderedDictionary)

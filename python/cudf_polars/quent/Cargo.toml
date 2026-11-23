@@ -1,0 +1,24 @@
+[workspace]
+members = ["analyzer", "bridge", "browser", "store"]
+resolver = "3"
+
+[workspace.dependencies]
+quent-analyzer = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-browser-bundle = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-browser-bundle-build = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-build-info = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-collector-python = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-dynamic-attributes = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-events = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-instrumentation = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-instrumentation-build = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-io = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099", default-features = false }
+quent-query-engine-analyzer = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-query-engine-browser = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-query-engine-ui = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-schema-codegen-python = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-store = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099", default-features = false }
+quent-store-build = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-time = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-ui = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }
+quent-yaml = { git = "https://github.com/rapidsai/quent", rev = "3829e73e413b0dbf42d0a0c034b7a4bcae88f099" }

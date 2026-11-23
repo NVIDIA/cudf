@@ -18,7 +18,6 @@ dependencies:
 - cuda-bindings>=13.0.2,<14.0
 - cuda-core>=1.0,<2
 - cuda-cudart-dev
-- cuda-cupti-dev
 - cuda-nvcc
 - cuda-nvrtc-dev
 - cuda-nvtx-dev

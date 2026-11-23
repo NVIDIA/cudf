@@ -8,10 +8,15 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.utils.cuda_stream import get_cuda_stream
 
 
 @pytest.fixture(
@@ -146,6 +151,23 @@ def test_fill_null_scalar_receiver_column_fill(engine: pl.GPUEngine, scalar, val
         pl.lit(scalar, dtype=pl.Float64).fill_null(pl.col("a")).alias("a")
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_fill_null_null_scalar_receiver_keeps_fill_sortedness():
+    dtype = DataType(pl.Float64())
+    stream = get_cuda_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": [3.0, 2.0, 1.0]}), stream=stream)
+    fill = df.column_map["a"].set_sorted(
+        is_sorted=plc.types.Sorted.YES,
+        order=plc.types.Order.DESCENDING,
+        null_order=plc.types.NullOrder.AFTER,
+    )
+    df = DataFrame([fill], stream=stream)
+    result = expr.UnaryFunction(
+        dtype, "fill_null", (), expr.Literal(dtype, None), expr.Col(dtype, "a")
+    ).evaluate(df)
+    assert result.is_sorted == plc.types.Sorted.YES
+    assert result.order == plc.types.Order.DESCENDING
 
 
 def test_fill_null_null_list_receiver_column_fill(engine: pl.GPUEngine):

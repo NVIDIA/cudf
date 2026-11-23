@@ -1594,7 +1594,9 @@ class UnaryFunction(Expr):
                     if column.size == 1 != evaluated.size:
                         if column.null_count == 1:
                             if column.dtype == evaluated.dtype:
-                                return Column(evaluated.obj, dtype=self.dtype)
+                                return Column(
+                                    evaluated.obj, dtype=self.dtype
+                                ).sorted_like(evaluated)
                         else:
                             (column,) = broadcast(
                                 column,

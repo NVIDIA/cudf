@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Propose a component and first responder without modifying GitHub or Slack."""
+"""Propose issue routing locally or send a private preview for a new issue."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 
 from collect import GitHub
 from selection import validate_numbers
+from slack_dm_test import payload, post, recipient, slack_token
 from storage import save_json
 
 ROOT = Path(__file__).parent
@@ -84,10 +85,15 @@ def propose(issue, component_owners, team_members):
         return {**result, "reason": "Issue already has an assignee"}
 
     author = issue["user"]["login"].casefold()
+    try:
+        members = team_members(team)
+    except RuntimeError:
+        return {**result, "reason": "Unable to read the codeowner team roster"}
+
     eligible = sorted(
         {
             member["login"].casefold()
-            for member in team_members(team)
+            for member in members
             if member.get("type") == "User"
             and member["login"].casefold() != author
         }
@@ -108,16 +114,77 @@ def propose(issue, component_owners, team_members):
     }
 
 
+def opened_issue_number(event, repository):
+    if (
+        event.get("action") != "opened"
+        or event.get("repository", {}).get("full_name") != repository
+        or "issue" not in event
+    ):
+        raise ValueError(
+            "Expected an issue opened event for the configured repository"
+        )
+    number = event["issue"]["number"]
+    validate_numbers([number])
+    return number
+
+
+def dm_payload(config, proposal):
+    component = proposal["component"] or "Manual triage"
+    label = proposal["suggested_label"] or "None"
+    contact = proposal["first_contact"] or "None"
+    url = (
+        f"https://github.com/{config['repository']}/issues/{proposal['issue']}"
+    )
+    lines = [
+        "Issue triage preview · no action requested",
+        url,
+        f"Component: {component}",
+        f"Proposed label: {label}",
+        f"Suggested first contact: {contact}",
+        proposal["reason"],
+    ]
+    if labels := proposal.get("existing_labels"):
+        lines.append("Existing component labels: " + ", ".join(labels))
+    for name, signal in proposal.get("matched_signals", {}).items():
+        lines.append(f"Evidence for {name}: {' '.join(signal.split())}")
+    # Issue text and contact names must never turn into Slack mentions.
+    return {
+        **payload(recipient(config), "\n".join(lines)),
+        "mrkdwn": False,
+        "link_names": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--numbers", nargs="+", type=int, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--numbers", nargs="+", type=int)
+    mode.add_argument(
+        "--event",
+        type=Path,
+        help="Send a DM preview for an issues.opened event",
+    )
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    try:
-        validate_numbers(args.numbers)
-    except ValueError as error:
-        parser.error(str(error))
     config = json.loads((ROOT / "config.json").read_text())
+    repository = config["repository"]
+    if args.event:
+        event = json.loads(args.event.read_text())
+        try:
+            numbers = [opened_issue_number(event, repository)]
+        except ValueError as error:
+            parser.error(str(error))
+        if args.output:
+            parser.error("--output is for local previews")
+    else:
+        if not args.output:
+            parser.error("--numbers requires --output")
+        numbers = args.numbers
+        try:
+            validate_numbers(numbers)
+        except ValueError as error:
+            parser.error(str(error))
+
     owners = json.loads((ROOT / "policy.json").read_text())["component_owners"]
     github = GitHub()
     rosters = {}
@@ -130,15 +197,18 @@ def main():
             )
         return rosters[team]
 
-    proposals = [
-        propose(
-            github.get(f"repos/{config['repository']}/issues/{number}"),
-            owners,
-            team_members,
-        )
-        for number in args.numbers
-    ]
-    save_json(args.output, proposals)
+    proposals = []
+    for number in numbers:
+        issue = github.get(f"repos/{repository}/issues/{number}")
+        if args.event and (
+            issue["state"] != "open" or "pull_request" in issue
+        ):
+            return
+        proposals.append(propose(issue, owners, team_members))
+    if args.event:
+        post(slack_token(allow_prompt=False), dm_payload(config, proposals[0]))
+    else:
+        save_json(args.output, proposals)
 
 
 if __name__ == "__main__":

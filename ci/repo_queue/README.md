@@ -420,8 +420,17 @@ triage. The output includes the matched signals. For a single known component,
 the script selects a team member consistently per issue, excluding the author
 and bots. Existing assignees suppress a contact suggestion.
 
-This command is read-only. It does not apply labels, assign issues, post
-messages, or change the scheduled PR workflow.
+Local previews use read-only GitHub calls and write the proposal to a private
+JSON file. The separate `issue-triage.yml` workflow reads the
+`issues.opened` event, fetches the current issue, and sends one preview to the
+configured primary contact's bot DM. Suggested contacts appear as plain text.
+The workflow does not label or assign the issue. A manual rerun can send
+another preview.
+
+The workflow reuses the tracking bot token and the Project GitHub token.
+The latter needs to be able to read the component codeowner rosters. If a
+roster lookup fails, the DM still shows the component and explains why there
+is no suggested contact.
 
 ## Scheduled DM delivery
 

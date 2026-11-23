@@ -471,7 +471,17 @@ jobs:
         run: |
           gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
             --name "${AUDIT_ARTIFACT}" --dir audit
-          jq -e '.status == "current"' audit/run-list-drift.json || {
+          # Newly GPU-executing tests only expand the candidate run list and do not
+          # indicate a regression. Keep failing for incomplete evidence, stale
+          # selections, or tests that lost observed GPU execution.
+          jq -e '
+            .status != "incomplete"
+            and (.errors | length == 0)
+            and ([.differences[] |
+              ((.lost_gpu_execution | length) == 0)
+              and ((.stale | length) == 0)
+            ] | all)
+          ' audit/run-list-drift.json || {
             jq '{status, errors, differences: (.differences | map_values({added: (.added | length), lost_gpu_execution: (.lost_gpu_execution | length), stale: (.stale | length)}))}' audit/run-list-drift.json
             exit 1
           }

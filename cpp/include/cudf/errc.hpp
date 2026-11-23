@@ -28,18 +28,15 @@ using error_int = int32_t;
 /**
  * @brief Operation error codes. Zero means success. User-defined errors must be in
  * [USER_RESERVED_BEGIN, USER_RESERVED_END). Other values are reserved for libcudf.
+ *
+ * @note error codes are ordered by severity, with lower values indicating more severe errors.
  */
 enum class [[nodiscard]] errc : error_int {
   SUCCESS             = 0,
-  USER_RESERVED_BEGIN = 1,
-  USER_RESERVED       = USER_RESERVED_BEGIN,
-  USER_RESERVED_END   = 0xFF00,
-  CUDF_RESERVED_BEGIN = 0xFF00,
-  // Library error codes are ordered from higher to lower severity.
-  DIVISION_BY_ZERO    = 0xFF00,
-  ARITHMETIC_OVERFLOW = 0xFF01,
-  CUDF_RESERVED_END   = 0x10000,
-  RESERVED_BEGIN      = 0x10000
+  DIVISION_BY_ZERO    = 1,
+  ARITHMETIC_OVERFLOW = 2,
+  USER_RESERVED_BEGIN = 512,
+  USER_RESERVED_END   = 1536,
 };
 
 /**

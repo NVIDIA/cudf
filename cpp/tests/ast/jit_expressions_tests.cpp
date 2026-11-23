@@ -405,7 +405,7 @@ TEST_F(JITExpressionTest, EvaluationStatusIdentifiesRowAndOperator)
 TEST_F(JITExpressionTest, EvaluationStatusSelectsFirstRowAcrossBlocks)
 {
   std::vector<int32_t> codes(4096, 0);
-  codes[17]   = 1;
+  codes[17]   = static_cast<int32_t>(cudf::errc::USER_RESERVED_BEGIN);
   codes[1500] = static_cast<int32_t>(cudf::errc::DIVISION_BY_ZERO);
   codes[3000] = static_cast<int32_t>(cudf::errc::ARITHMETIC_OVERFLOW);
   auto input  = column_wrapper<int32_t>(codes.begin(), codes.end());
@@ -441,9 +441,10 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
     return cudf::errc::SUCCESS;
   };
 
-  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED), 0}), cudf::errc::USER_RESERVED);
+  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED_BEGIN), 0}),
+            cudf::errc::USER_RESERVED_BEGIN);
   EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
-                      code(cudf::errc::USER_RESERVED),
+                      code(cudf::errc::USER_RESERVED_BEGIN),
                       code(cudf::errc::ARITHMETIC_OVERFLOW)}),
             cudf::errc::DIVISION_BY_ZERO);
   EXPECT_EQ(error_of({0, 1, 0}), static_cast<cudf::errc>(1));

@@ -70,6 +70,12 @@ TEST(EvaluationStatusTest, RoundTripAndPriority)
     evaluation_status::make(evaluation_status::make_error(cudf::errc::ARITHMETIC_OVERFLOW, 0), 0);
   EXPECT_LT(same_code_earlier_row, overflow);
   EXPECT_LT(overflow, next_op);
+  auto const user_error = evaluation_status::make(cudf::errc::USER_RESERVED_BEGIN, 0);
+  EXPECT_LT(overflow, user_error);
+  auto const last_user_code =
+    static_cast<cudf::errc>(static_cast<int32_t>(cudf::errc::USER_RESERVED_END) - 1);
+  EXPECT_EQ(evaluation_status::unpack(evaluation_status::make(last_user_code, 0)).error_code,
+            last_user_code);
   auto const plain =
     evaluation_status::unpack(evaluation_status::make(cudf::errc::ARITHMETIC_OVERFLOW, 42));
   EXPECT_EQ(plain.row_index, 42);

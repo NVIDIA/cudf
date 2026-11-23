@@ -21,6 +21,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.typing import Duration
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 if TYPE_CHECKING:
     from cudf_polars.typing import RankMethod
@@ -198,6 +199,10 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 range rolling min/max can propagate NaN",
+)
 @pytest.mark.parametrize("agg", ["min", "max"])
 @pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
 def test_rolling_min_max_nan(engine: pl.GPUEngine, agg: str, dtype) -> None:

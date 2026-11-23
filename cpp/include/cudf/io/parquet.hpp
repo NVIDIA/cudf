@@ -13,7 +13,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <memory>
 #include <optional>
@@ -628,14 +627,7 @@ class parquet_reader_options {
    *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    */
-  void set_timestamp_type(data_type type)
-  {
-    CUDF_EXPECTS(type.id() == type_id::EMPTY or
-                   (cudf::is_timestamp(type) and type.id() != type_id::TIMESTAMP_DAYS),
-                 "timestamp_type must be a TIMESTAMP type other than TIMESTAMP_DAYS",
-                 std::invalid_argument);
-    _timestamp_type = type;
-  }
+  void set_timestamp_type(data_type type);
 
   /**
    * @brief Sets decimal width used to cast decimal columns.

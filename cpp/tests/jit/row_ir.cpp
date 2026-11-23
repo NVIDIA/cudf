@@ -13,6 +13,7 @@
 #include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/utilities/evaluation_error.hpp>
 
 #include <cuda/iterator>
 
@@ -21,8 +22,63 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
+#include <limits>
 
 namespace row_ir = cudf::detail::row_ir;
+
+TEST(EvaluationStatusTest, RoundTripAndPriority)
+{
+  using namespace cudf::detail;
+  static_assert(sizeof(packed_evaluation_status) == sizeof(uint64_t));
+  static_assert(sizeof(cudf::errc) == sizeof(int32_t));
+  evaluation_status const success{};
+  EXPECT_EQ(success.error_code, cudf::errc::SUCCESS);
+  EXPECT_EQ(success.row_index, -1);
+  EXPECT_EQ(success.op_index, 0);
+  for (auto row :
+       {cudf::size_type{-1}, cudf::size_type{0}, std::numeric_limits<cudf::size_type>::max() - 1}) {
+    for (auto index : {uint16_t{0}, uint16_t{0xFFFF}}) {
+      auto const status  = evaluation_status::make_error(cudf::errc::DIVISION_BY_ZERO, index);
+      auto const decoded = evaluation_status::unpack(evaluation_status::make(status, row));
+      EXPECT_EQ(decoded.error_code, cudf::errc::DIVISION_BY_ZERO);
+      EXPECT_EQ(decoded.row_index, row);
+      EXPECT_EQ(decoded.op_index, index);
+    }
+  }
+  auto const first_row =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::USER_RESERVED_BEGIN, 2), 0);
+  auto const next_row =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::DIVISION_BY_ZERO, 0), 1);
+  auto const next_op =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::DIVISION_BY_ZERO, 3), 0);
+  EXPECT_LT(first_row, next_row);
+  EXPECT_LT(first_row, next_op);
+  EXPECT_LT(first_row, evaluation_status::success);
+  auto const unspecified_row = evaluation_status::make(cudf::errc::DIVISION_BY_ZERO, -1);
+  EXPECT_LT(next_row, unspecified_row);
+  EXPECT_LT(unspecified_row, evaluation_status::success);
+  auto const success_with_context =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::SUCCESS, 3), 0);
+  EXPECT_EQ(evaluation_status::unpack(success_with_context).error_code, cudf::errc::SUCCESS);
+  EXPECT_EQ(success_with_context, evaluation_status::success);
+  EXPECT_LT(next_row, success_with_context);
+  auto const same_code_earlier_row =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::DIVISION_BY_ZERO, 0), 0);
+  EXPECT_LT(same_code_earlier_row, next_row);
+  EXPECT_LT(same_code_earlier_row, next_op);
+  auto const overflow =
+    evaluation_status::make(evaluation_status::make_error(cudf::errc::ARITHMETIC_OVERFLOW, 0), 0);
+  EXPECT_LT(same_code_earlier_row, overflow);
+  EXPECT_LT(overflow, next_op);
+  auto const plain =
+    evaluation_status::unpack(evaluation_status::make(cudf::errc::ARITHMETIC_OVERFLOW, 42));
+  EXPECT_EQ(plain.row_index, 42);
+  EXPECT_EQ(plain.op_index, 0);
+  cudf::evaluation_error const legacy{cudf::errc::DIVISION_BY_ZERO, "division failed"};
+  EXPECT_FALSE(legacy.row_index().has_value());
+  EXPECT_FALSE(legacy.op_name().has_value());
+  EXPECT_FALSE(legacy.op().has_value());
+}
 
 struct RowIRCudaCodeGenTest : public ::testing::Test {
   std::unique_ptr<cudf::column> f32 =
@@ -239,7 +295,7 @@ TEST_F(RowIRCudaCodeGenTest, BinaryOperationOverflow)
 
     auto expected_code =
       R"***(int32_t tmp_0 = in_0;
-CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, 0, cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD_OVERFLOW, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0));
 )***";
 
     EXPECT_EQ(sink.get_code(), expected_code);
@@ -503,7 +559,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
 __device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
-CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, 0, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
 int32_t tmp_2 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_1);
 int32_t tmp_3 = tmp_2;
 *out_0 = tmp_3;
@@ -514,8 +570,8 @@ return cudf::errc::SUCCESS;
 __device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
-CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
-CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_2, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, 0, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
+CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_2, 1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
 int32_t tmp_3 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_1, tmp_2);
 int32_t tmp_4 = tmp_3;
 *out_0 = tmp_4;

@@ -20,6 +20,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/utilities/evaluation_error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
@@ -342,7 +343,7 @@ TEST_F(JITExpressionTest, UdfCallNullifyWithInfallibleCallee)
                                  VERBOSITY);
 }
 
-TEST_F(JITExpressionTest, UdfCallHighestErrorCodeWins)
+TEST_F(JITExpressionTest, UdfCallFirstFailingRowWins)
 {
   // Rows fail with ARITHMETIC_OVERFLOW before and after the row that fails with DIVISION_BY_ZERO.
   auto a     = column_wrapper<int32_t>{{-1, 4, 0, -3}};
@@ -355,15 +356,75 @@ TEST_F(JITExpressionTest, UdfCallHighestErrorCodeWins)
     std::ignore = run_column(table, call);
     FAIL() << "expected cudf::evaluation_error";
   } catch (cudf::evaluation_error const& e) {
-    EXPECT_EQ(e.error_code(), cudf::errc::DIVISION_BY_ZERO);
+    EXPECT_EQ(e.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
+    EXPECT_EQ(e.row_index(), 0);
+    EXPECT_EQ(e.op_name(), "UDF_CALL");
+    EXPECT_FALSE(e.op().has_value());
+    EXPECT_NE(std::string_view{e.what()}.find("UDF_CALL"), std::string_view::npos);
+  }
+}
+
+TEST_F(JITExpressionTest, EvaluationStatusIdentifiesRowAndOperator)
+{
+  for (bool nullable : {false, true}) {
+    auto a       = nullable
+                     ? column_wrapper<int32_t>{{1, 1, std::numeric_limits<int32_t>::max()}, {0, 1, 1}}
+                     : column_wrapper<int32_t>{1, 1, std::numeric_limits<int32_t>::max()};
+    auto b       = column_wrapper<int32_t>{1, 1, 1};
+    auto divisor = column_wrapper<int32_t>{1, 0, 1};
+    auto table   = cudf::table_view{{a, b, divisor}};
+    auto tree    = cudf::ast::tree{};
+    auto a_ref   = cudf::ast::column_reference{0};
+    auto b_ref   = cudf::ast::column_reference{1};
+    auto d_ref   = cudf::ast::column_reference{2};
+    auto& sum = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD_OVERFLOW, {a_ref, b_ref});
+    auto& quotient =
+      cudf::ast::jit::operation(tree, cudf::ast::jit::op::DIV_OVERFLOW, {a_ref, d_ref});
+    auto& output = cudf::ast::jit::operation(tree, cudf::ast::jit::op::ADD, {sum, quotient});
+    auto check   = [](auto&& execute) {
+      try {
+        std::ignore = execute();
+        FAIL() << "expected cudf::evaluation_error";
+      } catch (cudf::evaluation_error const& error) {
+        EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+        EXPECT_EQ(error.row_index(), 1);
+        EXPECT_EQ(error.op_name(), "DIV_OVERFLOW");
+        EXPECT_EQ(error.op(), cudf::ast::jit::op::DIV_OVERFLOW);
+        EXPECT_NE(std::string_view{error.what()}.find("DIV_OVERFLOW"), std::string_view::npos);
+      }
+    };
+    check([&] { return run_column(table, output); });
+    std::reference_wrapper<cudf::ast::expression const> expressions[]{output};
+    auto program = cudf::transform_program{table, expressions};
+    check([&] { return program.run(table); });
+    std::reference_wrapper<cudf::ast::expression const> multi_output[]{sum, output};
+    check([&] { return run_table(table, multi_output); });
+  }
+}
+
+TEST_F(JITExpressionTest, EvaluationStatusSelectsFirstRowAcrossBlocks)
+{
+  std::vector<int32_t> codes(4096, 0);
+  codes[17]   = 1;
+  codes[1500] = static_cast<int32_t>(cudf::errc::DIVISION_BY_ZERO);
+  codes[3000] = static_cast<int32_t>(cudf::errc::ARITHMETIC_OVERFLOW);
+  auto input  = column_wrapper<int32_t>(codes.begin(), codes.end());
+  auto tree   = cudf::ast::tree{};
+  auto ref    = cudf::ast::column_reference{0};
+  auto& call  = cudf::ast::jit::call(tree, callee("lto_fail_with", int32_type), {ref});
+  try {
+    std::ignore = run_column(cudf::table_view{{input}}, call);
+    FAIL() << "expected cudf::evaluation_error";
+  } catch (cudf::evaluation_error const& error) {
+    EXPECT_EQ(error.row_index(), 17);
+    EXPECT_EQ(error.error_code(), cudf::errc::USER_RESERVED_BEGIN);
+    EXPECT_EQ(error.op_name(), "UDF_CALL");
   }
 }
 
 TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
 {
-  // lto_fail_with fails each row with the code it holds. The codes libcudf reserves for
-  // user-defined functions reach the caller unchanged, and as the highest codes they are reported
-  // over libcudf's own.
+  // lto_fail_with returns the supplied status. The earliest failing row wins.
   auto const code     = [](cudf::errc error) { return static_cast<int32_t>(error); };
   auto const error_of = [](std::initializer_list<int32_t> codes) {
     auto column = column_wrapper<int32_t>(codes.begin(), codes.end());
@@ -381,14 +442,13 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
   };
 
   EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED), 0}), cudf::errc::USER_RESERVED);
-  EXPECT_EQ(
-    error_of({code(static_cast<cudf::errc>(0x20000)), 0, code(static_cast<cudf::errc>(0x10005))}),
-    static_cast<cudf::errc>(0x20000));
   EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
                       code(cudf::errc::USER_RESERVED),
                       code(cudf::errc::ARITHMETIC_OVERFLOW)}),
-            cudf::errc::USER_RESERVED);
-  EXPECT_STREQ(cudf::to_string(static_cast<cudf::errc>(0x10011)), "Unknown Error");
+            cudf::errc::DIVISION_BY_ZERO);
+  EXPECT_EQ(error_of({0, 1, 0}), static_cast<cudf::errc>(1));
+  EXPECT_EQ(error_of({0, static_cast<int32_t>(cudf::errc::USER_RESERVED_END) - 1}),
+            static_cast<cudf::errc>(static_cast<int32_t>(cudf::errc::USER_RESERVED_END) - 1));
 }
 
 TEST_F(JITExpressionTest, UdfCallDecimalInputsAndOutput)

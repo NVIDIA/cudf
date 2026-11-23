@@ -105,6 +105,7 @@ struct [[nodiscard]] transform_args {
   std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
   // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
   cudf::lto_fragments lto_fragments = {};
+  std::vector<opcode> error_operator_map{};
 };
 
 struct node;
@@ -119,6 +120,7 @@ struct [[nodiscard]] instance_context {
   int32_t num_tmp_vars_   = 0;                 ///< The number of temporary variables generated
   std::string tmp_prefix_ = "tmp_";            ///< The prefix for temporary variable identifiers
   bool has_nulls_         = false;             ///< If expressions involve null values
+  std::vector<opcode> error_operator_map_;     ///< Maps packed operator indices to row-IR opcodes
   std::vector<input> inputs_;                  ///< The inputs for the IR
   std::vector<var_info> input_vars_;           ///< The input variables for the IR
   std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR

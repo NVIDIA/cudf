@@ -64,9 +64,9 @@ namespace jit {
  * functions are never merged. A call expression is evaluated once per row however often the
  * tree refers to it, so all references to it see the same result.
  *
- * Functions return SUCCESS or an error code. Error codes below zero are ignored for error
- * reporting. Codes at or above `errc::USER_RESERVED` belong to the consumer and are preserved
- * by `evaluation_error`.
+ * Functions return SUCCESS, a libcudf error, or a user error in
+ * [errc::USER_RESERVED_BEGIN, errc::USER_RESERVED_END). User codes are preserved by
+ * `evaluation_error`. Returning an ABI-invalid status is undefined behavior.
  */
 struct udf {
   std::string symbol;                         ///< Unmangled device function name

@@ -138,6 +138,7 @@ struct [[nodiscard]] opcode_info {
   bool is_fallible                                                     = false;
   cuda::std::inplace_vector<std::variant<types, arg_ref>, 4> arg_types = {};
   std::variant<types, arg_ref> output_type                             = types::NONE;
+  std::optional<ast::jit::op> ast_operator                             = std::nullopt;
 };
 
 /**
@@ -148,87 +149,112 @@ struct [[nodiscard]] opcode_info {
   using enum null_output;
   using enum types;
   using enum arg_ref;
+  using enum ast::jit::op;
 
   static opcode_info const map[] =  // NOLINT(modernize-avoid-c-arrays)
     {
       {"GET_INPUT", PROPAGATE, false, false, {}, INPUT},
       {"SET_OUTPUT", PROPAGATE, false, false, {ALL}, NONE},
-      {"IDENTITY", PROPAGATE, false, false, {ALL}, ARG0},
-      {"IS_NULL", ALWAYS_VALID, true, false, {ALL}, BOOL8},
-      {"COALESCE", PROPAGATE, true, false, {ALL, ARG0}, ARG0},
-      {"PREDICATE", ALWAYS_VALID, true, false, {BOOL8}, ARG0},
-      {"ADD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"SUB", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"MUL", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"DIV", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"NEG", PROPAGATE, false, false, {ARITHMETIC}, ARG0},
-      {"ABS", PROPAGATE, false, false, {ARITHMETIC}, ARG0},
-      {"MOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"PYMOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0},
-      {"TRUE_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, FLOAT64},
-      {"FLOOR_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0},
-      {"ADD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
-      {"SUB_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
-      {"MUL_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
-      {"DIV_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
-      {"NEG_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0},
-      {"ABS_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0},
-      {"MOD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0},
-      {"CHECK_PRECISION", PROPAGATE, false, true, {DECIMALS, INT32}, ARG0},
-      {"BITWISE_AND", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
-      {"BITWISE_INVERT", PROPAGATE, false, false, {INTEGERS}, ARG0},
-      {"BITWISE_OR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
-      {"BITWISE_XOR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
-      {"BITWISE_SHIFT_LEFT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
-      {"BITWISE_SHIFT_RIGHT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0},
-      {"CAST_TO_BOOL8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8},
-      {"CAST_TO_INT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT8},
-      {"CAST_TO_INT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT16},
-      {"CAST_TO_INT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT32},
-      {"CAST_TO_INT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT64},
-      {"CAST_TO_UINT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT8},
-      {"CAST_TO_UINT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT16},
-      {"CAST_TO_UINT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT32},
-      {"CAST_TO_UINT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT64},
-      {"CAST_TO_FLOAT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT32},
-      {"CAST_TO_FLOAT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT64},
-      {"CAST_TO_DECIMAL32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, DECIMAL32},
-      {"CAST_TO_DECIMAL64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, DECIMAL64},
-      {"CAST_TO_DECIMAL128", PROPAGATE, false, false, {DECIMALS}, DECIMAL128},
-      {"RESCALE", PROPAGATE, false, false, {DECIMALS, INT32}, ARG0},
-      {"EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"NOT_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"GREATER", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"GREATER_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"LESS", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"LESS_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
-      {"NULL_EQUAL", ALWAYS_VALID, true, false, {ALL, ARG0}, BOOL8},
-      {"NULL_LOGICAL_AND", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
-      {"NULL_LOGICAL_OR", ALWAYS_NULLABLE, true, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
-      {"LOGICAL_AND", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
-      {"LOGICAL_OR", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8},
-      {"LOGICAL_NOT", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8},
-      {"IF_ELSE", PROPAGATE, true, false, {ALL, ARG0, INTEGRALS}, ARG0},
-      {"CBRT", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"CEIL", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"FLOOR", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"RINT", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"SQRT", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"POW", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0},
-      {"EXP", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"LOG", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCCOS", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCCOSH", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCSIN", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCSINH", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCTAN", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"ARCTANH", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"COS", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"COSH", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"SIN", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"SINH", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"TAN", PROPAGATE, false, false, {FLOATS}, ARG0},
-      {"TANH", PROPAGATE, false, false, {FLOATS}, ARG0},
+      {"IDENTITY", PROPAGATE, false, false, {ALL}, ARG0, IDENTITY},
+      {"IS_NULL", ALWAYS_VALID, true, false, {ALL}, BOOL8, IS_NULL},
+      {"COALESCE", PROPAGATE, true, false, {ALL, ARG0}, ARG0, COALESCE},
+      {"PREDICATE", ALWAYS_VALID, true, false, {BOOL8}, ARG0, PREDICATE},
+      {"ADD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, ADD},
+      {"SUB", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, SUB},
+      {"MUL", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, MUL},
+      {"DIV", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, DIV},
+      {"NEG", PROPAGATE, false, false, {ARITHMETIC}, ARG0, NEG},
+      {"ABS", PROPAGATE, false, false, {ARITHMETIC}, ARG0, ABS},
+      {"MOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, MOD},
+      {"PYMOD", PROPAGATE, false, false, {ARITHMETIC, ARG0}, ARG0, PYMOD},
+      {"TRUE_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, FLOAT64, TRUE_DIV},
+      {"FLOOR_DIV", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0, FLOOR_DIV},
+      {"ADD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0, ADD_OVERFLOW},
+      {"SUB_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0, SUB_OVERFLOW},
+      {"MUL_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0, MUL_OVERFLOW},
+      {"DIV_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0, DIV_OVERFLOW},
+      {"NEG_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0, NEG_OVERFLOW},
+      {"ABS_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC}, ARG0, ABS_OVERFLOW},
+      {"MOD_OVERFLOW", PROPAGATE, false, true, {ARITHMETIC, ARG0}, ARG0, MOD_OVERFLOW},
+      {"CHECK_PRECISION", PROPAGATE, false, true, {DECIMALS, INT32}, ARG0, CHECK_PRECISION},
+      {"BITWISE_AND", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0, BITWISE_AND},
+      {"BITWISE_INVERT", PROPAGATE, false, false, {INTEGERS}, ARG0, BITWISE_INVERT},
+      {"BITWISE_OR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0, BITWISE_OR},
+      {"BITWISE_XOR", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0, BITWISE_XOR},
+      {"BITWISE_SHIFT_LEFT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0, BITWISE_SHIFT_LEFT},
+      {"BITWISE_SHIFT_RIGHT", PROPAGATE, false, false, {INTEGERS, ARG0}, ARG0, BITWISE_SHIFT_RIGHT},
+      {"CAST_TO_BOOL8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8, CAST_TO_BOOL8},
+      {"CAST_TO_INT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT8, CAST_TO_INT8},
+      {"CAST_TO_INT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT16, CAST_TO_INT16},
+      {"CAST_TO_INT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT32, CAST_TO_INT32},
+      {"CAST_TO_INT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, INT64, CAST_TO_INT64},
+      {"CAST_TO_UINT8", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT8, CAST_TO_UINT8},
+      {"CAST_TO_UINT16", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT16, CAST_TO_UINT16},
+      {"CAST_TO_UINT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT32, CAST_TO_UINT32},
+      {"CAST_TO_UINT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT64, CAST_TO_UINT64},
+      {"CAST_TO_FLOAT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT32, CAST_TO_FLOAT32},
+      {"CAST_TO_FLOAT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT64, CAST_TO_FLOAT64},
+      {"CAST_TO_DECIMAL32",
+       PROPAGATE,
+       false,
+       false,
+       {ARITHMETIC | BOOL8},
+       DECIMAL32,
+       CAST_TO_DECIMAL32},
+      {"CAST_TO_DECIMAL64",
+       PROPAGATE,
+       false,
+       false,
+       {ARITHMETIC | BOOL8},
+       DECIMAL64,
+       CAST_TO_DECIMAL64},
+      {"CAST_TO_DECIMAL128", PROPAGATE, false, false, {DECIMALS}, DECIMAL128, CAST_TO_DECIMAL128},
+      {"RESCALE", PROPAGATE, false, false, {DECIMALS, INT32}, ARG0, RESCALE},
+      {"EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, EQUAL},
+      {"NOT_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, NOT_EQUAL},
+      {"GREATER", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, GREATER},
+      {"GREATER_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, GREATER_EQUAL},
+      {"LESS", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, LESS},
+      {"LESS_EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8, LESS_EQUAL},
+      {"NULL_EQUAL", ALWAYS_VALID, true, false, {ALL, ARG0}, BOOL8, NULL_EQUAL},
+      {"NULL_LOGICAL_AND",
+       ALWAYS_NULLABLE,
+       true,
+       false,
+       {ARITHMETIC | BOOL8, ARG0},
+       BOOL8,
+       NULL_LOGICAL_AND},
+      {"NULL_LOGICAL_OR",
+       ALWAYS_NULLABLE,
+       true,
+       false,
+       {ARITHMETIC | BOOL8, ARG0},
+       BOOL8,
+       NULL_LOGICAL_OR},
+      {"LOGICAL_AND", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8, LOGICAL_AND},
+      {"LOGICAL_OR", PROPAGATE, false, false, {ARITHMETIC | BOOL8, ARG0}, BOOL8, LOGICAL_OR},
+      {"LOGICAL_NOT", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, BOOL8, LOGICAL_NOT},
+      {"IF_ELSE", PROPAGATE, true, false, {ALL, ARG0, INTEGRALS}, ARG0, IF_ELSE},
+      {"CBRT", PROPAGATE, false, false, {FLOATS}, ARG0, CBRT},
+      {"CEIL", PROPAGATE, false, false, {FLOATS}, ARG0, CEIL},
+      {"FLOOR", PROPAGATE, false, false, {FLOATS}, ARG0, FLOOR},
+      {"RINT", PROPAGATE, false, false, {FLOATS}, ARG0, RINT},
+      {"SQRT", PROPAGATE, false, false, {FLOATS}, ARG0, SQRT},
+      {"POW", PROPAGATE, false, false, {FLOATS | INTEGERS, ARG0}, ARG0, POW},
+      {"EXP", PROPAGATE, false, false, {FLOATS}, ARG0, EXP},
+      {"LOG", PROPAGATE, false, false, {FLOATS}, ARG0, LOG},
+      {"ARCCOS", PROPAGATE, false, false, {FLOATS}, ARG0, ARCCOS},
+      {"ARCCOSH", PROPAGATE, false, false, {FLOATS}, ARG0, ARCCOSH},
+      {"ARCSIN", PROPAGATE, false, false, {FLOATS}, ARG0, ARCSIN},
+      {"ARCSINH", PROPAGATE, false, false, {FLOATS}, ARG0, ARCSINH},
+      {"ARCTAN", PROPAGATE, false, false, {FLOATS}, ARG0, ARCTAN},
+      {"ARCTANH", PROPAGATE, false, false, {FLOATS}, ARG0, ARCTANH},
+      {"COS", PROPAGATE, false, false, {FLOATS}, ARG0, COS},
+      {"COSH", PROPAGATE, false, false, {FLOATS}, ARG0, COSH},
+      {"SIN", PROPAGATE, false, false, {FLOATS}, ARG0, SIN},
+      {"SINH", PROPAGATE, false, false, {FLOATS}, ARG0, SINH},
+      {"TAN", PROPAGATE, false, false, {FLOATS}, ARG0, TAN},
+      {"TANH", PROPAGATE, false, false, {FLOATS}, ARG0, TANH},
       // Placeholder that keeps the table aligned with the opcodes: a UDF_CALL node takes its
       // arity, null behaviour and types from its function declaration, never from this row.
       {"UDF_CALL", PROPAGATE, false, false, {}, NONE},
@@ -246,6 +272,13 @@ struct [[nodiscard]] opcode_info {
   }
 
   return info;
+}
+
+std::string_view to_string(opcode op) { return get_op_info(op, error_policy::PROPAGATE).name; }
+
+std::optional<ast::jit::op> get_ast_operator(opcode op)
+{
+  return get_op_info(op, error_policy::PROPAGATE).ast_operator;
 }
 
 opcode as_opcode(ast::ast_operator op)
@@ -801,7 +834,14 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
 
       auto emit_call = [&](std::string const& call, bool is_fallible) {
         if (is_fallible && error_policy_ != cudf::error_policy::NULLIFY) {
-          sink.emit(std::format("CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {});\n", type, id_, call));
+          CUDF_EXPECTS(
+            instance.error_operator_map_.size() < evaluation_status::max_error_map_entries,
+            "Too many fallible operators in one row program",
+            std::invalid_argument);
+          auto const operator_id = instance.error_operator_map_.size();
+          instance.error_operator_map_.push_back(op_);
+          sink.emit(std::format(
+            "CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {}, {});\n", type, id_, operator_id, call));
         } else {
           sink.emit(std::format("{} {} = {};\n", type, id_, call));
         }
@@ -1154,19 +1194,21 @@ transform_args ast_converter::compute_table(
                                        .nullability = output_nullabilities[i]});
   }
   auto row_size = std::max({left_table.num_rows(), right_table.num_rows()});
-  auto result   = transform_args{.scalar_columns       = std::move(scalar_columns),
-                                 .input_table_sources  = std::move(table_sources),
-                                 .input_column_indices = std::move(column_indices),
-                                 .udf                  = std::move(code),
-                                 .source_type          = cudf::udf_source_type::CUDA,
-                                 .is_null_aware        = is_null_aware,
-                                 .user_data            = std::nullopt,
-                                 .inputs               = inputs,
-                                 .outputs              = std::move(outputs),
-                                 .string_offsets{},
-                                 .row_size       = row_size,
-                                 .udf_expression = std::string{function_name},
-                                 .lto_fragments  = fragments};
+  auto result =
+    transform_args{.scalar_columns       = std::move(scalar_columns),
+                   .input_table_sources  = std::move(table_sources),
+                   .input_column_indices = std::move(column_indices),
+                   .udf                  = std::move(code),
+                   .source_type          = cudf::udf_source_type::CUDA,
+                   .is_null_aware        = is_null_aware,
+                   .user_data            = std::nullopt,
+                   .inputs               = inputs,
+                   .outputs              = std::move(outputs),
+                   .string_offsets{},
+                   .row_size           = row_size,
+                   .udf_expression     = std::string{function_name},
+                   .lto_fragments      = fragments,
+                   .error_operator_map = std::move(converter.instance_.error_operator_map_)};
   if (get_context().dump_codegen()) {
     std::cout << "Generated code for transform: \n" << result.udf << std::endl;
   }

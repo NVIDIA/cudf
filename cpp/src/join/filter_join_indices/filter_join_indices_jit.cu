@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "jit/error.hpp"
 #include "join/filter_join_indices/filter_join_indices_jit_kernel.cuh"
 #include "join/filter_join_indices/filter_passing_set.cuh"
 #include "join/filter_join_indices/full_join.hpp"
@@ -12,6 +13,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/join/join.hpp>
@@ -130,6 +132,7 @@ void launch_join_filter_kernel(kernel const& kernel,
                                std::span<transform_input const> inputs,
                                bool* predicate_results,
                                std::optional<void*> user_data,
+                               std::span<row_ir::opcode const> error_operator_map,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
@@ -149,34 +152,24 @@ void launch_join_filter_kernel(kernel const& kernel,
   auto [handles, device_views] = cudf::jit::column_views_to_device<column_device_view, column_view>(
     column_views, stream, mr.get_temporary_mr());
 
-  // Match the pointer parameters of the JIT kernel entry point.
-  cudf::size_type num_rows                         = left_indices.size();
-  cudf::size_type const* left_indices_ptr          = left_indices.data();
-  cudf::size_type const* right_indices_ptr         = right_indices.data();
-  cudf::column_device_view_core const* columns_ptr = device_views.data();
-  void* user_data_ptr                              = user_data.value_or(nullptr);
+  device_scalar<packed_evaluation_status> d_status(
+    evaluation_status::success, stream, mr.get_temporary_mr());
+  size_type const num_rows = left_indices.size();
+  auto const cfg           = kernel.max_occupancy_config(0, 0);
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr());
-  auto max_error_ptr = d_max_error.data();
+  kernel.launch_with({cfg.min_grid_size},
+                     {cfg.block_size},
+                     0,
+                     stream,
+                     num_rows,
+                     left_indices.data(),
+                     right_indices.data(),
+                     device_views.data(),
+                     predicate_results,
+                     user_data.value_or(nullptr),
+                     d_status.data());
 
-  void* args[]{&num_rows,
-               &left_indices_ptr,
-               &right_indices_ptr,
-               &columns_ptr,
-               &predicate_results,
-               &user_data_ptr,
-               &max_error_ptr};
-
-  auto cfg = kernel.max_occupancy_config(0, 0);
-
-  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
-
-  auto error = static_cast<errc>(d_max_error.value(stream));
-  if (error != errc::SUCCESS) {
-    throw evaluation_error(
-      error, std::format("Join filter evaluation failed with error `{}`", to_string(error)));
-  }
+  handle_evaluation_status(d_status.value(stream), error_operator_map, "Join filter evaluation");
 }
 
 // Same join semantics handling as the AST version
@@ -414,6 +407,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                             inputs,
                             predicate_results.data(),
                             std::nullopt,  // no user data for now
+                            {},
                             stream,
                             mr);
 
@@ -511,6 +505,7 @@ filter_join_indices_jit(cudf::table_view const& left,
                             filter_result.inputs,
                             predicate_results.data(),
                             filter_result.user_data,
+                            filter_result.error_operator_map,
                             stream,
                             mr);
 

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/column/column_device_view_base.cuh>
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/types.hpp>
 
 namespace cudf::join::jit {
@@ -22,7 +23,7 @@ namespace cudf::join::jit {
  * @param columns Device view of all columns involved in the predicate
  * @param predicate_results Output array for predicate evaluation results
  * @param user_data Optional user data for predicate function
- * @param max_error Device pointer to the maximum predicate evaluation error code
+ * @param status Device pointer to the packed predicate evaluation status
  */
 template <bool has_user_data, null_aware is_null_aware, typename Accessors>
 CUDF_KERNEL void filter_join_kernel(cudf::size_type num_rows,
@@ -31,6 +32,6 @@ CUDF_KERNEL void filter_join_kernel(cudf::size_type num_rows,
                                     cudf::column_device_view_core const* __restrict__ columns,
                                     bool* __restrict__ predicate_results,
                                     void* __restrict__ user_data,
-                                    int32_t* __restrict__ max_error);
+                                    detail::packed_evaluation_status* __restrict__ status);
 
 }  // namespace cudf::join::jit

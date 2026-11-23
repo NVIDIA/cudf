@@ -7,6 +7,7 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.cuh>
 #include <cudf/detail/null_mask.hpp>
@@ -39,6 +40,7 @@
 
 #include <cudf_fragments.hpp>
 #include <jit/cache.hpp>
+#include <jit/error.hpp>
 #include <jit/helpers.hpp>
 #include <jit/output_columns.hpp>
 #include <jit/parser.hpp>
@@ -110,16 +112,24 @@ void launch(cudf::kernel const& kernel,
             void* user_data,
             column_device_view_core const* input_cols,
             mutable_column_device_view_core const* output_cols,
-            int32_t* max_error,
+            detail::packed_evaluation_status* status,
             cuda::stream_ref stream)
 {
   CUDF_FUNC_RANGE();
-  void* args[] = {&row_size, &stencil, &user_data, &input_cols, &output_cols, &max_error};
-  auto cfg     = kernel.max_occupancy_config(0, 0);
+  auto const cfg = kernel.max_occupancy_config(0, 0);
   CUDF_EXPECTS(cfg.block_size % cudf::detail::warp_size == 0,
                "Expected block size to be a multiple of warp size",
                std::runtime_error);
-  kernel.launch({cfg.min_grid_size}, {cfg.block_size}, 0, stream, args);
+  kernel.launch_with({cfg.min_grid_size},
+                     {cfg.block_size},
+                     0,
+                     stream,
+                     row_size,
+                     stencil,
+                     user_data,
+                     input_cols,
+                     output_cols,
+                     status);
 }
 
 std::tuple<rtcx::blob, lto_binary_type, std::string> instantiate_fragment(
@@ -289,7 +299,7 @@ void run(bool is_null_aware,
          void* user_data,
          std::span<input_column_view const> inputs,
          std::span<output_column> outputs,
-         int32_t* d_max_error,
+         detail::packed_evaluation_status* d_status,
          std::string const& udf,
          udf_source_type source_type,
          cuda::stream_ref stream,
@@ -303,8 +313,7 @@ void run(bool is_null_aware,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_status, stream);
 }
 
 void run(kernel const& kernel,
@@ -313,7 +322,7 @@ void run(kernel const& kernel,
          void* user_data,
          std::span<input_column_view const> inputs,
          std::span<output_column> outputs,
-         int32_t* d_max_error,
+         detail::packed_evaluation_status* d_status,
          cuda::stream_ref stream,
          cudf::memory_resources mr)
 {
@@ -321,8 +330,7 @@ void run(kernel const& kernel,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_status, stream);
 }
 
 void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type, char const*>>
@@ -334,7 +342,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
              void* user_data,
              std::span<input_column_view const> inputs,
              std::span<output_column> outputs,
-             int32_t* d_max_error,
+             detail::packed_evaluation_status* d_status,
              std::span<uint8_t const> udf_binary,
              lto_binary_type source_type,
              cuda::stream_ref stream,
@@ -352,8 +360,7 @@ void run_lto(std::optional<std::tuple<std::span<uint8_t const>, lto_binary_type,
   auto* input_cols     = reinterpret_cast<column_device_view_core const*>(cols.data());
   auto* output_cols =
     reinterpret_cast<mutable_column_device_view_core const*>(input_cols + inputs.size());
-  return launch(
-    kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_max_error, stream);
+  return launch(kernel, row_size, d_stencil, user_data, input_cols, output_cols, d_status, stream);
 }
 
 }  // namespace jit_transform
@@ -795,7 +802,8 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr,
                                          std::string_view udf_expression,
-                                         cudf::lto_fragments lto_fragments)
+                                         cudf::lto_fragments lto_fragments,
+                                         std::span<detail::row_ir::opcode const> error_operator_map)
 {
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
   auto output_may_be_nullable    = get_null_transformation(is_null_aware, inputs, outputs);
@@ -811,8 +819,8 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
   auto stencil_arg       = stencil.has_value() ? stencil->first : nullptr;
   auto stencil_has_nulls = stencil.has_value() ? (stencil->second > 0) : false;
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  detail::device_scalar<detail::packed_evaluation_status> d_status(
+    detail::evaluation_status::success, stream, cudf::get_current_device_resource_ref());
 
   if (compiled_kernel == nullptr) {
     jit_transform::run(is_null_aware == null_aware::YES,
@@ -822,7 +830,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                        user_data.value_or(nullptr),
                        inputs,
                        output_columns,
-                       d_max_error.data(),
+                       d_status.data(),
                        udf,
                        source_type,
                        stream,
@@ -836,19 +844,13 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                        user_data.value_or(nullptr),
                        inputs,
                        output_columns,
-                       d_max_error.data(),
+                       d_status.data(),
                        stream,
                        mr);
   }
 
-  auto error = static_cast<errc>(d_max_error.value(stream));
-
-  switch (error) {
-    case errc::SUCCESS: break;
-    default:
-      throw evaluation_error(
-        error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
-  }
+  detail::handle_evaluation_status(
+    d_status.value(stream), error_operator_map, "Transform UDF evaluation");
 
   auto finalized = finalize_outputs(is_null_aware, row_size, std::move(output_columns), stream, mr);
   return std::make_unique<table>(std::move(finalized));
@@ -892,6 +894,7 @@ std::unique_ptr<table> transform(std::string const& udf,
                            nullptr,
                            stream,
                            mr,
+                           {},
                            {},
                            {});
 }
@@ -942,7 +945,8 @@ std::unique_ptr<table> compute_table_jit(
                            stream,
                            mr,
                            args.udf_expression,
-                           args.lto_fragments);
+                           args.lto_fragments,
+                           args.error_operator_map);
 }
 
 // if we have a matching pre-compiled kernel fragment for the given transform configuration, return
@@ -1016,8 +1020,8 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
   auto precompiled_kernel_fragment = dispatch_lto_kernel_fragment(
     is_null_aware == null_aware::YES, user_data.has_value(), inputs, output_columns);
 
-  cudf::detail::device_scalar<int32_t> d_max_error(
-    static_cast<int32_t>(errc::SUCCESS), stream, cudf::get_current_device_resource_ref());
+  detail::device_scalar<detail::packed_evaluation_status> d_status(
+    detail::evaluation_status::success, stream, cudf::get_current_device_resource_ref());
 
   jit_transform::run_lto(precompiled_kernel_fragment,
                          is_null_aware == null_aware::YES,
@@ -1027,19 +1031,13 @@ std::unique_ptr<table> transform_lto(std::span<uint8_t const> udf,
                          user_data.value_or(nullptr),
                          inputs,
                          output_columns,
-                         d_max_error.data(),
+                         d_status.data(),
                          udf,
                          binary_type,
                          stream,
                          mr);
 
-  auto error = static_cast<errc>(d_max_error.value(stream));
-  switch (error) {
-    case errc::SUCCESS: break;
-    default:
-      throw evaluation_error(
-        error, std::format("Transform UDF evaluation failed with error `{}`", to_string(error)));
-  }
+  detail::handle_evaluation_status(d_status.value(stream), {}, "Transform UDF evaluation");
 
   auto finalized = finalize_outputs(is_null_aware, row_size, std::move(output_columns), stream, mr);
   return std::make_unique<table>(std::move(finalized));
@@ -1092,6 +1090,7 @@ struct transform_program::impl {
   std::vector<data_type> ast_input_types_;
   std::vector<bool> ast_input_nullable_;
   std::vector<transform_output> ast_outputs_;
+  std::vector<detail::row_ir::opcode> ast_error_operator_map_;
 };
 
 transform_program::transform_program(std::string const& udf,
@@ -1152,6 +1151,7 @@ transform_program::transform_program(
                                  jit::make_output_specs(args.outputs, args.string_offsets),
                                  args.udf_expression,
                                  args.lto_fragments);
+  impl_->ast_error_operator_map_ = std::move(args.error_operator_map);
   CUDF_EXPECTS(args.inputs.size() == args.input_column_indices.size(),
                "AST transform input metadata size mismatch");
   for (auto i = std::size_t{0}; i < args.inputs.size(); ++i) {
@@ -1200,7 +1200,8 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
                            stream,
                            mr,
                            {},
-                           {});
+                           {},
+                           impl_->ast_error_operator_map_);
 }
 
 std::unique_ptr<table> transform_program::run(table_view const& table,

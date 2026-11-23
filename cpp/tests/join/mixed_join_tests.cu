@@ -20,6 +20,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/evaluation_error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -2324,13 +2325,24 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
   cudf::column_view const index_view = indices;
   cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
 
-  // Errors from multiple rows must be aggregated using the maximum code.
+  // Report the earliest failing candidate index, not its source row.
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> reordered_indices{3, 0, 1, 2};
+  cudf::column_view const reordered_view = reordered_indices;
+  cudf::device_span<cudf::size_type const> const reordered_maps{
+    reordered_view.data<cudf::size_type>(), 4};
   try {
-    cudf::filter_join_indices_jit(
-      cudf::table_view{{left}}, cudf::table_view{{right}}, maps, maps, udf, GetParam());
+    cudf::filter_join_indices_jit(cudf::table_view{{left}},
+                                  cudf::table_view{{right}},
+                                  reordered_maps,
+                                  reordered_maps,
+                                  udf,
+                                  GetParam());
     FAIL() << "Expected predicate evaluation to fail";
   } catch (cudf::evaluation_error const& error) {
-    EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+    EXPECT_EQ(error.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
+    EXPECT_EQ(error.row_index(), 2);
+    EXPECT_FALSE(error.op_name().has_value());
+    EXPECT_FALSE(error.op().has_value());
   }
 
   cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
@@ -2393,6 +2405,9 @@ TEST_P(FilterJoinJitErrorTest, AstErrorHandling)
       FAIL() << "Expected predicate evaluation to fail";
     } catch (cudf::evaluation_error const& error) {
       EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
+      EXPECT_EQ(error.row_index(), 2);
+      EXPECT_EQ(error.op_name(), "DIV_OVERFLOW");
+      EXPECT_EQ(error.op(), cudf::ast::jit::op::DIV_OVERFLOW);
     }
     std::vector<index_pair> expected{{0, 0}, {2, 2}, {3, 3}};
     if (!nullable) {

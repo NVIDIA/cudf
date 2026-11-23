@@ -57,7 +57,9 @@ struct StringsLargeTest : public cudf::test::BaseFixture {
    */
   void SetUp() override
   {
-    if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+    if (getenv("LIBCUDF_RACECHECK_ENABLED")) {
+      GTEST_SKIP() << "Large strings skipped for racecheck. Coverage in other tests is sufficient.";
+    }
   }
 
   large_strings_enabler g_ls_enabler;

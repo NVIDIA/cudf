@@ -1740,7 +1740,7 @@ struct bool_gen {
 TEST_F(ParquetChunkedReaderInputLimitTest, List)
 {
   // this test runs over 1 hour when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 1 hour under racecheck"; }
 
   auto base_path      = temp_env->get_temp_filepath("list");
   auto test_filenames = input_limit_get_test_names(base_path);
@@ -1892,7 +1892,7 @@ struct char_values {
 TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
 {
   // this test runs over 1 hour when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 1 hour under racecheck"; }
 
   auto base_path      = temp_env->get_temp_filepath("mixed_types");
   auto test_filenames = input_limit_get_test_names(base_path);
@@ -2738,7 +2738,7 @@ TEST_F(ParquetReaderTest, BooleanList)
 TEST_F(ParquetReaderTest, ManyLargeLists)
 {
   // this test runs over 3 hours when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 3 hours under racecheck"; }
 
   auto const stream = cudf::get_default_stream();
 

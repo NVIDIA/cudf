@@ -1245,7 +1245,7 @@ struct char_values {
 TEST_F(OrcChunkedReaderInputLimitTest, ListType)
 {
   // this test runs over 3 hours when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 3 hours under racecheck"; }
 
   int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
@@ -1311,7 +1311,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, ListType)
 TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
 {
   // this test runs over 3 hours when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 3 hours under racecheck"; }
 
   int constexpr num_rows  = 25'000'000;
   int constexpr list_size = 4;
@@ -1481,7 +1481,7 @@ TEST_F(OrcChunkedReaderInputLimitTest, ReadWithRowSelection)
 TEST_F(OrcChunkedReaderInputLimitTest, SizeTypeRowsOverflow)
 {
   // this test runs over 3 hours when racecheck is used
-  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
+  if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP() << "Takes over 3 hours under racecheck"; }
 
   using data_type = int16_t;
   using data_col  = cudf::test::fixed_width_column_wrapper<data_type, int64_t>;

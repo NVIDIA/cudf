@@ -40,6 +40,7 @@
 #include <span>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -2325,24 +2326,31 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
   cudf::column_view const index_view = indices;
   cudf::device_span<cudf::size_type const> const maps{index_view.data<cudf::size_type>(), 4};
 
-  // Report the earliest failing candidate index, not its source row.
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> reordered_indices{3, 0, 1, 2};
+  // Report the lowest failing left row, even when its candidate pair appears later.
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> reordered_indices{3, 2, 0, 1};
   cudf::column_view const reordered_view = reordered_indices;
   cudf::device_span<cudf::size_type const> const reordered_maps{
     reordered_view.data<cudf::size_type>(), 4};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> reordered_right_indices{2, 3, 0, 1};
+  cudf::column_view const reordered_right_view = reordered_right_indices;
+  cudf::device_span<cudf::size_type const> const reordered_right_maps{
+    reordered_right_view.data<cudf::size_type>(), 4};
   try {
     cudf::filter_join_indices_jit(cudf::table_view{{left}},
                                   cudf::table_view{{right}},
                                   reordered_maps,
-                                  reordered_maps,
+                                  reordered_right_maps,
                                   udf,
                                   GetParam());
     FAIL() << "Expected predicate evaluation to fail";
   } catch (cudf::evaluation_error const& error) {
     EXPECT_EQ(error.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
-    EXPECT_EQ(error.row_index(), 2);
+    EXPECT_EQ(error.row_index(), 1);
     EXPECT_FALSE(error.op_name().has_value());
     EXPECT_FALSE(error.op().has_value());
+    EXPECT_STREQ(
+      error.what(),
+      "Join filter evaluation failed at left row 1 with error `ARITHMETIC_OVERFLOW` (2)");
   }
 
   cudf::test::fixed_width_column_wrapper<int> valid_left{1, 2, 3, 4};
@@ -2385,8 +2393,12 @@ __device__ cudf::errc predicate(bool* output, int a, int b)
 TEST_P(FilterJoinJitErrorTest, AstErrorHandling)
 {
   cudf::ast::tree tree;
-  auto const& division = cudf::ast::jit::operation(
-    tree, cudf::ast::jit::op::DIV_OVERFLOW, {col_ref_left_0, col_ref_right_0});
+  auto const& division = cudf::ast::jit::operation(tree,
+                                                   cudf::ast::jit::op::DIV_OVERFLOW,
+                                                   {col_ref_left_0, col_ref_right_0},
+                                                   cudf::error_policy::PROPAGATE,
+                                                   std::nullopt,
+                                                   91);
   auto const predicate =
     cudf::ast::operation{cudf::ast::ast_operator::EQUAL, division, col_ref_left_0};
   cudf::test::fixed_width_column_wrapper<cudf::size_type> indices{0, 1, 2, 3};
@@ -2406,6 +2418,10 @@ TEST_P(FilterJoinJitErrorTest, AstErrorHandling)
     } catch (cudf::evaluation_error const& error) {
       EXPECT_EQ(error.error_code(), cudf::errc::DIVISION_BY_ZERO);
       EXPECT_EQ(error.row_index(), 2);
+      EXPECT_EQ(error.expression_id(), 91);
+      EXPECT_STREQ(error.what(),
+                   "Join filter evaluation failed at left row 2 at operator `"
+                   "ast::jit::op::DIV_OVERFLOW` with error `DIVISION_BY_ZERO` (1)");
       EXPECT_EQ(error.op_name(), "DIV_OVERFLOW");
       EXPECT_EQ(error.op(), cudf::ast::jit::op::DIV_OVERFLOW);
     }

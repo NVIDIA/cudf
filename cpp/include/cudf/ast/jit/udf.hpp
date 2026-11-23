@@ -8,7 +8,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -93,6 +95,7 @@ struct udf {
  * @param function Declaration of the function to call
  * @param args Arguments matching the declared input types
  * @param error_policy How failing rows are handled
+ * @param expression_id Caller identifier reported on evaluation failure
  * @return The created expression
  */
 // The returned expression belongs to tree, independently of argument temporaries.
@@ -102,7 +105,8 @@ struct udf {
 expression const& call(ast::tree& tree,
                        ast::jit::udf function,
                        std::vector<std::reference_wrapper<expression const>> args,
-                       cudf::error_policy error_policy = cudf::error_policy::PROPAGATE);
+                       cudf::error_policy error_policy      = cudf::error_policy::PROPAGATE,
+                       std::optional<int32_t> expression_id = std::nullopt);
 }  // namespace jit
 /** @} */
 }  // namespace ast

@@ -169,7 +169,8 @@ void launch_join_filter_kernel(kernel const& kernel,
                      user_data.value_or(nullptr),
                      d_status.data());
 
-  handle_evaluation_status(d_status.value(stream), error_operator_map, "Join filter evaluation");
+  handle_evaluation_status(
+    d_status.value(stream), error_operator_map, "Join filter evaluation", "left row");
 }
 
 // Same join semantics handling as the AST version

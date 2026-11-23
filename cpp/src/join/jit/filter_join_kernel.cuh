@@ -23,7 +23,7 @@ namespace cudf::join::jit {
  * @param columns Device view of all columns involved in the predicate
  * @param predicate_results Output array for predicate evaluation results
  * @param user_data Optional user data for predicate function
- * @param status Device pointer to the packed predicate evaluation status
+ * @param status Device pointer to the packed status; its row index refers to the left table
  */
 template <bool has_user_data, null_aware is_null_aware, typename Accessors>
 CUDF_KERNEL void filter_join_kernel(cudf::size_type num_rows,

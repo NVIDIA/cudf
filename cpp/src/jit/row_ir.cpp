@@ -643,8 +643,13 @@ size_t node::compute_hash() const
 node::node(opcode op,
            std::optional<int32_t> target_scale,
            error_policy error_policy,
-           std::vector<std::unique_ptr<node>> args)
-  : op_{op}, target_scale_{target_scale}, error_policy_{error_policy}, args_{std::move(args)}
+           std::vector<std::unique_ptr<node>> args,
+           std::optional<int32_t> expression_id)
+  : op_{op},
+    target_scale_{target_scale},
+    error_policy_{error_policy},
+    args_{std::move(args)},
+    expression_id_{expression_id}
 {
   auto op_info = get_op_info(op_, error_policy_);
   CUDF_EXPECTS(op_ != opcode::GET_INPUT && op_ != opcode::SET_OUTPUT,
@@ -687,8 +692,15 @@ node::node(input_reference input)
   hash_ = compute_hash();
 }
 
-node::node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
-  : op_{opcode::UDF_CALL}, error_policy_{error_policy}, args_{std::move(args)}, udf_{std::move(udf)}
+node::node(ast::jit::udf udf,
+           error_policy error_policy,
+           std::vector<std::unique_ptr<node>> args,
+           std::optional<int32_t> expression_id)
+  : op_{opcode::UDF_CALL},
+    error_policy_{error_policy},
+    args_{std::move(args)},
+    expression_id_{expression_id},
+    udf_{std::move(udf)}
 {
   hash_ = compute_hash();
 }
@@ -697,6 +709,7 @@ node::node(repeated_reference reference)
   : op_{reference.first->op_},
     error_policy_{reference.first->error_policy_},
     hash_{reference.first->hash_},
+    expression_id_{reference.first->expression_id_},
     udf_{reference.first->udf_},
     alias_{reference.first}
 {
@@ -896,8 +909,9 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
             "Too many fallible operators in one row program",
             std::invalid_argument);
           auto const operator_id = instance.error_operator_map_.size();
-          instance.error_operator_map_.push_back(udf_.has_value() ? error_operator{udf_->symbol}
-                                                                  : error_operator{op_});
+          instance.error_operator_map_.push_back(udf_.has_value()
+                                                   ? error_operator{udf_->symbol, expression_id_}
+                                                   : error_operator{op_, expression_id_});
           sink.emit(std::format(
             "CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {}, {});\n", type, id_, operator_id, call));
         } else {
@@ -1005,7 +1019,8 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& e
   return std::make_unique<row_ir::node>(as_opcode(expr.get_operator()),
                                         expr.get_target_scale(),
                                         error_policy::PROPAGATE,
-                                        std::move(args));
+                                        std::move(args),
+                                        expr.get_expression_id());
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::predicate const& expr)
@@ -1022,8 +1037,11 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
-  return std::make_unique<row_ir::node>(
-    expr.get_opcode(), expr.get_target_scale(), expr.get_error_policy(), std::move(args));
+  return std::make_unique<row_ir::node>(expr.get_opcode(),
+                                        expr.get_target_scale(),
+                                        expr.get_error_policy(),
+                                        std::move(args),
+                                        expr.get_expression_id());
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
@@ -1038,8 +1056,8 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_c
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
-  auto call =
-    std::make_unique<row_ir::node>(expr.get_function(), expr.get_error_policy(), std::move(args));
+  auto call = std::make_unique<row_ir::node>(
+    expr.get_function(), expr.get_error_policy(), std::move(args), expr.get_expression_id());
   calls_.emplace(&expr, call.get());
   return call;
 }

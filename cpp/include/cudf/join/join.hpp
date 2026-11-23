@@ -525,6 +525,7 @@ filter_join_indices_output_size(
  * The remaining parameters correspond to columns in the left table followed by the right table.
  * The CUDA function may return `cudf::errc` instead of `void` to report evaluation errors.
  * PTX modules functions must return `cudf::errc` as a 32-bit integer status.
+ * An evaluation error's row index identifies the row in `left`.
  *
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
@@ -563,6 +564,7 @@ filter_join_indices_jit(cudf::table_view const& left,
  * This overload converts an AST expression referencing columns from both left and right
  * tables into JIT-compiled CUDA code and uses it to filter the join index pairs.
  * The input-map contract and join semantics are the same as `filter_join_indices`.
+ * Evaluation errors identify a row in `left`.
  *
  * @throw std::invalid_argument if join_kind is not INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @throw cudf::evaluation_error if the predicate reports an evaluation error.

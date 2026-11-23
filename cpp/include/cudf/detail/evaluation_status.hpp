@@ -75,7 +75,7 @@ struct evaluation_status {
    * A zero raw error code produces `success`, discarding any operator context.
    *
    * @param status ABI-valid raw status, optionally carrying row-IR operator context
-   * @param row Logical row index, or -1 if unspecified; joins use the candidate-pair index
+   * @param row Logical row index, or -1 if unspecified; joins use the left row index
    * @return Packed failure status, or `success` when the raw error code is zero
    */
   [[nodiscard]] CUDF_HOST_DEVICE static constexpr packed_evaluation_status make(errc status,

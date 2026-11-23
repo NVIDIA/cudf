@@ -72,6 +72,20 @@ class expression_transformer;
  */
 struct [[nodiscard]] expression {
   /**
+   * @brief Constructs an expression with an optional caller-provided identifier.
+   *
+   * IDs do not affect common subexpression elimination. When equivalent expressions are merged,
+   * the retained expression's ID is reported. IDs need not be contiguous or fit in the device
+   * operator index.
+   *
+   * @param expression_id Identifier to report when this expression fails during JIT execution
+   */
+  explicit expression(std::optional<int32_t> expression_id = std::nullopt)
+    : expression_id_{expression_id}
+  {
+  }
+
+  /**
    * @brief Accepts a visitor class.
    *
    * @param visitor The `expression_parser` parsing this expression tree
@@ -121,8 +135,18 @@ struct [[nodiscard]] expression {
                                                table_view const& right,
                                                cuda::stream_ref stream) const = 0;
 
+  /**
+   * @brief Returns the caller-provided expression identifier.
+   *
+   * @return Identifier, or std::nullopt if none was supplied
+   */
+  [[nodiscard]] std::optional<int32_t> get_expression_id() const { return expression_id_; }
+
   /// @brief Destroy the expression object
   virtual ~expression() {}
+
+ private:
+  std::optional<int32_t> expression_id_{};
 };
 
 /**
@@ -507,8 +531,11 @@ class operation : public expression {
    *
    * @param op Operator
    * @param input Input expression (operand)
+   * @param expression_id Caller identifier reported on JIT evaluation failure
    */
-  operation(ast_operator op, expression const& input);
+  operation(ast_operator op,
+            expression const& input,
+            std::optional<int32_t> expression_id = std::nullopt);
 
   /**
    * @brief Construct a scale-aware RESCALE operation.
@@ -516,8 +543,12 @@ class operation : public expression {
    * @param op Operator; must be `ast_operator::RESCALE`
    * @param input Input fixed-point expression
    * @param target_scale Desired output scale
+   * @param expression_id Caller identifier reported on JIT evaluation failure
    */
-  operation(ast_operator op, expression const& input, numeric::scale_type target_scale);
+  operation(ast_operator op,
+            expression const& input,
+            numeric::scale_type target_scale,
+            std::optional<int32_t> expression_id = std::nullopt);
 
   /**
    * @brief Construct a new binary operation object.
@@ -525,16 +556,34 @@ class operation : public expression {
    * @param op Operator
    * @param left Left input expression (left operand)
    * @param right Right input expression (right operand)
+   * @param expression_id Caller identifier reported on JIT evaluation failure
    */
-  operation(ast_operator op, expression const& left, expression const& right);
+  operation(ast_operator op,
+            expression const& left,
+            expression const& right,
+            std::optional<int32_t> expression_id = std::nullopt);
 
   // operation only stores references to expressions, so it does not accept r-value
   // references: the calling code must own the expressions.
-  operation(ast_operator op, expression&& input)                                   = delete;
-  operation(ast_operator op, expression&& input, numeric::scale_type target_scale) = delete;
-  operation(ast_operator op, expression&& left, expression&& right)                = delete;
-  operation(ast_operator op, expression&& left, expression const& right)           = delete;
-  operation(ast_operator op, expression const& left, expression&& right)           = delete;
+  operation(ast_operator op,
+            expression&& input,
+            std::optional<int32_t> expression_id = std::nullopt) = delete;
+  operation(ast_operator op,
+            expression&& input,
+            numeric::scale_type target_scale,
+            std::optional<int32_t> expression_id = std::nullopt) = delete;
+  operation(ast_operator op,
+            expression&& left,
+            expression&& right,
+            std::optional<int32_t> expression_id = std::nullopt) = delete;
+  operation(ast_operator op,
+            expression&& left,
+            expression const& right,
+            std::optional<int32_t> expression_id = std::nullopt) = delete;
+  operation(ast_operator op,
+            expression const& left,
+            expression&& right,
+            std::optional<int32_t> expression_id = std::nullopt) = delete;
 
   /**
    * @brief Get the operator.
@@ -884,13 +933,15 @@ enum class op : uint8_t {
  * @param args Operation arguments.
  * @param error_policy Specifies how fallible operations handle errors.
  * @param target_scale Required only for `op::RESCALE`.
+ * @param expression_id Caller identifier reported on evaluation failure.
  * @return A reference to the created operation expression.
  */
 expression const& operation(ast::tree& tree,
                             op operator_id,
                             std::vector<std::reference_wrapper<expression const>> const& args,
-                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
-                            std::optional<int32_t> target_scale = std::nullopt);
+                            cudf::error_policy error_policy      = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale  = std::nullopt,
+                            std::optional<int32_t> expression_id = std::nullopt);
 
 /**
  * @brief Creates a JIT expression operation from an opcode and argument list.
@@ -900,13 +951,15 @@ expression const& operation(ast::tree& tree,
  * @param args Operation arguments.
  * @param error_policy Specifies how fallible operations handle errors.
  * @param target_scale Required only for `op::RESCALE`.
+ * @param expression_id Caller identifier reported on evaluation failure.
  * @return A reference to the created operation expression.
  */
 expression const& operation(ast::tree& tree,
                             op operator_id,
                             std::initializer_list<std::reference_wrapper<expression const>> args,
-                            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
-                            std::optional<int32_t> target_scale = std::nullopt);
+                            cudf::error_policy error_policy      = cudf::error_policy::PROPAGATE,
+                            std::optional<int32_t> target_scale  = std::nullopt,
+                            std::optional<int32_t> expression_id = std::nullopt);
 
 }  // namespace jit
 

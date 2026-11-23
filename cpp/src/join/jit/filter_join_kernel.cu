@@ -44,7 +44,8 @@ namespace cudf::join::jit {
 constexpr cudf::size_type JoinNoMatch = cuda::std::numeric_limits<cudf::size_type>::min();
 
 template <bool has_user_data, typename... T>
-__device__ errc execute_predicate_op(void* user_data, size_type row_index, T... args)
+__device__ errc
+execute_predicate_op(void* user_data, size_type left_row, size_type right_row, T... args)
 {
   auto func = [&](auto... a) {
     if constexpr (!cuda::std::is_void_v<decltype(GENERIC_JOIN_FILTER_OP(a...))>) {
@@ -56,7 +57,7 @@ __device__ errc execute_predicate_op(void* user_data, size_type row_index, T... 
   };
 
   if constexpr (has_user_data) {
-    return func(user_data, row_index, args...);
+    return func(user_data, left_row, right_row, args...);
   } else {
     return func(args...);
   }
@@ -77,29 +78,34 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
   auto thread_status = detail::evaluation_status::success;
 
   for (auto i = start; i < num_rows; i += stride) {
+    auto const left_row  = left_indices[i];
+    auto const right_row = right_indices[i];
     // Skip if either index is JoinNoMatch
-    if (left_indices[i] == JoinNoMatch || right_indices[i] == JoinNoMatch) {
+    if (left_row == JoinNoMatch || right_row == JoinNoMatch) {
       predicate_results[i] = false;
       continue;
     }
 
-    cudf::size_type const* indices[] = {left_indices, right_indices};
+    size_type const indices[]{left_row, right_row};
 
-    // Each accessor receives both tables and both indices, and internally selects
-    // the appropriate table based on whether it's a left or right accessor.
     if constexpr (is_null_aware) {
       // Null-aware path: pass optional<T> inputs, get optional<bool> result
       cuda::std::optional<bool> result{false};
       auto row_status = Accessors::map([&]<typename... A>() {
         return execute_predicate_op<has_user_data>(
-          user_data, i, &result, A::nullable_element(columns, indices[A::table_index][i])...);
+          user_data,
+          left_row,
+          right_row,
+          &result,
+          A::nullable_element(columns, indices[A::table_index])...);
       });
-      thread_status = cuda::std::min(thread_status, detail::evaluation_status::make(row_status, i));
+      thread_status =
+        cuda::std::min(thread_status, detail::evaluation_status::make(row_status, left_row));
       predicate_results[i] = result.has_value() && result.value();
     } else {
       // Non-null-aware path: if any input is null, predicate is false
       auto any_null = Accessors::map(
-        [&]<typename... A>() { return (A::is_null(columns, indices[A::table_index][i]) || ...); });
+        [&]<typename... A>() { return (A::is_null(columns, indices[A::table_index]) || ...); });
       if (any_null) {
         predicate_results[i] = false;
         continue;
@@ -107,9 +113,10 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
       bool result     = false;
       auto row_status = Accessors::map([&]<typename... A>() {
         return execute_predicate_op<has_user_data>(
-          user_data, i, &result, A::element(columns, indices[A::table_index][i])...);
+          user_data, left_row, right_row, &result, A::element(columns, indices[A::table_index])...);
       });
-      thread_status = cuda::std::min(thread_status, detail::evaluation_status::make(row_status, i));
+      thread_status =
+        cuda::std::min(thread_status, detail::evaluation_status::make(row_status, left_row));
       predicate_results[i] = result;
     }
   }

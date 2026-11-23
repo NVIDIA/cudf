@@ -26,8 +26,8 @@
 namespace cudf {
 namespace ast {
 
-operation::operation(ast_operator op, expression const& input)
-  : op{op}, operands{input}, target_scale{std::nullopt}
+operation::operation(ast_operator op, expression const& input, std::optional<int32_t> expression_id)
+  : expression{expression_id}, op{op}, operands{input}, target_scale{std::nullopt}
 {
   CUDF_EXPECTS(cudf::ast::detail::ast_operator_arity(op) == 1,
                "The provided operator is not a unary operator.",
@@ -36,16 +36,22 @@ operation::operation(ast_operator op, expression const& input)
     op != ast_operator::RESCALE, "RESCALE requires target scale metadata.", std::invalid_argument);
 }
 
-operation::operation(ast_operator op, expression const& input, numeric::scale_type target_scale)
-  : op{op}, operands{input}, target_scale{target_scale}
+operation::operation(ast_operator op,
+                     expression const& input,
+                     numeric::scale_type target_scale,
+                     std::optional<int32_t> expression_id)
+  : expression{expression_id}, op{op}, operands{input}, target_scale{target_scale}
 {
   CUDF_EXPECTS(op == ast_operator::RESCALE,
                "Target scale metadata is only valid for RESCALE.",
                std::invalid_argument);
 }
 
-operation::operation(ast_operator op, expression const& left, expression const& right)
-  : op{op}, operands{left, right}, target_scale{std::nullopt}
+operation::operation(ast_operator op,
+                     expression const& left,
+                     expression const& right,
+                     std::optional<int32_t> expression_id)
+  : expression{expression_id}, op{op}, operands{left, right}, target_scale{std::nullopt}
 {
   CUDF_EXPECTS(cudf::ast::detail::ast_operator_arity(op) == 2,
                "The provided operator is not a binary operator.",

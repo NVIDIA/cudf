@@ -7,6 +7,7 @@
 #include <cudf/errc.hpp>
 #include <cudf/types.hpp>
 
+#include <cstdint>
 #include <exception>
 #include <optional>
 #include <string>
@@ -38,20 +39,23 @@ struct evaluation_error : std::exception {
   /**
    * @brief Constructs an error with execution context.
    * @param error Evaluation status
-   * @param row_index Logical input row, or candidate-pair index for a join; nullopt if unavailable
+   * @param row_index Logical input row, or left row for a join; nullopt if unavailable
    * @param op_name Operator name or UDF symbol, nullopt if unavailable
    * @param op Built-in JIT operator, nullopt for UDF calls or unavailable context
    * @param message Diagnostic message
+   * @param expression_id Caller-provided ID of the failing expression, nullopt if unavailable
    */
   evaluation_error(errc error,
                    std::optional<size_type> row_index,
                    std::optional<std::string> op_name,
                    std::optional<ast::jit::op> op,
-                   std::string message)
+                   std::string message,
+                   std::optional<int32_t> expression_id = std::nullopt)
     : error_(error),
       row_index_(row_index),
       op_name_(std::move(op_name)),
       op_(op),
+      expression_id_(expression_id),
       message_(std::move(message))
   {
   }
@@ -71,7 +75,7 @@ struct evaluation_error : std::exception {
   [[nodiscard]] errc error_code() const noexcept { return error_; }
 
   /**
-   * @brief Returns the logical input row.
+   * @brief Returns the logical input row, or the left row for a join filter.
    *
    * @return Row index, or std::nullopt if unavailable
    */
@@ -91,11 +95,19 @@ struct evaluation_error : std::exception {
    */
   [[nodiscard]] std::optional<ast::jit::op> op() const noexcept { return op_; }
 
+  /**
+   * @brief Returns the caller-provided ID of the failing expression.
+   *
+   * @return Identifier, or std::nullopt if none was assigned or expression context is unavailable
+   */
+  [[nodiscard]] std::optional<int32_t> expression_id() const noexcept { return expression_id_; }
+
  private:
   errc error_;
   std::optional<size_type> row_index_;
   std::optional<std::string> op_name_;
   std::optional<ast::jit::op> op_;
+  std::optional<int32_t> expression_id_;
   std::string message_;
 };
 

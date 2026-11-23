@@ -21,7 +21,8 @@ namespace cudf::detail {
 
 void handle_evaluation_status(packed_evaluation_status packed,
                               std::span<error_operator const> operators,
-                              std::string_view operation)
+                              std::string_view operation,
+                              std::string_view row_label)
 {
   auto const status = evaluation_status::unpack(packed);
 
@@ -32,22 +33,24 @@ void handle_evaluation_status(packed_evaluation_status packed,
   std::optional<size_type> row;
   std::optional<std::string> name;
   std::optional<ast::jit::op> op;
+  std::optional<int32_t> expression_id;
   std::string location;
 
   if (status.row_index != -1) {
     row      = status.row_index;
-    location = std::format(" at row {}", *row);
+    location = std::format(" at {} {}", row_label, *row);
   }
 
   if (index < operators.size()) {
     auto const& entry = operators[index];
-    if (auto const* opcode = std::get_if<row_ir::opcode>(&entry)) {
+    expression_id     = entry.expression_id;
+    if (auto const* opcode = std::get_if<row_ir::opcode>(&entry.op)) {
       name = row_ir::to_string(*opcode);
       op   = row_ir::get_ast_operator(*opcode);
     } else {
-      name = std::get<std::string>(entry);
+      name = std::get<std::string>(entry.op);
     }
-    location += std::format(" at operator {}{}", op.has_value() ? "ast::jit::op::" : "", *name);
+    location += std::format(" at operator `{}{}`", op.has_value() ? "ast::jit::op::" : "", *name);
   }
 
   throw evaluation_error(error,
@@ -58,7 +61,8 @@ void handle_evaluation_status(packed_evaluation_status packed,
                                      operation,
                                      location,
                                      to_string(error),
-                                     static_cast<error_int>(error)));
+                                     static_cast<error_int>(error)),
+                         expression_id);
 }
 
 }  // namespace cudf::detail

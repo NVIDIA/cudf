@@ -298,6 +298,8 @@ struct [[nodiscard]] node {
 
   std::string id_ = {};  ///< The identifier of the IR node
 
+  std::optional<int32_t> expression_id_{};  ///< Caller ID, excluded from CSE equivalence
+
   data_type type_ = {};  ///< The resolved type information of the IR node
 
   input_reference scale_reference_ = {};  ///< The index of the target scale as an IR input
@@ -347,11 +349,13 @@ struct [[nodiscard]] node {
    * @param target_scale The target scale for decimal rescaling if applicable
    * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
+   * @param expression_id Caller identifier reported on evaluation failure
    */
   node(opcode op,
        std::optional<int32_t> target_scale,
        error_policy error_policy,
-       std::vector<std::unique_ptr<node>> args);
+       std::vector<std::unique_ptr<node>> args,
+       std::optional<int32_t> expression_id);
 
   /**
    * @brief Construct a new operation IR node
@@ -362,7 +366,7 @@ struct [[nodiscard]] node {
    */
   template <cuda::std::same_as<node>... T>
   node(opcode op, std::optional<int32_t> target_scale, error_policy error_policy, T... args)
-    : node(op, target_scale, error_policy, arguments(std::move(args)...))
+    : node(op, target_scale, error_policy, arguments(std::move(args)...), std::nullopt)
   {
   }
 
@@ -378,7 +382,7 @@ struct [[nodiscard]] node {
        std::optional<int32_t> target_scale,
        error_policy error_policy,
        std::unique_ptr<T>... args)
-    : node(op, target_scale, error_policy, arguments(std::move(args)...))
+    : node(op, target_scale, error_policy, arguments(std::move(args)...), std::nullopt)
   {
   }
 
@@ -394,8 +398,12 @@ struct [[nodiscard]] node {
    * @param udf The function to call
    * @param error_policy How a row whose call fails is handled
    * @param args The arguments of the call
+   * @param expression_id Caller identifier reported on evaluation failure
    */
-  node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
+  node(ast::jit::udf udf,
+       error_policy error_policy,
+       std::vector<std::unique_ptr<node>> args,
+       std::optional<int32_t> expression_id);
 
   /**
    * @brief Construct a node for a repeated reference to an AST call, which reuses the evaluation

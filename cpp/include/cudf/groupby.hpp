@@ -718,7 +718,7 @@ class direct_groupby {
    * may be called concurrently with `aggregate()`.
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Memory resources used for temporary allocations and the returned columns
+   * @param mr Device memory resource used to allocate the returned columns
    * @return A vector of aggregation_results (one per request)
    *
    * @throws cudf::logic_error if no non-empty batch has been aggregated

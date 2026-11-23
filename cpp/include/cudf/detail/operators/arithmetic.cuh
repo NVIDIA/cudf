@@ -56,7 +56,7 @@ __device__ numeric::decimal<R> abs(numeric::decimal<R> a)
 template <typename A, typename B>
 __device__ auto add(A a, B b) -> decltype(a + b)
 {
-#if defined(__CUDA_ARCH__) 
+#if defined(__CUDA_ARCH__)
   using result_type = decltype(a + b);
   if constexpr (cuda::std::is_same_v<result_type, float>) {
     return __fadd_rn(a, b);

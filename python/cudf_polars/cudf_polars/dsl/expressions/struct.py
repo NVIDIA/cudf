@@ -39,7 +39,7 @@ class StructFunction(Expr):
         SuffixFields = auto()
         JsonEncode = auto()
         WithFields = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19284
-        MapFieldNames = auto()  # TODO: https://github.com/NVIDIA/cudf/issues/19285
+        MapFieldNames = auto()
         FieldByIndex = auto()
         MultipleFields = (
             auto()
@@ -66,6 +66,7 @@ class StructFunction(Expr):
         Name.PrefixFields,
         Name.SuffixFields,
         Name.JsonEncode,
+        Name.MapFieldNames,
     }
 
     def __init__(
@@ -84,6 +85,15 @@ class StructFunction(Expr):
             raise NotImplementedError(
                 f"Struct function {self.name}"
             )  # pragma: no cover
+        if self.name in {
+            StructFunction.Name.RenameFields,
+            StructFunction.Name.MapFieldNames,
+        }:
+            fields = cast("pl.Struct", self.dtype.polars_type).fields
+            if len({field.name for field in fields}) != len(fields):
+                raise NotImplementedError(
+                    f"Struct function {self.name} with duplicate field names"
+                )
 
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
@@ -151,8 +161,9 @@ class StructFunction(Expr):
             StructFunction.Name.RenameFields,
             StructFunction.Name.PrefixFields,
             StructFunction.Name.SuffixFields,
+            StructFunction.Name.MapFieldNames,
         }:
-            return column
+            return Column(column.obj, dtype=self.dtype).sorted_like(column)
         else:
             raise NotImplementedError(
                 f"Struct function {self.name}"

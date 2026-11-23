@@ -1135,9 +1135,8 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * width of outputType.  For DECIMAL outputs the CUDA output parameter is a
    * {@code numeric::decimal32/64/128} pointer; only its unscaled value is stored, so the UDF must
    * produce it at outputType's scale.
-   * For STRING outputs the output parameter is a {@code cudf::string_view} pointer.  The
-   * string_view must point to device memory that stays valid until this method returns, such as
-   * the characters of a STRING input; the characters are copied into the result column.
+   * For STRING outputs the output parameter is a {@code cudf::string_view} pointer to device
+   * memory, e.g. a slice of a STRING input; its characters are copied into the result column.
    * @param udf This function will be applied to every element in the vector
    * @param isPtx is the code of the function ptx? true or C/C++ false.
    * @param outputType the type of the output column. The type of the UDF's output parameter

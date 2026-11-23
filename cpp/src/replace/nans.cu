@@ -8,6 +8,7 @@
 #include <cudf/detail/copy_if_else.cuh>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/math.cuh>
 #include <cudf/detail/replace.hpp>
 #include <cudf/replace.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -20,7 +21,6 @@
 
 #include <cuda/iterator>
 #include <cuda/std/concepts>
-#include <cuda/std/limits>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -45,7 +45,7 @@ struct replace_nans_functor {
     size_type size         = input.size();
 
     auto predicate = [dinput = *input_device_view] __device__(auto i) {
-      return dinput.is_null(i) or !std::isnan(dinput.element<T>(i));
+      return dinput.is_null(i) or cudf::detail::ops::is_not_nan(dinput.element<T>(i));
     };
 
     auto input_iterator =
@@ -127,10 +127,7 @@ struct normalize_nans_and_zeros_lambda {
   cudf::column_device_view in;
   T __device__ operator()(cudf::size_type i)
   {
-    auto e = in.element<T>(i);
-    if (isnan(e)) { return cuda::std::numeric_limits<T>::quiet_NaN(); }
-    if (T{0.0} == e) { return T{0.0}; }
-    return e;
+    return cudf::detail::ops::normalize_nans_and_zeros(in.element<T>(i));
   }
 };
 

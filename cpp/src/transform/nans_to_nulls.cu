@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/math.cuh>
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/null_mask.hpp>
@@ -32,7 +33,7 @@ struct dispatch_nan_to_null {
     auto input_device_view     = *input_device_view_ptr;
 
     auto pred = [input_device_view] __device__(cudf::size_type idx) {
-      return not(cuda::std::isnan(input_device_view.element<T>(idx)) ||
+      return not(cudf::detail::ops::is_nan(input_device_view.element<T>(idx)) ||
                  input_device_view.is_null(idx));
     };
 

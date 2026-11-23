@@ -85,8 +85,9 @@ __device__ auto floor_div(A a, B b) -> decltype(cudf::detail::integral_floor_div
   return cudf::detail::integral_floor_div(a, b);
 }
 
-template <cuda::std::floating_point A, cuda::std::floating_point B>
-__device__ auto floor_div(A a, B b) -> decltype(cuda::std::floor(a / b))
+template <typename A, typename B>
+__device__ auto floor_div(A a, B b) -> cuda::std::common_type_t<A, B>
+  requires(cuda::std::floating_point<cuda::std::common_type_t<A, B>>)
 {
   return cuda::std::floor(a / b);
 }
@@ -105,10 +106,12 @@ __device__ auto mod(A a, B b) -> decltype(a % b)
   return a % b;
 }
 
-template <cuda::std::floating_point A, cuda::std::floating_point B>
-__device__ auto mod(A a, B b) -> decltype(cuda::std::fmod(a, b))
+template <typename A, typename B>
+__device__ auto mod(A a, B b) -> cuda::std::common_type_t<A, B>
+  requires(cuda::std::floating_point<cuda::std::common_type_t<A, B>>)
 {
-  return cuda::std::fmod(a, b);
+  using common_t = cuda::std::common_type_t<A, B>;
+  return cuda::std::fmod(static_cast<common_t>(a), static_cast<common_t>(b));
 }
 
 /**
@@ -199,6 +202,47 @@ template <typename A, typename B>
 __device__ auto true_div(A a, B b) -> decltype(static_cast<double>(a) / static_cast<double>(b))
 {
   return static_cast<double>(a) / static_cast<double>(b);
+}
+
+/**
+ * @brief Computes positive modulus, adjusting negative remainders by the divisor.
+ *
+ * @tparam A Dividend type.
+ * @tparam B Divisor type.
+ * @param a Dividend.
+ * @param b Divisor.
+ */
+template <typename A, typename B>
+__device__ auto pmod(A a, B b)
+  requires(cuda::std::integral<cuda::std::common_type_t<A, B>>)
+{
+  using common_t = cuda::std::common_type_t<A, B>;
+  auto const lhs = static_cast<common_t>(a);
+  auto const rhs = static_cast<common_t>(b);
+  auto rem       = lhs % rhs;
+  if constexpr (cuda::std::is_signed_v<decltype(rem)>) {
+    if (rem < 0) { rem = (rem + rhs) % rhs; }
+  }
+  return rem;
+}
+
+template <typename A, typename B>
+__device__ auto pmod(A a, B b)
+  requires(cuda::std::floating_point<cuda::std::common_type_t<A, B>>)
+{
+  using common_t = cuda::std::common_type_t<A, B>;
+  auto const lhs = static_cast<common_t>(a);
+  auto const rhs = static_cast<common_t>(b);
+  auto rem       = cuda::std::fmod(lhs, rhs);
+  if (rem < 0) { rem = cuda::std::fmod(rem + rhs, rhs); }
+  return rem;
+}
+
+template <concepts::fixed_point A, cuda::std::same_as<A> B>
+__device__ auto pmod(A a, B b)
+{
+  auto const rem = a % b;
+  return rem.value() < 0 ? (rem + b) % b : rem;
 }
 
 }  // namespace ops

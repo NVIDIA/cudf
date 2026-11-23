@@ -23,6 +23,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/concepts>
+#include <cuda/std/optional>
 #include <cuda/stream>
 #include <thrust/transform.h>
 
@@ -240,15 +241,14 @@ struct null_considering_binop {
     auto minmax_func = cuda::proclaim_return_type<cudf::string_view>(
       [op, invalid_str] __device__(
         bool lhs_valid, bool rhs_valid, cudf::string_view lhs_value, cudf::string_view rhs_value) {
-        if (!lhs_valid && !rhs_valid) { return invalid_str; }
-        auto const result = (lhs_valid && rhs_valid)
-                              ? ((op == binary_operator::NULL_MAX)
-                                   ? cuda::maximum<cudf::string_view>()(lhs_value, rhs_value)
-                                   : cuda::minimum<cudf::string_view>()(lhs_value, rhs_value))
-                              : (lhs_valid ? lhs_value : rhs_value);
+        auto const lhs    = lhs_valid ? cuda::std::optional{lhs_value} : cuda::std::nullopt;
+        auto const rhs    = rhs_valid ? cuda::std::optional{rhs_value} : cuda::std::nullopt;
+        auto const result = op == binary_operator::NULL_MAX ? cudf::detail::ops::null_max(lhs, rhs)
+                                                            : cudf::detail::ops::null_min(lhs, rhs);
+        if (!result.has_value()) { return invalid_str; }
         // A valid empty string may carry a null data pointer, which make_strings_column would
         // treat as the null placeholder. Normalize it to the canonical (non-null) empty string.
-        return result.empty() ? cudf::string_view{} : result;
+        return result->empty() ? cudf::string_view{} : *result;
       });
 
     // Populate output column

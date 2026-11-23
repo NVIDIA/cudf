@@ -10,8 +10,8 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/operators/casts.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
-#include <cudf/fixed_point/conv.hpp>
 #include <cudf/unary.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -44,12 +44,11 @@ struct type_casted_accessor {
   {
     if constexpr (column_device_view::has_element_accessor<Element>()) {
       auto const element = col.element<Element>(is_scalar ? 0 : i);
-      if constexpr (cuda::std::is_convertible_v<Element, CastType>) {
-        return static_cast<CastType>(element);
-      } else if constexpr (is_fixed_point<Element>() && cuda::std::is_floating_point_v<CastType>) {
-        return convert_fixed_to_floating<CastType>(element);
+      if constexpr (cuda::std::is_convertible_v<Element, CastType> ||
+                    (is_fixed_point<Element>() && cuda::std::is_floating_point_v<CastType>)) {
+        return cudf::detail::ops::cast<CastType>(element);
       } else if constexpr (is_fixed_point<CastType>() && cuda::std::is_floating_point_v<Element>) {
-        return convert_floating_to_fixed<CastType>(element, numeric::scale_type{0});
+        return cudf::detail::ops::cast<CastType>(element, numeric::scale_type{0});
       }
     }
     return {};
@@ -69,19 +68,18 @@ struct typed_casted_writer {
   {
     if constexpr (mutable_column_device_view::has_element_accessor<Element>() and
                   cuda::std::is_constructible_v<Element, FromType>) {
-      col.element<Element>(i) = static_cast<Element>(val);
+      col.element<Element>(i) = cudf::detail::ops::cast<Element>(val);
     } else if constexpr (is_fixed_point<Element>()) {
       auto const scale = numeric::scale_type{col.type().scale()};
       if constexpr (is_fixed_point<FromType>()) {
-        col.data<typename Element::rep>()[i] = val.rescaled(scale).value();
-      } else if constexpr (cuda::std::is_constructible_v<Element, FromType>) {
-        col.data<typename Element::rep>()[i] = Element{val, scale}.value();
-      } else if constexpr (cuda::std::is_floating_point_v<FromType>) {
         col.data<typename Element::rep>()[i] =
-          convert_floating_to_fixed<Element>(val, scale).value();
+          cudf::detail::ops::rescale(val, static_cast<int32_t>(scale)).value();
+      } else if constexpr (cuda::std::is_constructible_v<Element, FromType> ||
+                           cuda::std::is_floating_point_v<FromType>) {
+        col.data<typename Element::rep>()[i] = cudf::detail::ops::cast<Element>(val, scale).value();
       }
     } else if constexpr (cuda::std::is_floating_point_v<Element> and is_fixed_point<FromType>()) {
-      col.data<Element>()[i] = convert_fixed_to_floating<Element>(val);
+      col.data<Element>()[i] = cudf::detail::ops::cast<Element>(val);
     }
   }
 };

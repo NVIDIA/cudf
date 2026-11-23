@@ -11,10 +11,90 @@
 
 #include <cuda/std/cmath>
 #include <cuda/std/concepts>
+#include <cuda/std/limits>
+#include <cuda/std/type_traits>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
 namespace ops {
+
+/**
+ * @brief Tests whether a floating-point value is NaN.
+ *
+ * @tparam T Value type.
+ * @param a Input value.
+ */
+template <cuda::std::floating_point T>
+__device__ bool is_nan(T a)
+{
+  return cuda::std::isnan(a);
+}
+
+/**
+ * @brief Tests whether a floating-point value is not NaN.
+ *
+ * @tparam T Value type.
+ * @param a Input value.
+ */
+template <cuda::std::floating_point T>
+__device__ bool is_not_nan(T a)
+{
+  return !is_nan(a);
+}
+
+/**
+ * @brief Tests whether a floating-point value is finite.
+ *
+ * @tparam T Value type.
+ * @param a Input value.
+ */
+template <cuda::std::floating_point T>
+__device__ bool is_finite(T a)
+{
+  return cuda::std::isfinite(a);
+}
+
+/**
+ * @brief Canonicalizes NaNs and replaces either signed zero with positive zero.
+ *
+ * @tparam T Value type.
+ * @param a Input value.
+ */
+template <cuda::std::floating_point T>
+__device__ T normalize_nans_and_zeros(T a)
+{
+  if (is_nan(a)) { return cuda::std::numeric_limits<T>::quiet_NaN(); }
+  return a == T{0.0} ? T{0.0} : a;
+}
+
+// Separate names keep AST dispatch from accepting binary forms of the unary ceil/floor operators.
+/**
+ * @brief Rounds an integral representation up to a multiple of a positive factor.
+ *
+ * @tparam T Representation type.
+ * @param a Input representation.
+ * @param factor Positive rounding factor, such as ten to the negated decimal scale.
+ */
+template <cuda::std::integral T>
+__device__ T ceil_to_multiple(T a, T factor)
+{
+  auto const truncated = (a / factor) * factor;
+  return truncated + (a > 0 && truncated != a ? factor : 0);
+}
+
+/**
+ * @brief Rounds an integral representation down to a multiple of a positive factor.
+ *
+ * @tparam T Representation type.
+ * @param a Input representation.
+ * @param factor Positive rounding factor, such as ten to the negated decimal scale.
+ */
+template <cuda::std::integral T>
+__device__ T floor_to_multiple(T a, T factor)
+{
+  auto const truncated = (a / factor) * factor;
+  return truncated - (a < 0 && truncated != a ? factor : 0);
+}
 
 /**
  * @brief Computes cube root
@@ -56,14 +136,9 @@ __device__ numeric::decimal<R> decimal_round(numeric::decimal<R> a)
   } else {
     auto factor =
       numeric::detail::ipow<R, numeric::Radix::BASE_10>(-static_cast<int32_t>(a.scale()));
-    auto div = a.value() / factor;
-    auto rem = a.value() % factor;
-    if (rem == 0) {
-      return a;
-    } else {
-      auto val = ceil ? (a.value() > 0 ? (div + 1) : div) : (a.value() > 0 ? div : (div - 1));
-      return numeric::decimal<R>{numeric::scaled_integer<R>{val * factor, a.scale()}};
-    }
+    auto rep =
+      ceil ? ops::ceil_to_multiple(a.value(), factor) : ops::floor_to_multiple(a.value(), factor);
+    return numeric::decimal<R>{numeric::scaled_integer<R>{rep, a.scale()}};
   }
 }
 
@@ -158,6 +233,35 @@ template <cuda::std::floating_point T>
 __device__ T sqrt(T a)
 {
   return cuda::std::sqrt(a);
+}
+
+/**
+ * @brief Computes integral exponentiation, retaining the base type.
+ *
+ * @tparam A Base type.
+ * @tparam B Exponent type.
+ * @param a Base value.
+ * @param b Exponent value.
+ */
+template <cuda::std::integral A, cuda::std::integral B>
+__device__ A int_pow(A a, B b)
+{
+  return cudf::detail::integral_pow(a, b);
+}
+
+/**
+ * @brief Computes the logarithm of a value in the supplied base, returning double.
+ *
+ * @tparam A Value type.
+ * @tparam B Base type.
+ * @param a Input value.
+ * @param b Logarithm base.
+ */
+template <typename A, typename B>
+__device__ double log_base(A a, B b)
+  requires(cuda::std::is_convertible_v<A, double> && cuda::std::is_convertible_v<B, double>)
+{
+  return cuda::std::log(static_cast<double>(a)) / cuda::std::log(static_cast<double>(b));
 }
 
 }  // namespace ops

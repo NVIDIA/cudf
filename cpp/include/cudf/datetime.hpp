@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cudf/datetime_types.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
@@ -25,22 +26,6 @@ namespace datetime {
  * @addtogroup datetime_extract
  * @{
  */
-
-/**
- * @brief Types of datetime components that may be extracted.
- */
-enum class datetime_component : uint8_t {
-  YEAR,
-  MONTH,
-  DAY,
-  WEEKDAY,
-  HOUR,
-  MINUTE,
-  SECOND,
-  MILLISECOND,
-  MICROSECOND,
-  NANOSECOND
-};
 
 /**
  * @brief Extracts the specified datetime component from any datetime type and
@@ -229,20 +214,6 @@ std::unique_ptr<cudf::column> extract_quarter(
   cudf::column_view const& column,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Fixed frequencies supported by datetime rounding functions ceil, floor, round.
- *
- */
-enum class rounding_frequency : int32_t {
-  DAY,
-  HOUR,
-  MINUTE,
-  SECOND,
-  MILLISECOND,
-  MICROSECOND,
-  NANOSECOND
-};
 
 /**
  * @brief Round datetimes up to the nearest multiple of the given frequency.

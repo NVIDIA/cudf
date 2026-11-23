@@ -17,6 +17,7 @@ from cudf_streaming.channel_metadata import (
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import allgather_polars_dataframe
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
@@ -252,6 +253,9 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
 
     async def _run() -> None:
         stream = context.br().stream_pool.get_stream()
+        ir_context = IRExecutionContext(
+            get_cuda_stream=context.br().stream_pool.get_stream
+        )
         payload_df = DataFrame.from_polars(pl_payload, stream)
         rank_part_df = DataFrame.from_polars(pl_rank_part, stream)
 
@@ -267,10 +271,13 @@ def test_local_repartitioner_index(spmd_engine, local_count) -> None:
                     TableChunk.from_pylibcudf_table(
                         rank_part_df.table, stream, exclusive_view=True, br=context.br()
                     ),
+                    ir_context=ir_context,
                 )
 
             local = LocalRepartitioner(shuffle, local_count=local_count)
-            await local.repartition_by_index(partition_col=0, stream=stream)
+            await local.repartition_by_index(
+                partition_col=0, stream=stream, ir_context=ir_context
+            )
 
             for pid in local.local_partitions():
                 tbl = await local.extract_chunk(pid, stream)

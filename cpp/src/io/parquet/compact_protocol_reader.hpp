@@ -255,5 +255,17 @@ void decode_footer_bytes(
  */
 void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMetaData* metadata);
 
+/**
+ * @brief Initialize the schema of an already decoded `FileMetaData`
+ *
+ * Populates the schema tree (children, parent and max levels) and the column chunk schema indices.
+ * Must only be called on a `FileMetaData` whose schema has not yet been initialized.
+ *
+ * @param metadata Metadata to initialize
+ *
+ * @throws cudf::logic_error If the schema cannot be initialized
+ */
+void init_schema(FileMetaData* metadata);
+
 }  // namespace io::parquet::detail
 }  // namespace CUDF_EXPORT cudf

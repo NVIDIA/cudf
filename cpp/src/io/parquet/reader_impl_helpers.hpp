@@ -40,8 +40,8 @@ namespace cudf::io::parquet::detail {
  * @brief Size in bytes of a bloom filter block
  *
  * cuco's Arrow bloom filter bitsets must be aligned to this size and be a multiple of it long.
+ * TODO(NVIDIA/cuCollections#829): replace with a cuco-provided block-size / alignment accessor.
  */
-// TODO(NVIDIA/cuCollections#829): replace with a cuco-provided block-size / alignment accessor.
 auto constexpr bloom_filter_block_bytes = std::size_t{32};
 
 /**

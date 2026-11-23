@@ -673,7 +673,7 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                std::invalid_argument);
 
   // Bitsets must be header-stripped and 32-byte aligned (see `fetch_bloom_filters_to_device`)
-  auto constexpr bloom_filter_block_bytes = cudf::io::parquet::detail::bloom_filter_block_bytes;
+  using parquet::detail::bloom_filter_block_bytes;
   CUDF_EXPECTS(
     std::ranges::all_of(
       bloom_filter_data,

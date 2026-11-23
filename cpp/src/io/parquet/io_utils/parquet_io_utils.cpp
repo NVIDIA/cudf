@@ -497,7 +497,7 @@ fetch_bloom_filters_to_device_impl(
                "Encountered mismatch in number of datasources and bloom filter byte range spans");
 
   // Each bitset must align to 32-byte boundaries, as required by cuco's Arrow bloom filter bitsets.
-  auto constexpr bloom_filter_block_bytes = detail::bloom_filter_block_bytes;
+  using detail::bloom_filter_block_bytes;
 
   auto const total_filters =
     std::accumulate(bloom_filter_byte_ranges_per_source.begin(),

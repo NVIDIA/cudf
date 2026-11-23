@@ -719,6 +719,10 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
   // delta stream held fewer values than the definition levels call for. Those rows are already
   // marked valid, so without an error the read would return whatever their output slots happened
   // to contain.
+  //
+  // The error is reported by the same thread that updates `s->setup.error`. `invoke_one` does not
+  // guarantee which thread it selects, so reading the field from another thread here would race
+  // with this write.
   cg::invoke_one(block, [&] {
     if (s->setup.error == 0 and db->error) {
       s->setup.error |=
@@ -726,9 +730,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
     } else if (s->setup.error == 0 and s->progress.src_pos < s->progress.nz_count) {
       s->setup.error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
     }
+    if (s->setup.error != 0) { set_error(s->setup.error, error_code); }
   });
-
-  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
 }
 
 // Decode page data that is DELTA_BYTE_ARRAY packed. This encoding consists of a DELTA_BINARY_PACKED

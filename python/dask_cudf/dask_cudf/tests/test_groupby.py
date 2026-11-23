@@ -11,6 +11,7 @@ from dask import dataframe as dd
 from dask.utils_test import hlg_layer
 
 import cudf
+from cudf.testing import assert_eq
 
 import dask_cudf
 from dask_cudf._expr.groupby import OPTIMIZED_AGGS, _aggs_optimized
@@ -46,6 +47,23 @@ def pdf(request):
         pdf = pdf.mask(rng.choice([True, False], size=pdf.shape))
 
     return pdf
+
+
+def test_groupby_apply_return_input_frame():
+    pdf = pd.DataFrame({"a": [1, 2, 3, 1, 2, 3], "b": [1, 2, 3, 4, 5, 6]})
+    ddf = dd.from_pandas(pdf, npartitions=2).to_backend("cudf")
+
+    actual = ddf.groupby("a").apply(
+        lambda group: group,
+        meta=ddf._meta.drop(columns=["a"]),
+        include_groups=False,
+    )
+    expected = pdf.groupby("a").apply(
+        lambda group: group, include_groups=False
+    )
+
+    result = actual.compute(scheduler="single-threaded")
+    assert_eq(expected.sort_index(), result.sort_index())
 
 
 # NOTE: We only want to test aggregation "methods" here,

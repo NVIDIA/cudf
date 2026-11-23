@@ -26,10 +26,11 @@ template <typename ElementType>
 struct transformer_pair_meanvar {
   using ResultType = cuda::std::pair<cudf::meanvar<ElementType>, bool>;
 
-  CUDF_HOST_DEVICE inline ResultType operator()(cuda::std::pair<ElementType, bool> const& pair)
+  CUDF_HOST_DEVICE inline ResultType operator()(
+    cudf::detail::value_and_validity<ElementType> const& input)
   {
-    ElementType v = pair.first;
-    return {{v, static_cast<ElementType>(v * v), (pair.second) ? 1 : 0}, pair.second};
+    auto const& [v, is_valid] = input;
+    return {{v, static_cast<ElementType>(v * v), is_valid ? 1 : 0}, is_valid};
   };
 };
 

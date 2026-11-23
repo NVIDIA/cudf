@@ -37,11 +37,12 @@ struct null_replacing_transformer {
   {
   }
 
-  template <typename ElementType>
-  CUDF_HOST_DEVICE inline type operator()(cuda::std::pair<ElementType, bool> const& pair_value)
+  template <typename ValueAndValidity>
+  CUDF_HOST_DEVICE inline type operator()(ValueAndValidity const& input)
   {
-    if (pair_value.second)
-      return f(pair_value.first);
+    auto const& [value, is_valid] = input;
+    if (is_valid)
+      return f(value);
     else
       return replacement;
   }
@@ -119,10 +120,11 @@ template <typename ElementType>
 struct transformer_meanvar {
   using ResultType = meanvar<ElementType>;
 
-  CUDF_HOST_DEVICE inline ResultType operator()(cuda::std::pair<ElementType, bool> const& pair)
+  template <typename ValueAndValidity>
+  CUDF_HOST_DEVICE inline ResultType operator()(ValueAndValidity const& input)
   {
-    ElementType v = pair.first;
-    return meanvar<ElementType>(v, v * v, (pair.second) ? 1 : 0);
+    auto const& [v, is_valid] = input;
+    return meanvar<ElementType>(v, v * v, is_valid ? 1 : 0);
   };
 };
 

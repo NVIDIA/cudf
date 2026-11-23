@@ -75,10 +75,11 @@ struct IteratorTest : public cudf::test::BaseFixture {
   }
 
   // iterator test case which uses thrust
-  template <typename InputIterator, typename T_output>
+  template <typename InputIterator, typename T_output, typename Equal = cuda::std::equal_to<>>
   void iterator_test_thrust(thrust::host_vector<T_output> const& expected,
                             InputIterator d_in,
-                            int num_items)
+                            int num_items,
+                            Equal equal = {})
   {
     InputIterator d_in_last = d_in + num_items;
     EXPECT_EQ(cuda::std::distance(d_in, d_in_last), num_items);
@@ -96,7 +97,7 @@ struct IteratorTest : public cudf::test::BaseFixture {
                       d_in_last,
                       dev_expected.begin(),
                       dev_results.begin(),
-                      cuda::std::equal_to{});
+                      equal);
     auto result = thrust::all_of(rmm::exec_policy_nosync(cudf::get_default_stream()),
                                  dev_results.begin(),
                                  dev_results.end(),

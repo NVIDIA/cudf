@@ -20,8 +20,6 @@
 #endif
 
 #include <cuda/std/algorithm.max.h>
-#include <cuda/std/functional>
-#include <cuda/std/utility>
 
 // This file should only include device code logic.
 // Host-only or host/device code should be defined in the string_view.hpp header file.
@@ -54,6 +52,11 @@ __device__ inline size_type characters_in_string(char const* str, size_type byte
 #endif
 }
 
+struct character_position_result {
+  size_type byte_offset          = 0;
+  size_type remaining_characters = 0;
+};
+
 /**
  * @brief Count the bytes to a specified character position
  *
@@ -65,8 +68,8 @@ __device__ inline size_type characters_in_string(char const* str, size_type byte
  * @param pos Character position to count to
  * @return The number of bytes and the left over non-counted position value
  */
-__device__ inline cuda::std::pair<size_type, size_type> bytes_to_character_position(
-  string_view d_str, size_type pos)
+__device__ inline character_position_result bytes_to_character_position(string_view d_str,
+                                                                        size_type pos)
 {
   size_type bytes    = 0;
   auto ptr           = d_str.data();
@@ -296,7 +299,7 @@ __device__ inline char_utf8 string_view::operator[](size_type pos) const
 __device__ inline size_type string_view::byte_offset(size_type pos) const
 {
   if (length() == size_bytes()) return pos;
-  return cuda::std::get<0>(strings::detail::bytes_to_character_position(*this, pos));
+  return strings::detail::bytes_to_character_position(*this, pos).byte_offset;
 }
 
 __device__ inline int string_view::compare(string_view const& in) const

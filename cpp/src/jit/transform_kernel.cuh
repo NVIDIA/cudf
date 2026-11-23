@@ -15,7 +15,6 @@
 #include <cudf/utilities/bit.hpp>
 
 #include <cuda/std/algorithm.min.h>
-#include <cuda/std/utility>
 
 #include <jit/column_accessor.cuh>
 #include <jit/sync.cuh>

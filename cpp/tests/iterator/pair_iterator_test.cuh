@@ -9,6 +9,14 @@
 #include <cuda/std/utility>
 #include <thrust/host_vector.h>
 
+struct value_and_validity_equal {
+  __device__ bool operator()(auto const& actual, auto const& expected) const
+  {
+    auto const& [value, is_valid] = expected;
+    return actual.value == value && actual.is_valid == is_valid;
+  }
+};
+
 template <typename T>
 void nonull_pair_iterator(IteratorTest<T>& testFixture)
 {
@@ -29,7 +37,8 @@ void nonull_pair_iterator(IteratorTest<T>& testFixture)
 
   // GPU test
   auto it_dev = d_col->template pair_begin<T, false>();
-  testFixture.iterator_test_thrust(replaced_array, it_dev, host_values.size());
+  testFixture.iterator_test_thrust(
+    replaced_array, it_dev, host_values.size(), value_and_validity_equal{});
 }
 
 template <typename T>
@@ -60,10 +69,12 @@ void null_pair_iterator(IteratorTest<T>& testFixture)
 
   // GPU test
   auto it_dev = d_col->template pair_begin<T, true>();
-  testFixture.iterator_test_thrust(value_and_validity, it_dev, host_values.size());
+  testFixture.iterator_test_thrust(
+    value_and_validity, it_dev, host_values.size(), value_and_validity_equal{});
 
   auto it_hasnonull_dev = d_col->template pair_begin<T, false>();
-  testFixture.iterator_test_thrust(value_all_valid, it_hasnonull_dev, host_values.size());
+  testFixture.iterator_test_thrust(
+    value_all_valid, it_hasnonull_dev, host_values.size(), value_and_validity_equal{});
 
   auto itb_dev = cudf::detail::make_validity_iterator(*d_col);
   testFixture.iterator_test_thrust(host_bools, itb_dev, host_values.size());

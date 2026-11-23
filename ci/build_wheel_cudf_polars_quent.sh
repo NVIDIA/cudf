@@ -16,7 +16,8 @@ export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 rapids-retry rustup toolchain install "${RUSTUP_TOOLCHAIN}" \
   --profile minimal \
   --component rustfmt \
-  --component clippy
+  --component clippy \
+  --target wasm32-unknown-unknown
 
 export RAPIDS_PACKAGE_VERSION
 RAPIDS_PACKAGE_VERSION=$(<VERSION)

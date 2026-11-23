@@ -145,7 +145,7 @@ correct for one rank without a separate branch.
 
 ## Device Memory and Spilling
 
-### Reserve memory asynchronously, sized to the real allocation
+### Reserve memory asynchronously, with a best-effort size
 
 Every device allocation in an actor (unspill, pack, sort, concat, key
 evaluation) must be covered by an awaited reservation. A synchronous
@@ -153,6 +153,11 @@ evaluation) must be covered by an awaited reservation. A synchronous
 on the event loop. `net_memory_delta` and `reserve_extra` must match the
 real memory effect. Use no unexplained multipliers, and no extra
 reservation for a single-chunk concat.
+
+The size of a reservation passed to `opaque_memory_usage` is a best-effort
+estimate based on the inputs and the expected output. It may use knowledge
+of libcudf internals, such as sort workspace or temporary buffers, but do not
+require it. The rapidsmpf reservation system tolerates an inexact estimate.
 
 ```python
 # Bad: blocks the event loop and can overbook

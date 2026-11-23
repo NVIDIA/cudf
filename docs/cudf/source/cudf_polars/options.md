@@ -59,7 +59,7 @@ value is read from the environment variable if present; otherwise the underlying
 its built-in default. `raise_on_fail` has no environment variable. The environment variables for
 `dynamic_planning`, `join_filter_pushdown`, and `quent_context` accept a boolean that enables or
 disables the feature; the nested fields of `dynamic_planning` and `join_filter_pushdown` have their
-own environment variables (e.g. `CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_CHUNK_COUNT`).
+own environment variables (e.g. `CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING__SAMPLE_BYTE_COUNT`).
 Boolean environment variables accept `{"1", "true", "yes", "y"}` as true and
 `{"0", "false", "no", "n"}` as false.
 

@@ -52,9 +52,12 @@ __device__ inline size_type characters_in_string(char const* str, size_type byte
 #endif
 }
 
+/**
+ * @brief Byte offset reached while locating a UTF-8 character position and the remaining count.
+ */
 struct character_position_result {
-  size_type byte_offset          = 0;
-  size_type remaining_characters = 0;
+  size_type byte_offset          = 0;  ///< Byte offset reached in the string.
+  size_type remaining_characters = 0;  ///< Characters still needed to reach the requested position.
 };
 
 /**

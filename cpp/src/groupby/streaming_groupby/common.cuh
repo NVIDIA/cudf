@@ -303,7 +303,8 @@ struct aggregate_state {
   }
   void aggregate_values(table_view const& data,
                         device_span<size_type const> group_ids,
-                        cuda::stream_ref stream);
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr);
 
   [[nodiscard]] std::unique_ptr<table> gather_agg_results(size_type size,
                                                           cuda::stream_ref stream,
@@ -395,7 +396,8 @@ struct direct_groupby::impl : aggregate_state {
 
   void do_aggregate(device_span<size_type const> group_ids,
                     table_view const& values,
-                    cuda::stream_ref stream);
+                    cuda::stream_ref stream,
+                    cudf::memory_resources mr);
   [[nodiscard]] std::vector<aggregation_result> do_finalize(cuda::stream_ref stream,
                                                             cudf::memory_resources mr) const;
 };

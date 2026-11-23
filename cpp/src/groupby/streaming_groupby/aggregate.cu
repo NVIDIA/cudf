@@ -34,7 +34,8 @@ void aggregate_state::update_partial_budget(size_type batch_size)
 
 void aggregate_state::aggregate_values(table_view const& data,
                                        device_span<size_type const> group_ids,
-                                       cuda::stream_ref stream)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
   _results_read_done.wait(stream);
 
@@ -45,7 +46,7 @@ void aggregate_state::aggregate_values(table_view const& data,
                           _partials_per_group,
                           _agg_results->mutable_view(),
                           stream,
-                          cudf::get_current_device_resource_ref());
+                          mr);
   record_aggregate_completion(stream);
 }
 
@@ -80,7 +81,8 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
     insertion_started    = true;
     auto const group_ids = probe_and_insert(batch_keys, stream);
     _insert_done.record(stream);
-    aggregate_values(data, {group_ids.data(), group_ids.size()}, stream);
+    aggregate_values(
+      data, {group_ids.data(), group_ids.size()}, stream, cudf::get_current_device_resource_ref());
   } catch (...) {
     if (insertion_started) { _invalidated = true; }
     // Do not let partially enqueued writes escape tracking before a subsequent resize/read.
@@ -91,7 +93,8 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
 
 void direct_groupby::impl::do_aggregate(device_span<size_type const> group_ids,
                                         table_view const& values,
-                                        cuda::stream_ref stream)
+                                        cuda::stream_ref stream,
+                                        cudf::memory_resources mr)
 {
   ensure_not_invalidated();
 
@@ -105,16 +108,16 @@ void direct_groupby::impl::do_aggregate(device_span<size_type const> group_ids,
   ensure_not_invalidated();
   bool reshape_started = false;
   try {
-    auto const mr = cudf::memory_resources{_mr, cudf::get_current_device_resource_ref()};
-    if (!_initialized) { initialize_aggregates(values, stream, mr); }
+    auto const state_mr = cudf::memory_resources{_mr, mr.get_temporary_mr()};
+    if (!_initialized) { initialize_aggregates(values, stream, state_mr); }
     update_partial_budget(values.num_rows());
     _insert_done.wait(stream);
     reshape_started = true;
-    reshape_aggregate_results(_num_groups, _num_groups, stream, mr);
+    reshape_aggregate_results(_num_groups, _num_groups, stream, state_mr);
     _insert_done.record(stream);
     // Only now does finalize() have storage to read.
     _initialized = true;
-    aggregate_values(values, group_ids, stream);
+    aggregate_values(values, group_ids, stream, mr);
   } catch (...) {
     if (reshape_started) { _invalidated = true; }
     // Do not let partially enqueued writes escape tracking before a subsequent resize/read.

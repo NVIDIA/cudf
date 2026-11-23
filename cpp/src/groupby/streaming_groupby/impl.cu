@@ -699,10 +699,11 @@ direct_groupby& direct_groupby::operator=(direct_groupby&&) noexcept = default;
 
 void direct_groupby::aggregate(device_span<size_type const> group_ids,
                                table_view const& values,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  _impl->do_aggregate(group_ids, values, stream);
+  _impl->do_aggregate(group_ids, values, stream, mr);
 }
 
 std::vector<aggregation_result> direct_groupby::finalize(cuda::stream_ref stream,

@@ -743,6 +743,8 @@ TEST_F(StreamingGroupbyTest, DirectGroupby)
 {
   constexpr cudf::size_type num_groups = 4;
   constexpr cudf::size_type num_rows   = 2048;
+  auto harness                         = cudf::test::memory_resource_test_harness{};
+  auto const stream                    = cudf::get_default_stream();
 
   std::vector<cudf::groupby::streaming_aggregation_request> requests;
   requests.push_back(make_req(
@@ -752,7 +754,7 @@ TEST_F(StreamingGroupbyTest, DirectGroupby)
   requests.push_back(make_req(0, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
 
   EXPECT_THROW(cudf::groupby::direct_groupby(0, requests), std::invalid_argument);
-  cudf::groupby::direct_groupby direct(num_groups, requests);
+  cudf::groupby::direct_groupby direct(num_groups, requests, harness.output_mr());
 
   cudf::test::fixed_width_column_wrapper<cudf::size_type> no_ids{};
   cudf::test::fixed_width_column_wrapper<int32_t> no_values{};
@@ -781,7 +783,15 @@ TEST_F(StreamingGroupbyTest, DirectGroupby)
 
   EXPECT_THROW(direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{values}}),
                std::invalid_argument);
-  direct.aggregate(cudf::column_view{ids}, cudf::table_view{{values}});
+  {
+    auto const current_scope = harness.fail_on_current_device_resource_use();
+    direct.aggregate(
+      cudf::column_view{ids}, cudf::table_view{{values}}, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_output_allocations_live(stream);
+  harness.expect_temporary_allocation_activity(stream);
+  harness.expect_temporary_allocations_released(stream);
 
   auto const results = direct.finalize();
   cudf::test::fixed_width_column_wrapper<cudf::size_type> count_all{513, 0, 513, 0};

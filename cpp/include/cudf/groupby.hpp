@@ -659,7 +659,7 @@ class direct_groupby {
    * @param requests The aggregations to perform. `column_index` refers to the `values` table
    *        passed to `aggregate()`.
    * @param mr Device memory resource used to allocate the aggregate state. Temporary
-   *        allocations made by `aggregate()` use the current device memory resource.
+   *        allocations made by `aggregate()` use the temporary resource passed to that call.
    *
    * @throws std::invalid_argument if `num_groups <= 0`
    * @throws std::invalid_argument if any requested aggregation kind is unsupported
@@ -691,6 +691,8 @@ class direct_groupby {
    * @param group_ids Group ID of each row of `values`
    * @param values Table containing the value columns
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources whose temporary resource is used for temporary allocations.
+   *        The aggregate state is allocated from the resource passed to the constructor.
    *
    * @throws std::invalid_argument if `group_ids.size() != values.num_rows()`
    * @throws cudf::logic_error if the first non-empty batch has a MEAN aggregation on a value
@@ -702,7 +704,8 @@ class direct_groupby {
    */
   void aggregate(device_span<size_type const> group_ids,
                  table_view const& values,
-                 cuda::stream_ref stream = cudf::get_default_stream());
+                 cuda::stream_ref stream   = cudf::get_default_stream(),
+                 cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Finalize the accumulated aggregates into final results.

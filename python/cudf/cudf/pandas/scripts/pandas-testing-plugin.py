@@ -12244,10 +12244,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/groupby/test_reductions.py::test_string_dtype_all_na[string=string[python]-min-True-False-1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/indexes/multi/test_formats.py::TestRepr::test_tuple_width": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-partition2-object]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition1-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition2-category]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_api.py::test_api_per_method[index-empty1-rpartition2-object]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
     "tests/strings/test_api.py::test_api_per_method[index-empty1-split1-object]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=object]": "Flaky under test sharding: cudf.pandas behavior is test-order-dependent (see #22992)",
     "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[bool-dtype-string=str[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
@@ -12475,13 +12471,6 @@ NODEIDS_TO_SKIP_WHEN_SHARDED: dict[str, str] = {
     "tests/strings/test_strings.py::test_isnumeric_unicode_missing[string=string[pyarrow]-isdecimal-expected1]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_len[string=string[pyarrow]]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
     "tests/strings/test_strings.py::test_len[string=string[python]]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[pyarrow]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=str[python]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]--10-3-z-expected7]": "Skipped: failing in pandas-tests sharded CI (PR #24099, run 34415333268)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[pyarrow]-None--2-z-expected5]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
-    "tests/strings/test_strings.py::test_slice_replace[string=string[python]--1-None-z-expected4]": "Skipped: failing in pandas-tests sharded CI (PR #22992, run 28204832469)",
 }
 
 # Keep keys in alphabetical order

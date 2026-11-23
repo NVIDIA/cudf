@@ -386,20 +386,4 @@ struct streaming_groupby::impl : aggregate_state {
   void do_merge(impl const& other, cuda::stream_ref stream);
 };
 
-/// The impl struct for direct_groupby. Defined in impl.cu.
-struct direct_groupby::impl : aggregate_state {
-  size_type _num_groups;
-
-  impl(size_type num_groups,
-       host_span<streaming_aggregation_request const> requests,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
-
-  void do_aggregate(device_span<size_type const> group_ids,
-                    table_view const& values,
-                    cuda::stream_ref stream,
-                    cudf::memory_resources mr);
-  [[nodiscard]] std::vector<aggregation_result> do_finalize(cuda::stream_ref stream,
-                                                            cudf::memory_resources mr) const;
-};
-
 }  // namespace cudf::groupby

@@ -620,9 +620,8 @@ class streaming_groupby {
 /**
  * @brief Stateful groupby that aggregates values by caller-supplied group IDs.
  *
- * `direct_groupby` is the aggregation step of `streaming_groupby` without its hash table. Use
- * it when every row already has a dense integer group ID, for example the right row index
- * returned by `distinct_hash_join::left_join`, so the keys need not be hashed again. Input
+ * Use `direct_groupby` when every row already has a dense integer group ID, for example the
+ * right row index returned by `distinct_hash_join::left_join`, so no keys are hashed. Input
  * arrives in batches through `aggregate()`, and `finalize()` returns one row per group ID.
  * Keys are neither stored nor returned; the caller owns the mapping from group IDs to keys.
  *

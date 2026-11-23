@@ -18,7 +18,6 @@
 #include <limits>
 #include <mutex>
 #include <string>
-#include <utility>
 
 namespace cudf::groupby {
 
@@ -85,41 +84,6 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
       data, {group_ids.data(), group_ids.size()}, stream, cudf::get_current_device_resource_ref());
   } catch (...) {
     if (insertion_started) { _invalidated = true; }
-    // Do not let partially enqueued writes escape tracking before a subsequent resize/read.
-    synchronize_on_error(stream);
-    throw;
-  }
-}
-
-void direct_groupby::impl::do_aggregate(device_span<size_type const> group_ids,
-                                        table_view const& values,
-                                        cuda::stream_ref stream,
-                                        cudf::memory_resources mr)
-{
-  ensure_not_invalidated();
-
-  CUDF_EXPECTS(std::cmp_equal(group_ids.size(), values.num_rows()),
-               "group_ids and values must have the same number of rows.",
-               std::invalid_argument);
-  if (group_ids.empty()) { return; }
-
-  // Keep host bookkeeping locked until every result use is enqueued and registered.
-  std::lock_guard const lock{_insert_mutex};
-  ensure_not_invalidated();
-  bool reshape_started = false;
-  try {
-    auto const state_mr = cudf::memory_resources{_mr, mr.get_temporary_mr()};
-    if (!_initialized) { initialize_aggregates(values, stream, state_mr); }
-    update_partial_budget(values.num_rows());
-    _insert_done.wait(stream);
-    reshape_started = true;
-    reshape_aggregate_results(_num_groups, _num_groups, stream, state_mr);
-    _insert_done.record(stream);
-    // Only now does finalize() have storage to read.
-    _initialized = true;
-    aggregate_values(values, group_ids, stream, mr);
-  } catch (...) {
-    if (reshape_started) { _invalidated = true; }
     // Do not let partially enqueued writes escape tracking before a subsequent resize/read.
     synchronize_on_error(stream);
     throw;

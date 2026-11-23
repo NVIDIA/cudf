@@ -739,70 +739,6 @@ TEST_F(StreamingGroupbyTest, ConcurrentAggregate)
   verify_against_groupby(direct_keys, direct_results, batches, KEY_COL, reqs);
 }
 
-TEST_F(StreamingGroupbyTest, DirectGroupby)
-{
-  constexpr cudf::size_type num_groups = 4;
-  constexpr cudf::size_type num_rows   = 2048;
-  auto harness                         = cudf::test::memory_resource_test_harness{};
-  auto const stream                    = cudf::get_default_stream();
-
-  std::vector<cudf::groupby::streaming_aggregation_request> requests;
-  requests.push_back(make_req(
-    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
-  requests.push_back(make_req(
-    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
-  requests.push_back(make_req(0, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
-
-  EXPECT_THROW(cudf::groupby::direct_groupby(0, requests), std::invalid_argument);
-  cudf::groupby::direct_groupby direct(num_groups, requests, harness.output_mr());
-
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> no_ids{};
-  cudf::test::fixed_width_column_wrapper<int32_t> no_values{};
-  direct.aggregate(cudf::column_view{no_ids}, cudf::table_view{{no_values}});
-  EXPECT_THROW(static_cast<void>(direct.finalize()), cudf::logic_error);
-
-  // Groups 1 and 3 never receive a row.
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> small_ids{0, 2, -1};
-  cudf::test::fixed_width_column_wrapper<int32_t> small_values{1, 1, 1};
-  direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{small_values}});
-
-  // 2,048 rows over four groups raise the state to two partials per group. Unless skipped, the
-  // -2 rows in a block of the second partial land in group 2 of the first partial.
-  constexpr std::array<cudf::size_type, 4> id_cycle{
-    0, 2, -2, std::numeric_limits<cudf::size_type>::min()};
-  std::vector<cudf::size_type> id_data(num_rows);
-  std::vector<int32_t> value_data(num_rows, 3);
-  std::vector<bool> validity(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
-    id_data[i]  = id_cycle[i % 4];
-    validity[i] = i % 8 != 0;
-  }
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> ids(id_data.begin(), id_data.end());
-  cudf::test::fixed_width_column_wrapper<int32_t> values(
-    value_data.begin(), value_data.end(), validity.begin());
-
-  EXPECT_THROW(direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{values}}),
-               std::invalid_argument);
-  {
-    auto const current_scope = harness.fail_on_current_device_resource_use();
-    direct.aggregate(
-      cudf::column_view{ids}, cudf::table_view{{values}}, stream, harness.resources());
-    harness.synchronize(stream);
-  }
-  harness.expect_output_allocations_live(stream);
-  harness.expect_temporary_allocation_activity(stream);
-  harness.expect_temporary_allocations_released(stream);
-
-  auto const results = direct.finalize();
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_all{513, 0, 513, 0};
-  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_valid{257, 0, 513, 0};
-  cudf::test::fixed_width_column_wrapper<int64_t> sum{{769, 0, 1537, 0},
-                                                      {true, false, true, false}};
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_all, *results[0].results[0]);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_valid, *results[1].results[0]);
-  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sum, *results[2].results[0]);
-}
-
 TEST_F(StreamingGroupbyTest, EmptyBatch)
 {
   using K = int32_t;
@@ -2239,4 +2175,70 @@ TEST_F(StreamingGroupbyTest, SharedM2DependenciesPreserveRequestOrder)
     auto [released_keys, released_results] = std::move(gb).finalize_and_release();
     check(released_keys, released_results, cudf::table_view{{expected_keys}}, expected);
   }
+}
+
+struct DirectGroupbyTest : public cudf::test::BaseFixture {};
+
+TEST_F(DirectGroupbyTest, NegativeIdsAndEmptyGroups)
+{
+  constexpr cudf::size_type num_groups = 4;
+  constexpr cudf::size_type num_rows   = 2048;
+  auto harness                         = cudf::test::memory_resource_test_harness{};
+  auto const stream                    = cudf::get_default_stream();
+
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back(make_req(
+    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE)));
+  requests.push_back(make_req(
+    0, cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::EXCLUDE)));
+  requests.push_back(make_req(0, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+
+  EXPECT_THROW(cudf::groupby::direct_groupby(0, requests), std::invalid_argument);
+  cudf::groupby::direct_groupby direct(num_groups, requests, harness.output_mr());
+
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> no_ids{};
+  cudf::test::fixed_width_column_wrapper<int32_t> no_values{};
+  direct.aggregate(cudf::column_view{no_ids}, cudf::table_view{{no_values}});
+  EXPECT_THROW(static_cast<void>(direct.finalize()), cudf::logic_error);
+
+  // Groups 1 and 3 never receive a row.
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> small_ids{0, 2, -1};
+  cudf::test::fixed_width_column_wrapper<int32_t> small_values{1, 1, 1};
+  direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{small_values}});
+
+  // 2,048 rows over four groups raise the state to two partials per group. Unless skipped, the
+  // -2 rows in a block of the second partial land in group 2 of the first partial.
+  constexpr std::array<cudf::size_type, 4> id_cycle{
+    0, 2, -2, std::numeric_limits<cudf::size_type>::min()};
+  std::vector<cudf::size_type> id_data(num_rows);
+  std::vector<int32_t> value_data(num_rows, 3);
+  std::vector<bool> validity(num_rows);
+  for (cudf::size_type i = 0; i < num_rows; ++i) {
+    id_data[i]  = id_cycle[i % 4];
+    validity[i] = i % 8 != 0;
+  }
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> ids(id_data.begin(), id_data.end());
+  cudf::test::fixed_width_column_wrapper<int32_t> values(
+    value_data.begin(), value_data.end(), validity.begin());
+
+  EXPECT_THROW(direct.aggregate(cudf::column_view{small_ids}, cudf::table_view{{values}}),
+               std::invalid_argument);
+  {
+    auto const current_scope = harness.fail_on_current_device_resource_use();
+    direct.aggregate(
+      cudf::column_view{ids}, cudf::table_view{{values}}, stream, harness.resources());
+    harness.synchronize(stream);
+  }
+  harness.expect_output_allocations_live(stream);
+  harness.expect_temporary_allocation_activity(stream);
+  harness.expect_temporary_allocations_released(stream);
+
+  auto const results = direct.finalize();
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_all{513, 0, 513, 0};
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> count_valid{257, 0, 513, 0};
+  cudf::test::fixed_width_column_wrapper<int64_t> sum{{769, 0, 1537, 0},
+                                                      {true, false, true, false}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_all, *results[0].results[0]);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(count_valid, *results[1].results[0]);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(sum, *results[2].results[0]);
 }

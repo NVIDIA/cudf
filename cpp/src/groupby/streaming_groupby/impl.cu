@@ -229,14 +229,6 @@ aggregate_state::aggregate_state(host_span<streaming_aggregation_request const> 
   }
 }
 
-direct_groupby::impl::impl(size_type num_groups,
-                           host_span<streaming_aggregation_request const> requests,
-                           cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : aggregate_state{requests, std::move(mr)}, _num_groups{num_groups}
-{
-  CUDF_EXPECTS(num_groups > 0, "num_groups must be positive.", std::invalid_argument);
-}
-
 void streaming_groupby::impl::initialize(table_view const& data, cuda::stream_ref stream)
 {
   auto const mr = cudf::memory_resources{_mr, cudf::get_current_device_resource_ref()};
@@ -628,23 +620,6 @@ streaming_groupby::impl::do_finalize(cuda::stream_ref stream, cudf::memory_resou
   }
 }
 
-std::vector<aggregation_result> direct_groupby::impl::do_finalize(cuda::stream_ref stream,
-                                                                  cudf::memory_resources mr) const
-{
-  std::lock_guard const lock{_insert_mutex};
-  CUDF_EXPECTS(_initialized, "Cannot finalize direct_groupby with no accumulated data.");
-  _aggregate_done.wait(stream);
-  try {
-    auto results = finalize_gathered(gather_agg_results(_num_groups, stream, mr), stream, mr);
-    record_result_read(stream);
-    return results;
-  } catch (...) {
-    // A failed read must not leave untracked accesses before a subsequent resize.
-    synchronize_on_error(stream);
-    throw;
-  }
-}
-
 std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
 streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::memory_resources mr)
 {
@@ -683,35 +658,6 @@ streaming_groupby::~streaming_groupby() = default;
 streaming_groupby::streaming_groupby(streaming_groupby&&) noexcept = default;
 
 streaming_groupby& streaming_groupby::operator=(streaming_groupby&&) noexcept = default;
-
-direct_groupby::direct_groupby(size_type num_groups,
-                               host_span<streaming_aggregation_request const> requests,
-                               cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-  : _impl{std::make_unique<impl>(num_groups, requests, std::move(mr))}
-{
-}
-
-direct_groupby::~direct_groupby() = default;
-
-direct_groupby::direct_groupby(direct_groupby&&) noexcept = default;
-
-direct_groupby& direct_groupby::operator=(direct_groupby&&) noexcept = default;
-
-void direct_groupby::aggregate(device_span<size_type const> group_ids,
-                               table_view const& values,
-                               cuda::stream_ref stream,
-                               cudf::memory_resources mr)
-{
-  CUDF_FUNC_RANGE();
-  _impl->do_aggregate(group_ids, values, stream, mr);
-}
-
-std::vector<aggregation_result> direct_groupby::finalize(cuda::stream_ref stream,
-                                                         cudf::memory_resources mr) const
-{
-  CUDF_FUNC_RANGE();
-  return _impl->do_finalize(stream, mr);
-}
 
 // Private member functions defined here (requires full impl definition).
 // The public API wrappers in streaming_groupby.cpp call these.

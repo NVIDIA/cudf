@@ -123,7 +123,7 @@ template <typename T>
 struct create_minmax_with_nulls {
   __device__ minmax_pair<T> operator()(auto const& input)
   {
-    auto const& [value, is_valid] = input;
+    auto const [value, is_valid] = input;
     return is_valid ? minmax_pair<T>{value} : minmax_pair<T>{};
   }
 };

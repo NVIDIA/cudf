@@ -40,7 +40,7 @@ struct null_replacing_transformer {
   template <typename ValueAndValidity>
   CUDF_HOST_DEVICE inline type operator()(ValueAndValidity const& input)
   {
-    auto const& [value, is_valid] = input;
+    auto const [value, is_valid] = input;
     if (is_valid)
       return f(value);
     else
@@ -123,7 +123,7 @@ struct transformer_meanvar {
   template <typename ValueAndValidity>
   CUDF_HOST_DEVICE inline ResultType operator()(ValueAndValidity const& input)
   {
-    auto const& [v, is_valid] = input;
+    auto const [v, is_valid] = input;
     return meanvar<ElementType>(v, v * v, is_valid ? 1 : 0);
   };
 };

@@ -29,7 +29,7 @@ struct transformer_pair_meanvar {
   CUDF_HOST_DEVICE inline ResultType operator()(
     cudf::detail::value_and_validity<ElementType> const& input)
   {
-    auto const& [v, is_valid] = input;
+    auto const [v, is_valid] = input;
     return {{v, static_cast<ElementType>(v * v), is_valid ? 1 : 0}, is_valid};
   };
 };

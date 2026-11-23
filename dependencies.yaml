@@ -826,12 +826,10 @@ dependencies:
         packages:
           - *rapids_build_backend
           - setuptools>=77.0.0
-          - wheel
   build_python_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-
           - cython>=3.2.2,<3.3.0a0
   numpy_run:
     common:

@@ -8,9 +8,11 @@
 #include <cudf/utilities/evaluation_error.hpp>
 
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace cudf::detail::row_ir {
 enum class opcode : int32_t;

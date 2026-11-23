@@ -3,6 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "jit/cache.hpp"
+#include "jit/error.hpp"
+#include "jit/helpers.hpp"
+#include "jit/output_columns.hpp"
+#include "jit/parser.hpp"
+#include "jit/reflect.hpp"
+#include "jit/row_ir.hpp"
+
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -39,13 +47,6 @@
 #include <thrust/logical.h>
 
 #include <cudf_fragments.hpp>
-#include <jit/cache.hpp>
-#include <jit/error.hpp>
-#include <jit/helpers.hpp>
-#include <jit/output_columns.hpp>
-#include <jit/parser.hpp>
-#include <jit/reflect.hpp>
-#include <jit/row_ir.hpp>
 #include <rtcx/rtcx.hpp>
 
 #include <algorithm>

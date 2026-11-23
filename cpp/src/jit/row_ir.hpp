@@ -4,6 +4,9 @@
  */
 
 #pragma once
+
+#include "jit/error.hpp"
+
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -105,7 +108,7 @@ struct [[nodiscard]] transform_args {
   std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
   // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
   cudf::lto_fragments lto_fragments = {};
-  std::vector<opcode> error_operator_map{};
+  std::vector<error_operator> error_operator_map{};
 };
 
 struct node;
@@ -117,13 +120,13 @@ struct node;
  */
 struct [[nodiscard]] instance_context {
  private:
-  int32_t num_tmp_vars_   = 0;                 ///< The number of temporary variables generated
-  std::string tmp_prefix_ = "tmp_";            ///< The prefix for temporary variable identifiers
-  bool has_nulls_         = false;             ///< If expressions involve null values
-  std::vector<opcode> error_operator_map_;     ///< Maps packed operator indices to row-IR opcodes
-  std::vector<input> inputs_;                  ///< The inputs for the IR
-  std::vector<var_info> input_vars_;           ///< The input variables for the IR
-  std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
+  int32_t num_tmp_vars_   = 0;       ///< The number of temporary variables generated
+  std::string tmp_prefix_ = "tmp_";  ///< The prefix for temporary variable identifiers
+  bool has_nulls_         = false;   ///< If expressions involve null values
+  std::vector<error_operator> error_operator_map_;  ///< Maps packed indices to error context
+  std::vector<input> inputs_;                       ///< The inputs for the IR
+  std::vector<var_info> input_vars_;                ///< The input variables for the IR
+  std::vector<untyped_var_info> output_vars_;       ///< The output variables for the IR
   std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
   cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
   cudf::memory_resources

@@ -804,7 +804,7 @@ std::unique_ptr<table> execute_transform(std::string const& udf,
                                          cudf::memory_resources mr,
                                          std::string_view udf_expression,
                                          cudf::lto_fragments lto_fragments,
-                                         std::span<detail::row_ir::opcode const> error_operator_map)
+                                         std::span<detail::error_operator const> error_operator_map)
 {
   auto row_size = in_row_size.has_value() ? *in_row_size : jit::get_projection_size(inputs);
   auto output_may_be_nullable    = get_null_transformation(is_null_aware, inputs, outputs);
@@ -1091,7 +1091,7 @@ struct transform_program::impl {
   std::vector<data_type> ast_input_types_;
   std::vector<bool> ast_input_nullable_;
   std::vector<transform_output> ast_outputs_;
-  std::vector<detail::row_ir::opcode> ast_error_operator_map_;
+  std::vector<detail::error_operator> ast_error_operator_map_;
 };
 
 transform_program::transform_program(std::string const& udf,

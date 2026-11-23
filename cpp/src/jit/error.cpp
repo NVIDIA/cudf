@@ -20,26 +20,36 @@ namespace cudf::detail::row_ir {
 namespace cudf::detail {
 
 void handle_evaluation_status(packed_evaluation_status packed,
-                              std::span<row_ir::opcode const> operators,
+                              std::span<error_operator const> operators,
                               std::string_view operation)
 {
   auto const status = evaluation_status::unpack(packed);
+
   if (status.error_code == errc::SUCCESS) { return; }
+
   auto const index = status.op_index;
   auto const error = status.error_code;
   std::optional<size_type> row;
   std::optional<std::string> name;
   std::optional<ast::jit::op> op;
   std::string location;
+
   if (status.row_index != -1) {
     row      = status.row_index;
     location = std::format(" at row {}", *row);
   }
+
   if (index < operators.size()) {
-    name = row_ir::to_string(operators[index]);
-    op   = row_ir::get_ast_operator(operators[index]);
-    location += std::format(" at operator {}", *name);
+    auto const& entry = operators[index];
+    if (auto const* opcode = std::get_if<row_ir::opcode>(&entry)) {
+      name = row_ir::to_string(*opcode);
+      op   = row_ir::get_ast_operator(*opcode);
+    } else {
+      name = std::get<std::string>(entry);
+    }
+    location += std::format(" at operator {}{}", op.has_value() ? "ast::jit::op::" : "", *name);
   }
+
   throw evaluation_error(error,
                          row,
                          std::move(name),

@@ -896,7 +896,8 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
             "Too many fallible operators in one row program",
             std::invalid_argument);
           auto const operator_id = instance.error_operator_map_.size();
-          instance.error_operator_map_.push_back(op_);
+          instance.error_operator_map_.push_back(
+            udf_.has_value() ? error_operator{udf_->symbol} : error_operator{op_});
           sink.emit(std::format(
             "CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {}, {});\n", type, id_, operator_id, call));
         } else {

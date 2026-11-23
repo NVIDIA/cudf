@@ -8,7 +8,9 @@
 
 #include <cstdint>
 #include <span>
+#include <string>
 #include <string_view>
+#include <variant>
 
 namespace cudf::detail::row_ir {
 enum class opcode : int32_t;
@@ -16,8 +18,10 @@ enum class opcode : int32_t;
 
 namespace cudf::detail {
 
+using error_operator = std::variant<row_ir::opcode, std::string>;
+
 void handle_evaluation_status(packed_evaluation_status packed,
-                              std::span<row_ir::opcode const> operators,
+                              std::span<error_operator const> operators,
                               std::string_view operation);
 
 }  // namespace cudf::detail

@@ -352,16 +352,23 @@ TEST_F(JITExpressionTest, UdfCallFirstFailingRowWins)
   auto a_ref = cudf::ast::column_reference(0);
   auto& call = cudf::ast::jit::call(tree, callee("lto_checked_hundred_over", int32_type), {a_ref});
 
-  try {
-    std::ignore = run_column(table, call);
-    FAIL() << "expected cudf::evaluation_error";
-  } catch (cudf::evaluation_error const& e) {
-    EXPECT_EQ(e.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
-    EXPECT_EQ(e.row_index(), 0);
-    EXPECT_EQ(e.op_name(), "UDF_CALL");
-    EXPECT_FALSE(e.op().has_value());
-    EXPECT_NE(std::string_view{e.what()}.find("UDF_CALL"), std::string_view::npos);
-  }
+  auto check = [](auto&& execute) {
+    try {
+      std::ignore = execute();
+      FAIL() << "expected cudf::evaluation_error";
+    } catch (cudf::evaluation_error const& e) {
+      EXPECT_EQ(e.error_code(), cudf::errc::ARITHMETIC_OVERFLOW);
+      EXPECT_EQ(e.row_index(), 0);
+      EXPECT_EQ(e.op_name(), "lto_checked_hundred_over");
+      EXPECT_FALSE(e.op().has_value());
+      EXPECT_NE(std::string_view{e.what()}.find("lto_checked_hundred_over"),
+                std::string_view::npos);
+    }
+  };
+  check([&] { return run_column(table, call); });
+  std::array<std::reference_wrapper<cudf::ast::expression const>, 1> expressions{call};
+  auto program = cudf::transform_program{table, expressions, modules()};
+  check([&] { return program.run(table); });
 }
 
 TEST_F(JITExpressionTest, EvaluationStatusIdentifiesRowAndOperator)
@@ -390,7 +397,8 @@ TEST_F(JITExpressionTest, EvaluationStatusIdentifiesRowAndOperator)
         EXPECT_EQ(error.row_index(), 1);
         EXPECT_EQ(error.op_name(), "DIV_OVERFLOW");
         EXPECT_EQ(error.op(), cudf::ast::jit::op::DIV_OVERFLOW);
-        EXPECT_NE(std::string_view{error.what()}.find("DIV_OVERFLOW"), std::string_view::npos);
+        EXPECT_NE(std::string_view{error.what()}.find("ast::jit::op::DIV_OVERFLOW"),
+                  std::string_view::npos);
       }
     };
     check([&] { return run_column(table, output); });
@@ -418,7 +426,7 @@ TEST_F(JITExpressionTest, EvaluationStatusSelectsFirstRowAcrossBlocks)
   } catch (cudf::evaluation_error const& error) {
     EXPECT_EQ(error.row_index(), 17);
     EXPECT_EQ(error.error_code(), cudf::errc::USER_RESERVED_BEGIN);
-    EXPECT_EQ(error.op_name(), "UDF_CALL");
+    EXPECT_EQ(error.op_name(), "lto_fail_with");
   }
 }
 
@@ -434,6 +442,7 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
     try {
       std::ignore = run_column(cudf::table_view{{column}}, call);
     } catch (cudf::evaluation_error const& e) {
+      EXPECT_EQ(e.op_name(), "lto_fail_with");
       EXPECT_NE(std::string_view{e.what()}.find(cudf::to_string(e.error_code())),
                 std::string_view::npos);
       return e.error_code();

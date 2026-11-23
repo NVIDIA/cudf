@@ -132,7 +132,7 @@ void launch_join_filter_kernel(kernel const& kernel,
                                std::span<transform_input const> inputs,
                                bool* predicate_results,
                                std::optional<void*> user_data,
-                               std::span<row_ir::opcode const> error_operator_map,
+                               std::span<error_operator const> error_operator_map,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {

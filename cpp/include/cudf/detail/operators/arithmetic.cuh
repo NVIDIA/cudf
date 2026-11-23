@@ -56,14 +56,15 @@ __device__ numeric::decimal<R> abs(numeric::decimal<R> a)
 template <typename A, typename B>
 __device__ auto add(A a, B b) -> decltype(a + b)
 {
+#if defined(__CUDA_ARCH__) 
   using result_type = decltype(a + b);
   if constexpr (cuda::std::is_same_v<result_type, float>) {
     return __fadd_rn(a, b);
   } else if constexpr (cuda::std::is_same_v<result_type, double>) {
     return __dadd_rn(a, b);
-  } else {
-    return a + b;
   }
+#endif
+  return a + b;
 }
 
 /**
@@ -162,14 +163,15 @@ __device__ auto pymod(A a, B b) -> cuda::std::common_type_t<A, B>
 template <typename A, typename B>
 __device__ auto mul(A a, B b) -> decltype(a * b)
 {
+#if defined(__CUDA_ARCH__)
   using result_type = decltype(a * b);
   if constexpr (cuda::std::is_same_v<result_type, float>) {
     return __fmul_rn(a, b);
   } else if constexpr (cuda::std::is_same_v<result_type, double>) {
     return __dmul_rn(a, b);
-  } else {
-    return a * b;
   }
+#endif
+  return a * b;
 }
 
 /**
@@ -204,14 +206,15 @@ __device__ numeric::decimal<R> neg(numeric::decimal<R> a)
 template <typename A, typename B>
 __device__ auto sub(A a, B b) -> decltype(a - b)
 {
+#if defined(__CUDA_ARCH__)
   using result_type = decltype(a - b);
   if constexpr (cuda::std::is_same_v<result_type, float>) {
     return __fsub_rn(a, b);
   } else if constexpr (cuda::std::is_same_v<result_type, double>) {
     return __dsub_rn(a, b);
-  } else {
-    return a - b;
   }
+#endif
+  return a - b;
 }
 
 /**

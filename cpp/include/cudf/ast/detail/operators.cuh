@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -24,6 +24,11 @@ constexpr bool is_valid_binary_op = requires(Op op, LHS lhs, RHS rhs) { op(lhs, 
 
 template <typename Op, typename T>
 constexpr bool is_valid_unary_op = requires(Op op, T value) { op(value); };
+
+template <ast_operator op, typename T>
+constexpr bool is_valid_ast_unary_op =
+  op == ast_operator::RESCALE ? requires(operator_functor<op> f, T value) { f(value, int32_t{}); }
+                              : is_valid_unary_op<operator_functor<op>, T>;
 
 /**
  * @brief Operator dispatcher
@@ -139,6 +144,33 @@ CUDF_HOST_DEVICE inline constexpr decltype(auto) ast_operator_dispatcher(ast_ope
       return f.template operator()<ast_operator::CAST_TO_UINT64>(cuda::std::forward<Ts>(args)...);
     case ast_operator::CAST_TO_FLOAT64:
       return f.template operator()<ast_operator::CAST_TO_FLOAT64>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_BOOL8:
+      return f.template operator()<ast_operator::CAST_TO_BOOL8>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_INT8:
+      return f.template operator()<ast_operator::CAST_TO_INT8>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_INT16:
+      return f.template operator()<ast_operator::CAST_TO_INT16>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_INT32:
+      return f.template operator()<ast_operator::CAST_TO_INT32>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_UINT8:
+      return f.template operator()<ast_operator::CAST_TO_UINT8>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_UINT16:
+      return f.template operator()<ast_operator::CAST_TO_UINT16>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_UINT32:
+      return f.template operator()<ast_operator::CAST_TO_UINT32>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_FLOAT32:
+      return f.template operator()<ast_operator::CAST_TO_FLOAT32>(cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_DECIMAL32:
+      return f.template operator()<ast_operator::CAST_TO_DECIMAL32>(
+        cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_DECIMAL64:
+      return f.template operator()<ast_operator::CAST_TO_DECIMAL64>(
+        cuda::std::forward<Ts>(args)...);
+    case ast_operator::CAST_TO_DECIMAL128:
+      return f.template operator()<ast_operator::CAST_TO_DECIMAL128>(
+        cuda::std::forward<Ts>(args)...);
+    case ast_operator::RESCALE:
+      return f.template operator()<ast_operator::RESCALE>(cuda::std::forward<Ts>(args)...);
     default: {
 #ifndef __CUDA_ARCH__
       CUDF_FAIL("Invalid operator.");

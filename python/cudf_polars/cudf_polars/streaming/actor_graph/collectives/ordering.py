@@ -194,6 +194,7 @@ def _trivial_ordering_metadata(
     context: Context,
     comm: Communicator,
     schema_ir: IR,
+    ir_context: IRExecutionContext,
     metadata: ChannelMetadata,
     keys: Sequence[OrderKey],
 ) -> ChannelMetadata | None:
@@ -208,7 +209,7 @@ def _trivial_ordering_metadata(
         existing_orderings = list(partitioning.inter_rank.orderings)
 
     dtypes = tuple(schema_ir.schema.values())
-    stream = context.br().stream_pool.get_stream()
+    stream = ir_context.get_cuda_stream()
     boundaries = TableChunk.from_pylibcudf_table(
         plc.Table(
             [make_empty_column(dtypes[key.column_index], stream) for key in keys]
@@ -400,7 +401,7 @@ async def ensure_ordering_metadata(
     ):
         if (
             extracted_metadata := _trivial_ordering_metadata(
-                context, comm, schema_ir, metadata, order_keys
+                context, comm, schema_ir, ir_context, metadata, order_keys
             )
         ) is not None:
             metadata = extracted_metadata
@@ -451,6 +452,7 @@ class _RoutingPlan:
         cls,
         context: Context,
         comm: Communicator,
+        ir_context: IRExecutionContext,
         input_ordering: Ordering,
         output_ordering: Ordering,
         output_boundaries: TableChunk,
@@ -464,7 +466,7 @@ class _RoutingPlan:
         else:
             input_boundary_chunk = input_ordering.get_boundaries(context.br())
             with stream_ordered_after(
-                context.br().stream_pool.get_stream,
+                ir_context.get_cuda_stream,
                 upstreams=(input_boundary_chunk.stream, output_boundaries.stream),
             ) as stream:
                 lower_positions, upper_positions = _boundary_search_positions(
@@ -738,6 +740,7 @@ class _OutputPartitionBuffer:
     def __init__(
         self,
         context: Context,
+        ir_context: IRExecutionContext,
         ch_in: Channel[TableChunk],
         boundary_chunk: TableChunk,
         input_ordering: Ordering,
@@ -746,6 +749,7 @@ class _OutputPartitionBuffer:
         input_rows_ordered: bool,
     ) -> None:
         self.context = context
+        self.ir_context = ir_context
         self.ch_in = ch_in
         self.boundary_chunk = boundary_chunk
         self.input_ordering = input_ordering
@@ -794,7 +798,7 @@ class _OutputPartitionBuffer:
             with (
                 opaque_memory_usage(extra),
                 stream_ordered_after(
-                    self.context.br().stream_pool.get_stream,
+                    self.ir_context.get_cuda_stream,
                     upstreams=(chunk.stream, self.boundary_chunk.stream),
                 ) as stream,
             ):
@@ -952,10 +956,11 @@ async def _adjust_ordering_impl(
     """Adjust ordering while using exchange only for remote dependencies."""
     output_boundaries = output_ordering.get_boundaries(context.br())
     plan = _RoutingPlan.from_orderings(
-        context, comm, input_ordering, output_ordering, output_boundaries
+        context, comm, ir_context, input_ordering, output_ordering, output_boundaries
     )
     buffer = _OutputPartitionBuffer(
         context,
+        ir_context,
         ch_in,
         output_boundaries,
         input_ordering,
@@ -1027,7 +1032,7 @@ async def _adjust_ordering_impl(
     if exchange is not None:
         for source_rank in plan.remote_sources:
             remote_pieces: dict[int, ChunkStore] = {}
-            stream = context.br().stream_pool.get_stream()
+            stream = ir_context.get_cuda_stream()
             expected_pids = _remote_pids_from_source(plan, source_rank, comm.rank)
             for pid, packed in zip(
                 expected_pids,

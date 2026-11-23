@@ -331,6 +331,55 @@ TEST_F(StringsLikeTests, Escape)
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
 }
 
+TEST_F(StringsLikeTests, EscapedEscape)
+{
+  // check both the row-per-thread (short) and warp-parallel (long) code paths
+  for (auto const n : {2, 24}) {
+    std::string dirs;
+    for (int i = 0; i < n; ++i) {
+      dirs += "dir/";
+    }
+    auto input    = cudf::test::strings_column_wrapper({"C:\\" + dirs, "D:\\" + dirs, "C:" + dirs});
+    auto const sv = cudf::strings_column_view(input);
+    auto expected = cudf::test::fixed_width_column_wrapper<bool>({true, false, false});
+
+    auto results = cudf::strings::like(sv, std::string_view("C:\\\\%"), std::string_view("\\"));
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+    results  = cudf::strings::like(sv, std::string_view("%\\\\%/"), std::string_view("\\"));
+    expected = cudf::test::fixed_width_column_wrapper<bool>({true, true, false});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+    input   = cudf::test::strings_column_wrapper({"C:!" + dirs, "D:!" + dirs, "C:" + dirs});
+    results = cudf::strings::like(
+      cudf::strings_column_view(input), std::string_view("C:!!%"), std::string_view("!"));
+    expected = cudf::test::fixed_width_column_wrapper<bool>({true, false, false});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+  }
+}
+
+TEST_F(StringsLikeTests, OverlappingSuffix)
+{
+  // check both the row-per-thread (short) and warp-parallel (long) code paths
+  for (auto const n : {2, 24}) {
+    std::string dirs;
+    for (int i = 0; i < n; ++i) {
+      dirs += "dir/";
+    }
+    auto input = cudf::test::strings_column_wrapper(
+      {dirs + "前界後", dirs + "前界界後", dirs + "前界別", dirs + "ab", dirs + "aab"});
+    auto patterns = cudf::test::strings_column_wrapper(
+      {dirs + "前界%界後", dirs + "前界%界後", dirs + "前界%後", dirs + "a%ab", dirs + "a%ab"});
+    auto results =
+      cudf::strings::like(cudf::strings_column_view(input), cudf::strings_column_view(patterns));
+    auto expected = cudf::test::fixed_width_column_wrapper<bool>({false, true, false, false, true});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+    results  = cudf::strings::like(cudf::strings_column_view(input), dirs + "前界%界後");
+    expected = cudf::test::fixed_width_column_wrapper<bool>({false, true, false, false, false});
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+  }
+}
+
 TEST_F(StringsLikeTests, MultiplePatterns)
 {
   auto input =

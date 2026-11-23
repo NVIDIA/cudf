@@ -17,10 +17,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let generated = quent_instrumentation_build::generate(
         &parsed.schema,
         &quent_instrumentation_build::Options {
-            serde: true,
-            combined_event: true,
+            events: quent_instrumentation_build::EventOptions {
+                serde: true,
+                combined_event: true,
+                record_derives: &["Clone"],
+                ..Default::default()
+            },
             analyzer_package: Some("cudf-polars-quent-analyzer".to_owned()),
-            record_derives: &["Clone"],
             collector_sink: true,
             ..Default::default()
         },
@@ -37,6 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             collector: true,
             ..Default::default()
         },
+        browser_bundle_writer: Some(
+            "cudf_polars_quent_browser::generate::generate_bundle".to_owned(),
+        ),
         collector_server: true,
         ..Default::default()
     };

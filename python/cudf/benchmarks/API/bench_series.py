@@ -13,6 +13,11 @@ def bench_construction(benchmark, N):
     benchmark(cudf.Series, cupy.random.rand(N))
 
 
+@benchmark_with_object(cls="series", dtype="int", nulls=False)
+def bench_getitem_scalar_rangeindex(benchmark, series):
+    benchmark(series.__getitem__, len(series) // 2)
+
+
 @benchmark_with_object(cls="series", dtype="int")
 def bench_sort_values(benchmark, series):
     benchmark(series.sort_values)

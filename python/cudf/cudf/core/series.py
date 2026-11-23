@@ -286,11 +286,15 @@ class _SeriesLocIndexer(_FrameIndexer):
     @_performance_tracking
     def __getitem__(self, arg: Any) -> ScalarLike | DataFrameOrSeries:
         if not isinstance(self._frame.index, cudf.MultiIndex):
+            key = indexing_utils.destructure_series_loc_indexer(
+                arg, self._frame
+            )
+            if isinstance(self._frame.index, RangeIndex) and is_integer(key):
+                # A RangeIndex already determines the position on the host.
+                position = self._frame.index.get_loc(key)
+                return self._frame._column.element_indexing(position)
             indexing_spec = indexing_utils.parse_row_loc_indexer(
-                indexing_utils.destructure_series_loc_indexer(
-                    arg, self._frame
-                ),
-                self._frame.index,
+                key, self._frame.index
             )
             return self._frame._getitem_preprocessed(indexing_spec)
 

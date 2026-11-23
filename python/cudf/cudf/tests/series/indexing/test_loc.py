@@ -57,6 +57,18 @@ def test_series_loc_numerical():
     assert_eq(ps.loc[[5, 8, 9]], gs.loc[cp.array([5, 8, 9])])
 
 
+def test_series_scalar_range_index_stays_lazy():
+    index = cudf.RangeIndex(9, 1, -2)
+    series = cudf.Series([1, None, 3, 4], index=index, dtype="int64")
+
+    assert series[np.uint64(5)] == 3
+    assert series.loc[7] is cudf.NA
+    assert series.at[3] == 4
+    with pytest.raises(KeyError):
+        series.loc[1]
+    assert "_column" not in vars(series.index)
+
+
 def test_series_loc_float_index():
     ps = pd.Series([1, 2, 3, 4, 5], index=[5.43, 6.34, 7.34, 8.0, 9.1])
     gs = cudf.Series(ps)

@@ -35,6 +35,14 @@ EXPECTED_FAILURES: Mapping[str, str] = {
 }
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Ignore warnings that the GPU engine raises by design."""
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore:Sortedness of columns cannot be checked when 'by' groups provided:UserWarning",
+    )
+
+
 def pytest_collection_modifyitems(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ) -> None:

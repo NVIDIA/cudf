@@ -2044,6 +2044,39 @@ def test_string_partition_fail():
         gs.str.rpartition(["a"])
 
 
+@pytest.mark.parametrize("klass", [pd.Index, pd.Series])
+@pytest.mark.parametrize("method", ["partition", "rpartition"])
+@pytest.mark.parametrize(
+    "dtype", ["object", "category", "string[python]", "string[pyarrow]"]
+)
+def test_string_partition_empty_result(klass, method, dtype):
+    ps = klass([], dtype=dtype, name="source")
+    gs = cudf.from_pandas(ps)
+
+    if klass is pd.Index:
+        for obj in (ps, gs):
+            with pytest.raises(
+                TypeError,
+                match="Cannot infer number of levels from empty list",
+            ):
+                getattr(obj.str, method)(expand=True)
+    else:
+        expected = getattr(ps.str, method)(expand=True)
+        result = getattr(gs.str, method)(expand=True)
+        assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("method", ["partition", "rpartition"])
+def test_string_partition_empty_arrow_index(method):
+    ps = pd.Index([], dtype=pd.ArrowDtype(pa.string()), name="source")
+    gs = cudf.from_pandas(ps)
+    for obj in (ps, gs):
+        with pytest.raises(
+            TypeError, match="Cannot infer number of levels from empty list"
+        ):
+            getattr(obj.str, method)(expand=True)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -2282,8 +2315,8 @@ def test_string_slice_from():
         ["koala", "fox", "chameleon"],
     ],
 )
-@pytest.mark.parametrize("number", [0, 1, 10])
-@pytest.mark.parametrize("diff", [0, 3])
+@pytest.mark.parametrize("number", [-10, -1, 0, 1, 10])
+@pytest.mark.parametrize("diff", [-3, 0, 3])
 @pytest.mark.parametrize("repl", ["2", "!!"])
 def test_string_slice_replace(string, number, diff, repl):
     pds = pd.Series(string)
@@ -2307,6 +2340,20 @@ def test_string_slice_replace(string, number, diff, repl):
         pds.str.slice_replace(start=number, stop=number + diff, repl=repl),
         gds.str.slice_replace(start=number, stop=number + diff, repl=repl),
         check_dtype=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "start, stop",
+    [(np.int64(-1), None), (0, np.int64(-1)), (np.uint32(2), np.int32(1))],
+)
+def test_string_slice_replace_numpy_integer_bounds(start, stop):
+    ps = pd.Series(["abc", "é", "", None])
+    gs = cudf.from_pandas(ps)
+
+    assert_eq(
+        ps.str.slice_replace(start, stop, repl="!"),
+        gs.str.slice_replace(start, stop, repl="!"),
     )
 
 

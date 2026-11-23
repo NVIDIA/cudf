@@ -200,6 +200,16 @@ class Cast(Expr):
 class WrappingCast(Cast):
     """Class representing a cast that wraps out-of-range integers."""
 
+    def __init__(self, dtype: DataType, strict: bool, value: Expr) -> None:  # noqa: FBT001
+        super().__init__(dtype, strict, value)
+        # libcudf's out-of-range float to integer conversion does not match Polars.
+        if plc.traits.is_floating_point(
+            value.dtype.plc_type
+        ) and plc.traits.is_integral_not_bool(self.dtype.plc_type):
+            raise NotImplementedError(
+                "wrap_numerical cast from float to integer is not supported"
+            )
+
     def do_evaluate(
         self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
     ) -> Column:

@@ -261,6 +261,14 @@ def test_wrapping_integer_cast_still_wraps(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("to_dtype", [pl.UInt8, pl.Int32])
+def test_wrapping_float_to_integer_cast_falls_back(engine: pl.GPUEngine, to_dtype):
+    # libcudf does not wrap out-of-range floats the way Polars does.
+    df = pl.LazyFrame({"a": [256.0, -1.0, None]}, schema={"a": pl.Float64})
+    q = df.select(pl.col("a").cast(to_dtype, wrap_numerical=True))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 def test_wrapping_cast_through_null_returns_nulls(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, None]}, schema={"a": pl.Int8})
     q = df.select(

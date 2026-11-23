@@ -5,6 +5,7 @@
 
 #include "cudf_jni_apis.hpp"
 #include "dtype_utils.hpp"
+#include "jni_memory_resources.hpp"
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -557,37 +558,51 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_makeDecimal128Scalar(
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_binaryOpSV(
-  JNIEnv* env, jclass, jlong lhs_ptr, jlong rhs_view, jint int_op, jint out_dtype, jint scale)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_binaryOpSV(JNIEnv* env,
+                                                              jclass,
+                                                              jlong lhs_ptr,
+                                                              jlong rhs_view,
+                                                              jint int_op,
+                                                              jint out_dtype,
+                                                              jint scale,
+                                                              jlong j_stream,
+                                                              jlong j_output_mr,
+                                                              jlong j_temp_mr)
 {
   JNI_NULL_CHECK(env, lhs_ptr, "lhs is null", 0);
   JNI_NULL_CHECK(env, rhs_view, "rhs is null", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
+    auto const stream           = cudf::jni::get_stream(j_stream);
+    auto const mr               = cudf::jni::get_memory_resources(j_output_mr, j_temp_mr);
     cudf::scalar* lhs           = reinterpret_cast<cudf::scalar*>(lhs_ptr);
     auto rhs                    = reinterpret_cast<cudf::column_view*>(rhs_view);
     cudf::data_type n_data_type = cudf::jni::make_data_type(out_dtype, scale);
     cudf::binary_operator op    = static_cast<cudf::binary_operator>(int_op);
 
     if (lhs->type().id() == cudf::type_id::STRUCT) {
-      auto out = make_fixed_width_column(n_data_type, rhs->size(), cudf::mask_state::UNALLOCATED);
+      auto out = make_fixed_width_column(
+        n_data_type, rhs->size(), cudf::mask_state::UNALLOCATED, stream, mr);
 
       if (op == cudf::binary_operator::NULL_EQUALS) {
-        out->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+        out->set_null_mask(cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
       } else {
-        auto [new_mask, new_null_count] = cudf::binops::scalar_col_valid_mask_and(*rhs, *lhs);
+        auto [new_mask, new_null_count] =
+          cudf::binops::scalar_col_valid_mask_and(*rhs, *lhs, stream, mr);
         out->set_null_mask(std::move(new_mask), new_null_count);
       }
 
-      auto lhs_col  = cudf::make_column_from_scalar(*lhs, 1);
+      auto lhs_col  = cudf::make_column_from_scalar(*lhs, 1, stream, mr.as_temporary());
       auto out_view = out->mutable_view();
+      // TODO: pass mr once apply_sorting_struct_binary_op takes cudf::memory_resources
+      // (NVIDIA/cudf#25213)
       cudf::binops::compiled::detail::apply_sorting_struct_binary_op(
-        out_view, lhs_col->view(), *rhs, true, false, op, cudf::get_default_stream());
+        out_view, lhs_col->view(), *rhs, true, false, op, stream);
       return release_as_jlong(out);
     }
 
-    return release_as_jlong(cudf::binary_operation(*lhs, *rhs, op, n_data_type));
+    return release_as_jlong(cudf::binary_operation(*lhs, *rhs, op, n_data_type, stream, mr));
   }
   JNI_CATCH(env, 0);
 }

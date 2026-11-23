@@ -1453,7 +1453,7 @@ template <typename ColumnType>
 void operator()() { std::cout << "timestamp, duration, or fixed-point\n"; }
 ```
 
-Do not use `CUDF_ENABLE_IF` or `std::enable_if_t` in new code.
+Do not use `std::enable_if_t` in new code. `CUDF_ENABLE_IF` is deprecated.
 
 The concepts in `include/cudf/utilities/concepts.hpp` (namespace `cudf::concepts`) mirror the type
 traits in `include/cudf/utilities/traits.hpp`. Use the standard concepts, such as `cuda::std::integral` and `cuda::std::floating_point`, where libcudf does not define its

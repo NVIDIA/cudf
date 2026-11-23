@@ -20,6 +20,7 @@ enum class op : uint8_t;
 
 /**
  * @brief An evaluation failure and the row and operator that produced it.
+ * @ingroup utility_error
  *
  * Row and operator context is disengaged when unavailable.
  */

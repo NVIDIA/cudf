@@ -538,8 +538,7 @@ size_type count_set_bits(bitmask_type const* bitmask,
                          cudf::memory_resources mr)
 {
   CUDF_EXPECTS(bitmask != nullptr, "Invalid bitmask.");
-  auto bitmasks = cudf::detail::make_pinned_vector_async<bitmask_type const*>(1, stream);
-  bitmasks[0]   = bitmask;
+  auto const bitmasks = std::vector<bitmask_type const*>{bitmask};
   return detail::batch_count_set_bits(bitmasks, start, stop, stream, mr).front();
 }
 

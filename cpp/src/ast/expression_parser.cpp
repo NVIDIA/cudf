@@ -6,7 +6,6 @@
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
-#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/types.hpp>
@@ -117,7 +116,6 @@ void expression_parser::move_to_device(cuda::stream_ref stream, cudf::memory_res
   }
 
   _device_data_buffer = cudf::detail::make_device_buffer_async(host_data_buffer, stream, mr);
-  cudf::detail::sync_stream(stream);
 
   // Create device pointers to components of plan
   auto device_data_buffer_ptr            = _device_data_buffer.data();

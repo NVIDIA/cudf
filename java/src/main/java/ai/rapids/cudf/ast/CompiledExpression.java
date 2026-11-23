@@ -208,6 +208,15 @@ public class CompiledExpression implements AutoCloseable {
     return cleaner.nativeHandle;
   }
 
+  /**
+   * Returns the native address of this compiled expression in either compilation mode, for
+   * native consumers that select the AST or JIT backend from the expression itself.
+   * Intended for internal cudf use only.
+   */
+  public long getModeAwareNativeHandle() {
+    return cleaner.nativeHandle;
+  }
+
   private static native long compile(byte[] serializedExpression);
   private static native long compileJit(byte[] serializedExpression);
   private static native long computeColumn(long astHandle, long tableHandle);

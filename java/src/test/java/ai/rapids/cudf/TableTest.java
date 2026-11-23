@@ -14,10 +14,14 @@ import ai.rapids.cudf.HostColumnVector.ListType;
 import ai.rapids.cudf.HostColumnVector.StructData;
 import ai.rapids.cudf.HostColumnVector.StructType;
 
+import ai.rapids.cudf.ast.AstExpression;
 import ai.rapids.cudf.ast.BinaryOperation;
 import ai.rapids.cudf.ast.BinaryOperator;
 import ai.rapids.cudf.ast.ColumnReference;
 import ai.rapids.cudf.ast.CompiledExpression;
+import ai.rapids.cudf.ast.JitErrorPolicy;
+import ai.rapids.cudf.ast.JitOperation;
+import ai.rapids.cudf.ast.JitOperator;
 import ai.rapids.cudf.ast.TableReference;
 import com.google.common.base.Charsets;
 import com.google.common.collect.Lists;
@@ -2927,6 +2931,116 @@ public class TableTest extends CudfTestBase {
           assertEquals(0, leftFilteredMap.getRowCount());
           assertEquals(0, rightFilteredMap.getRowCount());
         }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsJitMatchesAst() {
+    final int inv = Integer.MIN_VALUE;
+    BinaryOperation expression = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(0, TableReference.LEFT),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table leftKeys = new Table.TestBuilder().column(1, 2).build();
+         Table rightKeys = new Table.TestBuilder().column(1, 3).build();
+         Table leftConditional = new Table.TestBuilder().column(10, 20).build();
+         Table rightConditional = new Table.TestBuilder().column(5, 30).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression astCondition = expression.compile();
+         CompiledExpression jitCondition = expression.compileJit()) {
+      for (JoinKind kind : JoinKind.values()) {
+        int[] expectedLeft = kind == JoinKind.INNER ? new int[]{0} :
+            kind == JoinKind.LEFT ? new int[]{0, 1} : new int[]{inv, 0, 1};
+        int[] expectedRight = kind == JoinKind.INNER ? new int[]{0} :
+            kind == JoinKind.LEFT ? new int[]{0, inv} : new int[]{1, 0, inv};
+        try (ColumnVector expectedLeftColumn = ColumnVector.fromInts(expectedLeft);
+             ColumnVector expectedRightColumn = ColumnVector.fromInts(expectedRight);
+             Table expected = new Table(expectedLeftColumn, expectedRightColumn)) {
+          GatherMap[] equalityMaps = equalityJoinGatherMaps(leftKeys, rightHash, kind);
+          try (GatherMap leftEqualityMap = equalityMaps[0];
+               GatherMap rightEqualityMap = equalityMaps[1]) {
+            GatherMap[] astMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                astCondition, kind);
+            try (GatherMap astLeft = astMaps[0]; GatherMap astRight = astMaps[1]) {
+              assertGatherMapsEqualUnordered(expected, astMaps);
+            }
+            GatherMap[] jitMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                jitCondition, kind);
+            try (GatherMap jitLeft = jitMaps[0]; GatherMap jitRight = jitMaps[1]) {
+              assertGatherMapsEqualUnordered(expected, jitMaps);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsJitWithJitOperation() {
+    final int inv = Integer.MIN_VALUE;
+    // left.price * left.qty > right.limit, where an overflowing product never matches.
+    AstExpression expression = new BinaryOperation(BinaryOperator.GREATER,
+        new JitOperation(JitOperator.MUL_OVERFLOW, JitErrorPolicy.NULLIFY,
+            new ColumnReference(0, TableReference.LEFT),
+            new ColumnReference(1, TableReference.LEFT)),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table leftKeys = new Table.TestBuilder().column(1, 1, 1, 2).build();
+         Table rightKeys = new Table.TestBuilder().column(1, 2).build();
+         Table leftConditional = new Table.TestBuilder()
+             .column(2, 10, 100000, 3)
+             .column(3, 1, 100000, 5)
+             .build();
+         Table rightConditional = new Table.TestBuilder().column(5, 20).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compileJit()) {
+      for (JoinKind kind : JoinKind.values()) {
+        int[] expectedLeft = kind == JoinKind.INNER ? new int[]{0, 1} :
+            kind == JoinKind.LEFT ? new int[]{0, 1, 2, 3} : new int[]{inv, 0, 1, 2, 3};
+        int[] expectedRight = kind == JoinKind.INNER ? new int[]{0, 0} :
+            kind == JoinKind.LEFT ? new int[]{0, 0, inv, inv} : new int[]{1, 0, 0, inv, inv};
+        try (ColumnVector expectedLeftColumn = ColumnVector.fromInts(expectedLeft);
+             ColumnVector expectedRightColumn = ColumnVector.fromInts(expectedRight);
+             Table expected = new Table(expectedLeftColumn, expectedRightColumn)) {
+          GatherMap[] equalityMaps = equalityJoinGatherMaps(leftKeys, rightHash, kind);
+          try (GatherMap leftEqualityMap = equalityMaps[0];
+               GatherMap rightEqualityMap = equalityMaps[1]) {
+            GatherMap[] filteredMaps = Table.filterJoinGatherMaps(
+                leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+                condition, kind);
+            try (GatherMap leftFilteredMap = filteredMaps[0];
+                 GatherMap rightFilteredMap = filteredMaps[1]) {
+              assertGatherMapsEqualUnordered(expected, filteredMaps);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  @Test
+  void testFilterJoinGatherMapsJitPropagatesEvaluationError() {
+    AstExpression expression = new BinaryOperation(BinaryOperator.GREATER,
+        new JitOperation(JitOperator.MUL_OVERFLOW,
+            new ColumnReference(0, TableReference.LEFT),
+            new ColumnReference(1, TableReference.LEFT)),
+        new ColumnReference(0, TableReference.RIGHT));
+    try (Table leftKeys = new Table.TestBuilder().column(1, 1).build();
+         Table rightKeys = new Table.TestBuilder().column(1).build();
+         Table leftConditional = new Table.TestBuilder()
+             .column(2, 100000)
+             .column(3, 100000)
+             .build();
+         Table rightConditional = new Table.TestBuilder().column(5).build();
+         HashJoin rightHash = new HashJoin(rightKeys, false);
+         CompiledExpression condition = expression.compileJit()) {
+      GatherMap[] equalityMaps = leftKeys.innerJoinGatherMaps(rightHash);
+      try (GatherMap leftEqualityMap = equalityMaps[0];
+           GatherMap rightEqualityMap = equalityMaps[1]) {
+        assertThrows(CudfException.class, () -> Table.filterJoinGatherMaps(
+            leftEqualityMap, rightEqualityMap, leftConditional, rightConditional,
+            condition, JoinKind.INNER));
       }
     }
   }

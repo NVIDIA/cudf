@@ -2841,7 +2841,7 @@ public final class Table implements AutoCloseable {
         leftGatherMap.getBufferAddress(), leftLength,
         rightGatherMap.getBufferAddress(), rightLength,
         leftTable.getNativeView(), rightTable.getNativeView(),
-        condition.getNativeHandle(), joinKind.nativeId);
+        condition.getModeAwareNativeHandle(), joinKind.nativeId);
     return buildJoinGatherMaps(gatherMapData);
   }
 

@@ -352,8 +352,8 @@ class reader_impl {
                         cudf::memory_resources mr);
 
   /**
-   * @brief Checks if a decoded column buffer is copied again, by the decimal cast or by the
-   * dictionary encode, before it is returned
+   * @brief Checks if a decoded column buffer is copied again by the dictionary encode before it
+   * is returned
    *
    * @param buffer Column buffer
    * @param top_level_index Index of the top-level output column, or `std::nullopt` if nested
@@ -529,15 +529,6 @@ class reader_impl {
    */
   [[nodiscard]] std::optional<std::vector<std::string>> get_column_projection(
     parquet_reader_options const& options) const;
-
-  /**
-   * @brief Cast any fixed-point output columns to the decimal width specified in options.
-   *
-   * @param out_columns Output columns to cast
-   * @param mr Memory resources for the decoded columns
-   */
-  void apply_decimal_width_cast(std::vector<std::unique_ptr<cudf::column>>& out_columns,
-                                cudf::memory_resources mr);
 
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;

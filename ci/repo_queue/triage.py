@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 from collect import GitHub
 from selection import validate_numbers
@@ -87,7 +88,7 @@ def propose(issue, component_owners, team_members):
     author = issue["user"]["login"].casefold()
     try:
         members = team_members(team)
-    except RuntimeError:
+    except (RuntimeError, TimeoutExpired):
         return {**result, "reason": "Unable to read the codeowner team roster"}
 
     eligible = sorted(

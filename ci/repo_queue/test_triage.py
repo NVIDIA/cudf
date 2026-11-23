@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
+from subprocess import TimeoutExpired
 from unittest.mock import call, patch
 
 from triage import main
@@ -16,7 +17,7 @@ REPOSITORY = "NVIDIA/cudf"
 
 
 class IssueEventTests(unittest.TestCase):
-    def run_event(self, repository, issue):
+    def run_event(self, repository, issue, *, roster_error=None):
         with tempfile.TemporaryDirectory() as tmp:
             event = Path(tmp) / "event.json"
             event.write_text(
@@ -40,7 +41,7 @@ class IssueEventTests(unittest.TestCase):
                 get = github.return_value.get
                 get.side_effect = [
                     issue,
-                    [{"login": "maintainer", "type": "User"}],
+                    roster_error or [{"login": "maintainer", "type": "User"}],
                 ]
                 main()
                 return get, post
@@ -77,6 +78,27 @@ class IssueEventTests(unittest.TestCase):
         self.assertIn("Proposed label: Python", message["text"])
         self.assertIn("Suggested first contact: maintainer", message["text"])
         self.assertNotIn("<!", message["text"])
+
+    def test_roster_timeout_still_sends_component_preview(self):
+        _, post = self.run_event(
+            REPOSITORY,
+            {
+                "number": 42,
+                "state": "open",
+                "user": {"login": "reporter"},
+                "title": "import cudf fails",
+                "labels": [],
+            },
+            roster_error=TimeoutExpired("gh", 180),
+        )
+        post.assert_called_once()
+        _, message = post.call_args.args
+        self.assertEqual(message["channel"], "U01PXPJ5741")
+        self.assertIn("Proposed label: Python", message["text"])
+        self.assertIn("Suggested first contact: None", message["text"])
+        self.assertIn(
+            "Unable to read the codeowner team roster", message["text"]
+        )
 
     def test_issue_closed_before_fetch_does_not_send(self):
         _, post = self.run_event(REPOSITORY, {"state": "closed"})

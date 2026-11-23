@@ -550,7 +550,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def __repr__(self) -> str:
         max_seq_items = pd.get_option("display.max_seq_items") or len(self)
-        self._maybe_materialize_codes_and_levels()
+        indices = None
 
         if len(self) > max_seq_items:
             n = int(max_seq_items / 2) + 1
@@ -561,29 +561,45 @@ class MultiIndex(Index):
             indices = indices.append(
                 ColumnBase.from_range(range(len(self) - n, len(self), 1))
             )
-            preprocess = self[indices]
-        else:
-            preprocess = self
 
-        arrays = []
-        # Unused level values also determine pandas' formatting, such as
-        # whether datetime values include a time component.
-        for level in self.levels:
+        pd_levels = []
+        pd_codes = []
+        for i, col in enumerate(self._columns):
+            if self._levels is not None and self._codes is not None:
+                level = self._levels[i]
+                code = self._codes[i]
+                if indices is not None:
+                    code = code.take(indices, check_bounds=False)
+                code = code.find_and_replace(
+                    as_column(np.iinfo(SIZE_TYPE_DTYPE).min, length=1),
+                    as_column(-1, length=1),
+                )
+            else:
+                # Datetime and timedelta formatting can depend on values
+                # outside the preview. Other lazy levels only need the preview.
+                temporal = col.dtype.kind in "Mm"
+                if indices is not None and not temporal:
+                    col = col.take(indices, check_bounds=False)
+                labels, categories = col.factorize(
+                    sort=False, use_na_sentinel=True
+                )
+                level = Index._from_column(categories)
+                code = as_column(labels)
+                if indices is not None and temporal:
+                    code = code.take(indices, check_bounds=False)
+
             try:
                 pd_idx = level.to_pandas(nullable=True)
             except NotImplementedError:
                 pd_idx = level.to_pandas(nullable=False)
-            arrays.append(pd_idx)
+            pd_levels.append(pd_idx)
+            pd_codes.append(code.to_numpy())
 
-        pd_codes = (
-            code.find_and_replace(
-                as_column(np.iinfo(SIZE_TYPE_DTYPE).min, length=1),
-                as_column(-1, length=1),
-            ).to_numpy()
-            for code in preprocess._codes
-        )
         preprocess_pd = pd.MultiIndex(
-            levels=arrays, codes=list(pd_codes), names=self.names
+            levels=pd_levels,
+            codes=pd_codes,
+            names=self.names,
+            verify_integrity=False,
         )
 
         output = repr(preprocess_pd)

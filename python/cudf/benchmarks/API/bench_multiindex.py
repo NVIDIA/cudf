@@ -51,3 +51,20 @@ def bench_repr_unused_levels(benchmark, level_size, level_type):
 
     with pd.option_context("display.max_seq_items", 10):
         benchmark(repr, midx)
+
+
+@pytest.mark.parametrize("num_rows", NUM_ROWS)
+@pytest.mark.parametrize(
+    "distinct", [False, True], ids=["repeated", "distinct"]
+)
+def bench_first_repr_after_set_index(benchmark, num_rows, distinct):
+    values = np.arange(num_rows)
+    if not distinct:
+        values %= 8
+    frame = cudf.DataFrame({"x": values, "y": values[::-1].copy()})
+
+    def setup():
+        return (frame.set_index(["x", "y"]).index,), {}
+
+    with pd.option_context("display.max_seq_items", 10):
+        benchmark.pedantic(repr, setup=setup, rounds=5)

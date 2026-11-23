@@ -1713,7 +1713,6 @@ within the string.
 
 #### UTF-8
 
-The libcudf strings column only supports UTF-8 encoding for strings data.
 [UTF-8](https://en.wikipedia.org/wiki/UTF-8) is a variable-length character encoding wherein each
 character can be 1-4 bytes. This means the length of a string is not the same as its size in bytes.
 For this reason, it is recommended to use the `cudf::string_view` class to access these characters for
@@ -1725,9 +1724,8 @@ The `cudf/strings/detail/utf8.hpp` header also includes some utility methods for
 See [Unicode Limitations](../unicode.md) for limits on the Unicode support in libcudf strings
 functions such as character type testing and case conversion.
 
-libcudf does not validate that the data in a strings column is valid UTF-8. Passing a strings column
-containing invalid UTF-8 (for example, arbitrary binary data) to any libcudf API is undefined
-behavior. See [libcudf does not introspect data](#libcudf-does-not-introspect-data) for details.
+The libcudf strings column only supports UTF-8 encoding for strings data. Passing a strings column
+containing invalid UTF-8 to any libcudf API is [undefined behavior](#libcudf-does-not-introspect-data).
 
 ### cudf::lists_column_view and cudf::lists_view
 

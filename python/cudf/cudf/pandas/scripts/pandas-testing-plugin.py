@@ -1007,7 +1007,6 @@ NODEIDS_THAT_FAIL = {
     "tests/frame/methods/test_drop.py::TestDataFrameDrop::test_drop_multiindex_not_lexsorted[False]": "AssertionError: assert not True",
     "tests/frame/methods/test_drop.py::TestDataFrameDrop::test_drop_multiindex_not_lexsorted[True]": "AssertionError: assert not True",
     "tests/frame/methods/test_drop.py::TestDataFrameDrop::test_drop_raise_with_both_axis_and_index": "Failed: DID NOT RAISE <class 'ValueError'>",
-    "tests/frame/methods/test_dropna.py::TestDataFrameMissingData::test_drop_and_dropna_caching": "TODO: Add a reason for failure",
     "tests/frame/methods/test_dropna.py::TestDataFrameMissingData::test_dropna": "TODO: Add a reason for failure",
     "tests/frame/methods/test_dropna.py::TestDataFrameMissingData::test_dropna_multiple_axes": "TODO: Add a reason for failure",
     "tests/frame/methods/test_dropna.py::TestDataFrameMissingData::test_no_nans_in_frame[axis='index']": "TODO: Add a reason for failure",

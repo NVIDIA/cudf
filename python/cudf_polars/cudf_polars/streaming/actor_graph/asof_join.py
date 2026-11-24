@@ -53,9 +53,10 @@ if TYPE_CHECKING:
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
 
 
-async def _iter_right_chunks(
+async def _iter_channel_chunks(
     context: Context, channel: Channel[TableChunk]
 ) -> AsyncGenerator[TableChunk, None]:
+    """Yield chunks from a channel until it drains."""
     while (msg := await channel.recv(context)) is not None:
         yield TableChunk.from_message(msg, br=context.br())
 
@@ -63,6 +64,7 @@ async def _iter_right_chunks(
 async def _iter_buffered_chunks(
     chunks: list[TableChunk],
 ) -> AsyncGenerator[TableChunk, None]:
+    """Yield gathered chunks and clear the input list."""
     pending = deque(chunks)
     chunks.clear()
     while pending:
@@ -76,19 +78,21 @@ async def _gather_right(
     *,
     collective_id: int,
 ) -> list[TableChunk]:
-    allgather = AllGatherManager(context, comm, collective_id)
-    with allgather.inserting() as inserter:
-        while (msg := await channel.recv(context)) is not None:
-            await inserter.insert(
-                msg.sequence_number, TableChunk.from_message(msg, br=context.br())
-            )
-    return await allgather.extract_chunks(ordered=True)
+    """Gather right chunks from all ranks in rank order."""
+    async with AllGatherManager(context, comm, collective_id) as allgather:
+        with allgather.inserting() as inserter:
+            while (msg := await channel.recv(context)) is not None:
+                await inserter.insert(
+                    msg.sequence_number, TableChunk.from_message(msg, br=context.br())
+                )
+        return await allgather.extract_chunks(ordered=True)
 
 
 class _TimeOrder:
     """Validate ascending chunks and infer null placement as rows arrive."""
 
     def __init__(self, ir_context: IRExecutionContext) -> None:
+        """Set up order tracking for one input stream."""
         self.ir_context = ir_context
         self.previous: tuple[plc.Table, Any] | None = None
         self.null_orders: tuple[plc.types.NullOrder, ...] = (
@@ -98,10 +102,12 @@ class _TimeOrder:
 
     @property
     def null_order(self) -> plc.types.NullOrder:
+        """Return a null placement consistent with the chunks seen so far."""
         return self.null_orders[0]
 
     @staticmethod
     def endpoint(column: plc.Column, row: int, stream: Any) -> plc.Table:
+        """Copy one time value for cross-chunk comparisons."""
         return plc.copying.slice(plc.Table([column]), [row, row + 1], stream=stream)[
             0
         ].copy(stream=stream)
@@ -176,6 +182,7 @@ class _AsofCursor:
         ir: AsofJoin,
         right_chunks: AsyncIterator[TableChunk],
     ) -> None:
+        """Set up the right stream and state for probing left chunks."""
         self.context = context
         self.ir_context = ir_context
         self.ir = ir
@@ -200,11 +207,13 @@ class _AsofCursor:
     async def _reserved(
         self, size: int, func: Any, /, *args: Any, **kwargs: Any
     ) -> Any:
+        """Run work in a thread under a device-memory reservation."""
         reservation = await reserve_memory(self.context, size=size, net_memory_delta=0)
         with opaque_memory_usage(reservation):
             return await self.ir_context.to_thread(func, *args, **kwargs)
 
     def _prepare(self, right: DataFrame) -> None:
+        """Prepare the current right window for repeated probes."""
         ir = self.ir
         discarded = set(ir.right_by)
         if ir.options[2] and ir.left_on.name == ir.right_on.name:
@@ -307,6 +316,7 @@ class _AsofCursor:
             return
 
     async def _ensure_prepared(self) -> None:
+        """Prepare the current right window only when needed."""
         if self.joiner is None:
             assert self.current is not None
             await self._reserved(
@@ -316,6 +326,7 @@ class _AsofCursor:
             )
 
     def _lower_bound(self, column: plc.Column, left_stream: Any) -> int:
+        """Find where left times reach the current right-window maximum."""
         assert self.maximum is not None
         with stream_ordered_after(
             self.ir_context.get_cuda_stream,
@@ -486,7 +497,7 @@ async def asof_join_actor(
             if left_metadata.duplicated:
                 tracer.set_duplicated()
         if right_metadata.duplicated or comm.nranks == 1:
-            right_source = _iter_right_chunks(context, ch_right)
+            right_source = _iter_channel_chunks(context, ch_right)
         else:
             right_chunks = await _gather_right(
                 context, comm, ch_right, collective_id=right_gather_id

@@ -52,7 +52,6 @@ struct row_group_stats_caster : public stats_caster_base {
   std::vector<metadata> const& per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
   bool with_null_and_nan_stats;
-  bool ignore_inexact_stats = true;
 
   template <typename T>
   result_type operator()(std::span<int const> schema_indices_per_source,
@@ -141,9 +140,8 @@ struct row_group_stats_caster : public stats_caster_base {
                                  std::distance(row_group.columns.begin(), col)) or
               int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
             // Inexact (truncated) min == max does not mean the column chunk is constant. Spec
-            // compliant writers never produce it, so ignore it unless the stored values are wanted
+            // compliant writers never produce it, so ignore it
             auto const ignore_inexact_min_max =
-              ignore_inexact_stats and
               (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
               min_value->has_value() and *min_value == *max_value;
             if (ignore_int96_min_max or ignore_inexact_min_max) {

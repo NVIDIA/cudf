@@ -5370,16 +5370,6 @@ TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBounds)
   auto expected_max    = column_wrapper<int64_t>({2, 4}, all_valid);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds->view().column(2));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_max, bounds->view().column(3));
-
-  // Exactness flags are not interpreted: inexact min == max is returned as stored
-  auto& stats              = metadatas[0].row_groups[0].columns[0].meta_data.statistics;
-  stats.max_value          = stats.min_value;
-  stats.is_max_value_exact = false;
-  bounds                   = cudf::io::read_parquet_column_chunk_bounds(
-    metadatas, column_names, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_min, bounds->view().column(2));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(column_wrapper<int64_t>({1, 4}, all_valid),
-                                 bounds->view().column(3));
 }
 
 TEST_F(ParquetMetadataReaderTest, ReadParquetColumnChunkBoundsEmptyMetadata)

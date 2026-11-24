@@ -128,7 +128,9 @@ std::unique_ptr<column> count_re(
  *
  * Specify an escape character to include either `%` or `_` in the search.
  * The `escape_character` is expected to be either 0 or 1 characters and
- * is expected to be an ASCII character.
+ * is expected to be an ASCII character. A NUL escape character is not
+ * supported and the results are undefined.
+ * Patterns containing a NUL byte are not supported.
  *
  * @code{.pseudo}
  * Example:
@@ -142,7 +144,7 @@ std::unique_ptr<column> count_re(
  * The `pattern` and `escape_character` parameter must be valid until a
  * synchronize is performed on the given `stream` parameter.
  *
- * @throw std::invalid_argument if `escape_character` contains more than on byte
+ * @throw std::invalid_argument if `escape_character` contains more than one byte
  *
  * @param input Strings instance for this operation
  * @param pattern Like pattern to match within each string
@@ -176,7 +178,9 @@ std::unique_ptr<column> like(strings_column_view const& input,
  *
  * Specify an escape character to include either `%` or `_` in the search.
  * The `escape_character` is expected to be either 0 or 1 characters and
- * is expected to be an ASCII character.
+ * is expected to be an ASCII character. A NUL escape character is not
+ * supported and the results are undefined.
+ * Patterns containing a NUL byte are not supported.
  *
  * Any null string entries return corresponding null output column entries.
  *

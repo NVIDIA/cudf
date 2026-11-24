@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -67,11 +67,10 @@ public class TableWithMeta implements AutoCloseable {
    */
   public Table releaseTable() {
     long[] ptr = releaseTable(handle);
-    if (ptr == null || ptr.length == 0) {
+    if (ptr == null) {
       return null;
-    } else {
-      return new Table(ptr);
     }
+    return Table.fromRowCountAndColumns(ptr);
   }
 
   private static class ChildAndOffset {

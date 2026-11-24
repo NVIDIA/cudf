@@ -1240,6 +1240,26 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testReadJSONTableWithMetaZeroColumns() {
+    JSONOptions opts = JSONOptions.builder()
+            .withLines(true)
+            .build();
+    byte[] data = "{}\n{}\n".getBytes(StandardCharsets.UTF_8);
+    final int numBytes = data.length;
+    try (HostMemoryBuffer hostbuf = hostMemoryAllocator.allocate(numBytes)) {
+      hostbuf.setBytes(0, data, 0, numBytes);
+      try (TableWithMeta tablemeta = Table.readJSON(opts, hostbuf, 0, numBytes);
+           Table table = tablemeta.releaseTable()) {
+        assertArrayEquals(new String[0], tablemeta.getColumnNames());
+        assertNotNull(table, "a zero-column result is still a table");
+        assertEquals(0, table.getNumberOfColumns());
+        assertEquals(0, table.getRowCount());
+        assertNull(tablemeta.releaseTable(), "the table can only be released once");
+      }
+    }
+  }
+
+  @Test
   void testReadCSVPrune() {
     Schema schema = Schema.builder()
         .column(DType.INT32, "A")

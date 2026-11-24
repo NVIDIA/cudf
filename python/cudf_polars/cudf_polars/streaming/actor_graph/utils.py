@@ -11,7 +11,7 @@ import math
 import operator
 import struct
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
 from typing import TYPE_CHECKING, Any
@@ -563,12 +563,15 @@ async def allgather_and_reduce(
     -------
     The chunk produced by evaluating ``reduce_ir`` on the gathered result.
     """
-    allgather = AllGatherManager(context, comm, collective_id)
-    with allgather.inserting() as inserter:
-        await inserter.insert(0, local_chunk)
     stream = ir_context.get_cuda_stream()
+    async with AllGatherManager(context, comm, collective_id) as allgather:
+        with allgather.inserting() as inserter:
+            await inserter.insert(0, local_chunk)
+        concat_table = await allgather.extract_concatenated(
+            stream, ir_context=ir_context
+        )
     concat_chunk = TableChunk.from_pylibcudf_table(
-        await allgather.extract_concatenated(stream, ir_context=ir_context),
+        concat_table,
         stream,
         exclusive_view=True,
         br=context.br(),
@@ -1378,13 +1381,10 @@ async def allgather_reduce(
     data = struct.pack(fmt, *local_values)
     packed = PackedData.from_host_bytes(data, context.br())
 
-    allgather = AllGather(context, comm, op_id)
-    try:
-        allgather.insert(0, packed)
-    finally:
-        allgather.insert_finished()
-
-    results = await allgather.extract_all(context, ordered=False)
+    async with aclosing(AllGather(context, comm, op_id)) as allgather:
+        with allgather:
+            allgather.insert(0, packed)
+        results = await allgather.extract_all(ordered=False)
 
     totals = [0] * n
     for packed_result in results:

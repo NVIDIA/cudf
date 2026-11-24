@@ -229,6 +229,42 @@ TEST_F(StringsDatetimeTest, ToTimestampYear)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, is_expected);
 }
 
+TEST_F(StringsDatetimeTest, ToTimestampNegativeYear)
+{
+  cudf::test::strings_column_wrapper input{"-1970-02-01 00:00:00",
+                                           "-0001-12-31 23:59:59",
+                                           "-0044-03-15 12:30:00",
+                                           "-9999-01-01 00:00:00",
+                                           "0000-02-29 00:00:00",
+                                           "-0004-02-29 06:00:00",
+                                           "1970-01-01 00:00:00"};
+  auto const sv     = cudf::strings_column_view(input);
+  auto const format = std::string("%Y-%m-%d %H:%M:%S");
+
+  auto results =
+    cudf::strings::to_timestamps(sv, cudf::data_type{cudf::type_id::TIMESTAMP_SECONDS}, format);
+  auto expected = cudf::test::fixed_width_column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{
+    -124331673600L, -62167219201L, -63549315000L, -377705116800L, -62162121600L, -62288330400L, 0L};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  results = cudf::strings::to_timestamps(
+    sv, cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}, std::string("%Y-%m-%d"));
+  auto expected_days =
+    cudf::test::fixed_width_column_wrapper<cudf::timestamp_D, cudf::timestamp_D::rep>{
+      -1439024, -719529, -735525, -4371587, -719469, -720930, 0};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected_days);
+
+  results          = cudf::strings::is_timestamp(sv, format);
+  auto is_expected = cudf::test::fixed_width_column_wrapper<bool>({1, 1, 1, 1, 1, 1, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, is_expected);
+
+  cudf::test::strings_column_wrapper invalid{
+    "-", "--1970-02-01", "-1970-02-29", "+1970-02-01", "-abcd-02-01", "-0003-02-29", "-0004-02-29"};
+  results     = cudf::strings::is_timestamp(cudf::strings_column_view(invalid), "%Y-%m-%d");
+  is_expected = cudf::test::fixed_width_column_wrapper<bool>({0, 0, 0, 0, 0, 0, 1});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, is_expected);
+}
+
 TEST_F(StringsDatetimeTest, ToTimestampWeeks)
 {
   cudf::test::strings_column_wrapper input{

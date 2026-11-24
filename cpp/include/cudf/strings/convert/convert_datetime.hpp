@@ -34,7 +34,7 @@ namespace strings {
  * | \%d | Day of the month: 01-31 |
  * | \%m | Month of the year: 01-12 |
  * | \%y | Year without century: 00-99. [0,68] maps to [2000,2068] and [69,99] maps to [1969,1999] |
- * | \%Y | Year with century: 0001-9999 |
+ * | \%Y | Year with century: 0001-9999. A leading '-' sign is allowed: -9999 to -0001 |
  * | \%H | 24-hour of the day: 00-23 |
  * | \%I | 12-hour of the day: 01-12 |
  * | \%M | Minute of the hour: 00-59 |
@@ -49,6 +49,9 @@ namespace strings {
  * | \%u | Day of week: 1-7 = Monday-Sunday |
  *
  * Other specifiers are not currently supported.
+ *
+ * Negative years use astronomical year numbering where year 0 is 1 BC, -1 is 2 BC, and so on.
+ * For example, "-1970-02-01" with format "%Y-%m-%d" is parsed as -1439024 days since epoch.
  *
  * Invalid formats are not checked. If the string contains unexpected
  * or insufficient characters, that output row entry's timestamp value is undefined.
@@ -94,7 +97,7 @@ std::unique_ptr<column> to_timestamps(
  * | \%d | Day of the month: 01-31 |
  * | \%m | Month of the year: 01-12 |
  * | \%y | Year without century: 00-99. [0,68] maps to [2000,2068] and [69,99] maps to [1969,1999] |
- * | \%Y | Year with century: 0001-9999 |
+ * | \%Y | Year with century: 0001-9999. A leading '-' sign is allowed: -9999 to -0001 |
  * | \%H | 24-hour of the day: 00-23 |
  * | \%I | 12-hour of the day: 01-12 |
  * | \%M | Minute of the hour: 00-59|

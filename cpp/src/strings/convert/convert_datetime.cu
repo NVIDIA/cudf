@@ -186,6 +186,30 @@ __device__ cuda::std::pair<int32_t, size_type> parse_int(char const* str, size_t
 }
 
 /**
+ * @brief Parse a year value which may include a leading '-' sign character.
+ *
+ * Years before 0001 are represented using astronomical year numbering
+ * where year 0 is 1 BC, year -1 is 2 BC, etc.
+ *
+ * @param str Beginning of characters to read.
+ * @param length Number of bytes available in str.
+ * @param digits Maximum number of digits to read after an optional sign.
+ * @return Year value and number of bytes consumed; 0 bytes consumed if no digits were found
+ */
+__device__ cuda::std::pair<int32_t, size_type> parse_year(char const* str,
+                                                          size_type length,
+                                                          size_type digits)
+{
+  auto const negative     = (length > 0) && (*str == '-');
+  auto const sign_size    = static_cast<size_type>(negative);
+  auto const bytes        = cuda::std::min(digits, length - sign_size);
+  auto const [year, left] = parse_int(str + sign_size, bytes);
+  auto const consumed     = bytes - left;
+  if (consumed <= 0) { return cuda::std::make_pair(0, 0); }
+  return cuda::std::make_pair(negative ? -year : year, consumed + sign_size);
+}
+
+/**
  * @brief This parses date/time characters into a timestamp integer
  *
  * @tparam T cudf::timestamp type
@@ -229,9 +253,9 @@ struct parse_datetime {
       // special logic for each specifier
       switch (item.value) {
         case 'Y': {
-          auto const [year, left] = parse_int(ptr, item.length);
-          timeparts.year          = static_cast<int16_t>(year);
-          bytes_read -= left;
+          auto const [year, consumed] = parse_year(ptr, length, item.length);
+          timeparts.year              = static_cast<int16_t>(year);
+          bytes_read                  = consumed;
           break;
         }
         case 'y': {
@@ -532,10 +556,10 @@ struct check_datetime_format {
       size_type bytes_read = item.length;
       switch (item.value) {
         case 'Y': {
-          auto const [year, left] = parse_int(ptr, item.length);
-          result                  = (left < item.length) && (year <= 9999);
-          dateparts.year          = static_cast<int16_t>(year);
-          bytes_read -= left;
+          auto const [year, consumed] = parse_year(ptr, length, item.length);
+          result                      = (consumed > 0) && (year <= 9999);
+          dateparts.year              = static_cast<int16_t>(year);
+          bytes_read                  = consumed;
           break;
         }
         case 'y': {

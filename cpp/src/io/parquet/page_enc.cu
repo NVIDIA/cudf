@@ -2868,8 +2868,19 @@ __device__ cuda::std::optional<extremum> truncate_utf8(device_span<unsigned char
   auto const ptr = static_cast<unsigned char*>(scratch);
   for (int32_t i = len - 1; i >= 0; i--) {
     if (increment_utf8_at(&ptr[i])) {  // true if no overflow
-      // the increment may yield a surrogate or a code point above U+10FFFF, in which case fall
-      // back to incrementing the last ASCII byte, which always yields valid UTF-8
+      // a carry into the second byte of a character may step past U+D7FF into the surrogates,
+      // so skip ahead to U+E000, or past U+10FFFF, so drop the overflowed character and carry into
+      // the preceding character
+      auto const lead = i > 0 ? ptr[i - 1] : 0;
+      if (lead == 0xED and ptr[i] == 0xA0) {
+        ptr[i - 1] = 0xEE;
+        ptr[i]     = 0x80;
+      } else if (lead == 0xF4 and ptr[i] == 0x90) {
+        len = --i;
+        continue;
+      }
+      // an invalid code point in the input itself falls back to incrementing the last ASCII byte,
+      // which always yields valid UTF-8
       if (is_valid_code_point(ptr, len)) { return extremum{scratch, len}; }
       return truncate_binary(
         span, false, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());

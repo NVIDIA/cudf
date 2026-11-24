@@ -69,7 +69,7 @@ if [[ -n "${open_pr}" ]]; then
     head_oid=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" --jq .object.sha)
 else
     # A branch without an open PR is left over from a merged or closed proposal.
-    gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" 2> /dev/null || true
+    gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" > /dev/null 2>&1 || true
     gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" \
         -f "sha=${base_oid}" > /dev/null
     head_oid=${base_oid}

@@ -1035,6 +1035,12 @@ void parquet_writer_options_base::set_column_index_truncate_length(int32_t size_
   _column_index_truncate_length = size_bytes;
 }
 
+void parquet_writer_options_base::set_statistics_truncate_length(int32_t size_bytes)
+{
+  CUDF_EXPECTS(size_bytes >= 0, "Statistics truncate length cannot be negative.");
+  _statistics_truncate_length = size_bytes;
+}
+
 void parquet_writer_options_base::set_dictionary_policy(dictionary_policy policy)
 {
   _dictionary_policy = policy;
@@ -1162,6 +1168,14 @@ BuilderT& parquet_writer_options_builder_base<BuilderT, OptionsT>::column_index_
   int32_t val)
 {
   _options.set_column_index_truncate_length(val);
+  return static_cast<BuilderT&>(*this);
+}
+
+template <class BuilderT, class OptionsT>
+BuilderT& parquet_writer_options_builder_base<BuilderT, OptionsT>::statistics_truncate_length(
+  int32_t val)
+{
+  _options.set_statistics_truncate_length(val);
   return static_cast<BuilderT&>(*this);
 }
 

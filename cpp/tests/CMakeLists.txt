@@ -470,6 +470,7 @@ ConfigureTest(
   utilities_tests/io_utilities_tests.cpp
   utilities_tests/lists_column_wrapper_tests.cpp
   utilities_tests/memory_resource_tests.cpp
+  utilities_tests/parse_size_tests.cpp
   utilities_tests/pinned_memory_tests.cpp
   utilities_tests/stream_pool_tests.cpp
   utilities_tests/type_check_tests.cpp
@@ -644,6 +645,7 @@ ConfigureTest(
   LARGE_STRINGS_TEST
   large_strings/concatenate_tests.cpp
   large_strings/case_tests.cpp
+  large_strings/find_tests.cpp
   large_strings/json_tests.cpp
   large_strings/large_strings_fixture.cpp
   large_strings/bpe_tests.cpp
@@ -737,6 +739,8 @@ add_fragment(
 )
 
 add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
+
+add_fragment(cudf_test_fragments FRAGMENT copy_string SOURCE transform/fragments/copy_string.cu)
 
 add_fragment(
   cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu

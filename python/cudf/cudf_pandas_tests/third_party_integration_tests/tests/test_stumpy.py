@@ -1,11 +1,11 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
 import pandas as pd
 import pytest
 import stumpy
-from numba import cuda
+from cuda.bindings import runtime
 from pandas._testing import assert_equal
 
 
@@ -34,7 +34,7 @@ def test_1d_time_series():
     "ignore::numba.core.errors.NumbaPerformanceWarning"
 )
 @pytest.mark.filterwarnings(
-    "ignore::numba.cuda.core.errors.NumbaPerformanceWarning"
+    "ignore::numba_cuda_mlir.numba_cuda.core.errors.NumbaPerformanceWarning"
 )
 # https://github.com/stumpy-dev/stumpy/issues/1134
 @pytest.mark.filterwarnings("ignore:Implicitly cleaning up:ResourceWarning")
@@ -44,9 +44,9 @@ def test_1d_gpu():
     window_size = (
         50  # Approximately, how many data points might be found in a pattern
     )
-    all_gpu_devices = [
-        int(device.id) for device in cuda.list_devices()
-    ]  # Get a list of all available GPU devices
+    err, num_devices = runtime.cudaGetDeviceCount()
+    assert err == runtime.cudaError_t.cudaSuccess
+    all_gpu_devices = list(range(num_devices))  # All available GPU devices
 
     return stumpy.gpu_stump(
         your_time_series, m=window_size, device_id=all_gpu_devices

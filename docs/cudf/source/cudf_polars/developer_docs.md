@@ -222,6 +222,12 @@ containing runtime execution context). To perform the
 evaluation, one should use the base class (generic) `evaluate` method
 which handles the recursive evaluation of child nodes.
 
+`do_evaluate` must not modify its input dataframes. It must not write
+to their device data, and must not add, remove or rename their
+columns. The only permitted change to an input is recording sortedness
+metadata that is true of the data, as `Column.check_sorted` does. The
+result may share device memory with the inputs.
+
 Plan nodes must also declare an `_n_non_child_args` attribute giving
 the length of the `_non_child_args` tuple. This is used by tracing to know
 how many non-child (dataframe) inputs to expect without introspection.
@@ -534,6 +540,33 @@ on multiple streams. It's the caller's responsibility to provide a stream that
 all the `Column`s are valid on, likely by joining together the streams that each
 individual stream is valid on.
 
+# Memory reservations
+
+Streaming actors reserve device memory through the rapidsmpf reservation
+system before they allocate. Allocations that rapidsmpf does not track, such
+as libcudf calls, run inside `opaque_memory_usage`, which associates them with
+a reservation obtained from `reserve_memory`:
+
+```python
+from rapidsmpf.memory.memory_reservation import opaque_memory_usage
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
+
+with opaque_memory_usage(
+    await reserve_memory(context, size=input_bytes, net_memory_delta=0)
+):
+    df = await ir_context.to_thread(
+        ir.do_evaluate, *args, *dfs, context=ir_context
+    )
+```
+
+The size of an opaque reservation is a best-effort estimate. Base it on
+quantities that cudf-polars knows, such as the size of the inputs, the
+expected output, or `split_and_pack_cost` for a pack or copy of a slice.
+Knowledge of libcudf internals, such as sort workspace or temporary buffers,
+may be used to improve an estimate, but it is not required. The rapidsmpf
+reservation system tolerates an inexact estimate, because allocations inside
+`opaque_memory_usage` are not capped by the reservation.
+
 # Writing tests
 
 We use `pytest`, tests live in the `tests/` subdirectory,
@@ -614,6 +647,52 @@ python ci/analyze_cudf_polars_fallbacks.py --diagnostics-file fallback-diagnosti
 The command exits nonzero for drift or incomplete evidence. Review the diff
 before committing a replacement. New Polars versions require full discovery
 and matching list entries before selected PR runs can use them.
+
+### Comparing local and upstream test coverage
+
+Use a GPU-enabled Linux environment with Git and the existing
+test runners' dependencies (including GNU coreutils and binutils). Build and
+install this checkout's cudf-polars in editable mode with its test dependencies,
+including pytest-cov and pytest-xdist. A devcontainer is optional. Use a supported
+Polars version and its matching `py-<version>` checkout in `polars/`, then run:
+
+```bash
+ci/run_cudf_polars_coverage_comparison.sh
+```
+
+This collects local coverage and upstream coverage with the in-memory and
+default-blocksize SPMD engines. GPU run-list selection is disabled; existing
+runner exclusions still apply. Set `POLARS_DIR` for another checkout or pass
+an output directory as the first argument.
+
+Outputs default to `coverage-results/cudf-polars-comparison/`. Keep
+`.coverage.local`, `.coverage.upstream-in-memory`, `.coverage.upstream-spmd`,
+and `coverage-comparison.json` together. The JSON classifies local-only,
+upstream-only, and shared lines with up to 20 context samples per line;
+the databases retain all contexts. The nightly `cudf-polars-coverage-collection-and-comparison`
+job runs this command on one configuration and uploads these files together as
+the `cudf-polars-coverage-comparison` GitHub artifact, including
+after suite failures. PR jobs do not run the comparison.
+
+To retrieve all local contexts, replace the filename and line below with
+exact values from the report:
+
+```bash
+python - coverage-results/cudf-polars-comparison/.coverage.local /absolute/source/filename.py 42 <<'PY'
+import sys
+
+from coverage import CoverageData
+
+data = CoverageData(basename=sys.argv[1])
+data.read()
+print(*sorted(data.contexts_by_lineno(sys.argv[2])[int(sys.argv[3])]), sep="\n")
+PY
+```
+
+Coverage differences identify investigation targets, not proven missing
+assertions or GPU execution. A failed suite makes the command exit nonzero;
+any resulting report is incomplete. To re-export saved databases, see
+`python ci/analyze_cudf_polars_coverage.py --help`.
 
 # Debugging
 

@@ -222,7 +222,9 @@ async def _passthrough_union(
     for ch_in, drop in zip(chs_in, suppress, strict=True):
         num_ch_chunks = 0
         while (msg := await ch_in.recv(context)) is not None:
+            sequence_number = msg.sequence_number + seq_num_offset
             if drop:
+                del msg
                 stream = ir_context.get_cuda_stream()
                 out_chunk = empty_table_chunk(ir, context, stream)
             else:
@@ -234,13 +236,7 @@ async def _passthrough_union(
                     reserve_extra=0,
                     net_memory_delta=0,
                 )
-            await ch_out.send(
-                context,
-                Message(
-                    msg.sequence_number + seq_num_offset,
-                    out_chunk,
-                ),
-            )
+            await ch_out.send(context, Message(sequence_number, out_chunk))
             num_ch_chunks += 1
         seq_num_offset += num_ch_chunks
 
@@ -266,13 +262,14 @@ async def _exchange_child(
     # Every rank exchanges with every other rank (possibly sending nothing),
     # which keeps the set of peers independent of the routing plan.
     peers = [r for r in range(comm.nranks) if r != rank]
-    exchange = SparseAlltoall(context, comm, collective_id, srcs=peers, dsts=peers)
-
-    try:
+    async with SparseAlltoall(
+        context, comm, collective_id, srcs=peers, dsts=peers
+    ) as exchange:
         index = 0
         while (msg := await ch_in.recv(context)) is not None:
             if drop:
                 # Duplicated child: only rank 0's copy takes part.
+                del msg
                 continue
             dst = plan.destination(child, rank, index)
             chunk = TableChunk.from_message(msg, br=context.br())
@@ -287,16 +284,13 @@ async def _exchange_child(
                 )
                 exchange.insert(dst, chunk.into_packed_data(extra))
             index += 1
-    finally:
-        # Finish the exchange even if reading or packing fails or the task
-        # is cancelled: destroying an unfinished exchange can abort the worker.
-        await exchange.insert_finished(context)
+        await exchange.insert_finished()
 
-    for src in peers:
-        for i, packed in enumerate(exchange.extract(src)):
-            owned[src].insert(
-                Message(i, TableChunk.from_packed_data(packed, context.br()))
-            )
+        for src in peers:
+            for i, packed in enumerate(exchange.extract(src)):
+                owned[src].insert(
+                    Message(i, TableChunk.from_packed_data(packed, context.br()))
+                )
 
 
 async def _ordered_union(
@@ -331,7 +325,7 @@ async def _ordered_union(
     for child, meta in enumerate(metadata):
         if not meta.duplicated or comm.rank == 0:
             local_values[child * comm.nranks + comm.rank] = meta.local_count
-    # The AllGather completes before child 0's exchange starts, so the two
+    # The AllGather is closed before child 0's exchange starts, so the two
     # share collective_ids[0].
     gathered = await allgather_reduce(context, comm, collective_ids[0], *local_values)
     plan = _OrderedUnionPlan(

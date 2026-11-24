@@ -53,7 +53,8 @@ from cudf_polars.streaming.shuffle import Shuffle
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import Iterator
+    from types import TracebackType
 
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.packed_data import PackedData
@@ -69,6 +70,8 @@ if TYPE_CHECKING:
 class ShuffleManager:
     """
     ShufflerAsync manager.
+
+    Use as an async context manager, which releases the shuffler on exit.
 
     Parameters
     ----------
@@ -185,7 +188,11 @@ class ShuffleManager:
             )
 
         async def insert_index(
-            self, chunk: TableChunk, partition_map: TableChunk
+            self,
+            chunk: TableChunk,
+            partition_map: TableChunk,
+            *,
+            ir_context: IRExecutionContext,
         ) -> None:
             """
             Partition chunk by a separate single-column partition-map and insert.
@@ -199,6 +206,8 @@ class ShuffleManager:
                 Single-column ``TableChunk`` whose integer values give the
                 target partition ID for each row. Must be row-aligned with
                 ``chunk``.
+            ir_context
+                The IR execution context.
             """
             br = self._manager.context.br()
             # As in `insert_hash_keys`, this covers the reorder plus the pack.
@@ -213,7 +222,7 @@ class ShuffleManager:
                 chunk.table_view(), chunk.stream, br
             )
             with stream_ordered_after(
-                br.stream_pool.get_stream,
+                ir_context.get_cuda_stream,
                 upstreams=(chunk.stream, partition_map.stream),
             ) as stream:
                 partition_map_col = partition_map.table_view().columns()[0]
@@ -241,7 +250,7 @@ class ShuffleManager:
 
         async def __aexit__(self, *args: object) -> None:
             """Exit the context manager, calling ``insert_finished()``."""
-            await self._manager.shuffler.insert_finished(self._manager.context)
+            await self._manager.shuffler.insert_finished()
 
     def __init__(
         self,
@@ -263,6 +272,20 @@ class ShuffleManager:
             num_partitions,
             partition_assignment=partition_assignment,
         )
+
+    async def __aenter__(self) -> ShuffleManager:
+        """Enter the context manager."""
+        await self.shuffler.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Exit the context manager, releasing the shuffler."""
+        await self.shuffler.__aexit__(exc_type, exc, tb)
 
     def inserting(self) -> ShuffleManager.Inserter:
         """Return a context manager for the insert phase."""
@@ -323,6 +346,9 @@ class LocalRepartitioner:
     """
     Local re-partitioner that wraps a completed :class:`ShuffleManager`.
 
+    Use as an async context manager, which releases the local shuffle on exit.
+    The wrapped :class:`ShuffleManager` must stay open until then.
+
     Parameters
     ----------
     shuffle
@@ -345,23 +371,38 @@ class LocalRepartitioner:
             shuffle.collective_id,
         )
 
-    async def _iter_chunks(self, stream: Stream) -> AsyncGenerator[plc.Table, None]:
+    async def __aenter__(self) -> LocalRepartitioner:
+        """Enter the context manager."""
+        await self._local_shuffle.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Exit the context manager, releasing the local shuffle."""
+        await self._local_shuffle.__aexit__(exc_type, exc, tb)
+
+    def _iter_pieces(self) -> Iterator[Any]:
         for partition_id in self._global_shuffle.local_partitions():
-            for piece in self._global_shuffle.extract_pieces(partition_id):
-                # TODO: batch pieces up to target_partition_size before unpacking
-                pieces = [piece]
-                reservation = await reserve_memory(
-                    self._global_shuffle.context,
-                    py_unpack_and_concat_cost(pieces),
-                    # Representation change: the packed input is consumed as the
-                    # unpacked table is produced, at roughly the same size.
-                    net_memory_delta=0,
-                )
-                table = py_unpack_and_concat(
-                    pieces, stream=stream, br=self._br, reservation=reservation
-                )
-                if table.num_rows() > 0:
-                    yield table
+            yield from self._global_shuffle.extract_pieces(partition_id)
+
+    async def _unpack_table(self, piece: Any, stream: Stream) -> plc.Table | None:
+        # TODO: batch pieces up to target_partition_size before unpacking
+        pieces = [piece]
+        reservation = await reserve_memory(
+            self._global_shuffle.context,
+            py_unpack_and_concat_cost(pieces),
+            # Representation change: the packed input is consumed as the
+            # unpacked table is produced, at roughly the same size.
+            net_memory_delta=0,
+        )
+        table = py_unpack_and_concat(
+            pieces, stream=stream, br=self._br, reservation=reservation
+        )
+        return None if table.num_rows() == 0 else table
 
     async def repartition_by_hash(
         self, *, columns_to_hash: tuple[int, ...], stream: Stream
@@ -377,19 +418,22 @@ class LocalRepartitioner:
             CUDA stream for the unpack operation.
         """
         async with self._local_shuffle.inserting() as inserter:
-            async for table in self._iter_chunks(stream):
-                await inserter.insert_hash(
-                    TableChunk.from_pylibcudf_table(
+            for piece in self._iter_pieces():
+                table = await self._unpack_table(piece, stream)
+                if table is not None:
+                    chunk = TableChunk.from_pylibcudf_table(
                         table, stream, exclusive_view=True, br=self._br
-                    ),
-                    columns_to_hash,
-                )
+                    )
+                    del table
+                    await inserter.insert_hash(chunk, columns_to_hash)
+                    del chunk
 
     async def repartition_by_index(
         self,
         *,
         partition_col: int,
         stream: Stream,
+        ir_context: IRExecutionContext,
         drop_partition_col: bool = True,
     ) -> None:
         """
@@ -402,29 +446,41 @@ class LocalRepartitioner:
             local partition ID for each row.
         stream
             CUDA stream for the unpack operation.
+        ir_context
+            The IR execution context that provides the stream for the
+            reorder in ``insert_index``.
         drop_partition_col
             If ``True`` (default), the partition column is stripped from the
             payload before inserting. If ``False``, it is kept in the output.
         """
         async with self._local_shuffle.inserting() as inserter:
-            async for table in self._iter_chunks(stream):
+            for piece in self._iter_pieces():
+                table = await self._unpack_table(piece, stream)
+                if table is None:
+                    continue
                 cols = table.columns()
-                payload = plc.Table(
-                    [
-                        c
-                        for i, c in enumerate(cols)
-                        if not drop_partition_col or i != partition_col
-                    ]
+                payload = TableChunk.from_pylibcudf_table(
+                    plc.Table(
+                        [
+                            c
+                            for i, c in enumerate(cols)
+                            if not drop_partition_col or i != partition_col
+                        ]
+                    ),
+                    stream,
+                    exclusive_view=False,
+                    br=self._br,
                 )
-                partition_map = plc.Table([cols[partition_col]])
+                partition_map = TableChunk.from_pylibcudf_table(
+                    plc.Table([cols[partition_col]]),
+                    stream,
+                    exclusive_view=False,
+                    br=self._br,
+                )
                 await inserter.insert_index(
-                    TableChunk.from_pylibcudf_table(
-                        payload, stream, exclusive_view=True, br=self._br
-                    ),
-                    TableChunk.from_pylibcudf_table(
-                        partition_map, stream, exclusive_view=True, br=self._br
-                    ),
+                    payload, partition_map, ir_context=ir_context
                 )
+                del cols, table, payload, partition_map
 
     def local_partitions(self) -> list[int]:
         """Return the local partition IDs."""
@@ -542,38 +598,40 @@ async def _global_shuffle(
     # Other ranks still participate in the shuffle protocol.
     skip_insert = metadata_in.duplicated and comm.rank != 0
 
-    shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
-    async with shuffle.inserting() as inserter:
-        while (msg := await ch_in.recv(context)) is not None:
-            if not skip_insert:
-                chunk, _ = await make_table_chunks_available_or_wait(
-                    context,
-                    TableChunk.from_message(msg, br=context.br()),
-                    reserve_extra=0,
-                    net_memory_delta=0,
-                )
-                if columns_to_hash is None:
-                    await inserter.insert_hash_keys(chunk, keys_to_hash, input_schema)
-                else:
-                    await inserter.insert_hash(
-                        chunk,
-                        columns_to_hash,
+    async with ShuffleManager(context, comm, num_partitions, collective_id) as shuffle:
+        async with shuffle.inserting() as inserter:
+            while (msg := await ch_in.recv(context)) is not None:
+                if not skip_insert:
+                    chunk, _ = await make_table_chunks_available_or_wait(
+                        context,
+                        TableChunk.from_message(msg, br=context.br()),
+                        reserve_extra=0,
+                        net_memory_delta=0,
                     )
+                    if columns_to_hash is None:
+                        await inserter.insert_hash_keys(
+                            chunk, keys_to_hash, input_schema
+                        )
+                    else:
+                        await inserter.insert_hash(
+                            chunk,
+                            columns_to_hash,
+                        )
 
-    for partition_id in shuffle.local_partitions():
-        stream = ir_context.get_cuda_stream()
-        await ch_out.send(
-            context,
-            Message(
-                partition_id,
-                TableChunk.from_pylibcudf_table(
-                    table=await shuffle.extract_chunk(partition_id, stream),
-                    stream=stream,
-                    exclusive_view=True,
-                    br=context.br(),
+        for partition_id in shuffle.local_partitions():
+            stream = ir_context.get_cuda_stream()
+            await ch_out.send(
+                context,
+                Message(
+                    partition_id,
+                    TableChunk.from_pylibcudf_table(
+                        table=await shuffle.extract_chunk(partition_id, stream),
+                        stream=stream,
+                        exclusive_view=True,
+                        br=context.br(),
+                    ),
                 ),
-            ),
-        )
+            )
 
     await ch_out.drain(context)
 

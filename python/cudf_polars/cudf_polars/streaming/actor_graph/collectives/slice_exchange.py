@@ -14,8 +14,8 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.streaming.actor_graph.utils import ChunkStore
@@ -154,9 +154,7 @@ class SparseExchange:
                 net_memory_delta=0,
             )
         else:
-            reservation = await self.context.memory(MemoryType.DEVICE).reserve_or_wait(
-                0, net_memory_delta=0
-            )
+            reservation = await reserve_memory(self.context, size=0, net_memory_delta=0)
         self._exchange.insert(destination, chunk.into_packed_data(reservation))
 
     def start_finish(self) -> None:
@@ -164,9 +162,7 @@ class SparseExchange:
         if self._closed:
             raise RuntimeError("Sparse exchange is closed")
         if self._finish_task is None and self._exchange is not None:
-            self._finish_task = asyncio.create_task(
-                self._exchange.insert_finished(self.context)
-            )
+            self._finish_task = asyncio.create_task(self._exchange.insert_finished())
 
     async def finish(self) -> None:
         """Finish insertion before extraction, even under cancellation."""
@@ -176,8 +172,6 @@ class SparseExchange:
         cancelled = False
         if self._exchange is not None:
             assert self._finish_task is not None
-            # The detached C++ task borrows the exchange pointer. Keep it alive
-            # through cancellation until the task has actually completed.
             while not self._finish_task.done():
                 try:
                     await asyncio.shield(self._finish_task)
@@ -218,7 +212,16 @@ class SparseExchange:
             return
         try:
             await self.finish()
+        except BaseException:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                with suppress(BaseException):
+                    await exchange.aclose()
+            raise
+        else:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                await exchange.aclose()
         finally:
             self._closed = True
-            self._exchange = None
             self._pending_sources.clear()

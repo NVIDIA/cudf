@@ -177,13 +177,18 @@ for FILE in .github/workflows/*.yaml .github/workflows/*.yml; do
   sed_runner "s|:[0-9]*\\.[0-9]*-|:${NEXT_SHORT_TAG}-|g" "${FILE}"
 done
 
+# Keep the JNI image prefix aligned with main or the release branch, without changing its toolchain.
+sed_runner "s|jni-build:[^-]*-|jni-build:${RAPIDS_BRANCH_NAME#release/}-|" \
+  .github/workflows/cudf-spark-jni.yaml
+
 # cudf-polars-quent crate version.
 # Cargo requires SemVer, so use <major>.<minor>.<patch> without leading zeros (YY.MM.DD -> YY.MM.D).
 # Cargo.lock is edited directly to avoid a Rust toolchain dependency.
-QUENT_BRIDGE_DIR="python/cudf_polars/quent/bridge"
+QUENT_DIR="python/cudf_polars/quent"
+QUENT_BRIDGE_DIR="${QUENT_DIR}/bridge"
 NEXT_CARGO_VERSION="${NEXT_SHORT_TAG_PEP440}.${PATCH_PEP440}"
 sed_runner "s/^version = .*/version = \"${NEXT_CARGO_VERSION}\"/" "${QUENT_BRIDGE_DIR}/Cargo.toml"
-sed_runner "/^name = \"cudf-polars-quent\"\$/{n;s/^version = .*/version = \"${NEXT_CARGO_VERSION}\"/;}" "${QUENT_BRIDGE_DIR}/Cargo.lock"
+sed_runner "/^name = \"cudf-polars-quent\"\$/{n;s/^version = .*/version = \"${NEXT_CARGO_VERSION}\"/;}" "${QUENT_DIR}/Cargo.lock"
 
 # Java files
 NEXT_FULL_JAVA_TAG="${NEXT_SHORT_TAG}.${PATCH_PEP440}-SNAPSHOT"

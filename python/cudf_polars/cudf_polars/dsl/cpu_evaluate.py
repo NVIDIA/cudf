@@ -488,18 +488,29 @@ def evaluate_ir(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataF
     mode = context.rank_local_cpu_compute
     # is_cpu_capable and cpu_evaluate each build the Polars plan. That is
     # cheap compared to copying the data to the host and back.
+    gpu_error: str | None = None
     if mode == RankLocalCPUComputeMode.ON_OOM:
         try:
             return node.do_evaluate(*node._non_child_args, *dfs, context=context)
-        except MemoryError:
+        except MemoryError as e:
             if not is_cpu_capable(node):
                 raise
+            # Keep only the message, so the frames of the GPU attempt are released.
+            gpu_error = str(e)
     elif mode == RankLocalCPUComputeMode.NEVER or not is_cpu_capable(node):
         return node.do_evaluate(*node._non_child_args, *dfs, context=context)
 
     # At this point, the GPU ran out of memory or the mode is "always".
     start = time.perf_counter()
-    ret = cpu_evaluate(node, *dfs, context=context)
+    try:
+        ret = cpu_evaluate(node, *dfs, context=context)
+    except Exception as e:
+        if gpu_error is not None:
+            e.add_note(
+                f"Raised while evaluating {type(node).__name__} on the CPU after "
+                f"the GPU ran out of memory: {gpu_error}"
+            )
+        raise
     stats = context.statistics
     if stats is not None and stats.enabled:
         stats.add_report_entry(

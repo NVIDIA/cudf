@@ -583,6 +583,34 @@ def test_on_oom_not_capable_reraises(in_memory_engine, monkeypatch):
         evaluate_ir(node, df, context=context)
 
 
+@pytest.mark.parametrize("mode", ["always", "on_oom"])
+def test_cpu_error_notes_device_oom(in_memory_engine, monkeypatch, mode):
+    q = pl.LazyFrame({"a": [1, 2]}).select(pl.col("a") + 1)
+    node = Translator(q._ldf.visit(), in_memory_engine).translate_ir()
+    assert isinstance(node, Select)
+    assert is_cpu_capable(node)
+    context = IRExecutionContext(rank_local_cpu_compute=RankLocalCPUComputeMode(mode))
+    df = node.children[0].evaluate(cache={}, context=context)
+
+    def raise_oom(cls, *args, **kwargs):
+        raise MemoryError("std::bad_alloc: out_of_memory")
+
+    def raise_error(node, *dfs, context):
+        raise RuntimeError("CPU failure")
+
+    monkeypatch.setattr(Select, "do_evaluate", classmethod(raise_oom))
+    monkeypatch.setattr(cpu_evaluate_module, "cpu_evaluate", raise_error)
+    with pytest.raises(RuntimeError, match="CPU failure") as excinfo:
+        evaluate_ir(node, df, context=context)
+    # Only a CPU evaluation after a device OOM gets the note.
+    note = (
+        "Raised while evaluating Select on the CPU after the GPU ran out of "
+        "memory: std::bad_alloc: out_of_memory"
+    )
+    expected = [note] if mode == "on_oom" else []
+    assert getattr(excinfo.value, "__notes__", []) == expected
+
+
 @pytest.mark.parametrize("mode", ["never", "on_oom"])
 def test_device_oom(mode):
     # The engine reads its memory resource from ``memory_resource_config`` at

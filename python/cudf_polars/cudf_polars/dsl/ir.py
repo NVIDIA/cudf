@@ -3465,7 +3465,9 @@ class AsofJoin(IR):
         """Prepare a right window for repeated as-of probes."""
         if already_sorted:
             joiner = plc.join.AsofJoin(
-                plc.Table([]), right_on_col.obj, stream=right.stream
+                plc.Table([right.column_map[name].obj for name in right_by]),
+                right_on_col.obj,
+                stream=right.stream,
             )
         else:
             # TODO: Recognize composite (by..., on) RowOrdering to skip this sort.

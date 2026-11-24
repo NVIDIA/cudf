@@ -8,6 +8,8 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 import polars as pl
 
 import pylibcudf as plc
@@ -70,31 +72,32 @@ def test_allgather(spmd_engine) -> None:
 async def _test_allgather_chunks(engine) -> None:
     context = engine.context
     stream = context.br().stream_pool.get_stream()
-    allgather = AllGatherManager(context, engine.comm, 0)
+    async with AllGatherManager(context, engine.comm, 0) as allgather:
+        with allgather.inserting() as inserter:
+            for i in range(1, 4):
+                size = 3 * engine.comm.rank + i
+                table = plc.Table(
+                    [
+                        plc.Column.from_arrow(
+                            pl.Series([i] * size, dtype=pl.Int32()), stream=stream
+                        )
+                    ]
+                )
+                await inserter.insert(
+                    i,
+                    TableChunk.from_pylibcudf_table(
+                        table, stream, exclusive_view=True, br=context.br()
+                    ),
+                )
 
-    with allgather.inserting() as inserter:
-        for i in range(1, 4):
-            table = plc.Table(
-                [
-                    plc.Column.from_arrow(
-                        pl.Series([i] * i, dtype=pl.Int32()), stream=stream
-                    )
-                ]
-            )
-            await inserter.insert(
-                i,
-                TableChunk.from_pylibcudf_table(
-                    table, stream, exclusive_view=True, br=context.br()
-                ),
-            )
-
-    chunks = await allgather.extract_chunks()
+        chunks = await allgather.extract_chunks()
     assert [chunk.shape for chunk in chunks] == [
-        (i, 1) for _ in range(engine.comm.nranks) for i in range(1, 4)
+        (3 * rank + i, 1) for rank in range(engine.comm.nranks) for i in range(1, 4)
     ]
     assert all(chunk.is_spillable() for chunk in chunks)
 
 
+@pytest.mark.spmd
 def test_allgather_chunks(spmd_engine) -> None:
     asyncio.run(_test_allgather_chunks(spmd_engine))
 

@@ -23,6 +23,7 @@
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <algorithm>
+#include <numeric>
 #include <set>
 #include <vector>
 
@@ -407,19 +408,24 @@ TEST_F(KeyRemappingTest, AllDuplicates)
 
 TEST_F(KeyRemappingTest, AllUnique)
 {
-  column_wrapper<int32_t> right_col{1, 2, 3, 4, 5};
-  auto right_table = cudf::table_view{{right_col}};
+  // A slice with a nonzero offset that spans several thread blocks
+  std::vector<int32_t> data(10000);
+  std::iota(data.begin(), data.end(), 0);
+  column_wrapper<int32_t> right_col(data.begin(), data.end());
+  auto right_table = cudf::table_view{{cudf::slice(right_col, {100, 10000})[0]}};
 
   cudf::key_remapping remap{right_table};
 
-  EXPECT_EQ(remap.get_distinct_count(), 5);
+  EXPECT_EQ(remap.get_distinct_count(), 9900);
   EXPECT_EQ(remap.get_max_duplicate_count(), 1);
 
   auto right_result = remap.remap_right_keys();
   auto host_ids     = to_host<int32_t>(*right_result);
 
   // No duplicate keys: the ID of each key is its row index
-  EXPECT_EQ(host_ids, (std::vector<int32_t>{0, 1, 2, 3, 4}));
+  std::vector<int32_t> expected(right_table.num_rows());
+  std::iota(expected.begin(), expected.end(), 0);
+  EXPECT_EQ(host_ids, expected);
 }
 
 TEST_F(KeyRemappingTest, LargeTable)

@@ -68,5 +68,25 @@ if (( SUITEERROR == 0 )) && [[ "${RUN_LIBCUDF_STREAMING_TESTS}" == "true" ]]; th
     export GTEST_OUTPUT="${saved_gtest_output}"
 fi
 
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request && ${RUN_LIBCUDF_TESTS} == true ]]; then
+    if ! command -v zstd >/dev/null; then
+        rapids-logger "Skipping RTCX cache compression benchmark: zstd is unavailable"
+    elif [[ -z $(find "${LIBCUDF_KERNEL_CACHE_PATH}" -type f -print -quit) ]]; then
+        rapids-logger "Skipping RTCX cache compression benchmark: cache is empty"
+    else
+        # Match the cache action's zstd settings and stream the archive so the cache stays usable.
+        for level in 3 10 19; do
+            started=${SECONDS}
+            if bytes=$(tar --posix --sort=name --pax-option=delete=atime,delete=ctime \
+                -cf - -C "$(dirname "${LIBCUDF_KERNEL_CACHE_PATH}")" "$(basename "${LIBCUDF_KERNEL_CACHE_PATH}")" |
+                timeout 5m zstd -q -c -T0 --long=30 "-${level}" | wc -c); then
+                rapids-logger "RTCX cache zstd level ${level}: ${bytes} bytes in $((SECONDS - started)) s"
+            else
+                rapids-logger "RTCX cache compression benchmark failed at zstd level ${level}"
+            fi
+        done
+    fi
+fi
+
 rapids-logger "Test script exiting with value: $EXITCODE"
 exit ${EXITCODE}

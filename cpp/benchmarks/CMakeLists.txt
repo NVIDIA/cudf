@@ -7,45 +7,39 @@
 
 find_package(Threads REQUIRED)
 
-set(datagen_library_type STATIC)
+set(benchmark_helper_sources common/generate_input.cu common/generate_skewed_data.cpp
+                             common/generate_nested_types.cpp
+)
 if(CUDF_PRIVATE_TEST_LIBRARIES)
-  set(datagen_library_type SHARED)
-endif()
-add_library(
-  cudf_datagen ${datagen_library_type} common/generate_input.cu common/generate_skewed_data.cpp
-)
-if(datagen_library_type STREQUAL "SHARED")
-  set_target_properties(cudf_datagen PROPERTIES INSTALL_RPATH "\$ORIGIN")
-  target_link_options(cudf_datagen PRIVATE "LINKER:-z,defs")
-  install(
-    TARGETS cudf_datagen
-    LIBRARY DESTINATION ${lib_dir}
-            COMPONENT benchmarking
-            EXCLUDE_FROM_ALL
+  # Benchmarks need the test utilities and run in separate processes from gtests.
+  cudf_add_private_test_library(cudf_benchmark_helpers benchmarking ${benchmark_helper_sources})
+  target_link_libraries(
+    cudf_benchmark_helpers
+    PUBLIC "$<COMPILE_ONLY:nvbench::nvbench>"
+    PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,nvbench::nvbench>"
   )
+else()
+  add_library(cudf_benchmark_helpers STATIC ${benchmark_helper_sources})
+  target_link_libraries(cudf_benchmark_helpers PUBLIC cudf::cudftestutil nvbench::nvbench)
+  set(benchmark_test_support cudftestutil_objects)
 endif()
-target_compile_features(cudf_datagen PUBLIC cxx_std_20 cuda_std_20)
 
+target_compile_features(cudf_benchmark_helpers PUBLIC cxx_std_20 cuda_std_20)
 target_compile_options(
-  cudf_datagen PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
-                      "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
+  cudf_benchmark_helpers
+  PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:${CUDF_CXX_FLAGS};${CUDF_CXX_TEST_FLAGS}>"
+         "$<$<COMPILE_LANGUAGE:CUDA>:${CUDF_CUDA_FLAGS}>"
 )
-
 target_link_libraries(
-  cudf_datagen
-  PUBLIC Threads::Threads cudf cudf::cudftestutil nvtx3::nvtx3-cpp
+  cudf_benchmark_helpers
+  PUBLIC Threads::Threads cudf nvtx3::nvtx3-cpp
   PRIVATE $<TARGET_NAME_IF_EXISTS:conda_env>
 )
-
 target_include_directories(
-  cudf_datagen
+  cudf_benchmark_helpers
   PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}>"
          "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>"
 )
-
-# Keep the data generator independent of the NVBench runtime.
-add_library(cudf_nvbench_datagen STATIC common/generate_nested_types.cpp)
-target_link_libraries(cudf_nvbench_datagen PRIVATE cudf_datagen nvbench::nvbench)
 
 add_library(
   ndsh_data_generator STATIC
@@ -80,8 +74,8 @@ add_library(
                                common/nvbench_utilities.cpp
 )
 target_link_libraries(
-  cudf_benchmark_common PRIVATE cudf_datagen nvbench::nvbench $<TARGET_NAME_IF_EXISTS:conda_env>
-                                cudftestutil_internal kvikio::kvikio
+  cudf_benchmark_common PRIVATE cudf_benchmark_helpers ${benchmark_test_support}
+                                $<TARGET_NAME_IF_EXISTS:conda_env> kvikio::kvikio
 )
 
 add_custom_command(
@@ -103,9 +97,8 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
                INSTALL_RPATH "\$ORIGIN/../../../${lib_dir}"
   )
   target_link_libraries(
-    ${CMAKE_BENCH_NAME}
-    PRIVATE cudf_benchmark_common ndsh_data_generator cudf_nvbench_datagen cudf_datagen
-            nvbench::nvbench $<TARGET_NAME_IF_EXISTS:conda_env> cudftestutil_internal
+    ${CMAKE_BENCH_NAME} PRIVATE cudf_benchmark_common ndsh_data_generator cudf_benchmark_helpers
+                                ${benchmark_test_support} $<TARGET_NAME_IF_EXISTS:conda_env>
   )
   install(
     TARGETS ${CMAKE_BENCH_NAME}

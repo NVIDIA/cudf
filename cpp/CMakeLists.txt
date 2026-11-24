@@ -1586,31 +1586,27 @@ if(CUDF_BUILD_TESTUTIL)
       endif()
     endforeach()
     set_target_properties(cudftestutil_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    add_library(cudf_test_support SHARED $<TARGET_OBJECTS:cudftestutil_objects>)
-    set_target_properties(cudf_test_support PROPERTIES INSTALL_RPATH "\$ORIGIN")
-    # Assertions in the helper and in the executable must update the same GoogleTest state.
-    set_property(
-      TARGET cudf_test_support PROPERTY LINK_LIBRARY_OVERRIDE
-                                        "WHOLE_ARCHIVE,GTest::gmock,GTest::gtest"
-    )
-    target_link_libraries(
-      cudf_test_support PRIVATE cudf::cudftestutil
-                                "$<LINK_LIBRARY:WHOLE_ARCHIVE,GTest::gmock,GTest::gtest>"
-    )
-    target_link_options(cudf_test_support PRIVATE "LINKER:-z,defs")
-    add_library(cudftestutil_internal INTERFACE)
-    target_link_libraries(
-      cudftestutil_internal INTERFACE cudf::cudftestutil cudf_test_support
-                                      "$<COMPILE_ONLY:GTest::gmock>"
-    )
-    install(
-      TARGETS cudf_test_support
-      LIBRARY DESTINATION ${lib_dir}
-              COMPONENT test_support
-              EXCLUDE_FROM_ALL
-    )
-  else()
-    add_library(cudftestutil_internal ALIAS cudftestutil_objects)
+    # Let each install component carry its own runtime without depending on the other package.
+    function(cudf_add_private_test_library target component)
+      add_library(${target} SHARED ${ARGN} $<TARGET_OBJECTS:cudftestutil_objects>)
+      set_target_properties(${target} PROPERTIES INSTALL_RPATH "\$ORIGIN")
+      # Each executable and its helpers must use the same GoogleTest state.
+      set_property(
+        TARGET ${target} PROPERTY LINK_LIBRARY_OVERRIDE "WHOLE_ARCHIVE,GTest::gmock,GTest::gtest"
+      )
+      target_link_libraries(
+        ${target}
+        PUBLIC cudf::cudftestutil "$<COMPILE_ONLY:GTest::gmock>"
+        PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,GTest::gmock,GTest::gtest>"
+      )
+      target_link_options(${target} PRIVATE "LINKER:-z,defs")
+      install(
+        TARGETS ${target}
+        LIBRARY DESTINATION ${lib_dir}
+                COMPONENT ${component}
+                EXCLUDE_FROM_ALL
+      )
+    endfunction()
   endif()
 
   install(FILES tests/io/metadata_utilities.cpp DESTINATION src/cudftestutil/io)

@@ -539,6 +539,7 @@ jobs:
           # rapids-bot token when the secret exists, else the workflow's own.
           GH_TOKEN: ${{ secrets.RAPIDS_BOT_TOKEN || github.token }}
           TESTED_SHA: ${{ inputs.sha }}
+          AUDIT_ARTIFACT: cudf-polars-fallback-diagnostics-${{ github.run_attempt }}
         run: ci/propose_cudf_polars_run_list_update.sh
   narwhals-tests:
     permissions:

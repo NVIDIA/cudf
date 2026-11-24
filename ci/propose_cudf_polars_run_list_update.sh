@@ -12,6 +12,7 @@
 #   GITHUB_REPOSITORY   owner/name
 #   GITHUB_RUN_ID       the nightly run to read
 #   TESTED_SHA          the revision the nightly run tested
+#   AUDIT_ARTIFACT      name of the diagnostics artifact of this attempt
 #   DRY_RUN             if set, print the decision and change nothing
 #   PROPOSAL_BRANCH     branch for the proposal (default ci/auto-update-gpu-run-list)
 
@@ -21,17 +22,14 @@ branch=${PROPOSAL_BRANCH:-ci/auto-update-gpu-run-list}
 run_list=ci/cudf_polars/gpu_test_run_list.json
 work=$(mktemp -d)
 
-# Rerunning failed jobs does not repeat the diagnostics job, so take the newest.
-artifact=$(gh api --paginate \
-    "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
-    --jq '.artifacts[].name | select(test("^cudf-polars-fallback-diagnostics-[0-9]+$"))' \
-    | sort -t- -k4 -n | tail -n1)
-if [[ -z "${artifact}" ]]; then
-    echo "No diagnostics artifact in run ${GITHUB_RUN_ID}; nothing to propose."
+# The artifact the audit job reads. A rerun of only the failed jobs does not
+# repeat the diagnostics job, so the current attempt may have none.
+artifact=${AUDIT_ARTIFACT}
+if ! gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+    --name "${artifact}" --dir "${work}"; then
+    echo "No ${artifact} in run ${GITHUB_RUN_ID}; nothing to propose."
     exit 0
 fi
-gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-    --name "${artifact}" --dir "${work}"
 
 drift="${work}/run-list-drift.json"
 candidate="${work}/gpu-run-list-candidate.json"
@@ -63,15 +61,24 @@ if [[ -n "${DRY_RUN:-}" ]]; then
 fi
 
 base_oid=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq .object.sha)
+# The candidate was generated from the run list at TESTED_SHA. Publishing it over a
+# main that changed the run list since would drop the nodes main added.
+if ! gh api "repos/${GITHUB_REPOSITORY}/contents/${run_list}?ref=${base_oid}" \
+    -H "Accept: application/vnd.github.raw" | cmp -s - "${run_list}"; then
+    echo "main changed ${run_list} since ${TESTED_SHA}; nothing to propose."
+    exit 0
+fi
 open_pr=$(gh pr list --repo "${GITHUB_REPOSITORY}" --head "${branch}" --state open \
     --json number --jq '.[0].number // empty')
 if [[ -n "${open_pr}" ]]; then
     head_oid=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${branch}" --jq .object.sha)
 else
-    # A branch without an open PR is left over from a merged or closed proposal.
-    gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" > /dev/null 2>&1 || true
-    gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" \
-        -f "sha=${base_oid}" > /dev/null
+    # A branch without an open PR is left over from a merged or closed proposal:
+    # move it to main, or create it. Nothing is deleted.
+    gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" \
+        -f "sha=${base_oid}" -F force=true > /dev/null 2>&1 \
+        || gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${branch}" \
+            -f "sha=${base_oid}" > /dev/null
     head_oid=${base_oid}
 fi
 

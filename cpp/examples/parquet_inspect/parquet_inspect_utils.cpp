@@ -16,11 +16,11 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -107,7 +107,7 @@ namespace {
 }
 
 /**
- * @brief Makes an INT64 index column containing elements: [0, size)
+ * @brief Makes an INT32 index column containing elements: [0, size)
  *
  * @param num_rows Number of rows
  * @param stream CUDA stream
@@ -118,7 +118,8 @@ auto make_index_column(cudf::size_type num_rows, cuda::stream_ref stream)
 {
   std::vector<cudf::size_type> data(num_rows);
   std::iota(data.begin(), data.end(), 0);
-  auto buffer = rmm::device_buffer(data.data(), num_rows * sizeof(int64_t), stream);
+  cuda::device_buffer<cudf::size_type> buffer(
+    stream, cudf::get_current_device_resource_ref(), data.begin(), data.end());
   stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<cudf::size_type>()},
                                         num_rows,
@@ -139,7 +140,8 @@ auto make_index_column(cudf::size_type num_rows, cuda::stream_ref stream)
 template <typename T>
 auto make_column(cudf::host_span<T const> host_data, cuda::stream_ref stream)
 {
-  auto device_buffer = rmm::device_buffer(host_data.data(), host_data.size() * sizeof(T), stream);
+  cuda::device_buffer<T> device_buffer(
+    stream, cudf::get_current_device_resource_ref(), host_data.begin(), host_data.end());
   stream.sync();
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_to_id<T>()},
                                         host_data.size(),
@@ -172,8 +174,10 @@ auto make_page_data_list_column(cudf::host_span<T const> data,
 
   auto offsets_column = make_column<cudf::size_type>(col_page_offsets, stream);
 
-  auto page_data_buffer =
-    rmm::device_buffer(data.data(), num_pages_this_column * sizeof(int64_t), stream);
+  cuda::device_buffer<T> page_data_buffer(stream,
+                                          cudf::get_current_device_resource_ref(),
+                                          data.begin(),
+                                          data.begin() + num_pages_this_column);
   stream.sync();
 
   auto page_data_column =
@@ -279,12 +283,18 @@ void write_rowgroup_metadata(cudf::io::parquet::FileMetaData const& metadata,
   std::vector<std::unique_ptr<cudf::column>> columns;
   columns.emplace_back(make_index_column(num_row_groups, stream));
 
-  auto row_offsets_buffer =
-    rmm::device_buffer(row_group_row_offsets.data(), num_row_groups * sizeof(int64_t), stream);
-  auto row_counts_buffer =
-    rmm::device_buffer(row_group_row_counts.data(), num_row_groups * sizeof(int64_t), stream);
-  auto byte_offsets_buffer =
-    rmm::device_buffer(row_group_byte_offsets.data(), num_row_groups * sizeof(int64_t), stream);
+  cuda::device_buffer<int64_t> row_offsets_buffer(stream,
+                                                  cudf::get_current_device_resource_ref(),
+                                                  row_group_row_offsets.begin(),
+                                                  row_group_row_offsets.begin() + num_row_groups);
+  cuda::device_buffer<int64_t> row_counts_buffer(stream,
+                                                 cudf::get_current_device_resource_ref(),
+                                                 row_group_row_counts.begin(),
+                                                 row_group_row_counts.begin() + num_row_groups);
+  cuda::device_buffer<int64_t> byte_offsets_buffer(stream,
+                                                   cudf::get_current_device_resource_ref(),
+                                                   row_group_byte_offsets.begin(),
+                                                   row_group_byte_offsets.begin() + num_row_groups);
 
   stream.sync();
   columns.emplace_back(

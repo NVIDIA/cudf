@@ -7,14 +7,17 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
 #include <thrust/scan.h>
+
+#include <cstddef>
 
 /**
  * @brief Computes the size of each output row
@@ -122,7 +125,8 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   nvtxRangePushA("redact_strings");
 
   // create offsets vector
-  auto offsets = rmm::device_uvector<cudf::size_type>(names.size() + 1, stream);
+  cuda::device_buffer<cudf::size_type> offsets(
+    stream, cudf::get_current_device_resource_ref(), names.size() + 1, cuda::no_init);
 
   // compute output sizes
   sizes_kernel<<<blocks, block_size, 0, stream.get()>>>(*d_names, *d_visibilities, offsets.data());
@@ -133,10 +137,15 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
 
   // last element is the total output size
   // (device-to-host copy of 1 integer -- includes syncing the stream)
-  cudf::size_type output_size = offsets.back_element(stream);
+  cudf::size_type output_size;
+  cudf::detail::cuda_memcpy(
+    cudf::host_span<cudf::size_type>{&output_size, 1},
+    cudf::device_span<cudf::size_type const>{offsets.data() + names.size(), 1},
+    stream);
 
   //  create chars vector
-  auto chars = rmm::device_uvector<char>(output_size, stream);
+  cuda::device_buffer<char> chars(
+    stream, cudf::get_current_device_resource_ref(), output_size, cuda::no_init);
 
   // build chars output
   redact_kernel<<<blocks, block_size, 0, stream.get()>>>(
@@ -149,7 +158,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   // create column for chars vector (no copy is performed)
   auto result = cudf::make_strings_column(names.size(),
                                           std::move(offsets_column),
-                                          chars.release(),
+                                          std::move(chars).as_bytes<std::byte>(),
                                           0,
                                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 

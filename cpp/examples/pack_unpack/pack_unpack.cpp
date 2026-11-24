@@ -16,9 +16,10 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/pinned_host_memory_resource.hpp>
+
+#include <cuda/buffer>
 
 #include <cstddef>
 #include <cstdint>
@@ -38,17 +39,13 @@
 namespace {
 
 /**
- * @brief Copies `column_data` into a device_uvector and wraps it as an int32 column with no nulls.
+ * @brief Copies `column_data` into a device buffer and wraps it as an int32 column with no nulls.
  */
 std::unique_ptr<cudf::column> make_column_from_span(std::span<int32_t const> column_data)
 {
   auto stream = cudf::get_default_stream();
-  rmm::device_uvector<int32_t> device_data(column_data.size(), stream);
-  CUDF_CUDA_TRY(cudaMemcpyAsync(device_data.data(),
-                                column_data.data(),
-                                column_data.size() * sizeof(int32_t),
-                                cudaMemcpyDefault,
-                                stream.get()));
+  cuda::device_buffer<int32_t> device_data(
+    stream, cudf::get_current_device_resource_ref(), column_data.begin(), column_data.end());
   // Wait for the H2D copy so the caller can reuse or destroy the source span.
   stream.sync();
   return std::make_unique<cudf::column>(

@@ -11,7 +11,7 @@ import math
 import operator
 import struct
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
 from typing import TYPE_CHECKING, Any
@@ -29,13 +29,14 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.partitioning import NormalizedPartitioning
 from cudf_polars.streaming.actor_graph.tracing import (
@@ -464,11 +465,7 @@ def _evaluate_chunk_sync(
     The resulting table chunk after evaluation.
     """
     df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
-    df = ir.do_evaluate(
-        *ir._non_child_args,
-        df_in,
-        context=ir_context,
-    )
+    df = evaluate_ir(ir, df_in, context=ir_context)
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=br
     )
@@ -512,8 +509,8 @@ async def evaluate_chunk(
     if already_available:
         if not chunk.is_available():
             raise ValueError("already_available=True requires an available TableChunk")
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            chunk.data_alloc_size(), net_memory_delta=0
+        reservation = await reserve_memory(
+            context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
     else:
         chunk, reservation = await make_table_chunks_available_or_wait(
@@ -566,12 +563,15 @@ async def allgather_and_reduce(
     -------
     The chunk produced by evaluating ``reduce_ir`` on the gathered result.
     """
-    allgather = AllGatherManager(context, comm, collective_id)
-    with allgather.inserting() as inserter:
-        await inserter.insert(0, local_chunk)
     stream = ir_context.get_cuda_stream()
+    async with AllGatherManager(context, comm, collective_id) as allgather:
+        with allgather.inserting() as inserter:
+            await inserter.insert(0, local_chunk)
+        concat_table = await allgather.extract_concatenated(
+            stream, ir_context=ir_context
+        )
     concat_chunk = TableChunk.from_pylibcudf_table(
-        await allgather.extract_concatenated(stream, ir_context=ir_context),
+        concat_table,
         stream,
         exclusive_view=True,
         br=context.br(),
@@ -603,6 +603,12 @@ async def concat_batch(
     -------
     The table chunk after concatenation.
     """
+    if len(batch) == 1:
+        (chunk,) = batch
+        chunk, _ = await make_table_chunks_available_or_wait(
+            context, chunk, reserve_extra=0, net_memory_delta=0
+        )
+        return chunk
     batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
@@ -623,8 +629,6 @@ async def concat_batch(
             ],
             context=ir_context,
         )
-        if len(batch) > 1:
-            del batch
     return TableChunk.from_pylibcudf_table(
         df.table, df.stream, exclusive_view=True, br=context.br()
     )
@@ -659,7 +663,6 @@ async def evaluate_batch(
     first_ir = irs[0]
     input_schema = first_ir.children[0].schema
     chunk = await concat_batch(batch, context, input_schema, ir_context)
-    del batch
     return await evaluate_chunk(context, chunk, *irs, ir_context=ir_context)
 
 
@@ -735,7 +738,6 @@ async def chunkwise_evaluate(
             ir_context=chunk_ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del msg, cd
         await send_chunk(context, ch_out, result, seq_num, tracer=tracer)
 
     if handle_empty_input and not received_any:
@@ -747,7 +749,6 @@ async def chunkwise_evaluate(
             ir_context=ir_context,
             ordering_metadata=input_ordering_metadata,
         )
-        del chunk
         await send_chunk(context, ch_out, result, 0, tracer=tracer)
 
     await ch_out.drain(context)
@@ -842,7 +843,6 @@ class ChunkSampler:
 
     context: Context
     ch_in: Channel[TableChunk]
-    max_chunks: int
     max_bytes: int
     ch_in_chunk_count: int
     cardinality_estimator: CardinalityEstimator | None = None
@@ -873,7 +873,7 @@ class ChunkSampler:
         sampled_rows = 0
         exhausted = False
         await ch_out.shutdown_metadata(self.context)
-        for _ in range(self.max_chunks):
+        while sampled_bytes < self.max_bytes:
             msg = await self.ch_in.recv(self.context)
             if msg is None:
                 exhausted = True
@@ -882,8 +882,6 @@ class ChunkSampler:
             sampled_bytes += chunk.data_alloc_size()
             sampled_rows += chunk.shape[0]
             await ch_out.send(self.context, Message(msg.sequence_number, chunk))
-            if sampled_bytes >= self.max_bytes:
-                break
         await ch_out.drain(self.context)
         return exhausted, sampled_bytes, sampled_rows
 
@@ -948,9 +946,12 @@ class ChunkSampler:
             cardinality = CardinalityEstimate.from_message(msg)
 
         sample_count = len(chunks)
+        chunk_count = (
+            sample_count if is_complete else max(self.ch_in_chunk_count, sample_count)
+        )
         if sample_count and not is_complete:
-            total_size = int((sample_bytes / sample_count) * self.ch_in_chunk_count)
-            total_rows = int((sample_rows / sample_count) * self.ch_in_chunk_count)
+            total_size = sample_bytes * chunk_count // sample_count
+            total_rows = sample_rows * chunk_count // sample_count
         else:
             total_size = sample_bytes
             total_rows = sample_rows
@@ -963,7 +964,7 @@ class ChunkSampler:
             ),
             total_size=total_size,
             total_rows=total_rows,
-            total_chunks=(sample_count if is_complete else self.ch_in_chunk_count),
+            total_chunks=chunk_count,
             is_complete=is_complete,
             cardinality=cardinality,
         )
@@ -992,7 +993,6 @@ async def sample_inputs(
 async def _sample_chunks(
     context: Context,
     ch: Channel[TableChunk],
-    max_sample_chunks: int,
     max_sample_bytes: int,
     local_count: int,
     *,
@@ -1008,8 +1008,6 @@ async def _sample_chunks(
         The context.
     ch
         The channel to sample from.
-    max_sample_chunks
-        The maximum number of chunks to sample.
     max_sample_bytes
         The maximum number of bytes to sample.
     local_count
@@ -1028,7 +1026,6 @@ async def _sample_chunks(
     return await ChunkSampler(
         context=context,
         ch_in=ch,
-        max_chunks=max_sample_chunks,
         max_bytes=max_sample_bytes,
         ch_in_chunk_count=local_count,
         cardinality_estimator=cardinality_estimator,
@@ -1384,13 +1381,10 @@ async def allgather_reduce(
     data = struct.pack(fmt, *local_values)
     packed = PackedData.from_host_bytes(data, context.br())
 
-    allgather = AllGather(context, comm, op_id)
-    try:
-        allgather.insert(0, packed)
-    finally:
-        allgather.insert_finished()
-
-    results = await allgather.extract_all(context, ordered=False)
+    async with aclosing(AllGather(context, comm, op_id)) as allgather:
+        with allgather:
+            allgather.insert(0, packed)
+        results = await allgather.extract_all(ordered=False)
 
     totals = [0] * n
     for packed_result in results:

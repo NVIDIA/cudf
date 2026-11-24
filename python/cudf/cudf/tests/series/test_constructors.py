@@ -272,6 +272,9 @@ def test_construction_series_with_nulls(input_obj):
     assert expect == got
 
 
+@pytest.mark.filterwarnings(
+    "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning"
+)
 def test_series_unitness_np_datetimelike_units():
     data = np.array([np.timedelta64(1)])
     with pytest.raises(TypeError):

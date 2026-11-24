@@ -66,6 +66,103 @@ def test_getitem_out_of_bounds():
     assert_eq(result, expected)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python"),
+        pd.StringDtype(storage="pyarrow"),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.ArrowDtype(pa.string()),
+    ],
+)
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("contains", ("a",)),
+        ("startswith", ("a",)),
+        ("endswith", ("a",)),
+        ("isdigit", ()),
+        ("isnumeric", ()),
+        ("isalnum", ()),
+    ],
+)
+@pytest.mark.parametrize("data", [[], [None, None], ["12"], ["a", None, "12"]])
+def test_string_predicate_extension_dtype(dtype, method, args, data):
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("match", ("a",)),
+        ("isalpha", ()),
+        ("isdecimal", ()),
+        ("islower", ()),
+        ("isupper", ()),
+        ("istitle", ()),
+        ("isspace", ()),
+    ],
+)
+@pytest.mark.parametrize(
+    "data",
+    [[], [None, None], ["Abc"], ["a", None, "12", "", " ", "ABC", "Abc"]],
+)
+def test_string_additional_predicate_nullable_dtype(
+    storage, method, args, data
+):
+    ps = pd.Series(data, dtype=pd.StringDtype(storage=storage))
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python"),
+        pd.StringDtype(storage="pyarrow"),
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.ArrowDtype(pa.string()),
+    ],
+)
+@pytest.mark.parametrize(
+    "data", [["aba", None, "abc"], [], [None, None], ["aba"]]
+)
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("len", ()),
+        ("count", ("a",)),
+        ("find", ("a",)),
+        ("rfind", ("a",)),
+        ("index", ("a",)),
+        ("rindex", ("a",)),
+    ],
+)
+def test_string_numeric_nullable_dtype(dtype, data, method, args):
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
 @pytest.mark.parametrize("method", ["startswith", "endswith"])
 @pytest.mark.parametrize("pat", [None, (1, 2), pd.Series([1])])
 def test_startsendwith_invalid_pat(method, pat):
@@ -1966,6 +2063,39 @@ def test_string_partition_fail():
         gs.str.rpartition(["a"])
 
 
+@pytest.mark.parametrize("klass", [pd.Index, pd.Series])
+@pytest.mark.parametrize("method", ["partition", "rpartition"])
+@pytest.mark.parametrize(
+    "dtype", ["object", "category", "string[python]", "string[pyarrow]"]
+)
+def test_string_partition_empty_result(klass, method, dtype):
+    ps = klass([], dtype=dtype, name="source")
+    gs = cudf.from_pandas(ps)
+
+    if klass is pd.Index:
+        for obj in (ps, gs):
+            with pytest.raises(
+                TypeError,
+                match="Cannot infer number of levels from empty list",
+            ):
+                getattr(obj.str, method)(expand=True)
+    else:
+        expected = getattr(ps.str, method)(expand=True)
+        result = getattr(gs.str, method)(expand=True)
+        assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("method", ["partition", "rpartition"])
+def test_string_partition_empty_arrow_index(method):
+    ps = pd.Index([], dtype=pd.ArrowDtype(pa.string()), name="source")
+    gs = cudf.from_pandas(ps)
+    for obj in (ps, gs):
+        with pytest.raises(
+            TypeError, match="Cannot infer number of levels from empty list"
+        ):
+            getattr(obj.str, method)(expand=True)
+
+
 @pytest.mark.parametrize(
     "data",
     [
@@ -2204,8 +2334,8 @@ def test_string_slice_from():
         ["koala", "fox", "chameleon"],
     ],
 )
-@pytest.mark.parametrize("number", [0, 1, 10])
-@pytest.mark.parametrize("diff", [0, 3])
+@pytest.mark.parametrize("number", [-10, -1, 0, 1, 10])
+@pytest.mark.parametrize("diff", [-3, 0, 3])
 @pytest.mark.parametrize("repl", ["2", "!!"])
 def test_string_slice_replace(string, number, diff, repl):
     pds = pd.Series(string)
@@ -2229,6 +2359,20 @@ def test_string_slice_replace(string, number, diff, repl):
         pds.str.slice_replace(start=number, stop=number + diff, repl=repl),
         gds.str.slice_replace(start=number, stop=number + diff, repl=repl),
         check_dtype=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "start, stop",
+    [(np.int64(-1), None), (0, np.int64(-1)), (np.uint32(2), np.int32(1))],
+)
+def test_string_slice_replace_numpy_integer_bounds(start, stop):
+    ps = pd.Series(["abc", "é", "", None])
+    gs = cudf.from_pandas(ps)
+
+    assert_eq(
+        ps.str.slice_replace(start, stop, repl="!"),
+        gs.str.slice_replace(start, stop, repl="!"),
     )
 
 
@@ -2617,10 +2761,90 @@ def test_string_extract_named_groups():
     assert_eq(expect, got)
 
 
-def test_string_invalid_regex():
-    gs = cudf.Series(["a"])
-    with pytest.raises(RuntimeError):
-        gs.str.extract(r"{\}")
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("expand", [True, False])
+@pytest.mark.parametrize(
+    "pat, values",
+    [
+        (r"(?P<g>[(?P<x>)])", ["x", "P", "(", ")", "?", "<", ">"]),
+        (r"(?P<g>[](?P<x>)])", ["]", "x", "P", "(", ")"]),
+        (r"(?P<g>[\](?P<x>)])", ["]", "x", "P", "(", ")"]),
+        (r"(?P<g>[\\(?P<x>)])", ["\\", "x", "P", "(", ")"]),
+        (r"(?P<g>[(?P=x)])", ["x", "P", "=", "(", ")"]),
+    ],
+)
+def test_string_extract_named_group_literals(klass, expand, pat, values):
+    ps = klass(values, name="source", dtype="str")
+    gs = cudf.from_pandas(ps)
+
+    expected = ps.str.extract(pat, expand=expand)
+    actual = gs.str.extract(pat, expand=expand)
+
+    assert_eq(expected, actual)
+
+
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("expand", [True, False])
+@pytest.mark.parametrize("group_name", ["γράμμα", "数字"])
+def test_string_extract_unicode_named_group(klass, expand, group_name):
+    ps = klass(["a", "a"], name="source", dtype="str")
+    gs = cudf.from_pandas(ps)
+    pat = rf"(?P<{group_name}>a)"
+
+    assert_eq(
+        ps.str.extract(pat, expand=expand), gs.str.extract(pat, expand=expand)
+    )
+
+
+@pytest.mark.parametrize("klass", [cudf.Series, cudf.Index])
+@pytest.mark.parametrize("method", ["extract", "contains", "count", "match"])
+def test_string_named_backreference_not_supported(klass, method):
+    obj = klass(["aa", "a"], dtype="str")
+
+    with pytest.raises(NotImplementedError, match="Named backreferences"):
+        getattr(obj.str, method)(r"(?P<x>a)(?P=x)")
+
+
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("values", [[], ["a1"], ["a1", "b2", None]])
+@pytest.mark.parametrize(
+    "pat",
+    [
+        r"(a)",
+        r"(?P<letter>a)",
+        r"(a)(1)",
+        r"(?P<letter>a)(1)",
+        r"(a)(?P<number>1)",
+    ],
+)
+@pytest.mark.parametrize("expand", [True, False])
+def test_string_extract_result_structure(klass, values, pat, expand):
+    ps = klass(values, name="source", dtype="str")
+    gs = cudf.from_pandas(ps)
+
+    if klass is pd.Index and not expand and re.compile(pat).groups > 1:
+        for obj in (ps, gs):
+            with pytest.raises(
+                ValueError,
+                match="only one regex group is supported with Index",
+            ):
+                obj.str.extract(pat, expand=expand)
+    else:
+        expected = ps.str.extract(pat, expand=expand)
+        result = gs.str.extract(pat, expand=expand)
+        assert_eq(expected, result)
+
+
+@pytest.mark.parametrize("klass", [pd.Series, pd.Index])
+@pytest.mark.parametrize("pat", [r"{\}", r"a", r"(?:a)"])
+def test_string_extract_no_capture_groups(klass, pat):
+    ps = klass(["a"])
+    gs = cudf.from_pandas(ps)
+    for obj in (ps, gs):
+        with pytest.raises(
+            ValueError, match="pattern contains no capture groups"
+        ):
+            obj.str.extract(pat)
 
 
 def _cat_convert_seq_to_cudf(others):

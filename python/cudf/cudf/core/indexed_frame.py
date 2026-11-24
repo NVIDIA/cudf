@@ -83,6 +83,7 @@ from cudf.utils.dtypes import (
     is_mixed_with_object_dtype,
     is_pandas_nullable_extension_dtype,
     is_pandas_nullable_numpy_dtype,
+    np_dtypes_to_pandas_dtypes,
 )
 from cudf.utils.performance_tracking import _performance_tracking
 from cudf.utils.utils import _warn_no_dask_cudf
@@ -1276,6 +1277,17 @@ class IndexedFrame(Frame):
         np.int64(10)
         """
         # TODO: This function does not currently support nulls.
+        ext_dtypes = []
+        for obj in (self, other):
+            if isinstance(obj, (cudf.Series, cudf.DataFrame)):
+                for col in obj._columns:
+                    if is_pandas_nullable_extension_dtype(col.dtype):
+                        if col.has_nulls():
+                            raise NotImplementedError(
+                                "dot does not support nulls in pandas "
+                                "nullable extension dtypes."
+                            )
+                        ext_dtypes.append(col.dtype)
         lhs = self.values
         result_index = None
         result_cols = None
@@ -1325,16 +1337,25 @@ class IndexedFrame(Frame):
             lhs, rhs = rhs, lhs
 
         result = lhs.dot(rhs)
+        # pandas keeps the nullable extension dtype family of the operands.
+        result_dtype = None
+        if ext_dtypes and result.ndim > 0:
+            if any(isinstance(dt, pd.ArrowDtype) for dt in ext_dtypes):
+                result_dtype = pd.ArrowDtype(pa.from_numpy_dtype(result.dtype))
+            else:
+                result_dtype = np_dtypes_to_pandas_dtypes.get(result.dtype)
         if result.ndim == 1:
             return cudf.Series(
                 result,
                 index=self.index if result_index is None else result_index,
+                dtype=result_dtype,
             )
         if result.ndim == 2:
             return cudf.DataFrame(
                 result,
                 index=self.index if result_index is None else result_index,
                 columns=result_cols,
+                dtype=result_dtype,
             )
         # 0-d result: return a numpy scalar (e.g. np.int64) to match
         # pandas' ``np.matmul(Series, Series)`` semantics rather than the
@@ -4597,8 +4618,8 @@ class IndexedFrame(Frame):
         >>> df = cudf.DataFrame({"name": ['Alfred', 'Batman', 'Catwoman'],
         ...                    "toy": ['Batmobile', None, 'Bullwhip'],
         ...                    "born": [np.datetime64("1940-04-25"),
-        ...                             np.datetime64("NaT"),
-        ...                             np.datetime64("NaT")]})
+        ...                             np.datetime64("NaT", "ns"),
+        ...                             np.datetime64("NaT", "ns")]})
         >>> df
                name        toy                           born
         0    Alfred  Batmobile  1940-04-25 00:00:00.000000000

@@ -26,6 +26,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl.cpu_evaluate import evaluate_ir
 from cudf_polars.dsl.expr import Col, NamedExpr
 from cudf_polars.dsl.ir import Sort
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
@@ -72,7 +73,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.sort import _has_simple_zlice
-from cudf_polars.utils.cuda_stream import get_joined_cuda_stream
+from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -137,17 +138,17 @@ async def _simple_top_or_bottom_k(
     chunks.clear()
 
     if comm.nranks > 1 and not metadata_in.duplicated:
-        allgather = AllGatherManager(context, comm, collective_ids.pop())
-        with allgather.inserting() as inserter:
-            await inserter.insert(comm.rank, chunk)
-
         stream = ir_context.get_cuda_stream()
+        async with AllGatherManager(context, comm, collective_ids.pop()) as allgather:
+            with allgather.inserting() as inserter:
+                await inserter.insert(comm.rank, chunk)
+            gathered = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=ir_context
+            )
         chunk = await evaluate_chunk(
             context,
             TableChunk.from_pylibcudf_table(
-                await allgather.extract_concatenated(
-                    stream, ordered=True, ir_context=ir_context
-                ),
+                gathered,
                 stream,
                 exclusive_view=True,
                 br=context.br(),
@@ -181,13 +182,12 @@ async def _sample_chunks_for_size_estimate(
 
     size_estimate_id = collective_ids.pop()
     target_partition_size = executor.target_partition_size
-    sample_chunk_count = executor.dynamic_planning.sample_chunk_count
+    sample_byte_count = executor.dynamic_planning.sample_byte_count
 
     sample = await _sample_chunks(
         context,
         ch_in,
-        sample_chunk_count,
-        target_partition_size,
+        sample_byte_count,
         metadata_in.local_count,
     )
 
@@ -255,6 +255,7 @@ async def _receive_and_buffer_chunks(
             )
             local_row_offset += nrows
             tbl = plc.Table([*df.table.columns(), seq_id_col])
+            del seq_id_col
         else:
             tbl = df.table
         chunk_store.insert(
@@ -265,7 +266,7 @@ async def _receive_and_buffer_chunks(
                 ),
             )
         )
-        del df
+        del df, tbl
 
     return local_candidates_list
 
@@ -285,29 +286,22 @@ async def _insert_chunks_into_shuffle(
     ir: Sort,
     ir_context: IRExecutionContext,
     ch_in: Channel[TableChunk],
-    num_partitions: int,
-    collective_ids: list[int],
+    shuffle: ShuffleManager,
     metadata_in: ChannelMetadata,
     sort_boundaries_df: DataFrame,
     by: list[str],
-) -> tuple[ShuffleManager, Sort]:
-    """Create shuffle manager and insert each buffered chunk with sort-based splits."""
+) -> Sort:
+    """Insert each buffered chunk into the shuffle with sort-based splits."""
     column_order = list(ir.order)
     null_order = list(ir.null_order)
     by_indices = names_to_indices(tuple(by), ir.schema)
 
     skip_insert = metadata_in.duplicated and comm.rank != 0
 
-    shuffle = ShuffleManager(
-        context,
-        comm,
-        num_partitions,
-        collective_ids.pop(),
-        partition_assignment=PartitionAssignment.CONTIGUOUS,
-    )
     async with shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
             if skip_insert:
+                del msg
                 continue
             seq_num = msg.sequence_number
             # The chunk's data moves into shuffler-owned packed buffers,
@@ -321,23 +315,25 @@ async def _insert_chunks_into_shuffle(
             tbl = available_chunk.table_view()
             sort_cols_tbl = plc.Table([tbl.columns()[i] for i in by_indices])
 
-            stream = get_joined_cuda_stream(
+            with stream_ordered_after(
                 ir_context.get_cuda_stream,
                 upstreams=(available_chunk.stream, sort_boundaries_df.stream),
-            )
-
-            # TODO: Pre-sort chunks if they do not originate from the ChunkStore.
-            # (Not possible until we use _global_sort outside of sort_actor.)
-            splits = find_sort_splits(
-                sort_cols_tbl,
-                sort_boundaries_df.table,
-                seq_num,
-                column_order,
-                null_order,
-                stream=stream,
-                chunk_relative=True,
-            )
+            ) as stream:
+                # TODO: Pre-sort chunks if they do not originate from the
+                # ChunkStore. (Not possible until we use _global_sort outside
+                # of sort_actor.)
+                splits = await ir_context.to_thread(
+                    find_sort_splits,
+                    sort_cols_tbl,
+                    sort_boundaries_df.table,
+                    seq_num,
+                    column_order,
+                    null_order,
+                    stream=stream,
+                    chunk_relative=True,
+                )
             await inserter.insert_split(available_chunk, splits)
+            del tbl, sort_cols_tbl, available_chunk
 
     post_sort_ir = ir
     if ir.stable:
@@ -356,7 +352,7 @@ async def _insert_chunks_into_shuffle(
             ir.children[0],
         )
 
-    return shuffle, post_sort_ir
+    return post_sort_ir
 
 
 async def _extract_partitions_and_send(
@@ -375,8 +371,9 @@ async def _extract_partitions_and_send(
         stream = ir_context.get_cuda_stream()
         table = await shuffle.extract_chunk(partition_id, stream)
         if table.num_rows() > 0:
-            table = post_sort_ir.do_evaluate(
-                *post_sort_ir._non_child_args,
+            df = await ir_context.to_thread(
+                evaluate_ir,
+                post_sort_ir,
                 DataFrame.from_table(
                     table,
                     list(post_sort_ir.schema.keys()),
@@ -384,15 +381,15 @@ async def _extract_partitions_and_send(
                     stream,
                 ),
                 context=ir_context,
-            ).table
+            )
+            table = df.table
             if table.num_columns() > ncols_out:
                 table = plc.Table(table.columns()[:ncols_out])
             chunk = TableChunk.from_pylibcudf_table(
-                table, stream, exclusive_view=True, br=context.br()
+                table, df.stream, exclusive_view=True, br=context.br()
             )
+            del df, table
             await send_chunk(context, ch_out, chunk, partition_id, tracer=tracer)
-
-    await ch_out.drain(context)
 
 
 def _can_sort_chunkwise(
@@ -457,27 +454,34 @@ async def _global_sort(
     )
     await send_metadata(ch_out, context, output_metadata)
 
-    shuffle, post_sort_ir = await _insert_chunks_into_shuffle(
+    async with ShuffleManager(
         context,
         comm,
-        ir,
-        ir_context,
-        ch_in,
         num_partitions,
-        collective_ids,
-        metadata_in,
-        sort_boundaries_df,
-        by,
-    )
-    await _extract_partitions_and_send(
-        context,
-        ch_out,
-        shuffle,
-        post_sort_ir,
-        ir_context,
-        ir.schema,
-        tracer=tracer,
-    )
+        collective_ids.pop(),
+        partition_assignment=PartitionAssignment.CONTIGUOUS,
+    ) as shuffle:
+        post_sort_ir = await _insert_chunks_into_shuffle(
+            context,
+            comm,
+            ir,
+            ir_context,
+            ch_in,
+            shuffle,
+            metadata_in,
+            sort_boundaries_df,
+            by,
+        )
+        await _extract_partitions_and_send(
+            context,
+            ch_out,
+            shuffle,
+            post_sort_ir,
+            ir_context,
+            ir.schema,
+            tracer=tracer,
+        )
+    await ch_out.drain(context)
 
 
 @define_actor()

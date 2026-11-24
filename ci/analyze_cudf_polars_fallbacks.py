@@ -211,6 +211,20 @@ def audit_report(
         for run in report["runs"]
         if run.get("engine") == PR_SELECTION_ENGINE
     ]
+    if isinstance(jobs, list):
+        # A rerun only repeats the failed jobs, so reports from earlier
+        # attempts are valid for the jobs that were not repeated. Reports from
+        # a superseded attempt of a repeated job belong to a job that is no
+        # longer in the latest inventory.
+        latest_producers = {
+            str(job["id"])
+            for job in jobs
+            if isinstance(job, dict)
+            and isinstance(job.get("name"), str)
+            and job["name"].startswith(PR_PRODUCER_PREFIX)
+            and "id" in job
+        }
+        runs = [run for run in runs if run.get("producer") in latest_producers]
     selected_runs = {run["run"] for run in runs}
     by_run = defaultdict(list)
     for test in report["tests"]:

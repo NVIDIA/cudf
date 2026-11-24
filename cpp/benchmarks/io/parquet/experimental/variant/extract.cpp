@@ -334,7 +334,7 @@ std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t c
 
     auto d_offsets = cuda::device_buffer<int32_t>{stream, mr, offsets.begin(), offsets.end()};
     auto d_data    = cuda::device_buffer<uint8_t>{stream, mr, flat.begin(), flat.end()};
-    stream.synchronize();
+    stream.sync();
 
     auto off_col =
       std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},

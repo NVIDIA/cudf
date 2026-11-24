@@ -35,10 +35,20 @@ SUPPORTED_GROUPBY_NUMPY_TYPES = [
 ]
 
 
+class _UnsupportedGroupByJITDataFrameReturn(UDFError):
+    pass
+
+
 class GroupByJITDataFrame(Row):
     """Row type for groupby apply UDF. Raises TypingError for missing keys so
     can_be_jitted can fall back to non-JIT (same as numba-cuda NumbaKeyError).
     """
+
+    @property
+    def return_as(self):
+        raise _UnsupportedGroupByJITDataFrameReturn(
+            "JIT GroupBy.apply() does not support returning a DataFrame."
+        )
 
     def typeof(self, key):
         if key not in self.fields:

@@ -129,9 +129,9 @@ TEST_F(HybridScanMultifileFiltersTest, Metadata)
   auto parquet_metadata = reader->parquet_metadatas();
   ASSERT_EQ(parquet_metadata.size(), num_sources);
   for (auto const& meta : parquet_metadata) {
-    ASSERT_FALSE(meta.row_groups.empty());
-    EXPECT_FALSE(meta.row_groups[0].columns[0].offset_index.has_value());
-    EXPECT_FALSE(meta.row_groups[0].columns[0].column_index.has_value());
+    ASSERT_FALSE(meta->row_groups.empty());
+    EXPECT_FALSE(meta->row_groups[0].columns[0].offset_index.has_value());
+    EXPECT_FALSE(meta->row_groups[0].columns[0].column_index.has_value());
   }
 
   // Setup page index
@@ -160,8 +160,8 @@ TEST_F(HybridScanMultifileFiltersTest, Metadata)
   // Check if page index is now present in each parquet metadata
   parquet_metadata = reader->parquet_metadatas();
   for (auto const& meta : parquet_metadata) {
-    EXPECT_TRUE(meta.row_groups[0].columns[0].offset_index.has_value());
-    EXPECT_TRUE(meta.row_groups[0].columns[0].column_index.has_value());
+    EXPECT_TRUE(meta->row_groups[0].columns[0].offset_index.has_value());
+    EXPECT_TRUE(meta->row_groups[0].columns[0].column_index.has_value());
   }
 
   // Check all row groups
@@ -183,29 +183,30 @@ TEST_F(HybridScanMultifileFiltersTest, Metadata)
   EXPECT_EQ(reader->total_rows_in_row_groups(input_row_group_indices),
             2 * rows_per_row_group * num_sources);
 
-  auto const num_row_groups = parquet_metadata.front().row_groups.size();
+  auto const num_row_groups = parquet_metadata.front()->row_groups.size();
 
   auto const metadata_matches = [&](auto const& metadatas) {
     return metadatas.size() == static_cast<size_t>(num_sources) and
            std::all_of(metadatas.begin(), metadatas.end(), [&](auto const& meta) {
-             return meta.row_groups.size() == num_row_groups;
+             return meta->row_groups.size() == num_row_groups;
            });
   };
+  auto owned_parquet_metadata = copy_parquet_metadatas(parquet_metadata);
 
   // Copy the existing FileMetaData into a new reader, leaving the source metadata intact
   {
     auto const reader_from_metadata_span =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
-        cudf::host_span<cudf::io::parquet::FileMetaData const>{parquet_metadata}, options);
+        cudf::host_span<cudf::io::parquet::FileMetaData const>{owned_parquet_metadata}, options);
     EXPECT_TRUE(metadata_matches(reader_from_metadata_span->parquet_metadatas()));
-    EXPECT_TRUE(metadata_matches(parquet_metadata));
+    EXPECT_EQ(owned_parquet_metadata.size(), static_cast<size_t>(num_sources));
   }
 
   // Move the existing FileMetaData into a new reader without copying it.
   {
     auto const reader_with_existing_metadata =
       std::make_unique<cudf::io::parquet::experimental::hybrid_scan_multifile>(
-        std::move(parquet_metadata), options);
+        std::move(owned_parquet_metadata), options);
 
     // Check if the new metadata is the same as the existing one
     EXPECT_TRUE(metadata_matches(reader_with_existing_metadata->parquet_metadatas()));
@@ -248,10 +249,10 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
   // `col0` is REQUIRED in the first source, and stays REQUIRED in the reported metadata even
   // though the second source declares it nullable
   auto const col0_repetition_type = [](auto const& metadatas) {
-    return metadatas.front().schema[1].repetition_type;
+    return metadatas.front()->schema[1].repetition_type;
   };
 
-  ASSERT_EQ(reader.parquet_metadatas().front().schema[1].name, "col0");
+  ASSERT_EQ(reader.parquet_metadatas().front()->schema[1].name, "col0");
   EXPECT_EQ(col0_repetition_type(reader.parquet_metadatas()),
             cudf::io::parquet::FieldRepetitionType::REQUIRED);
 
@@ -266,12 +267,12 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
   EXPECT_TRUE(result.metadata.schema_info[0].is_nullable);
 
   // Materializing must not have rewritten the reported repetition type
-  auto metadatas = reader.parquet_metadatas();
+  auto const metadatas = reader.parquet_metadatas();
   EXPECT_EQ(col0_repetition_type(metadatas), cudf::io::parquet::FieldRepetitionType::REQUIRED);
 
   // A reader built from that metadata must produce the same (nullable)table.
-  auto reader_from_metadata =
-    cudf::io::parquet::experimental::hybrid_scan_multifile{std::move(metadatas), options};
+  auto reader_from_metadata = cudf::io::parquet::experimental::hybrid_scan_multifile{
+    copy_parquet_metadatas(metadatas), options};
   auto downstream_column_data = fetch_multisource_device_data(
     inputs, reader_from_metadata.all_column_chunks_byte_ranges(row_groups, options), stream, mr);
   auto const downstream_result = reader_from_metadata.materialize_all_columns(
@@ -302,8 +303,8 @@ TEST_F(HybridScanMultifileFiltersTest, EmptySource)
   // Check parquet metadata
   auto const parquet_metadata = reader->parquet_metadatas();
   ASSERT_EQ(parquet_metadata.size(), num_sources);
-  EXPECT_FALSE(parquet_metadata.front().row_groups.empty());
-  EXPECT_TRUE(parquet_metadata.back().row_groups.empty());
+  EXPECT_FALSE(parquet_metadata.front()->row_groups.empty());
+  EXPECT_TRUE(parquet_metadata.back()->row_groups.empty());
 
   // Check row group indices
   auto const all_rgs = reader->all_row_groups(options);
@@ -927,8 +928,8 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedSchemaDictionaryPruningCollisio
   // Ensure the reorder genuinely differs the per-source schemas
   auto const metadatas = reader->parquet_metadatas();
   ASSERT_EQ(metadatas.size(), num_sources);
-  EXPECT_EQ(metadatas.front().schema.at(1).name, "col0");
-  EXPECT_EQ(metadatas.back().schema.at(1).name, "col2");
+  EXPECT_EQ(metadatas.front()->schema.at(1).name, "col0");
+  EXPECT_EQ(metadatas.back()->schema.at(1).name, "col2");
 
   // Page index is needed to detect dictionary-only encoded pages
   setup_page_indexes(*reader, inputs);

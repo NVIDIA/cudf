@@ -450,7 +450,7 @@ class reader_impl {
   [[nodiscard]] bool ignore_missing_columns_policy(parquet_reader_options const& options) const
   {
     return options.is_enabled_ignore_missing_columns() and
-           not(has_cols_from_mismatched_sources(options) and _metadata->get_num_sources() > 1);
+           not(has_cols_from_mismatched_sources(options) and _metadata->num_sources() > 1);
   }
 
  private:

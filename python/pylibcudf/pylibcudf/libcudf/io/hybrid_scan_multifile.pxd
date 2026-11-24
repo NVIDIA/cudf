@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from libcpp cimport bool
-from libcpp.memory cimport unique_ptr
+from libcpp.memory cimport shared_ptr, unique_ptr
 from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
@@ -37,7 +37,8 @@ cdef extern from "cudf/io/experimental/hybrid_scan_multifile.hpp" \
             const parquet_reader_options& options
         ) except +libcudf_exception_handler
 
-        vector[FileMetaData] parquet_metadatas() except +libcudf_exception_handler
+        vector[shared_ptr[const_FileMetaData]] parquet_metadatas() \
+            except +libcudf_exception_handler
 
         vector[byte_range_info] page_index_byte_ranges() \
             except +libcudf_exception_handler

@@ -3,13 +3,14 @@
 
 from libc.stdint cimport uint8_t
 from libcpp cimport bool
-from libcpp.memory cimport unique_ptr
+from libcpp.memory cimport shared_ptr, unique_ptr
 from libcpp.span cimport span as std_span
 from libcpp.vector cimport vector
 from pylibcudf.exception_handler cimport libcudf_exception_handler
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view, mutable_column_view
 from pylibcudf.libcudf.io.parquet cimport parquet_reader_options
+from pylibcudf.libcudf.io.parquet_metadata cimport const_FileMetaData
 from pylibcudf.libcudf.io.parquet_schema cimport FileMetaData
 from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.io.types cimport table_with_metadata
@@ -60,7 +61,8 @@ cdef extern from "cudf/io/experimental/hybrid_scan.hpp" \
             hybrid_scan_metadata metadata
         ) except +libcudf_exception_handler
 
-        FileMetaData parquet_metadata() except +libcudf_exception_handler
+        shared_ptr[const_FileMetaData] parquet_metadata() \
+            except +libcudf_exception_handler
 
         byte_range_info page_index_byte_range() except +libcudf_exception_handler
 

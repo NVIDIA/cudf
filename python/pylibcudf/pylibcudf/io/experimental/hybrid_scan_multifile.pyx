@@ -4,7 +4,8 @@
 from libc.stdint cimport uint8_t
 from libc.stddef cimport size_t
 from libcpp cimport bool
-from libcpp.memory cimport make_unique, unique_ptr
+from cython.operator cimport dereference
+from libcpp.memory cimport make_unique, shared_ptr, unique_ptr
 from libcpp.pair cimport pair
 from libcpp.span cimport span as std_span
 from libcpp.utility cimport move
@@ -165,14 +166,19 @@ cdef class HybridScanMultiFile:
         list[FileMetaData]
             Parquet file footer metadata, one per source
         """
-        cdef vector[cpp_FileMetaData] c_result
+        cdef vector[shared_ptr[const_FileMetaData]] c_result
+        cdef vector[unique_ptr[cpp_FileMetaData]] c_copies
+        cdef size_t i
         with nogil:
-            c_result = move(self.c_obj.get()[0].parquet_metadatas())
+            c_result = self.c_obj.get()[0].parquet_metadatas()
+            c_copies.reserve(c_result.size())
+            for i in range(c_result.size()):
+                c_copies.push_back(
+                    move(make_unique[cpp_FileMetaData](dereference(c_result[i])))
+                )
         return [
-            c_FileMetaData.from_libcudf(
-                make_unique[cpp_FileMetaData](move(c_result[source]))
-            )
-            for source in range(c_result.size())
+            c_FileMetaData.from_libcudf(move(c_copies[source]))
+            for source in range(c_copies.size())
         ]
 
     def page_index_byte_ranges(self) -> list[ByteRangeInfo]:

@@ -289,7 +289,8 @@ struct column_selection_options {
 
 class aggregate_reader_metadata {
  protected:
-  std::vector<metadata> per_file_metadata;
+  // Per-file metadata may be shared with other aggregates, e.g. hybrid scan metadata handles
+  std::vector<std::shared_ptr<metadata>> per_file_metadata;
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
   std::unordered_set<int32_t> nullable_across_sources;
@@ -301,7 +302,7 @@ class aggregate_reader_metadata {
   /**
    * @brief Create a metadata object from each element in the source vector
    */
-  static std::vector<metadata> metadatas_from_sources(
+  static std::vector<std::shared_ptr<metadata>> metadatas_from_sources(
     std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
 
   /**
@@ -521,6 +522,22 @@ class aggregate_reader_metadata {
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs);
 
+  /**
+   * @brief Constructor from per-file metadata that may be shared with other aggregates
+   *
+   * The per-file metadata is neither copied nor modified, so it can be shared by aggregates built
+   * concurrently with different options.
+   *
+   * @throws std::invalid_argument if no sources are provided
+   *
+   * @param parquet_metadatas Per-file metadata, one per source
+   * @param use_arrow_schema Whether to use Arrow schema
+   * @param has_cols_from_mismatched_srcs Whether to have columns from mismatched sources
+   */
+  aggregate_reader_metadata(std::vector<std::shared_ptr<metadata>>&& parquet_metadatas,
+                            bool use_arrow_schema,
+                            bool has_cols_from_mismatched_srcs);
+
   aggregate_reader_metadata(aggregate_reader_metadata const&)            = delete;
   aggregate_reader_metadata& operator=(aggregate_reader_metadata const&) = delete;
   aggregate_reader_metadata(aggregate_reader_metadata&&)                 = default;
@@ -562,13 +579,14 @@ class aggregate_reader_metadata {
                                       std::span<input_column_info const> input_columns) const;
 
   /**
-   * @brief Get Parquet file metadatas
+   * @brief Get the Parquet file metadata of all sources without copying it
    *
-   * @return Parquet file metadatas
+   * @return Shared Parquet file metadata, one per source
    */
-  [[nodiscard]] std::vector<FileMetaData> get_parquet_metadatas() const
+  [[nodiscard]] std::vector<std::shared_ptr<FileMetaData const>> parquet_metadatas() const
   {
-    return std::vector<FileMetaData>{per_file_metadata.begin(), per_file_metadata.end()};
+    return std::vector<std::shared_ptr<FileMetaData const>>(per_file_metadata.begin(),
+                                                            per_file_metadata.end());
   }
 
   /**
@@ -641,7 +659,7 @@ class aggregate_reader_metadata {
    *
    * @return Total number of sources
    */
-  [[nodiscard]] auto get_num_sources() const { return per_file_metadata.size(); }
+  [[nodiscard]] auto num_sources() const { return per_file_metadata.size(); }
 
   /**
    * @brief Get the number of row groups per file
@@ -739,7 +757,7 @@ class aggregate_reader_metadata {
       schema_idx >= 0 and pfm_idx >= 0 and std::cmp_less(pfm_idx, per_file_metadata.size()),
       "Parquet reader encountered an invalid schema_idx or pfm_idx",
       std::out_of_range);
-    return per_file_metadata[pfm_idx].schema[schema_idx];
+    return per_file_metadata[pfm_idx]->schema[schema_idx];
   }
 
   /**
@@ -758,7 +776,7 @@ class aggregate_reader_metadata {
     CUDF_EXPECTS(pfm_idx >= 0 and std::cmp_less(pfm_idx, per_file_metadata.size()),
                  "Parquet reader encountered an invalid pfm_idx",
                  std::out_of_range);
-    return per_file_metadata[pfm_idx].schema;
+    return per_file_metadata[pfm_idx]->schema;
   }
 
   [[nodiscard]] auto const& get_key_value_metadata() const& { return keyval_maps; }
@@ -776,8 +794,8 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] inline int get_output_nesting_depth(int schema_index) const
   {
-    auto& pfm = per_file_metadata[0];
-    int depth = 0;
+    auto const& pfm = *per_file_metadata[0];
+    int depth       = 0;
 
     // walk upwards, skipping repeated fields
     while (schema_index > 0) {

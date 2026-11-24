@@ -1008,6 +1008,7 @@ public class TableTest extends CudfTestBase {
     }
   }
 
+  @Test
   void testReadMixedType2JSONFileFeatureDisabled() {
     Schema schema = Schema.builder()
             .column(DType.STRING, "a")

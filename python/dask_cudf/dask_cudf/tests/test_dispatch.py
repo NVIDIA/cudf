@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2021-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
@@ -74,7 +74,7 @@ def test_deterministic_tokenize(index):
     # Modifying a column element should change the token
     original_token = tokenize(df)
     original_token_a = tokenize(df.A)
-    df.A.iloc[2] = 10
+    df.iloc[2, df.columns.get_loc("A")] = 10
     assert original_token != tokenize(df)
     assert original_token_a != tokenize(df.A)
 

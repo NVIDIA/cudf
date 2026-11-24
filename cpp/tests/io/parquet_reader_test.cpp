@@ -17,6 +17,7 @@
 #include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -24,12 +25,14 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
@@ -40,6 +43,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -6612,7 +6616,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderAscending)
 {
   auto const f0        = make_ordered_rg_source(0, 4);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 1, 3}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6625,7 +6629,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderNonAscending)
 {
   auto const f0        = make_ordered_rg_source(0, 4);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{3, 0, 2}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6638,7 +6642,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderRepeatedIndices)
 {
   auto const f0        = make_ordered_rg_source(0, 3);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 2, 0, 1, 0}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6655,7 +6659,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderEmptySourceVector)
 
   // Middle source contributes nothing; outer source order must be preserved.
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 1}, {}, {0}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1, &f2}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1, &f2}, selection);
 
   auto const opts =
     cudf::io::parquet_reader_options::builder(
@@ -6673,7 +6677,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderMultiSourceMix)
 
   // Within each source, user-given order is preserved (non-ascending for f0).
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 3}, {0, 1}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -6690,7 +6694,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderUnsetMultiSource)
 
   // Without .row_groups(...): all RGs in source order, then on-disk order.
   auto const expected_order = std::vector<std::vector<cudf::size_type>>{{0, 1, 2}, {0, 1}};
-  auto const expected       = build_expected_ordered_table(std::vector{&f0, &f1}, expected_order);
+  auto const expected       = create_expected_ordered_table(std::vector{&f0, &f1}, expected_order);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -6717,7 +6721,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderStatsPushdown)
 
   // Survivors must keep relative order: f0 RG0, f0 RG1, f0 RG2.
   auto const survivors = std::vector<std::vector<cudf::size_type>>{{0, 1, 2}, {}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1}, survivors);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1}, survivors);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -7090,44 +7094,170 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
   }
 }
 
-TEST_F(ParquetReaderTest, DecimalTypeOption)
+template <typename T>
+struct ParquetReaderDecimalWidthTest : public ParquetReaderTest {
+  static constexpr auto scale = numeric::scale_type{-2};
+
+  /**
+   * @brief Creates INT32, INT64 and FLBA decimal columns of the same values truncated to each type
+   */
+  static std::unique_ptr<cudf::table> create_fixed_width_decimals_table()
+  {
+    // -600 and -1 are sign extended when widened, and 2^40 + 5 and 2^100 + 5 read as 5 when
+    // narrowed below their stored type
+    auto const distinct = std::vector<__int128_t>{-(__int128_t{1} << 100) - 7,
+                                                  -600,
+                                                  -1,
+                                                  0,
+                                                  5,
+                                                  7,
+                                                  999'999'999,
+                                                  (__int128_t{1} << 40) + 5,
+                                                  (__int128_t{1} << 100) + 5};
+    // Values repeat so that dictionaries pay off
+    auto values = std::vector<__int128_t>{};
+    for (auto i = 0; i < 100; ++i) {
+      values.insert(values.end(), distinct.begin(), distinct.end());
+    }
+    auto const validity = cudf::detail::make_counting_transform_iterator(
+      0, [&](auto i) { return i % distinct.size() != 3; });
+    auto columns   = std::vector<std::unique_ptr<cudf::column>>{};
+    auto const add = [&]<typename Rep>() {
+      auto const reps = std::vector<Rep>(values.begin(), values.end());
+      columns.push_back(
+        cudf::test::fixed_point_column_wrapper<Rep>(reps.begin(), reps.end(), validity, scale)
+          .release());
+    };
+    add.template operator()<int32_t>();
+    add.template operator()<int64_t>();
+    add.template operator()<__int128_t>();
+    return std::make_unique<cudf::table>(std::move(columns));
+  }
+
+  /**
+   * @brief Writes `table` with `encoding` where the physical type supports it and returns the file
+   * path
+   */
+  static std::string write_decimals_table(
+    cudf::table_view table,
+    cudf::io::column_encoding encoding = cudf::io::column_encoding::USE_DEFAULT)
+  {
+    auto metadata = cudf::io::table_input_metadata{table};
+    for (auto col = 0; col < table.num_columns(); ++col) {
+      // FLBA does not support DELTA_BINARY_PACKED
+      if (encoding != cudf::io::column_encoding::DELTA_BINARY_PACKED or
+          table.column(col).type().id() != cudf::type_id::DECIMAL128) {
+        metadata.column_metadata[col].set_encoding(encoding);
+      }
+    }
+    auto const filepath = temp_env->get_temp_filepath("DecimalWidth.parquet");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, table)
+        .metadata(std::move(metadata))
+        .build());
+    return filepath;
+  }
+
+  /**
+   * @brief Creates the columns of `table` cast to the `decimal_width` T
+   */
+  static std::unique_ptr<cudf::table> create_expected_table(cudf::table_view table)
+  {
+    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+    for (auto const& col : table) {
+      columns.push_back(cudf::cast(col, cudf::data_type{cudf::type_to_id<T>(), scale}));
+    }
+    return std::make_unique<cudf::table>(std::move(columns));
+  }
+};
+
+TYPED_TEST_SUITE(ParquetReaderDecimalWidthTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ParquetReaderDecimalWidthTest, ReadValues)
 {
-  auto const data = std::vector<int32_t>{1000, 2000, 3000, 4000, 5000};
-  auto col        = cudf::test::fixed_point_column_wrapper<int32_t>(
-    data.begin(), data.end(), numeric::scale_type{-2});
+  using cudf::io::column_encoding;
+  using cudf::io::parquet::Encoding;
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const expected = TestFixture::create_expected_table(table->view());
+  for (auto const [encoding, parquet_encoding] :
+       {std::pair{column_encoding::PLAIN, Encoding::PLAIN},
+        std::pair{column_encoding::DICTIONARY, Encoding::PLAIN_DICTIONARY},
+        std::pair{column_encoding::DELTA_BINARY_PACKED, Encoding::DELTA_BINARY_PACKED},
+        std::pair{column_encoding::BYTE_STREAM_SPLIT, Encoding::BYTE_STREAM_SPLIT}}) {
+    SCOPED_TRACE(std::format("encoding {}", static_cast<int>(encoding)));
+    auto const filepath = TestFixture::write_decimals_table(table->view(), encoding);
 
-  auto expected_table = cudf::table_view{{col}};
+    // The writer falls back to other encodings rather than failing, so check it used this one
+    auto const footer =
+      cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{filepath}))
+        .front();
+    for (auto const& column : footer.row_groups[0].columns) {
+      if (encoding == column_encoding::DELTA_BINARY_PACKED and
+          column.meta_data.type == cudf::io::parquet::Type::FIXED_LEN_BYTE_ARRAY) {
+        continue;
+      }
+      auto const& encodings = column.meta_data.encodings;
+      EXPECT_NE(std::ranges::find(encodings, parquet_encoding), encodings.end());
+    }
 
-  auto filepath = temp_env->get_temp_filepath("DecimalTypeOption.parquet");
-
-  // Write the table with DECIMAL32
-  {
-    auto options =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected_table)
-        .build();
-    cudf::io::write_parquet(options);
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .decimal_width(cudf::type_to_id<TypeParam>())
+        .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
   }
+}
 
-  // Read back with decimal_width set to DECIMAL128
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL128)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+TYPED_TEST(ParquetReaderDecimalWidthTest, FilterRows)
+{
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const expected = TestFixture::create_expected_table(table->view());
+  auto const filepath = TestFixture::write_decimals_table(table->view());
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
+  // Rows that read as 5 match, including ones truncated to it
+  auto literal_value = cudf::fixed_point_scalar<TypeParam>(5, TestFixture::scale);
+  auto const literal = cudf::ast::literal(literal_value);
+  for (auto col = 0; col < table->num_columns(); ++col) {
+    SCOPED_TRACE(std::format("column {}", col));
+    auto const col_ref = cudf::ast::column_reference(col);
+    auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+    auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .decimal_width(cudf::type_to_id<TypeParam>())
+                           .filter(filter)
+                           .build();
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(
+      cudf::apply_retention_mask(*expected, cudf::compute_column(*expected, filter)->view())
+        ->view(),
+      cudf::io::read_parquet(options).tbl->view());
   }
-  // Read back with decimal_width set to DECIMAL64
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL64)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+}
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
+TYPED_TEST(ParquetReaderDecimalWidthTest, InvalidOptionsThrow)
+{
+  EXPECT_THROW(cudf::io::parquet_reader_options::builder().decimal_width(cudf::type_id::INT64),
+               std::invalid_argument);
+
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const filepath = TestFixture::write_decimals_table(table->view());
+
+  // Literals of a stored type other than T do not match the columns read as T
+  auto const expect_throw = [&]<typename Stored>(cudf::size_type col) {
+    if constexpr (not cuda::std::is_same_v<Stored, TypeParam>) {
+      auto literal_value = cudf::fixed_point_scalar<Stored>(5, TestFixture::scale);
+      auto const literal = cudf::ast::literal(literal_value);
+      auto const col_ref = cudf::ast::column_reference(col);
+      auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+      auto const options =
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+          .decimal_width(cudf::type_to_id<TypeParam>())
+          .filter(filter)
+          .build();
+      EXPECT_THROW(std::ignore = cudf::io::read_parquet(options), cudf::logic_error);
+    }
+  };
+  expect_throw.template operator()<numeric::decimal32>(0);
+  expect_throw.template operator()<numeric::decimal64>(1);
+  expect_throw.template operator()<numeric::decimal128>(2);
 }
 
 TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)

@@ -9,6 +9,7 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/detail/binaryop.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -16,6 +17,7 @@
 #include <cudf/unary.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 
 template <typename T>
 struct FixedPointCompiledTest : public cudf::test::BaseFixture {};
@@ -702,27 +704,47 @@ TYPED_TEST(FixedPointCompiledTest, FixedPointBinaryOpThrows)
                cudf::data_type_error);
 }
 
-TYPED_TEST(FixedPointCompiledTest, LogicalOperationsAreRejectedBeforeLaunch)
+TYPED_TEST(FixedPointCompiledTest, UnsupportedOperationsAreRejectedBeforeLaunch)
 {
-  using decimalXX   = TypeParam;
-  using RepType     = cudf::device_storage_type_t<decimalXX>;
-  auto const output = cudf::data_type{cudf::type_id::BOOL8};
+  using decimalXX = TypeParam;
+  using RepType   = cudf::device_storage_type_t<decimalXX>;
+  using OtherRep =
+    cuda::std::conditional_t<cuda::std::is_same_v<RepType, int32_t>, int64_t, int32_t>;
   auto const scalar = cudf::make_fixed_point_scalar<decimalXX>(1, numeric::scale_type{-1});
   for (bool nullable : {false, true}) {
     std::vector<int> const validity{true, false};
     auto const input = nullable
                          ? fp_wrapper<RepType>{{1, 0}, validity.begin(), numeric::scale_type{-1}}
                          : fp_wrapper<RepType>{{1, 0}, numeric::scale_type{-1}};
-    auto const type  = static_cast<cudf::column_view>(input).type();
+    auto const mixed_input =
+      nullable ? fp_wrapper<OtherRep>{{1, 0}, validity.begin(), numeric::scale_type{-1}}
+               : fp_wrapper<OtherRep>{{1, 0}, numeric::scale_type{-1}};
     for (auto op : {cudf::binary_operator::LOGICAL_AND,
                     cudf::binary_operator::LOGICAL_OR,
                     cudf::binary_operator::NULL_LOGICAL_AND,
-                    cudf::binary_operator::NULL_LOGICAL_OR}) {
-      // Invocability alone is not permission to bypass the host decimal restriction.
-      EXPECT_TRUE(cudf::binops::is_supported_operation(output, type, type, op));
-      EXPECT_THROW(cudf::binary_operation(input, input, op, output), cudf::logic_error);
-      EXPECT_THROW(cudf::binary_operation(input, *scalar, op, output), cudf::logic_error);
-      EXPECT_THROW(cudf::binary_operation(*scalar, input, op, output), cudf::logic_error);
+                    cudf::binary_operator::NULL_LOGICAL_OR,
+                    cudf::binary_operator::TRUE_DIV}) {
+      auto const output = cudf::data_type{
+        op == cudf::binary_operator::TRUE_DIV ? cudf::type_id::FLOAT64 : cudf::type_id::BOOL8};
+      // The mixed-width inputs must cover the independent-input dispatch as well.
+      EXPECT_FALSE(cudf::binops::compiled::detail::get_common_type(
+                     output,
+                     static_cast<cudf::column_view>(input).type(),
+                     static_cast<cudf::column_view>(mixed_input).type())
+                     .has_value());
+      for (auto const& rhs :
+           {static_cast<cudf::column_view>(input), static_cast<cudf::column_view>(mixed_input)}) {
+        // TRUE_DIV already fails the support query, before fixed-point validation.
+        if (op == cudf::binary_operator::TRUE_DIV) {
+          EXPECT_THROW(cudf::binary_operation(input, rhs, op, output), cudf::data_type_error);
+          EXPECT_THROW(cudf::binary_operation(*scalar, rhs, op, output), cudf::data_type_error);
+          EXPECT_THROW(cudf::binary_operation(rhs, *scalar, op, output), cudf::data_type_error);
+        } else {
+          EXPECT_THROW(cudf::binary_operation(input, rhs, op, output), cudf::logic_error);
+          EXPECT_THROW(cudf::binary_operation(*scalar, rhs, op, output), cudf::logic_error);
+          EXPECT_THROW(cudf::binary_operation(rhs, *scalar, op, output), cudf::logic_error);
+        }
+      }
     }
   }
 }

@@ -10,6 +10,8 @@
 
 #include <cuda/stream>
 
+#include <optional>
+
 namespace cudf {
 //! Inner interfaces and implementations
 namespace detail {
@@ -58,4 +60,19 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
                                          cuda::stream_ref stream,
                                          cudf::memory_resources mr);
 }  // namespace detail
+
+namespace binops::compiled::detail {
+
+/**
+ * @brief Selects the common type used by compiled binary operations.
+ *
+ * @param out Requested output type
+ * @param lhs Left input type
+ * @param rhs Right input type
+ * @return Common type of @p out, @p lhs and @p rhs, falling back to the common
+ * input type, or std::nullopt if neither exists
+ */
+CUDF_EXPORT std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type rhs);
+
+}  // namespace binops::compiled::detail
 }  // namespace cudf

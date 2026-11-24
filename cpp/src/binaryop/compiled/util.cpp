@@ -7,6 +7,7 @@
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/binaryop.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -185,7 +186,7 @@ struct is_supported_operation_functor {
 
 }  // namespace
 
-std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type rhs)
+std::optional<data_type> detail::get_common_type(data_type out, data_type lhs, data_type rhs)
 {
   // Compute the common type of (out, lhs, rhs) if it exists, or the common
   // type of (lhs, rhs) if it exists, else return a null optional.

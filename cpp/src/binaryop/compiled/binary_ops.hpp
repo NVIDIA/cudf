@@ -6,13 +6,12 @@
 #pragma once
 
 #include <cudf/binaryop.hpp>
+#include <cudf/detail/binaryop.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
-
-#include <optional>
 
 namespace cudf {
 // Forward declarations
@@ -140,15 +139,6 @@ void binary_operation(mutable_column_view& out,
                       cudf::memory_resources mr);
 
 // Defined in util.cpp
-/**
- * @brief Get the common type among all input types.
- *
- * @param out type 1
- * @param lhs type 2
- * @param rhs type 3
- * @return common type among @p out, @p lhs, @p rhs.
- */
-std::optional<data_type> get_common_type(data_type out, data_type lhs, data_type rhs);
 /**
  * @brief Check if input binary operation is supported for the given input and output types.
  *

@@ -12,6 +12,7 @@ files:
       - build_base
       - build_all
       - build_cpp
+      - build_cpp_kafka
       - build_python_common
       - clang
       - cuda
@@ -45,12 +46,12 @@ files:
       - run_common
       - run_cudf
       - run_cudf_polars
-      - run_pylibcudf
       - run_dask_cudf
       - run_custreamz
       - test_cpp
       - test_python_common
       - test_python_cudf
+      - test_python_cudf_benchmarks
       - depends_on_pytorch
       - test_python_cudf_common
       - test_python_pylibcudf
@@ -81,7 +82,6 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
-      - depends_on_pytorch
       - test_python_cudf_pandas
   test_python_cudf:
     output: none
@@ -91,6 +91,7 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
+      - test_python_cudf_benchmarks
       - depends_on_pytorch
       - test_python_s3
       - numpy_run
@@ -123,7 +124,6 @@ files:
       - py_version
       - test_python_common
       - test_python_cudf_common
-      - test_python_pylibcudf
       - test_python_cudf_polars
       - test_python_s3
       - depends_on_cudf
@@ -205,7 +205,6 @@ files:
   docs:
     output: none
     includes:
-      - cuda
       - cuda_version
       - depends_on_cudf
       - depends_on_dask_cuda
@@ -263,7 +262,6 @@ files:
       - test_python_common
       - test_python_cudf_common
       - test_python_cudf
-      - depends_on_pytorch
       - test_python_s3
   py_build_libcudf:
     output: pyproject
@@ -345,7 +343,6 @@ files:
       - depends_on_cuda_bindings
       - depends_on_libcudf
       - depends_on_rmm
-      - run_pylibcudf
   py_run_pylibcudf_numpy:
     output: pyproject
     matrix:
@@ -409,6 +406,8 @@ files:
       table: project.optional-dependencies
       key: cudf-pandas-tests
     includes:
+      - depends_on_cuda_core
+      - test_python_common
       - test_python_cudf_pandas
   py_build_cudf_polars:
     output: pyproject
@@ -481,7 +480,6 @@ files:
       key: test
     includes:
       - cuda_version
-      - depends_on_dask_cuda
       - test_python_common
       - test_python_cudf_polars
   py_tpch_cudf_polars:
@@ -712,8 +710,6 @@ files:
       - py_version
       - test_python_common
       - test_python_cudf_common
-      - test_python_cudf
-      - depends_on_pytorch
       - test_python_narwhals
       - depends_on_cudf
       - depends_on_cudf_polars
@@ -744,7 +740,7 @@ dependencies:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
         packages:
-          - &cmake_ver cmake>=4.0,<4.5
+          - &cmake_ver cmake>=4.3,<4.5
           - ninja
   build_all:
     common:
@@ -774,15 +770,16 @@ dependencies:
         packages:
           - croaring==4.4.2
           - flatbuffers==24.3.25
+  build_cpp_kafka:
+    common:
+      - output_types: conda
+        packages:
           - librdkafka<2.15.0a0
   build_java:
     common:
       - output_types: conda
         packages:
           - boost
-          # cuda_profiler_api.h is used by the JNI layer (CudaJni.cpp) but is
-          # not pulled in by the base `cuda` dev packages.
-          - cuda-profiler-api
           - make
           - maven
           - openjdk=8.*
@@ -962,7 +959,6 @@ dependencies:
       - output_types: [conda]
         packages:
           - cuda-cudart-dev
-          - cuda-cupti-dev
           - cuda-profiler-api
           - cuda-nvrtc-dev
           - cuda-nvtx-dev
@@ -1081,11 +1077,6 @@ dependencies:
       - output_types: [requirements, pyproject]
         packages:
           - cuda-pathfinder
-  run_pylibcudf:
-    common:
-      - output_types: [conda, requirements, constraints, pyproject]
-        packages:
-          - nvtx>=0.2.1
   depends_on_cuda_bindings:
     specific:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1144,6 +1135,7 @@ dependencies:
         packages:
           # 'nvidia-ml-py' provides the 'pynvml' module
           - &nvidia_ml_py nvidia-ml-py>=12
+          - nvtx>=0.2.1
           - packaging
           - polars>=2.0,<2.2
   run_cudf_polars_dask:
@@ -1273,6 +1265,8 @@ dependencies:
           - *pandas
       - output_types: conda
         packages:
+          # binutils is needed because it provides 'nm'
+          - binutils
           - python-xxhash
       - output_types: [pyproject, requirements]
         packages:
@@ -1292,15 +1286,11 @@ dependencies:
         packages:
           - cramjam
           - *fastavro
-          - pytest-benchmark
-          - pytest-cases>=3.8.2
           - rapids-cli
           - scipy
           - zstandard
       - output_types: conda
         packages:
-          # binutils is needed because it provides 'nm'
-          - binutils
           - msgpack-python
       - output_types: [pyproject, requirements]
         packages:
@@ -1315,6 +1305,12 @@ dependencies:
               - pyarrow==19.*
           - matrix:
             packages:
+  test_python_cudf_benchmarks:
+    common:
+      - output_types: [conda, requirements]
+        packages:
+          - pytest-benchmark
+          - pytest-cases>=3.8.2
   test_python_cudf_polars:
     common:
       - output_types: [conda, requirements, constraints, pyproject]
@@ -1843,6 +1839,7 @@ dependencies:
           - openpyxl
           # https://github.com/pytest-dev/pytest-rerunfailures/issues/302
           - pytest-rerunfailures!=16.0.0
+          - scipy
   depends_on_dask_cuda:
     common:
       - output_types: conda

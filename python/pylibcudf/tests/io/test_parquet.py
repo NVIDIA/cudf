@@ -1307,6 +1307,51 @@ def test_read_parquet_arrow_schema_duration_mismatch(tmp_path, mismatched):
     )
 
 
+@pytest.mark.parametrize("mismatched", [False, True])
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_read_parquet_timestamp_units(tmp_path, units, mismatched):
+    # Naive timestamps have only a logical type, which differs in unit
+    paths = [tmp_path / f"{unit}.parquet" for unit in units]
+    for path, unit in zip(paths, units, strict=True):
+        write_table(pa.table({"t": pa.array([1], pa.timestamp(unit))}), path)
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        with pytest.raises(error, match=match):
+            plc.io.parquet.read_parquet(options)
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_converted_type(tmp_path, mismatched):
+    # UTC timestamps also get the deprecated converted type, naive ones do not
+    paths = [tmp_path / "utc.parquet", tmp_path / "naive.parquet"]
+    for path, tz in zip(paths, ("UTC", None), strict=True):
+        write_table(
+            pa.table({"t": pa.array([1], pa.timestamp("us", tz))}), path
+        )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        assert plc.io.parquet.read_parquet(options).tbl.num_rows() == 2
+
+
 def test_file_metadata_schema_element_nesting() -> None:
     schema = pa.schema(
         [

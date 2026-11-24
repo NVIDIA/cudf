@@ -17,8 +17,6 @@ from werkzeug import Response
 
 import polars as pl
 
-import pylibcudf as plc
-
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
 from cudf_polars.dsl.translate import Translator
@@ -286,6 +284,21 @@ def test_scan_parquet_timestamps_from_different_writers(
     )
     q = pl.scan_parquet(tmp_path / "*.parquet")
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_scan_parquet_timestamp_units(engine: pl.GPUEngine, tmp_path, units):
+    # polars writes only the logical type, which differs in unit
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
+    for i, unit in enumerate(units):
+        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(
+            tmp_path / f"{i}.parquet"
+        )
+    q = pl.scan_parquet(tmp_path / "*.parquet")
+    with pytest.raises(pl.exceptions.SchemaError):
+        q.collect()
+    with pytest.raises(RuntimeError, match="same schema"):
+        q.collect(engine=engine)
 
 
 def test_scan_ndjson_nrows_notimplemented(engine: pl.GPUEngine, tmp_path, df):
@@ -1322,47 +1335,3 @@ def test_scan_ndjson_schema_column_missing_from_file(
     (tmp_path / "test.ndjson").write_text(contents)
     q = pl.scan_ndjson(tmp_path / "test.ndjson", schema={"b": pl.String, "c": dtype})
     assert_gpu_result_equal(q, engine=engine)
-
-
-def _read_parquet_sources(paths: list[Path], *, mismatched: bool) -> plc.Table:
-    builder = plc.io.parquet.ParquetReaderOptions.builder(
-        plc.io.SourceInfo([str(p) for p in paths])
-    )
-    if mismatched:
-        builder = builder.allow_mismatched_pq_schemas(val=True)
-    options = builder.build()
-    if mismatched:
-        options.set_column_names(["t"])
-    return plc.io.parquet.read_parquet(options).tbl
-
-
-@pytest.mark.parametrize("mismatched", [False, True])
-@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
-def test_read_parquet_timestamps_with_different_units(tmp_path, units, mismatched):
-    # polars writes no converted type, so only the logical type tells the units
-    # apart. The values are copied without conversion, so the read must fail.
-    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
-    paths = [tmp_path / f"{unit}.parquet" for unit in units]
-    for path, unit in zip(paths, units, strict=True):
-        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(path)
-    error, match = (
-        (ValueError, "mismatching data type or schema")
-        if mismatched
-        else (RuntimeError, "same schema")
-    )
-    with pytest.raises(error, match=match):
-        _read_parquet_sources(paths, mismatched=mismatched)
-
-
-@pytest.mark.parametrize("mismatched", [False, True])
-def test_read_parquet_timestamps_from_different_writers(tmp_path, mismatched):
-    # pyarrow writes the deprecated converted type for UTC timestamps and names
-    # the root element "schema", polars writes neither and names it "root".
-    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
-    paths = [tmp_path / "pyarrow.parquet", tmp_path / "polars.parquet"]
-    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", "UTC"))}), paths[0])
-    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", "UTC")}).write_parquet(
-        paths[1]
-    )
-    result = _read_parquet_sources(paths, mismatched=mismatched)
-    assert result.columns()[0].to_arrow().to_pylist() == [t, t]

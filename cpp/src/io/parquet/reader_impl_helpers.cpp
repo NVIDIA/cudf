@@ -217,14 +217,20 @@ namespace {
                                         SchemaElement const& rhs,
                                         bool compare_arrow_types)
 {
-  auto const annotations_match =
-    lhs.logical_type.has_value() == rhs.logical_type.has_value() and
-    (lhs.logical_type.has_value() ? compare_logical_types(*lhs.logical_type, *rhs.logical_type)
-                                  : lhs.converted_type == rhs.converted_type);
-  auto const arrow_types_match = not compare_arrow_types or lhs.arrow_type == rhs.arrow_type;
-  return lhs.type == rhs.type and annotations_match and arrow_types_match and
-         lhs.type_length == rhs.type_length and lhs.decimal_scale == rhs.decimal_scale and
-         lhs.decimal_precision == rhs.decimal_precision;
+  // Physical type, fixed length and decimal parameters must match
+  if (lhs.type != rhs.type or lhs.type_length != rhs.type_length or
+      lhs.decimal_scale != rhs.decimal_scale or lhs.decimal_precision != rhs.decimal_precision) {
+    return false;
+  }
+  // ARROW:schema types must match if both sources have one
+  if (compare_arrow_types and lhs.arrow_type != rhs.arrow_type) { return false; }
+  // If either element has a logical type, both must have one and they must match
+  if (lhs.logical_type.has_value() or rhs.logical_type.has_value()) {
+    return lhs.logical_type.has_value() and rhs.logical_type.has_value() and
+           compare_logical_types(*lhs.logical_type, *rhs.logical_type);
+  }
+  // Fall back to the deprecated converted types
+  return lhs.converted_type == rhs.converted_type;
 }
 
 /**

@@ -96,19 +96,8 @@ struct row_group_stats_caster : public stats_caster_base {
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
                      "Mapped schema index is out of bounds",
                      std::invalid_argument);
-        // Compute timestamp scale factor for precision conversion from the mapped source schema.
-        auto const ts_scale = [&] {
-          if constexpr (cudf::is_timestamp<T>()) {
-            auto const& schema = source_metadata.schema[mapped_schema_idx];
-            return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
-          }
-          return 0;
-        }();
-        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
-        auto const& schema = source_metadata.schema[mapped_schema_idx];
-        auto const is_narrowing_column =
-          cuda::std::signed_integral<T> and
-          is_column_wider_than(schema.type, schema.type_length, sizeof(T));
+        auto const [ts_scale, is_narrowing_column] =
+          compute_conversion_info<T>(source_metadata.schema[mapped_schema_idx]);
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(
@@ -156,24 +145,7 @@ struct row_group_stats_caster : public stats_caster_base {
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
               has_nan->set_value(stats_idx, has_nans(stats.nan_count));
-              if (colchunk.meta_data.statistics.null_count.has_value()) {
-                auto const& null_count = colchunk.meta_data.statistics.null_count.value();
-                if (null_count == 0) {
-                  is_null->val[stats_idx] = false;
-                } else if (null_count < colchunk.meta_data.num_values) {
-                  is_null->set_value(stats_idx, std::nullopt);
-                } else if (null_count == colchunk.meta_data.num_values) {
-                  is_null->val[stats_idx] = true;
-                } else {
-                  CUDF_FAIL("Invalid null count");
-                }
-              } else {
-                // Statistics without a null count say nothing about this chunk's nullability. The
-                // value array is allocated uninitialized and the null mask starts out all valid, so
-                // this entry has to be marked null; leaving it alone would let an uninitialized
-                // byte be read as an answer.
-                is_null->set_value(stats_idx, std::nullopt);
-              }
+              is_null->set_all_null(stats_idx, stats.null_count, colchunk.meta_data.num_values);
             }
           } else {
             // Mark it null if the column chunk is absent from this row group.

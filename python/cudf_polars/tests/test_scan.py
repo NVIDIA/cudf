@@ -297,7 +297,9 @@ def test_scan_parquet_timestamp_units(engine: pl.GPUEngine, tmp_path, units):
     q = pl.scan_parquet(tmp_path / "*.parquet")
     with pytest.raises(pl.exceptions.SchemaError):
         q.collect()
-    with pytest.raises(RuntimeError, match="same schema"):
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(RuntimeError, match="same schema"), allow_unwrapped=True
+    ):
         q.collect(engine=engine)
 
 

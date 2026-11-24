@@ -2649,7 +2649,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
       new cudf::jni::jni_writer_data_sink(env, consumer, host_memory_allocator));
     sink_info sink{data_sink.get()};
 
-    auto stats = std::make_shared<cudf::io::writer_compression_statistics>();
+    auto stats                      = std::make_shared<cudf::io::writer_compression_statistics>();
     chunked_orc_writer_options opts = chunked_orc_writer_options::builder(sink)
                                         .metadata(std::move(metadata))
                                         .compression(static_cast<compression_type>(j_compression))
@@ -2730,7 +2730,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                    [](std::string const& k, std::string const& v) { return std::make_pair(k, v); });
 
     sink_info sink{output_path};
-    auto stats = std::make_shared<cudf::io::writer_compression_statistics>();
+    auto stats                      = std::make_shared<cudf::io::writer_compression_statistics>();
     chunked_orc_writer_options opts = chunked_orc_writer_options::builder(sink)
                                         .metadata(std::move(metadata))
                                         .compression(static_cast<compression_type>(j_compression))

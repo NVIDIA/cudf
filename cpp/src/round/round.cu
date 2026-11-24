@@ -22,6 +22,7 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/std/concepts>
+#include <cuda/std/limits>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -217,14 +218,35 @@ std::unique_ptr<column> round_with(column_view const& input,
                                               stream,
                                               mr);
 
-  auto out_view = result->mutable_view();
-  T const n     = std::pow(10, std::abs(decimal_places));
+  auto out_view    = result->mutable_view();
+  auto const begin = input.begin<T>();
+  auto const end   = input.end<T>();
+  auto const out   = out_view.begin<T>();
+  auto policy      = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    input.begin<T>(),
-                    input.end<T>(),
-                    out_view.begin<T>(),
-                    Functor{n});
+  if constexpr (cuda::std::is_integral_v<T>) {
+    // Here decimal_places < 0. The divisor 10^-decimal_places fits in T only up to digits10.
+    constexpr int32_t max_digits = cuda::std::numeric_limits<T>::digits10;
+    if (decimal_places >= -max_digits) {
+      auto const n = numeric::detail::ipow<T, numeric::Radix::BASE_10>(-decimal_places);
+      thrust::transform(policy, begin, end, out, Functor{n});
+    } else if (decimal_places == -(max_digits + 1)) {
+      // The divisor does not fit in T but some values may still round up to +/-10^(max_digits+1)
+      // (e.g. int64 values >= 5e18 rounded to -19). Compute in a wider type and cast back to T,
+      // which wraps the results that T cannot represent.
+      using WideT  = cuda::std::conditional_t<(sizeof(T) < sizeof(int64_t)), int64_t, __int128_t>;
+      auto const n = numeric::detail::ipow<WideT, numeric::Radix::BASE_10>(-decimal_places);
+      thrust::transform(policy, begin, end, out, [n] __device__(T e) -> T {
+        return static_cast<T>(RoundFunctor<WideT>{n}(static_cast<WideT>(e)));
+      });
+    } else {
+      // Every value of T is less than half the divisor so all values round to zero
+      thrust::uninitialized_fill(policy, out, out + input.size(), T{0});
+    }
+  } else {
+    T const n = std::pow(10, std::abs(decimal_places));
+    thrust::transform(policy, begin, end, out, Functor{n});
+  }
 
   result->set_null_count(input.null_count());
 

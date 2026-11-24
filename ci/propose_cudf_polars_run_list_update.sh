@@ -13,10 +13,11 @@
 #   GITHUB_RUN_ID       the nightly run to read
 #   TESTED_SHA          the revision the nightly run tested
 #   DRY_RUN             if set, print the decision and change nothing
+#   PROPOSAL_BRANCH     branch for the proposal (default ci/auto-update-gpu-run-list)
 
 set -euo pipefail
 
-branch=ci/auto-update-gpu-run-list
+branch=${PROPOSAL_BRANCH:-ci/auto-update-gpu-run-list}
 run_list=ci/cudf_polars/gpu_test_run_list.json
 work=$(mktemp -d)
 
@@ -74,18 +75,28 @@ else
     head_oid=${base_oid}
 fi
 
+# A second nightly with the same drift must not stack an identical commit.
+unchanged=false
+if [[ -n "${open_pr}" ]] \
+    && gh api "repos/${GITHUB_REPOSITORY}/contents/${run_list}?ref=${branch}" \
+        -H "Accept: application/vnd.github.raw" 2> /dev/null | cmp -s - "${candidate}"; then
+    unchanged=true
+fi
+
 # A commit made through the API is signed by GitHub for the token's identity.
-jq -n --arg repo "${GITHUB_REPOSITORY}" --arg branch "${branch}" --arg oid "${head_oid}" \
-    --arg path "${run_list}" --rawfile contents "${candidate}" \
-    --arg headline "Update the cudf-polars GPU test run list" \
-    --arg body "Add the upstream Polars tests that now run on the GPU, from nightly run ${GITHUB_RUN_ID} at ${TESTED_SHA}." \
-    '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
-      variables: {input: {
-        branch: {repositoryNameWithOwner: $repo, branchName: $branch},
-        expectedHeadOid: $oid,
-        message: {headline: $headline, body: $body},
-        fileChanges: {additions: [{path: $path, contents: ($contents | @base64)}]}}}}' \
-    | gh api graphql --input - > /dev/null
+if ! ${unchanged}; then
+    jq -n --arg repo "${GITHUB_REPOSITORY}" --arg branch "${branch}" --arg oid "${head_oid}" \
+        --arg path "${run_list}" --rawfile contents "${candidate}" \
+        --arg headline "Update the cudf-polars GPU test run list" \
+        --arg body "Add the upstream Polars tests that now run on the GPU, from nightly run ${GITHUB_RUN_ID} at ${TESTED_SHA}." \
+        '{query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+          variables: {input: {
+            branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+            expectedHeadOid: $oid,
+            message: {headline: $headline, body: $body},
+            fileChanges: {additions: [{path: $path, contents: ($contents | @base64)}]}}}}' \
+        | gh api graphql --input - > /dev/null
+fi
 
 pr_body="${work}/pr-body.md"
 cat > "${pr_body}" << BODY

@@ -3430,15 +3430,43 @@ class AsofJoin(IR):
         if not has_payload:
             return left.slice(zlice)
 
-        right_by_cols = [right.column_map[name].obj for name in right_by]
-        # TODO: Carry RowOrdering through to recognize composite (by..., on)
-        # ordering and avoid sorting the right side again.
-        if sorted_nulls_first:
+        joiner, right_payload = cls._prepare_right(
+            right,
+            right_on_col,
+            right_by,
+            discarded,
+            already_sorted=sorted_nulls_first,
+        )
+        return cls._probe_prepared(
+            left,
+            right_payload,
+            joiner,
+            left_on_col,
+            left_by,
+            suffix,
+            zlice=zlice,
+            context=context,
+        )
+
+    @staticmethod
+    def _prepare_right(
+        right: DataFrame,
+        right_on_col: Column,
+        right_by: tuple[str, ...],
+        discarded: set[str],
+        *,
+        already_sorted: bool,
+    ) -> tuple[plc.join.AsofJoin, DataFrame]:
+        """Prepare a right window for repeated as-of probes."""
+        if already_sorted:
             joiner = plc.join.AsofJoin(
                 plc.Table([]), right_on_col.obj, stream=right.stream
             )
         else:
-            keys = plc.Table([*right_by_cols, right_on_col.obj])
+            # TODO: Recognize composite (by..., on) RowOrdering to skip this sort.
+            keys = plc.Table(
+                [right.column_map[name].obj for name in right_by] + [right_on_col.obj]
+            )
             columns = plc.sorting.stable_sort_by_key(
                 plc.Table([*right.table.columns(), *keys.columns()]),
                 keys,
@@ -3457,10 +3485,23 @@ class AsofJoin(IR):
                 columns[-1],
                 stream=right.stream,
             )
+        return joiner, right.discard_columns(discarded)
 
-        right_payload = right.discard_columns(discarded)
-
-        with context.stream_ordered_after(left, right) as stream:
+    @classmethod
+    def _probe_prepared(
+        cls,
+        left: DataFrame,
+        right_payload: DataFrame,
+        joiner: plc.join.AsofJoin,
+        left_on_col: Column,
+        left_by: tuple[str, ...],
+        suffix: str,
+        *,
+        zlice: Zlice | None = None,
+        context: IRExecutionContext,
+    ) -> DataFrame:
+        """Probe a prepared right side and assemble the left-owned output."""
+        with context.stream_ordered_after(left, right_payload) as stream:
             gather_map = joiner.join(
                 plc.Table([left.column_map[name].obj for name in left_by]),
                 left_on_col.obj,

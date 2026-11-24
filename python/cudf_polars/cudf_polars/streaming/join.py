@@ -8,7 +8,7 @@ import operator
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from cudf_polars.dsl.ir import ConditionalJoin, Join, Projection, Slice
+from cudf_polars.dsl.ir import AsofJoin, ConditionalJoin, Join, Projection, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
@@ -451,3 +451,33 @@ def _(
             left,
             right,
         )
+
+
+@lower_ir_node.register(AsofJoin)
+def _(
+    ir: AsofJoin, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if (zlice := ir.options[0]) is not None:
+        offset, length = zlice
+        new_join = AsofJoin(
+            ir.schema,
+            ir.left_on,
+            ir.right_on,
+            ir.left_by,
+            ir.right_by,
+            (None, *ir.options[1:]),
+            *ir.children,
+        )
+        return rec(Slice(ir.schema, offset, length, new_join))
+
+    children, child_partition_info = zip(
+        *(rec(child) for child in ir.children), strict=True
+    )
+    partition_info = reduce(operator.or_, child_partition_info)
+    left = children[0]
+    new_node = ir.reconstruct(children)
+    partition_info[new_node] = PartitionInfo(
+        count=partition_info[left].count,
+        partitioned_on=partition_info[left].partitioned_on,
+    )
+    return new_node, partition_info

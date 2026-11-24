@@ -68,6 +68,38 @@ def test_allgather(spmd_engine) -> None:
     asyncio.run(_test_allgather(spmd_engine))
 
 
+async def _test_allgather_chunks(engine) -> None:
+    context = engine.context
+    stream = context.br().stream_pool.get_stream()
+    allgather = AllGatherManager(context, engine.comm, 0)
+
+    with allgather.inserting() as inserter:
+        for i in range(1, 4):
+            table = plc.Table(
+                [
+                    plc.Column.from_arrow(
+                        pl.Series([i] * i, dtype=pl.Int32()), stream=stream
+                    )
+                ]
+            )
+            await inserter.insert(
+                i,
+                TableChunk.from_pylibcudf_table(
+                    table, stream, exclusive_view=True, br=context.br()
+                ),
+            )
+
+    chunks = await allgather.extract_chunks()
+    assert [chunk.shape for chunk in chunks] == [
+        (i, 1) for _ in range(engine.comm.nranks) for i in range(1, 4)
+    ]
+    assert all(chunk.is_spillable() for chunk in chunks)
+
+
+def test_allgather_chunks(spmd_engine) -> None:
+    asyncio.run(_test_allgather_chunks(spmd_engine))
+
+
 async def _test_allgather_reduce(engine) -> None:
     """Test allgather_reduce with single and multiple values."""
     context = engine.context

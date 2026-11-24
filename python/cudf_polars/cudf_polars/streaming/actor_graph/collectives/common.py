@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from rapidsmpf.shuffler import Shuffler
 
 from cudf_polars.dsl.ir import (
+    AsofJoin,
     CallbackSink,
     Distinct,
     GroupBy,
@@ -146,6 +147,7 @@ class ReserveOpIDs:
             CallbackSink,
             Shuffle,
             Join,
+            AsofJoin,
             HintSorted,
             Repartition,
             StreamingSink,
@@ -160,6 +162,7 @@ class ReserveOpIDs:
                 CallbackSink,
                 Shuffle,
                 Join,
+                AsofJoin,
                 HintSorted,
                 Repartition,
                 StreamingSink,

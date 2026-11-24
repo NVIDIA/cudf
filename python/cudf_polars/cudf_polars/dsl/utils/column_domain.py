@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
+    AsofJoin,
     Distinct,
     Filter,
     GroupBy,
@@ -158,6 +159,12 @@ def _(node: Join) -> Mapping[str, ColumnBinding]:
         if output_name in node.schema:
             bindings[output_name] = ColumnBinding(1, name)
     return bindings
+
+
+@column_domain_bindings.register(AsofJoin)
+def _(node: AsofJoin) -> Mapping[str, ColumnBinding]:
+    left = node.children[0]
+    return {name: ColumnBinding(0, name) for name in node.schema if name in left.schema}
 
 
 @column_domain_bindings.register(HConcat)

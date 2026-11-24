@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from rapidsmpf.streaming.core.leaf_actor import pull_from_channel
 
 from cudf_polars.dsl.ir import (
+    AsofJoin,
     Join,
     Union,
 )
@@ -177,9 +178,11 @@ def determine_fanout_nodes(
     for node in traversal([ir]):
         if node in unbounded:
             _mark_children_unbounded(node)
-        elif isinstance(node, (Union, Join, Over, HintSorted, PushdownFilterHint)):
-            # Union processes children sequentially; Join may broadcast one
-            # side; Over buffers (or samples-then-replays) its input before
+        elif isinstance(
+            node, (Union, Join, AsofJoin, Over, HintSorted, PushdownFilterHint)
+        ):
+            # Union processes children sequentially; joins may broadcast an
+            # input; Over buffers (or samples-then-replays) its input before
             # producing output; hints may buffer then replay. In every case
             # the input source needs unbounded fanout so other consumers don't
             # block it.

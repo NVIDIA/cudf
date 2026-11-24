@@ -26,6 +26,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.none_of.h>
 #include <cuda/std/chrono>
 #include <cuda/std/cstring>
 #include <cuda/std/functional>
@@ -2801,21 +2802,21 @@ using extremum = cuda::std::pair<void const*, uint32_t>;
 
 /**
  * @brief Returns false if any UTF-8 character in the buffer encodes a surrogate (U+D800-U+DFFF)
- * or a code point above U+10FFFF, neither of which is valid UTF-8.
+ * or a code point above U+10FFFF, neither of which is valid Unicode.
  *
- * Both are identified by a character's lead byte and the byte following it.
+ * The buffer must hold whole UTF-8 characters.
  */
-__device__ bool is_valid_code_point(unsigned char const* ptr, int32_t len)
+__device__ bool is_valid_unicode(unsigned char const* ptr, int32_t len)
 {
-  for (int32_t i = 0; i < len; i++) {
-    auto const next = (i + 1 < len) ? ptr[i + 1] : 0;
-    // ED A0 to ED BF start the surrogates U+D800-U+DFFF
-    auto const is_surrogate = ptr[i] == 0xED and next >= 0xA0;
-    // F4 90 to F4 BF start U+110000-U+13FFFF, and bytes F5 and above never appear in valid UTF-8
-    auto const is_above_max = (ptr[i] == 0xF4 and next >= 0x90) or ptr[i] >= 0xF5;
-    if (is_surrogate or is_above_max) { return false; }
-  }
-  return true;
+  constexpr uint32_t surrogates_begin = 0xD800;
+  constexpr uint32_t surrogates_end   = 0xDFFF;
+  constexpr uint32_t max_code_point   = 0x10FFFF;
+  auto const str                      = string_view{reinterpret_cast<char const*>(ptr), len};
+  return cuda::std::none_of(str.begin(), str.end(), [](char_utf8 chr) {
+    auto const code_point = strings::detail::utf8_to_codepoint(chr);
+    return (code_point >= surrogates_begin and code_point <= surrogates_end) or
+           code_point > max_code_point;
+  });
 }
 
 /**
@@ -2872,20 +2873,19 @@ __device__ cuda::std::optional<extremum> truncate_utf8(device_span<unsigned char
   auto const ptr = static_cast<unsigned char*>(scratch);
   for (int32_t i = len - 1; i >= 0; i--) {
     if (increment_utf8_at(&ptr[i])) {  // true if no overflow
-      // a carry into the second byte of a character may step past U+D7FF into the surrogates,
-      // so skip ahead to U+E000, or past U+10FFFF, so drop the overflowed character and carry into
-      // the preceding character
       auto const lead = i > 0 ? ptr[i - 1] : 0;
       if (lead == 0xED and ptr[i] == 0xA0) {
+        // U+D7FF + 1 is a surrogate, so skip ahead to U+E000
         ptr[i - 1] = 0xEE;
         ptr[i]     = 0x80;
       } else if (lead == 0xF4 and ptr[i] == 0x90) {
+        // U+10FFFF + 1 is out of range, so drop this character and carry into the preceding one
         len = --i;
         continue;
       }
       // an invalid code point in the input itself falls back to incrementing the last ASCII byte,
       // which always yields valid UTF-8
-      if (is_valid_code_point(ptr, len)) { return extremum{scratch, len}; }
+      if (is_valid_unicode(ptr, len)) { return extremum{scratch, len}; }
       return truncate_binary(
         span, false, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());
     }

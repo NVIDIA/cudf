@@ -7967,6 +7967,30 @@ TEST_F(ParquetReaderTest, MismatchedLogicalTypeAcrossSources)
   }
 }
 
+TEST_F(ParquetReaderTest, LogicalTypeAgainstUnannotatedAcrossSources)
+{
+  // Nanosecond timestamps only have a logical type, plain INT64 has no annotation at all
+  column_wrapper<cudf::timestamp_ns> const ns{1790816523456789012L};
+  column_wrapper<int64_t> const plain{1790816523456789012L};
+  auto const ns_file = write_parquet_temp_file(cudf::table_view{{ns}}, "TsNanos.parquet", {"t"});
+  auto const plain_file =
+    write_parquet_temp_file(cudf::table_view{{plain}}, "PlainInt64.parquet", {"t"});
+
+  for (auto const& paths : {std::vector<std::string>{ns_file, plain_file},
+                            std::vector<std::string>{plain_file, ns_file}}) {
+    auto const default_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths}).build();
+    EXPECT_THROW(cudf::io::read_parquet(default_opts), cudf::logic_error);
+
+    auto const mismatched_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+        .allow_mismatched_pq_schemas(true)
+        .column_names({"t"})
+        .build();
+    EXPECT_THROW(cudf::io::read_parquet(mismatched_opts), std::invalid_argument);
+  }
+}
+
 TEST_F(ParquetReaderTest, NestedMismatchedSchemaColumnValidation)
 {
   auto const write_record = [](std::unique_ptr<cudf::column> record,

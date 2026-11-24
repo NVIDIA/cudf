@@ -1257,12 +1257,99 @@ def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
 
     # Explicit int64 and duration arrow types must not mix, in either order
     for paths in ([duration_path, int64_path], [int64_path, duration_path]):
-        with pytest.raises(
-            ValueError, match="Mismatching parquet statistics dtype"
-        ):
+        with pytest.raises(RuntimeError, match="same schema"):
             plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
                 read_footers(paths), columns=["d"]
             )
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_arrow_schema_duration_mismatch(tmp_path, mismatched):
+    def write(name, dtype, *, store_schema=True):
+        path = tmp_path / f"{name}.parquet"
+        write_table(
+            pa.table({"d": pa.array([1, 2], type=dtype)}),
+            path,
+            store_schema=store_schema,
+        )
+        return path
+
+    def read(paths, *, use_arrow_schema=True):
+        builder = plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(p) for p in paths])
+        ).use_arrow_schema(use_arrow_schema)
+        if mismatched:
+            builder = builder.allow_mismatched_pq_schemas(True)
+        options = builder.build()
+        if mismatched:
+            options.set_column_names(["d"])
+        return plc.io.parquet.read_parquet(options).tbl.columns()[0].to_arrow()
+
+    ms = write("ms", pa.duration("ms"))
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    # Explicit arrow types must match in either order, but only if in use
+    for other in (write("us", pa.duration("us")), write("int64", pa.int64())):
+        for paths in ([ms, other], [other, ms]):
+            with pytest.raises(error, match=match):
+                read(paths)
+            assert read(paths, use_arrow_schema=False).equals(
+                pa.array([1, 2, 1, 2])
+            )
+
+    # Sources without an arrow:schema follow the zeroth source's arrow types
+    no_schema = write("no_schema", pa.int64(), store_schema=False)
+    assert read([ms, no_schema]).equals(
+        pa.array([1, 2, 1, 2], type=pa.duration("ms"))
+    )
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_read_parquet_timestamp_units(tmp_path, units, mismatched):
+    # Naive timestamps have only a logical type, which differs in unit
+    paths = [tmp_path / f"{unit}.parquet" for unit in units]
+    for path, unit in zip(paths, units, strict=True):
+        write_table(pa.table({"t": pa.array([1], pa.timestamp(unit))}), path)
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        with pytest.raises(error, match=match):
+            plc.io.parquet.read_parquet(options)
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_converted_type(tmp_path, mismatched):
+    # UTC timestamps also get the deprecated converted type, naive ones do not
+    paths = [tmp_path / "utc.parquet", tmp_path / "naive.parquet"]
+    for path, tz in zip(paths, ("UTC", None), strict=True):
+        write_table(
+            pa.table({"t": pa.array([1], pa.timestamp("us", tz))}), path
+        )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        assert plc.io.parquet.read_parquet(options).tbl.num_rows() == 2
 
 
 def test_file_metadata_schema_element_nesting() -> None:

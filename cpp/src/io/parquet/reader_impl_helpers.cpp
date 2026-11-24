@@ -187,27 +187,59 @@ cuda::std::optional<LogicalType> converted_to_logical_type(SchemaElement const& 
 namespace {
 
 /**
- * @brief Check if two logical types have the same time unit.
+ * @brief Check if two logical types match in type, time unit, integer bit width and signedness.
+ *
+ * ENUM and STRING are treated as equal. `isAdjustedToUTC` is not compared as the reader returns
+ * the same timestamp type either way.
  */
-bool time_units_match(LogicalType const& lhs, LogicalType const& rhs)
+[[nodiscard]] bool compare_logical_types(LogicalType const& lhs, LogicalType const& rhs)
 {
+  // A converted-only ENUM is backfilled as STRING and both are read as strings
+  auto const type = [](LogicalType const& t) {
+    return t.type == LogicalType::ENUM ? LogicalType::STRING : t.type;
+  };
   auto const unit = [](auto const& t) {
     return t.has_value() ? t->unit.type : TimeUnit::UNDEFINED;
   };
-  return unit(lhs.time_type) == unit(rhs.time_type) and
-         unit(lhs.timestamp_type) == unit(rhs.timestamp_type);
+  return type(lhs) == type(rhs) and unit(lhs.time_type) == unit(rhs.time_type) and
+         unit(lhs.timestamp_type) == unit(rhs.timestamp_type) and
+         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
 }
 
 /**
- * @brief Check if two logical types are identical in everything the reader uses.
+ * @brief Check if two schema elements have the same physical and annotated type.
+ *
+ * Both elements must either have a logical type or not. Compare logical types if they do, else
+ * fall back to (deprecated) converted types. Also compare arrow:schema types if
+ * `compare_arrow_types` is true.
  */
-bool logical_types_match(LogicalType const& lhs, LogicalType const& rhs)
+[[nodiscard]] bool compare_schema_types(SchemaElement const& lhs,
+                                        SchemaElement const& rhs,
+                                        bool compare_arrow_types)
 {
-  auto const adjusted_to_utc = [](auto const& t) { return t.has_value() and t->isAdjustedToUTC; };
-  return lhs.type == rhs.type and time_units_match(lhs, rhs) and
-         adjusted_to_utc(lhs.time_type) == adjusted_to_utc(rhs.time_type) and
-         adjusted_to_utc(lhs.timestamp_type) == adjusted_to_utc(rhs.timestamp_type) and
-         lhs.bit_width() == rhs.bit_width() and lhs.is_signed() == rhs.is_signed();
+  // Physical type, fixed length and decimal parameters must match
+  if (lhs.type != rhs.type or lhs.type_length != rhs.type_length or
+      lhs.decimal_scale != rhs.decimal_scale or lhs.decimal_precision != rhs.decimal_precision) {
+    return false;
+  }
+  // ARROW:schema types must match if both sources have one
+  if (compare_arrow_types and lhs.arrow_type != rhs.arrow_type) { return false; }
+  // If either element has a logical type, both must have one and they must match
+  if (lhs.logical_type.has_value() or rhs.logical_type.has_value()) {
+    return lhs.logical_type.has_value() and rhs.logical_type.has_value() and
+           compare_logical_types(*lhs.logical_type, *rhs.logical_type);
+  }
+  // Fall back to the deprecated converted types
+  return lhs.converted_type == rhs.converted_type;
+}
+
+/**
+ * @brief Check if a Parquet file has an arrow:schema in its key value metadata
+ */
+[[nodiscard]] bool has_arrow_schema(FileMetaData const& file_metadata)
+{
+  return std::ranges::any_of(file_metadata.key_value_metadata,
+                             [](auto const& kv) { return kv.key == ARROW_SCHEMA_KEY; });
 }
 
 }  // namespace
@@ -1097,7 +1129,22 @@ void aggregate_reader_metadata::initialize_internals(bool use_arrow_schema,
           CUDF_EXPECTS(pfm.row_groups.empty() or num_cols == pfm.row_groups.front().columns.size(),
                        "All non-empty sources must have the same number of columns");
         }
-        CUDF_EXPECTS(schema == pfm.schema and same_logical_groups(pfm),
+
+        // Compare schemas element-wise, skipping the root element's name. Sources without an
+        // arrow:schema follow the zeroth source's arrow types.
+        auto const compare_arrow_types =
+          use_arrow_schema and has_arrow_schema(first_meta) and has_arrow_schema(pfm);
+        auto const schemas_match =
+          schema.front().num_children == pfm.schema.front().num_children and
+          std::ranges::equal(schema | std::views::drop(1),
+                             pfm.schema | std::views::drop(1),
+                             [compare_arrow_types](auto const& lhs, auto const& rhs) {
+                               return lhs.name == rhs.name and
+                                      lhs.num_children == rhs.num_children and
+                                      lhs.field_id == rhs.field_id and
+                                      compare_schema_types(lhs, rhs, compare_arrow_types);
+                             });
+        CUDF_EXPECTS(schemas_match and same_logical_groups(pfm),
                      "All sources must have the same schema");
       }
 
@@ -1656,12 +1703,12 @@ std::unique_ptr<table> aggregate_reader_metadata::read_column_chunk_bounds(
     for (auto src_idx = size_type{0}; std::cmp_less(src_idx, per_file_metadata.size()); ++src_idx) {
       auto const& schema_tree = get_schema_tree(src_idx);
       auto const schema_idx   = find_leaf_schema_index(schema_tree, column_name);
-      // Sources without an arrow:schema follow the zeroth source's arrow type
-      auto const has_arrow_schema =
-        std::ranges::any_of(per_file_metadata[src_idx].key_value_metadata,
-                            [](auto const& kv) { return kv.key == ARROW_SCHEMA_KEY; });
+      // Use a source's own arrow type only if both it and the zeroth source have an arrow:schema,
+      // the same as when reading the sources, else follow the zeroth source's arrow type
       auto const source_arrow_type =
-        has_arrow_schema ? arrow_type(schema_idx, src_idx) : col_arrow_type;
+        has_arrow_schema(per_file_metadata.front()) and has_arrow_schema(per_file_metadata[src_idx])
+          ? arrow_type(schema_idx, src_idx)
+          : col_arrow_type;
       if (src_idx == 0) { col_arrow_type = source_arrow_type; }
       auto const source_dtype = statistics_dtype(schema_tree[schema_idx], source_arrow_type);
 
@@ -2336,28 +2383,18 @@ aggregate_reader_metadata::select_columns(
     };
 
   // Compares two schema elements to be equal except their number of children
-  auto const equal_to_except_num_children = [selection_mode, case_sensitive_names](
-                                              SchemaElement const& lhs, SchemaElement const& rhs) {
-    // Match by field ID only when it is the selection method, otherwise match by name. Field IDs
-    // are optional in Parquet and may not be present in all sources.
-    auto const match_schema_by_field_id = selection_mode == column_selection_mode::BY_FIELD_ID;
-    auto const identities_match =
-      (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
-        ? lhs.field_id == rhs.field_id
-        : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
-    // Writers may emit the deprecated converted type, the logical type, or both for the same
-    // column. The time units must always agree when both sources have a logical type, because
-    // the values are copied without conversion. Otherwise sources match if their converted types
-    // are equal or their logical types are identical.
-    auto const annotations_match = (lhs.logical_type.has_value() and rhs.logical_type.has_value())
-                                     ? time_units_match(*lhs.logical_type, *rhs.logical_type) and
-                                         (lhs.converted_type == rhs.converted_type or
-                                          logical_types_match(*lhs.logical_type, *rhs.logical_type))
-                                     : lhs.converted_type == rhs.converted_type;
-    return lhs.type == rhs.type and annotations_match and lhs.type_length == rhs.type_length and
-           identities_match and lhs.decimal_scale == rhs.decimal_scale and
-           lhs.decimal_precision == rhs.decimal_precision;
-  };
+  auto const equal_to_except_num_children =
+    [selection_mode, case_sensitive_names](
+      SchemaElement const& lhs, SchemaElement const& rhs, bool compare_arrow_types) {
+      // Match by field ID only when it is the selection method, otherwise match by name. Field IDs
+      // are optional in Parquet and may not be present in all sources.
+      auto const match_schema_by_field_id = selection_mode == column_selection_mode::BY_FIELD_ID;
+      auto const identities_match =
+        (match_schema_by_field_id and lhs.field_id.has_value() and rhs.field_id.has_value())
+          ? lhs.field_id == rhs.field_id
+          : are_column_paths_equal(lhs.name, rhs.name, case_sensitive_names);
+      return identities_match and compare_schema_types(lhs, rhs, compare_arrow_types);
+    };
 
   // Maps a projected column's schema_idx in the zeroth per_file_metadata (source) to the
   // corresponding schema_idx in src_idx'th per_file_metadata (destination). The projected
@@ -2373,8 +2410,12 @@ aggregate_reader_metadata::select_columns(
       // Check the schema elements to be equal except their number of children as we only care about
       // the specific column paths in the schema trees. Raise an invalid_argument error if the
       // schema elements don't match.
+      // Sources without an arrow:schema follow the zeroth source's arrow types
+      auto const compare_arrow_types = use_arrow_schema and
+                                       has_arrow_schema(per_file_metadata.front()) and
+                                       has_arrow_schema(per_file_metadata[src_idx]);
       CUDF_EXPECTS(
-        equal_to_except_num_children(src_schema_elem, dst_schema_elem),
+        equal_to_except_num_children(src_schema_elem, dst_schema_elem, compare_arrow_types),
         std::format(
           "Encountered mismatching data type or schema across the Parquet sources for column '{}'",
           src_schema_elem.name),

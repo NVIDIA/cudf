@@ -230,7 +230,7 @@ int constexpr encode_field_number(int field_number) noexcept
 /**
  * @brief Class for parsing Orc's Protocol Buffers encoded metadata
  */
-class protobuf_reader {
+class CUDF_EXPORT protobuf_reader {
  public:
   protobuf_reader(uint8_t const* base, size_t len) : m_base(base), m_cur(base), m_end(base + len) {}
 

@@ -216,6 +216,22 @@ def partitioned_delta(tmp_path: Path) -> str:
     return str(path)
 
 
+@pytest.fixture(params=["default", "hybrid"])
+def lake_engine(request: pytest.FixtureRequest, engine: pl.GPUEngine) -> pl.GPUEngine:
+    if request.param == "default":
+        return engine
+    if not is_streaming_engine(engine):
+        pytest.skip("Hybrid scan requires a streaming engine")
+    # A partition target of one byte puts each data file in its own task,
+    # which hybrid scan requires.
+    return request.getfixturevalue("streaming_engine_factory")(
+        StreamingOptions(
+            target_partition_size=1,
+            parquet_options={"use_hybrid_scan": True},
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "table",
     [
@@ -287,13 +303,13 @@ PARTITIONED_PREDICATES = [
 )
 def test_scan_lake_predicate(
     request: pytest.FixtureRequest,
-    engine: pl.GPUEngine,
+    lake_engine: pl.GPUEngine,
     table: str,
     predicate: pl.Expr,
 ) -> None:
     scan = pl.scan_iceberg if table.endswith("iceberg") else pl.scan_delta
     q = scan(request.getfixturevalue(table))
-    assert_gpu_result_equal(q.filter(predicate).sort("a"), engine=engine)
+    assert_gpu_result_equal(q.filter(predicate).sort("a"), engine=lake_engine)
 
 
 @pytest.fixture
@@ -457,13 +473,13 @@ def test_scan_lake_hive_partition_predicate_on_column_missing_from_files(
 
 @pytest.mark.parametrize("table", ["partitioned_iceberg", "partitioned_delta"])
 def test_scan_lake_partition_predicate_without_file_columns(
-    request: pytest.FixtureRequest, engine: pl.GPUEngine, table: str
+    request: pytest.FixtureRequest, lake_engine: pl.GPUEngine, table: str
 ) -> None:
     # No column is read from the files, but the filter still has to know which
     # file each row comes from to pick its partition value.
     scan = pl.scan_iceberg if table.endswith("iceberg") else pl.scan_delta
     q = scan(request.getfixturevalue(table)).filter(pl.col("part") != "w")
-    assert_gpu_result_equal(q.select("part"), engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q.select("part"), engine=lake_engine, check_row_order=False)
 
 
 @pytest.mark.parametrize(
@@ -479,7 +495,7 @@ def test_scan_lake_partition_predicate_without_file_columns(
     ids=["data", "added", "added_only", "partition_only", "mixed", "partitions"],
 )
 def test_scan_delta_evolved_partitions_predicate(
-    engine: pl.GPUEngine, tmp_path: Path, query: Any
+    lake_engine: pl.GPUEngine, tmp_path: Path, query: Any
 ) -> None:
     path = str(tmp_path / "delta")
     pl.LazyFrame({"a": [1, 2, 3, 4], "part": ["u", "u", "v", "v"]}).sink_delta(
@@ -489,7 +505,7 @@ def test_scan_delta_evolved_partitions_predicate(
         path, mode="append", delta_write_options={"schema_mode": "merge"}
     )
     assert_gpu_result_equal(
-        query(pl.scan_delta(path)), engine=engine, check_row_order=False
+        query(pl.scan_delta(path)), engine=lake_engine, check_row_order=False
     )
 
 
@@ -699,7 +715,7 @@ def test_scan_iceberg_nested_by_field_id(
 
 
 def test_scan_iceberg_nested_by_field_id_filter(
-    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog
+    lake_engine: pl.GPUEngine, iceberg_catalog: SqlCatalog
 ) -> None:
     tbl = iceberg_catalog.create_table(
         "ns.nested",
@@ -722,7 +738,7 @@ def test_scan_iceberg_nested_by_field_id_filter(
         update.rename_column("s.y", "z")
     pl.DataFrame([{"s": {"x": 3, "z": 4}}]).write_iceberg(tbl, mode="append")
     q = pl.scan_iceberg(tbl.metadata_location).filter(pl.col("s").struct.field("z") > 1)
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q, engine=lake_engine, check_row_order=False)
 
 
 @pytest.mark.parametrize(
@@ -956,12 +972,13 @@ def _scan_iceberg_files(tbl: Table, paths: list[str], **kwargs: Any) -> pl.LazyF
     [
         lambda q: q,
         lambda q: q.filter(pl.col("d") > 5),
+        lambda q: q.filter(pl.col("a") > 2),
         lambda q: q.select("d"),
     ],
-    ids=["all", "filter", "select"],
+    ids=["all", "filter", "filter_pruned", "select"],
 )
 def test_scan_iceberg_initial_defaults(
-    engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, query: Any
+    lake_engine: pl.GPUEngine, iceberg_catalog: SqlCatalog, query: Any
 ) -> None:
     tbl = iceberg_catalog.create_table(
         "ns.defaults",
@@ -976,7 +993,7 @@ def test_scan_iceberg_initial_defaults(
         [task.file.file_path for task in tbl.scan().plan_files()],
         _default_values=("iceberg", ({}, {2: pl.Series([7], dtype=pl.Int64)})),
     )
-    assert_gpu_result_equal(query(q), engine=engine, check_row_order=False)
+    assert_gpu_result_equal(query(q), engine=lake_engine, check_row_order=False)
 
 
 @pytest.mark.skipif(
@@ -1207,9 +1224,9 @@ def deleted_rows_scan(
     ids=["all", "row_index", "count", "filter", "filter_then_head"],
 )
 def test_scan_lake_deletions(
-    engine: pl.GPUEngine, deleted_rows_scan: pl.LazyFrame, query: Any
+    lake_engine: pl.GPUEngine, deleted_rows_scan: pl.LazyFrame, query: Any
 ) -> None:
-    assert_gpu_result_equal(query(deleted_rows_scan), engine=engine)
+    assert_gpu_result_equal(query(deleted_rows_scan), engine=lake_engine)
 
 
 @pytest.mark.parametrize(

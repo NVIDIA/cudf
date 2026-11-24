@@ -13,7 +13,6 @@
 #include <cuda/std/algorithm>  // UDFs may use any algorithm without including it
 #include <cuda/std/cstddef>
 #include <cuda/std/limits>
-#include <cuda/std/tuple>
 #include <cuda/std/type_traits>
 
 #include <jit/column_accessor.cuh>
@@ -45,9 +44,7 @@ namespace cudf::join::jit {
 constexpr cudf::size_type JoinNoMatch = cuda::std::numeric_limits<cudf::size_type>::min();
 
 template <bool has_user_data, typename... T>
-__device__ errc execute_predicate_op(void* user_data,
-                                     size_type row_index,
-                                     cuda::std::tuple<T...> args)
+__device__ errc execute_predicate_op(void* user_data, size_type row_index, T... args)
 {
   auto func = [&](auto... a) {
     if constexpr (!cuda::std::is_void_v<decltype(GENERIC_JOIN_FILTER_OP(a...))>) {
@@ -59,10 +56,9 @@ __device__ errc execute_predicate_op(void* user_data,
   };
 
   if constexpr (has_user_data) {
-    return cuda::std::apply(func,
-                            cuda::std::tuple_cat(cuda::std::tuple{user_data, row_index}, args));
+    return func(user_data, row_index, args...);
   } else {
-    return cuda::std::apply(func, args);
+    return func(args...);
   }
 }
 
@@ -106,12 +102,13 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
     if constexpr (is_null_aware) {
       // Null-aware path: pass optional<T> inputs, get optional<bool> result
       cuda::std::optional<OutputType> result{false};
-      auto inputs    = Accessors::map([&]<typename... A>() {
-        return cuda::std::tuple{
-          A::nullable_element(columns, input_row<A>(left_indices, right_indices, i))...};
+      auto row_error       = Accessors::map([&]<typename... A>() {
+        return execute_predicate_op<has_user_data>(
+          user_data,
+          i,
+          &result,
+          A::nullable_element(columns, input_row<A>(left_indices, right_indices, i))...);
       });
-      auto row_error = execute_predicate_op<has_user_data>(
-        user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
       thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result.has_value() && result.value();
     } else {
@@ -123,13 +120,14 @@ __device__ void filter_join_kernel(cudf::size_type num_rows,
         predicate_results[i] = false;
         continue;
       }
-      OutputType result = false;
-      auto inputs       = Accessors::map([&]<typename... A>() {
-        return cuda::std::tuple{
-          A::element(columns, input_row<A>(left_indices, right_indices, i))...};
+      OutputType result    = false;
+      auto row_error       = Accessors::map([&]<typename... A>() {
+        return execute_predicate_op<has_user_data>(
+          user_data,
+          i,
+          &result,
+          A::element(columns, input_row<A>(left_indices, right_indices, i))...);
       });
-      auto row_error    = execute_predicate_op<has_user_data>(
-        user_data, i, cuda::std::tuple_cat(cuda::std::tuple{&result}, inputs));
       thread_error         = cuda::std::max(thread_error, row_error);
       predicate_results[i] = result;
     }

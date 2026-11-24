@@ -351,13 +351,15 @@ async def _collect_small_side_for_broadcast(
 
     dfs: list[DataFrame] = []
     if need_allgather:
-        allgather = AllGatherManager(context, comm, collective_id)
-        with allgather.inserting() as inserter:
-            for s_id in range(len(chunks)):
-                await inserter.insert(s_id, chunks.pop(0))
         stream = ir_context.get_cuda_stream()
-        # TODO: if we can't concatenate and we needn't then this spuriously fails.
-        gathered = await allgather.extract_concatenated(stream, ir_context=ir_context)
+        async with AllGatherManager(context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                for s_id in range(len(chunks)):
+                    await inserter.insert(s_id, chunks.pop(0))
+            # TODO: if we can't concatenate and we needn't then this spuriously fails.
+            gathered = await allgather.extract_concatenated(
+                stream, ir_context=ir_context
+            )
         # When every rank inserted zero chunks, the AllGather has no schema
         # to infer and returns a 0 column table. Substitute a properly typed
         # empty table for the small side so downstream joins still match the
@@ -1507,8 +1509,7 @@ async def collect_samples(
     comm: Communicator,
     join_state: JoinPlanningState,
     inputs: tuple[JoinInput, ...],
-    sample_chunk_count: int,
-    target_partition_size: int,
+    sample_byte_count: int,
     collective_id: int,
 ) -> None:
     """Sample inputs and attach aggregate estimates to their planning state."""
@@ -1546,8 +1547,7 @@ async def collect_samples(
             ChunkSampler(
                 context=context,
                 ch_in=input_.channel,
-                max_chunks=sample_chunk_count,
-                max_bytes=target_partition_size,
+                max_bytes=sample_byte_count,
                 ch_in_chunk_count=input_.metadata.local_count,
                 cardinality_estimator=cardinality_estimator,
                 cardinality_columns=cardinality_columns,
@@ -1616,8 +1616,7 @@ async def resolve_prefilters(
             if isinstance(candidate.spec.domain, ExternalDomain)
             and candidate.decision is None
         ),
-        executor.dynamic_planning.sample_chunk_count,
-        executor.target_partition_size,
+        executor.dynamic_planning.sample_byte_count,
         collective_id,
     )
     choose_prefilters(
@@ -1800,8 +1799,7 @@ async def choose_strategy(
             comm,
             join_state,
             (join_state.left, join_state.right),
-            executor.dynamic_planning.sample_chunk_count,
-            executor.target_partition_size,
+            executor.dynamic_planning.sample_byte_count,
             collective_ids.size_estimate,
         )
 

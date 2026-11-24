@@ -104,6 +104,11 @@ struct row_group_stats_caster : public stats_caster_base {
           }
           return 0;
         }();
+        // Whether values may be truncated to T, e.g. decimals read with a narrower decimal_width
+        auto const& schema = source_metadata.schema[mapped_schema_idx];
+        auto const is_narrowing_column =
+          cuda::std::signed_integral<T> and
+          is_column_wider_than(schema.type, schema.type_length, sizeof(T));
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(
@@ -135,12 +140,18 @@ struct row_group_stats_caster : public stats_caster_base {
                                  std::distance(row_group.columns.begin(), col)) or
               int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
             if (ignore_int96_min_max) {
-              min.set_index(stats_idx, std::nullopt, {});
-              max.set_index(stats_idx, std::nullopt, {});
+              host_column<T>::set_min_max(
+                min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             } else {
               // translate binary data to Type then to <T>
-              min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
-              max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
+              host_column<T>::set_min_max(min,
+                                          max,
+                                          stats_idx,
+                                          *min_value,
+                                          *max_value,
+                                          is_narrowing_column,
+                                          colchunk.meta_data.type,
+                                          ts_scale);
             }
             // Check the nullability and NaN presence of this column chunk
             if (with_null_and_nan_stats) {
@@ -150,7 +161,7 @@ struct row_group_stats_caster : public stats_caster_base {
                 if (null_count == 0) {
                   is_null->val[stats_idx] = false;
                 } else if (null_count < colchunk.meta_data.num_values) {
-                  is_null->set_index(stats_idx, std::nullopt, {});
+                  is_null->set_value(stats_idx, std::nullopt);
                 } else if (null_count == colchunk.meta_data.num_values) {
                   is_null->val[stats_idx] = true;
                 } else {
@@ -161,15 +172,14 @@ struct row_group_stats_caster : public stats_caster_base {
                 // value array is allocated uninitialized and the null mask starts out all valid, so
                 // this entry has to be marked null; leaving it alone would let an uninitialized
                 // byte be read as an answer.
-                is_null->set_index(stats_idx, std::nullopt, {});
+                is_null->set_value(stats_idx, std::nullopt);
               }
             }
           } else {
             // Mark it null if the column chunk is absent from this row group.
-            min.set_index(stats_idx, std::nullopt, {});
-            max.set_index(stats_idx, std::nullopt, {});
+            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             if (with_null_and_nan_stats) {
-              is_null->set_index(stats_idx, std::nullopt, {});
+              is_null->set_value(stats_idx, std::nullopt);
               has_nan->set_value(stats_idx, std::nullopt);
             }
           }

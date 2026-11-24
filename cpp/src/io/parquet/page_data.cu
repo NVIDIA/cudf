@@ -132,7 +132,6 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       gpuDecodeLevels<lvl_buf_size, level_t>(s, sb, target_pos, rep, def, warp);
     } else {
       // WARP1..WARP3: Decode values
-      Type const dtype = s->setup.col.physical_type;
       src_pos += block.thread_rank() - warp.size();
 
       // The position in the output column/buffer
@@ -172,28 +171,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
         // Note: non-decimal FIXED_LEN_BYTE_ARRAY will be handled in the string reader
         if (is_decimal) {
-          switch (dtype) {
-            case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
-            case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
-            case Type::FIXED_LEN_BYTE_ARRAY:
-              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-                *reinterpret_cast<int32_t*>(dst) =
-                  decode_big_endian_decimal<int32_t>(src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-                *reinterpret_cast<int64_t*>(dst) =
-                  decode_big_endian_decimal<int64_t>(src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-                *reinterpret_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(
-                  src, s->output_cvt.dtype_len_in, num_values);
-                break;
-              }
-              // unsupported decimal precision
-              [[fallthrough]];
-
-            default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
-          }
+          read_byte_stream_split_decimal(s, src, num_values, dst);
         } else if (dtype_len == 8) {
           if (s->output_cvt.dtype_len_in == 4) {
             // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
@@ -409,40 +387,18 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
 
         if (dtype == Type::BYTE_ARRAY) {
           if (is_decimal) {
-            auto const [ptr, len]        = gpuGetStringData(s, sb, val_src_pos);
-            auto const bytes             = reinterpret_cast<uint8_t const*>(ptr);
-            auto const decimal_precision = s->setup.col.logical_type->precision();
-            if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-              *static_cast<int32_t*>(dst) = decode_big_endian_decimal<int32_t>(bytes, len);
-            } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-              *static_cast<int64_t*>(dst) = decode_big_endian_decimal<int64_t>(bytes, len);
-            } else {
-              *static_cast<__int128_t*>(dst) = decode_big_endian_decimal<__int128_t>(bytes, len);
-            }
+            auto const str = gpuGetStringData(s, sb, val_src_pos);
+            store_decimal(dst, dtype_len, [&]<typename T>() {
+              return decode_big_endian_decimal<T>(reinterpret_cast<uint8_t const*>(str.first),
+                                                  str.second);
+            });
           } else {
             gpuOutputString(s, sb, val_src_pos, dst);
           }
         } else if (dtype == Type::BOOLEAN) {
           read_boolean(sb, val_src_pos, static_cast<uint8_t*>(dst));
         } else if (is_decimal) {
-          switch (dtype) {
-            case Type::INT32:
-              read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint32_t*>(dst));
-              break;
-            case Type::INT64:
-              read_fixed_width_value_fast(s, sb, val_src_pos, static_cast<uint2*>(dst));
-              break;
-            default:
-              if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-                read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int32_t*>(dst));
-              } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-                read_fixed_width_byte_array_as_int(s, sb, val_src_pos, static_cast<int64_t*>(dst));
-              } else {
-                read_fixed_width_byte_array_as_int(
-                  s, sb, val_src_pos, static_cast<__int128_t*>(dst));
-              }
-              break;
-          }
+          read_fixed_width_decimal(s, sb, val_src_pos, dst);
         } else if (dtype == Type::FIXED_LEN_BYTE_ARRAY) {
           gpuOutputString(s, sb, val_src_pos, dst);
         } else if (dtype == Type::INT96) {

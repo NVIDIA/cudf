@@ -101,8 +101,8 @@ template <typename T>
 struct minmax_binary_op {
   __device__ minmax_pair<T> operator()(minmax_pair<T> const& lhs, minmax_pair<T> const& rhs) const
   {
-    return minmax_pair<T>{cuda::std::min(lhs.min_val, rhs.min_val),
-                          cuda::std::max(lhs.max_val, rhs.max_val)};
+    return minmax_pair<T>{cudf::DeviceMin{}(lhs.min_val, rhs.min_val),
+                          cudf::DeviceMax{}(lhs.max_val, rhs.max_val)};
   }
 };
 

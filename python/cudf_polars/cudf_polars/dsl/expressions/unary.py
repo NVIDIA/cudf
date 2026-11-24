@@ -210,6 +210,34 @@ def _check_negate_supported(dtype: DataType) -> None:
         )
 
 
+def _extremum_input(column: Column, stream: Stream) -> Column:
+    """
+    Prepare the input of a libcudf ARGMIN or ARGMAX to select the row Polars selects.
+
+    Polars ignores NaN unless every non-null value is NaN, and treats -0.0 and +0.0 as
+    equal, selecting the first of tied values. libcudf ARGMIN and ARGMAX select the
+    first NaN, and order -0.0 before +0.0. For floating-point input, mask the NaNs out
+    and add +0.0, which turns -0.0 into +0.0 and keeps nulls and row positions. If
+    every non-null value is NaN, return the input as is, so libcudf selects the first
+    NaN.
+    """
+    if not plc.traits.is_floating_point(column.dtype.plc_type):
+        return column
+    masked = column.mask_nans(stream=stream)
+    if masked.null_count == masked.size:
+        return column
+    return Column(
+        plc.binaryop.binary_operation(
+            masked.obj,
+            plc.Scalar.from_py(0.0, column.dtype.plc_type, stream=stream),
+            plc.binaryop.BinaryOperator.ADD,
+            column.dtype.plc_type,
+            stream=stream,
+        ),
+        dtype=column.dtype,
+    )
+
+
 class UnaryFunction(Expr):
     """Class representing unary functions of an expression."""
 
@@ -744,17 +772,14 @@ class UnaryFunction(Expr):
                 if self.name == "arg_max"
                 else plc.aggregation.argmin()
             )
+            index = plc.reduce.reduce(
+                _extremum_input(column, df.stream).obj,
+                arg_agg,
+                plc.DataType(plc.TypeId.INT32),
+                stream=df.stream,
+            )
             return Column(
-                plc.Column.from_scalar(
-                    plc.reduce.reduce(
-                        column.obj,
-                        arg_agg,
-                        plc.DataType(plc.TypeId.INT32),
-                        stream=df.stream,
-                    ),
-                    1,
-                    stream=df.stream,
-                ),
+                plc.Column.from_scalar(index, 1, stream=df.stream),
                 dtype=DataType(pl.Int32()),
             ).astype(self.dtype, stream=df.stream)
         if self.name == "arg_sort":
@@ -1055,28 +1080,7 @@ class UnaryFunction(Expr):
                 # A scalar operand (e.g. a literal or an aggregation) applies
                 # to every row of the other operand.
                 val, by = broadcast(val, by, stream=df.stream)
-            unmasked = by
-            by = by.mask_nans(stream=df.stream)
-            agg = (
-                plc.aggregation.argmax()
-                if self.name == "max_by"
-                else plc.aggregation.argmin()
-            )
-            index = plc.reduce.reduce(
-                by.obj, agg, plc.types.SIZE_TYPE, stream=df.stream
-            )
-            if not index.is_valid(stream=df.stream):
-                if unmasked.null_count != unmasked.size:
-                    valid = plc.unary.is_valid(unmasked.obj, stream=df.stream)
-                    filtered = plc.stream_compaction.apply_retention_mask(
-                        plc.Table([val.obj]), valid, stream=df.stream
-                    )
-                    return Column(
-                        plc.copying.slice(
-                            filtered.columns()[0], [0, 1], stream=df.stream
-                        )[0],
-                        dtype=self.dtype,
-                    )
+            if by.null_count == by.size:
                 return Column(
                     plc.Column.from_scalar(
                         plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
@@ -1087,6 +1091,17 @@ class UnaryFunction(Expr):
                 )
             if val.is_scalar:
                 return val
+            agg = (
+                plc.aggregation.argmax()
+                if self.name == "max_by"
+                else plc.aggregation.argmin()
+            )
+            index = plc.reduce.reduce(
+                _extremum_input(by, df.stream).obj,
+                agg,
+                plc.types.SIZE_TYPE,
+                stream=df.stream,
+            )
             return Column(
                 plc.copying.gather(
                     plc.Table([val.obj]),
@@ -1616,17 +1631,20 @@ class UnaryFunction(Expr):
                 replacement = plc.replace.ReplacePolicy.PRECEDING
             elif strategy == "backward":
                 replacement = plc.replace.ReplacePolicy.FOLLOWING
-            elif strategy == "min":
+            elif strategy in {"min", "max"}:
+                # Polars ignores NaN here unless every non-null value is NaN, while
+                # libcudf min/max propagate NaN, so mask the NaNs out first. If every
+                # non-null value is NaN, reduce the input as is to get the NaN.
+                source = column
+                if plc.traits.is_floating_point(column.dtype.plc_type):
+                    masked = column.mask_nans(stream=df.stream)
+                    if masked.null_count != masked.size:
+                        source = masked
                 replacement = plc.reduce.reduce(
-                    column.obj,
-                    plc.aggregation.min(),
-                    column.dtype.plc_type,
-                    stream=df.stream,
-                )
-            elif strategy == "max":
-                replacement = plc.reduce.reduce(
-                    column.obj,
-                    plc.aggregation.max(),
+                    source.obj,
+                    plc.aggregation.min()
+                    if strategy == "min"
+                    else plc.aggregation.max(),
                     column.dtype.plc_type,
                     stream=df.stream,
                 )

@@ -6,11 +6,14 @@
 #pragma once
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <type_traits>
 
@@ -58,6 +61,16 @@ struct element_argminmax_fn {
       auto const comparison = lhs.compare(rhs);
       if (comparison == 0) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (comparison < 0) == arg_min ? lhs_idx : rhs_idx;
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      // Select the row holding the DeviceMin/DeviceMax result: the first NaN row for both argmin
+      // and argmax, with -0 less than +0 (see ieee_extremum_precedes).
+      auto const precedes = [&](T a, T b) {
+        return arg_min ? cudf::detail::ieee_extremum_precedes<true>(a, b)
+                       : cudf::detail::ieee_extremum_precedes<false>(a, b);
+      };
+      if (precedes(lhs, rhs)) { return lhs_idx; }
+      if (precedes(rhs, lhs)) { return rhs_idx; }
+      return lhs_idx < rhs_idx ? lhs_idx : rhs_idx;
     } else {
       if (lhs == rhs) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (lhs < rhs) == arg_min ? lhs_idx : rhs_idx;

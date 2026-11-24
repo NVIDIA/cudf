@@ -19,6 +19,7 @@ public final class ParquetWriterOptions extends CompressionMetadataWriterOptions
   private long rowGroupSizeBytes;
   private long maxDictionarySize;
   private DictionaryPolicy dictionaryPolicy;
+  private int statisticsTruncateLength;
 
   private ParquetWriterOptions(Builder builder) {
     super(builder);
@@ -27,6 +28,7 @@ public final class ParquetWriterOptions extends CompressionMetadataWriterOptions
     this.maxDictionarySize = builder.maxDictionarySize;
     this.dictionaryPolicy = builder.dictionaryPolicy;
     this.statsGranularity = builder.statsGranularity;
+    this.statisticsTruncateLength = builder.statisticsTruncateLength;
   }
 
   public enum StatisticsFrequency {
@@ -110,6 +112,14 @@ public final class ParquetWriterOptions extends CompressionMetadataWriterOptions
     return statsGranularity;
   }
 
+  /**
+   * @return the maximum length, in bytes, of string and binary min/max statistics. 0 means the
+   * statistics are not truncated.
+   */
+  public int getStatisticsTruncateLength() {
+    return statisticsTruncateLength;
+  }
+
   public static class Builder extends CompressionMetadataWriterOptions.Builder
         <Builder, ParquetWriterOptions> {
     private int rowGroupSizeRows = 1000000; //Max of 1 million rows per row group
@@ -119,6 +129,8 @@ public final class ParquetWriterOptions extends CompressionMetadataWriterOptions
     // Matches the cudf::io::parquet_writer_options default.
     private DictionaryPolicy dictionaryPolicy = DictionaryPolicy.ADAPTIVE;
     private StatisticsFrequency statsGranularity = StatisticsFrequency.ROWGROUP;
+    // Matches cudf::io::default_statistics_truncate_length (4096 bytes).
+    private int statisticsTruncateLength = 4096;
 
     public Builder() {
       super();
@@ -157,6 +169,19 @@ public final class ParquetWriterOptions extends CompressionMetadataWriterOptions
 
     public Builder withStatisticsFrequency(StatisticsFrequency statsGranularity) {
       this.statsGranularity = statsGranularity;
+      return this;
+    }
+
+    /**
+     * Sets the maximum size in bytes of string and binary min/max statistics values. 0 disables
+     * truncation. Must not be negative.
+     */
+    public Builder withStatisticsTruncateLength(int statisticsTruncateLength) {
+      if (statisticsTruncateLength < 0) {
+        throw new IllegalArgumentException(
+            "statisticsTruncateLength must not be negative, got " + statisticsTruncateLength);
+      }
+      this.statisticsTruncateLength = statisticsTruncateLength;
       return this;
     }
 

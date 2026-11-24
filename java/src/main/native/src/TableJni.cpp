@@ -2335,6 +2335,7 @@ Java_ai_rapids_cudf_ParquetTableWriter_writeParquetBufferBegin(JNIEnv* env,
                                                                jlong j_max_dictionary_size,
                                                                jint j_dictionary_policy,
                                                                jint j_stats_freq,
+                                                               jint j_stats_truncate_length,
                                                                jbooleanArray j_isInt96,
                                                                jintArray j_precisions,
                                                                jbooleanArray j_is_map,
@@ -2395,6 +2396,7 @@ Java_ai_rapids_cudf_ParquetTableWriter_writeParquetBufferBegin(JNIEnv* env,
         .max_dictionary_size(j_max_dictionary_size)
         .dictionary_policy(static_cast<cudf::io::dictionary_policy>(j_dictionary_policy))
         .stats_level(static_cast<statistics_freq>(j_stats_freq))
+        .statistics_truncate_length(j_stats_truncate_length)
         .key_value_metadata({kv_metadata})
         .compression_statistics(stats)
         .build();
@@ -2421,6 +2423,7 @@ Java_ai_rapids_cudf_ParquetTableWriter_writeParquetFileBegin(JNIEnv* env,
                                                              jlong j_max_dictionary_size,
                                                              jint j_dictionary_policy,
                                                              jint j_stats_freq,
+                                                             jint j_stats_truncate_length,
                                                              jbooleanArray j_isInt96,
                                                              jintArray j_precisions,
                                                              jbooleanArray j_is_map,
@@ -2479,6 +2482,7 @@ Java_ai_rapids_cudf_ParquetTableWriter_writeParquetFileBegin(JNIEnv* env,
         .max_dictionary_size(j_max_dictionary_size)
         .dictionary_policy(static_cast<cudf::io::dictionary_policy>(j_dictionary_policy))
         .stats_level(static_cast<statistics_freq>(j_stats_freq))
+        .statistics_truncate_length(j_stats_truncate_length)
         .key_value_metadata({kv_metadata})
         .compression_statistics(stats)
         .build();

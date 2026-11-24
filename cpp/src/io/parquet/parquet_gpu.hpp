@@ -1353,6 +1353,8 @@ void InitFragmentStatistics(device_span<statistics_group> groups,
  * @param[in] write_v2_headers True if V2 page headers should be written
  * @param[in] write_page_stats True if statistics are to be written to the data page headers. When
  * false, no space is reserved for them in the page headers
+ * @param[in] stats_len_limit Max length of the string/binary min/max values encoded in any
+ * statistics, used to bound the space reserved for them. 0 if unbounded
  * @param[in] page_grstats Setup for page-level stats
  * @param[in] chunk_grstats Setup for chunk-level stats
  * @param[out] error_code Error code for kernel failures
@@ -1369,6 +1371,7 @@ void InitEncoderPages(cudf::detail::device_2dspan<EncColumnChunk> chunks,
                       uint32_t page_align,
                       bool write_v2_headers,
                       bool write_page_stats,
+                      int32_t stats_len_limit,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
                       kernel_error::pointer error_code,
@@ -1414,12 +1417,14 @@ void decide_compression(device_span<EncColumnChunk> chunks,
  * @param[in] comp_res Compressor status
  * @param[in] page_stats Optional page-level statistics to be included in page header
  * @param[in] chunk_stats Optional chunk-level statistics to be encoded
+ * @param[in] statistics_truncate_length Max length of min/max values in chunk and page statistics
  * @param[in] stream CUDA stream to use
  */
 void EncodePageHeaders(device_span<EncPage> pages,
                        device_span<cudf::io::detail::codec_exec_result const> comp_res,
                        device_span<statistics_chunk const> page_stats,
                        statistics_chunk const* chunk_stats,
+                       int32_t statistics_truncate_length,
                        cuda::stream_ref stream);
 
 /**
@@ -1436,11 +1441,14 @@ void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream);
  * @param[in,out] chunks Column chunks
  * @param[in] column_stats Page-level statistics to be encoded
  * @param[in] column_index_truncate_length Max length of min/max values
+ * @param[in] stats_len_limit Max length of the min/max values reserved for in any statistics, used
+ * to write a max in full if it cannot be truncated to a valid upper bound
  * @param[in] stream CUDA stream to use
  */
 void EncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
+                         int32_t stats_len_limit,
                          cuda::stream_ref stream);
 
 }  // namespace cudf::io::parquet::detail

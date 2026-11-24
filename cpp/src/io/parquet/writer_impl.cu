@@ -1187,6 +1187,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                      size_type max_page_size_rows,
                      bool write_v2_headers,
                      bool write_page_stats,
+                     int32_t stats_len_limit,
                      compression_type compression,
                      cuda::stream_ref stream)
 {
@@ -1207,6 +1208,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
                    write_page_stats,
+                   stats_len_limit,
                    nullptr,
                    nullptr,
                    error_code.data(),
@@ -1240,6 +1242,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
                    write_page_stats,
+                   stats_len_limit,
                    nullptr,
                    nullptr,
                    error_code.data(),
@@ -1272,6 +1275,7 @@ auto init_page_sizes(hostdevice_2dvector<EncColumnChunk>& chunks,
                    compress_required_chunk_alignment(compression),
                    write_v2_headers,
                    write_page_stats,
+                   stats_len_limit,
                    nullptr,
                    nullptr,
                    error_code.data(),
@@ -1478,6 +1482,7 @@ build_chunk_dictionaries(hostdevice_2dvector<EncColumnChunk>& chunks,
  * @param max_page_size_rows Maximum page size, in rows
  * @param write_v2_headers True if version 2 page headers are to be written
  * @param write_page_stats True if statistics are to be written to the data page headers
+ * @param stats_len_limit Max length of the string/binary min/max values encoded in any statistics
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
 void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
@@ -1494,6 +1499,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                         size_type max_page_size_rows,
                         bool write_v2_headers,
                         bool write_page_stats,
+                        int32_t stats_len_limit,
                         cuda::stream_ref stream)
 {
   cuda::device_buffer<statistics_merge_group> page_stats_mrg(
@@ -1511,6 +1517,7 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                    alignment,
                    write_v2_headers,
                    write_page_stats,
+                   stats_len_limit,
                    (num_stats_bfr) ? page_stats_mrg.data() : nullptr,
                    (num_stats_bfr > num_pages) ? page_stats_mrg.data() + num_pages : nullptr,
                    error_code.data(),
@@ -1550,6 +1557,10 @@ void init_encoder_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
  * @param compression compression format
  * @param column_index_truncate_length maximum length of min or max values in column index, in
  * bytes
+ * @param statistics_truncate_length maximum length of min or max values in chunk and page
+ * statistics, in bytes
+ * @param stats_len_limit Max length of the string/binary min/max values reserved for in any
+ * statistics
  * @param write_v2_headers True if V2 page headers should be written
  * @param page_level_compression True if V2 pages can make per-page compression decisions
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -1562,6 +1573,8 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
                   std::optional<writer_compression_statistics>& comp_stats,
                   compression_type compression,
                   int32_t column_index_truncate_length,
+                  int32_t statistics_truncate_length,
+                  int32_t stats_len_limit,
                   bool write_v2_headers,
                   bool page_level_compression,
                   cuda::stream_ref stream)
@@ -1593,15 +1606,18 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
 
   auto d_chunks = chunks.device_view();
   decide_compression(d_chunks.flat_view(), page_level_compression, stream);
-  EncodePageHeaders(pages, comp_res, pages_stats, chunk_stats, stream);
+  EncodePageHeaders(pages, comp_res, pages_stats, chunk_stats, statistics_truncate_length, stream);
   GatherPages(d_chunks.flat_view(), stream);
 
   // By now, the var_bytes has been calculated in InitPages, and the histograms in EncodePages.
   // EncodeColumnIndexes can encode the histograms in the ColumnIndex, and also sum up var_bytes
   // and the histograms for inclusion in the chunk's SizeStats.
   if (column_stats != nullptr) {
-    EncodeColumnIndexes(
-      d_chunks.flat_view(), {column_stats, pages.size()}, column_index_truncate_length, stream);
+    EncodeColumnIndexes(d_chunks.flat_view(),
+                        {column_stats, pages.size()},
+                        column_index_truncate_length,
+                        stats_len_limit,
+                        stream);
   }
 
   chunks.device_to_host_async(stream);
@@ -1688,6 +1704,8 @@ size_t column_index_buffer_size(EncColumnChunk* ck,
  * @param max_row_group_rows Maximum row group size, in rows
  * @param max_page_size_rows Maximum page size, in rows
  * @param column_index_truncate_length maximum length of min or max values in column index, in bytes
+ * @param statistics_truncate_length maximum length of min or max values in chunk and page
+ * statistics, in bytes
  * @param stats_granularity Level of statistics requested in output file
  * @param compression Compression format
  * @param collect_compression_statistics Flag to indicate if compression statistics should be
@@ -1717,6 +1735,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                    size_type max_row_group_rows,
                                    size_type max_page_size_rows,
                                    int32_t column_index_truncate_length,
+                                   int32_t statistics_truncate_length,
                                    statistics_freq stats_granularity,
                                    compression_type compression,
                                    bool collect_compression_statistics,
@@ -2134,6 +2153,17 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
     }
   }
 
+  // Max length of the string/binary min/max values encoded in any statistics. The column index
+  // shares the space reserved for the chunk statistics, so bound both if it is written
+  auto const stats_len_limit = [&] {
+    if (stats_granularity != statistics_freq::STATISTICS_COLUMN) {
+      return statistics_truncate_length;
+    }
+    return (statistics_truncate_length == 0 or column_index_truncate_length == 0)
+             ? 0
+             : std::max(statistics_truncate_length, column_index_truncate_length);
+  }();
+
   // Build chunk dictionaries and count pages. Sends chunks to device.
   auto comp_page_sizes = init_page_sizes(chunks,
                                          d_col_desc,
@@ -2142,6 +2172,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                                          max_page_size_rows,
                                          write_v2_headers,
                                          stats_granularity == statistics_freq::STATISTICS_PAGE,
+                                         stats_len_limit,
                                          compression,
                                          stream);
 
@@ -2274,6 +2305,7 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
                        max_page_size_rows,
                        write_v2_headers,
                        stats_granularity == statistics_freq::STATISTICS_PAGE,
+                       stats_len_limit,
                        stream);
 
     // Now that page boundaries are finalized and dictionary indices have been materialized, compute
@@ -2300,6 +2332,8 @@ auto convert_table_to_parquet_data(table_input_metadata& table_meta,
       comp_stats,
       compression,
       column_index_truncate_length,
+      statistics_truncate_length,
+      stats_len_limit,
       write_v2_headers,
       page_level_compression,
       stream);
@@ -2467,6 +2501,7 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
     _write_arrow_schema(options.is_enabled_write_arrow_schema()),
     _sorting_columns(options.get_sorting_columns()),
     _column_index_truncate_length(options.get_column_index_truncate_length()),
+    _statistics_truncate_length(options.get_statistics_truncate_length()),
     _kv_meta(options.get_key_value_metadata()),
     _single_write_mode(mode),
     _out_sink(std::move(sinks)),
@@ -2508,6 +2543,7 @@ writer::impl::impl(std::vector<std::unique_ptr<data_sink>> sinks,
     _write_arrow_schema(options.is_enabled_write_arrow_schema()),
     _sorting_columns(options.get_sorting_columns()),
     _column_index_truncate_length(options.get_column_index_truncate_length()),
+    _statistics_truncate_length(options.get_statistics_truncate_length()),
     _kv_meta(options.get_key_value_metadata()),
     _single_write_mode(mode),
     _out_sink(std::move(sinks)),
@@ -2586,6 +2622,7 @@ void writer::impl::write(table_view const& input, std::vector<partition_info> co
                                   _max_row_group_rows,
                                   _max_page_size_rows,
                                   _column_index_truncate_length,
+                                  _statistics_truncate_length,
                                   _stats_granularity,
                                   _compression,
                                   _compression_statistics != nullptr,

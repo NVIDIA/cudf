@@ -612,7 +612,7 @@ def test_cpu_error_notes_device_oom(in_memory_engine, monkeypatch, mode):
 
 
 @pytest.mark.parametrize("mode", ["never", "on_oom"])
-def test_device_oom(mode):
+def test_device_oom(cpu_calls, mode):
     # The engine reads its memory resource from ``memory_resource_config`` at
     # construction, so build one with a 39 MiB device memory limit. Sorting
     # 2**20 rows of two int64 columns (16 MiB) then runs out of device memory
@@ -643,5 +643,9 @@ def test_device_oom(mode):
         if mode == "never":
             with pytest.raises(MemoryError):
                 q.collect(engine=engine)
+            assert not cpu_calls
         else:
             assert_frame_equal(q.collect(engine=engine), q.collect())
+            # Fails if the limit no longer makes the sort run out of device
+            # memory on the GPU.
+            assert cpu_calls["Sort"] > 0

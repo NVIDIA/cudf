@@ -8,7 +8,10 @@
 
 #include <cudf/lists/list_view.hpp>
 #include <cudf/structs/struct_view.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/chrono>
 
 #include <gtest/gtest.h>
 
@@ -180,5 +183,17 @@ TEST_F(TraitsTest, CvQualifiedBoolIsNotAnInteger)
   EXPECT_FALSE(cudf::is_numeric_not_bool<bool volatile>());
   EXPECT_TRUE(cudf::is_boolean<bool volatile>());
 }
+
+namespace cudf::test {
+// Concept names such as `duration` must not hide names that cudf code brings in with
+// `using namespace cuda::std::chrono`.
+template <typename PeriodT>
+constexpr int64_t unqualified_chrono_duration_count(int64_t v)
+{
+  using namespace cuda::std::chrono;
+  return duration<int64_t, PeriodT>{v}.count();
+}
+static_assert(unqualified_chrono_duration_count<cuda::std::milli>(42) == 42);
+}  // namespace cudf::test
 
 CUDF_TEST_PROGRAM_MAIN()

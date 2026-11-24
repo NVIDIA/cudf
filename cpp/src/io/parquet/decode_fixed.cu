@@ -12,6 +12,8 @@
 #include <cudf/detail/utilities/cuda.cuh>
 
 #include <cooperative_groups.h>
+#include <cuda/cmath>
+#include <cuda/std/algorithm.max.h>
 #include <cuda/std/bit>
 #include <cuda/std/iterator>
 
@@ -192,23 +194,7 @@ __device__ void decode_fixed_width_values(auto* s, state_buf* const sb, int star
 
     if (s->setup.col.logical_type.has_value() &&
         s->setup.col.logical_type->type == LogicalType::DECIMAL) {
-      switch (dtype) {
-        case Type::INT32:
-          read_fixed_width_value_fast(s, sb, src_pos, static_cast<uint32_t*>(dst));
-          break;
-        case Type::INT64:
-          read_fixed_width_value_fast(s, sb, src_pos, static_cast<uint2*>(dst));
-          break;
-        default:
-          if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-            read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<int32_t*>(dst));
-          } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-            read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<int64_t*>(dst));
-          } else {
-            read_fixed_width_byte_array_as_int(s, sb, src_pos, static_cast<__int128_t*>(dst));
-          }
-          break;
-      }
+      read_fixed_width_decimal(s, sb, src_pos, dst);
     } else if (dtype == Type::BOOLEAN) {
       read_boolean(sb, src_pos, static_cast<uint8_t*>(dst));
     } else if (dtype == Type::INT96) {
@@ -249,7 +235,6 @@ __device__ inline void decode_fixed_width_split_values(
   int const leaf_level_index = s->setup.col.max_nesting_depth - 1;
   auto const data_out        = s->nesting.nesting_info[leaf_level_index].data_out;
 
-  Type const dtype    = s->setup.col.physical_type;
   auto const data_len = cuda::std::distance(s->stream.data_start, s->stream.data_end);
 
   // Check malformed BYTE_STREAM_SPLIT pages
@@ -296,28 +281,7 @@ __device__ inline void decode_fixed_width_split_values(
 
     // Note: non-decimal FIXED_LEN_BYTE_ARRAY will be handled in the string reader
     if (is_decimal) {
-      switch (dtype) {
-        case Type::INT32: gpuOutputByteStreamSplit<int32_t>(dst, src, num_values); break;
-        case Type::INT64: gpuOutputByteStreamSplit<int64_t>(dst, src, num_values); break;
-        case Type::FIXED_LEN_BYTE_ARRAY:
-          if (s->output_cvt.dtype_len_in <= sizeof(int32_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int32_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
-            break;
-          } else if (s->output_cvt.dtype_len_in <= sizeof(int64_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<int64_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
-            break;
-          } else if (s->output_cvt.dtype_len_in <= sizeof(__int128_t)) {
-            gpuOutputSplitFixedLenByteArrayAsInt(
-              reinterpret_cast<__int128_t*>(dst), src, num_values, s->output_cvt.dtype_len_in);
-            break;
-          }
-          // unsupported decimal precision
-          [[fallthrough]];
-
-        default: s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
-      }
+      read_byte_stream_split_decimal(s, src, num_values, dst);
     } else if (dtype_len == 8) {
       if (s->output_cvt.dtype_len_in == 4) {
         // Reading INT32 TIME_MILLIS into 64-bit DURATION_MILLISECONDS
@@ -334,6 +298,16 @@ __device__ inline void decode_fixed_width_split_values(
       }
     } else if (dtype_len == 4) {
       gpuOutputByteStreamSplit<int32_t>(dst, src, num_values);
+    } else if (s->output_cvt.dtype_len_in == sizeof(int32_t)) {
+      // 8- and 16-bit integers are stored as INT32, so keep the low-order bytes of each value,
+      // which are in the first byte streams
+      if (dtype_len == sizeof(int16_t)) {
+        gpuOutputByteStreamSplit<int16_t>(dst, src, num_values);
+      } else if (dtype_len == sizeof(int8_t)) {
+        gpuOutputByteStreamSplit<int8_t>(dst, src, num_values);
+      } else {
+        s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
+      }
     } else {
       s->set_error_code(decode_error::UNSUPPORTED_ENCODING);
     }
@@ -1150,7 +1124,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size_t, 8)
 
   // shared buffer. all shared memory is suballocated out of here
   constexpr int rle_run_buffer_bytes =
-    cudf::util::round_up_unsafe(rle_run_buffer_size * sizeof(rle_run), size_t{16});
+    cuda::round_up(rle_run_buffer_size * sizeof(rle_run), size_t{16});
   constexpr int shared_buf_size = cuda::std::max(
     1, rle_run_buffer_bytes * (static_cast<int>(has_dict_t) + static_cast<int>(has_bools_t)));
   __shared__ __align__(16) uint8_t shared_buf[shared_buf_size];

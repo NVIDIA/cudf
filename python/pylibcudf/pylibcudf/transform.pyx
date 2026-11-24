@@ -28,7 +28,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .expressions cimport Expression
 from .gpumemoryview cimport gpumemoryview, _from_cuda_device_buffer
-from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from .types cimport DataType, null_aware, output_nullability
 from .utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
@@ -160,7 +160,8 @@ cpdef Column compute_column_jit(
     cdef table_view c_input = input.view()
     with nogil:
         c_result = cpp_transform.compute_column_jit(
-            c_input, dereference(expr.c_obj.get()), _cs, mr.get_mr()
+            c_input, dereference(expr.c_obj.get()),
+            span[cpp_transform.const_lto_fragment](), _cs, mr.get_mr()
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -187,7 +188,7 @@ cpdef tuple[gpumemoryview, int] bools_to_mask(
     tuple[gpumemoryview, int]
         Two-tuple of a gpumemoryview wrapping the bitmask and the null count.
     """
-    cdef pair[unique_ptr[device_buffer[byte]], size_type] c_result
+    cdef pair[unique_ptr[device_buffer[bitmask_type]], size_type] c_result
 
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()

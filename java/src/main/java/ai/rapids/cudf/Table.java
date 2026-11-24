@@ -2776,7 +2776,7 @@ public final class Table implements AutoCloseable {
         target.getNativeView()));
   }
 
-  private static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
+  static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
     long bufferSize = gatherMapData[0];
     long leftAddr = gatherMapData[1];
     long leftHandle = gatherMapData[2];
@@ -2986,6 +2986,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = leftHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a left equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext leftJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.LEFT);
   }
 
   /**
@@ -3279,6 +3290,17 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Probes this table once for an inner equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext innerJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.INNER);
+  }
+
+  /**
    * Computes the number of rows from the result of an inner join between two tables when a
    * conditional expression is true. It is assumed this table instance holds the columns from
    * the left table, and the table argument represents the columns from the right table.
@@ -3524,6 +3546,19 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = fullHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a full equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval. Collect the partition results and call
+   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[]...)}
+   * to append the unmatched right rows.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext fullJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.FULL);
   }
 
   /**
@@ -4089,6 +4124,15 @@ public final class Table implements AutoCloseable {
      * Computes row-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy}; this method
+     * does not sort them, and the {@link GroupByOptions} sort settings have no effect here. Groups
+     * are taken to be runs of adjacent rows with equal values in those columns, so rows with equal
+     * values that are not adjacent are aggregated as separate groups. Within a group, the preceding
+     * and following rows are counted in the order the rows appear in the table, so if the window
+     * should follow some other order (the ORDER BY of the SQL example below), the rows must be
+     * sorted by it within each group as well. Unsorted input is not detected and might silently
+     * produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4119,7 +4163,7 @@ public final class Table implements AutoCloseable {
      *    { "user2",     40      }
      *  ]
      *
-     * Partitioning (grouping) by `user_id` yields the following `sales_amt` vector
+     * The input must first be sorted by `user_id`, which yields the following `sales_amt` vector
      * (with 2 groups, one for each distinct `user_id`):
      *
      *    [ 10,  20,  10,  50,  60,  20,  30,  80,  40 ]
@@ -4216,6 +4260,17 @@ public final class Table implements AutoCloseable {
      * Computes range-based window aggregation functions on the Table/projection,
      * based on windows specified in the argument.
      *
+     * The rows must already be sorted by the columns passed to {@link Table#groupBy} and, within
+     * each group, by the order-by columns of the {@link WindowOptions}; this method does not sort
+     * them, and the {@link GroupByOptions} sort settings have no effect here. Groups are taken to be
+     * runs of adjacent rows with equal values in the group-by columns, as in
+     * {@link #aggregateWindows}. Within a group, the window bounds are found by searching the
+     * order-by columns, so they must be sorted in the direction the {@link WindowOptions} gives. For
+     * a single order-by column, the placement of nulls is deduced from the data, so the nulls must be
+     * at the same end, either the start or the end, of every group; for multiple order-by columns,
+     * the nulls must be placed as {@link WindowOptions.Builder#orderByColumns} states. Unsorted input
+     * is not detected and might silently produce incorrect results.
+     *
      * This method enables queries such as the following SQL:
      *
      *  SELECT user_id,
@@ -4247,8 +4302,8 @@ public final class Table implements AutoCloseable {
      *    { "user2",   40,      20200104    }
      *  ]
      *
-     * Partitioning (grouping) by `user_id`, and ordering by `date` yields the following `sales_amt` vector
-     * (with 2 groups, one for each distinct `user_id`):
+     * The input must first be sorted by `user_id` and then by `date`, which yields the following
+     * `sales_amt` vector (with 2 groups, one for each distinct `user_id`):
      *
      * Date :(202001-)  [ 01,  02,  03,  07,  07,    01,   01,   02,  04 ]
      * Input:           [ 10,  20,  10,  50,  60,    20,   30,   80,  40 ]

@@ -6,9 +6,18 @@
 #pragma once
 
 #include <cudf/table/table.hpp>
+#include <cudf/utilities/concepts.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 
@@ -52,21 +61,21 @@ enum class distribution_id : int8_t {
 };
 
 // Default distribution types for each type
-template <typename T, std::enable_if_t<cudf::is_chrono<T>()>* = nullptr>
+template <cudf::concepts::chrono T>
 distribution_id default_distribution_id()
 {
   return distribution_id::GEOMETRIC;
 }
 
-template <typename T, std::enable_if_t<!std::is_unsigned_v<T> && cudf::is_numeric<T>()>* = nullptr>
+template <cudf::concepts::arithmetic T>
+  requires(not cuda::std::unsigned_integral<T>)
 distribution_id default_distribution_id()
 {
   return distribution_id::NORMAL;
 }
 
-template <typename T,
-          std::enable_if_t<!std::is_same_v<T, bool> && std::is_unsigned_v<T> &&
-                           cudf::is_numeric<T>()>* = nullptr>
+template <cuda::std::unsigned_integral T>
+  requires(not cudf::concepts::boolean<T>)
 distribution_id default_distribution_id()
 {
   return distribution_id::GEOMETRIC;
@@ -78,7 +87,7 @@ distribution_id default_distribution_id()
  * The 2020 timestamp is used as a lower bound to bias the geometric distribution to recent
  * timestamps.
  */
-template <typename T, std::enable_if_t<cudf::is_timestamp<T>()>* = nullptr>
+template <cudf::concepts::timestamp T>
 std::pair<int64_t, int64_t> default_range()
 {
   using cuda::std::chrono::duration_cast;
@@ -91,7 +100,7 @@ std::pair<int64_t, int64_t> default_range()
  *
  * If a geometric distribution is used, it will bias towards short duration values.
  */
-template <typename T, std::enable_if_t<cudf::is_duration<T>()>* = nullptr>
+template <cudf::concepts::duration T>
 std::pair<int64_t, int64_t> default_range()
 {
   using cuda::std::chrono::duration_cast;
@@ -99,7 +108,7 @@ std::pair<int64_t, int64_t> default_range()
   return {0, 2 * year.count()};
 }
 
-template <typename T, std::enable_if_t<cudf::is_numeric<T>()>* = nullptr>
+template <cudf::concepts::arithmetic T>
 std::pair<T, T> default_range()
 {
   // Limits need to be such that `upper - lower` does not overflow
@@ -107,16 +116,16 @@ std::pair<T, T> default_range()
 }
 
 /**
- * @brief Enables partial specializations with SFINAE.
+ * @brief Enables constrained partial specializations.
  */
-template <typename T, typename Enable = void>
+template <typename T>
 struct distribution_params;
 
 /**
  * @brief Numeric values are parameterized with a distribution type and bounds of the same type.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<!std::is_same_v<T, bool> && cudf::is_numeric<T>()>> {
+template <cudf::concepts::arithmetic_not_bool T>
+struct distribution_params<T> {
   distribution_id id;
   T lower_bound;
   T upper_bound;
@@ -125,16 +134,16 @@ struct distribution_params<T, std::enable_if_t<!std::is_same_v<T, bool> && cudf:
 /**
  * @brief Booleans are parameterized with the probability of getting `true` value.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<std::is_same_v<T, bool>>> {
+template <cudf::concepts::boolean T>
+struct distribution_params<T> {
   double probability_true;
 };
 
 /**
  * @brief Timestamps and durations are parameterized with a distribution type and int64_t bounds.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<cudf::is_chrono<T>()>> {
+template <cudf::concepts::chrono T>
+struct distribution_params<T> {
   distribution_id id;
   int64_t lower_bound;
   int64_t upper_bound;
@@ -143,8 +152,8 @@ struct distribution_params<T, std::enable_if_t<cudf::is_chrono<T>()>> {
 /**
  * @brief Strings are parameterized by the distribution of their length and character range.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>> {
+template <cudf::concepts::string_view T>
+struct distribution_params<T> {
   distribution_params<uint32_t> length_params;
   unsigned char char_lower = 32;   ///< Lower bound of character range (inclusive)
   unsigned char char_upper = 137;  ///< Upper bound of character range (inclusive), >126 produces
@@ -155,8 +164,8 @@ struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::string_vi
  * @brief Lists are parameterized by the distribution of their length, maximal nesting level, and
  * the element type.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>> {
+template <cudf::concepts::list_view T>
+struct distribution_params<T> {
   cudf::type_id element_type;
   distribution_params<uint32_t> length_params;
   cudf::size_type max_depth;
@@ -165,8 +174,8 @@ struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::list_view
 /**
  * @brief Structs are parameterized by the maximal nesting level, and the leaf column types.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>> {
+template <cudf::concepts::struct_view T>
+struct distribution_params<T> {
   std::vector<cudf::type_id> leaf_types;
   cudf::size_type max_depth;
 };
@@ -175,8 +184,8 @@ struct distribution_params<T, std::enable_if_t<std::is_same_v<T, cudf::struct_vi
  * @brief Fixed-point values are parameterized with a distribution type, scale, and bounds of the
  * same type.
  */
-template <typename T>
-struct distribution_params<T, std::enable_if_t<cudf::is_fixed_point<T>()>> {
+template <cudf::concepts::fixed_point T>
+struct distribution_params<T> {
   distribution_id id;
   typename T::rep lower_bound;
   typename T::rep upper_bound;
@@ -207,6 +216,41 @@ std::vector<cudf::type_id> get_type_or_group(int32_t id);
 std::vector<cudf::type_id> get_type_or_group(std::vector<int32_t> const& ids);
 
 /**
+ * @brief Returns the full range of the parameter type read by get_distribution_params.
+ *
+ * These limits differ from default_range, whose narrower generation defaults avoid overflow
+ * and bias chrono values toward recent timestamps or short durations.
+ */
+inline std::pair<__int128_t, __int128_t> integer_type_range(cudf::type_id tid)
+{
+  return cudf::type_dispatcher(
+    cudf::data_type{tid}, [=]<typename T>() -> std::pair<__int128_t, __int128_t> {
+      if constexpr (cudf::is_integral_not_bool<T>() or cudf::is_chrono<T>() or
+                    cudf::is_fixed_point<T>()) {
+        using bound_type = decltype(distribution_params<T>{}.lower_bound);
+        return {std::numeric_limits<bound_type>::lowest(), std::numeric_limits<bound_type>::max()};
+      } else {
+        CUDF_FAIL("Type does not have integer distribution bounds");
+      }
+    });
+}
+
+/**
+ * @brief Rounds and saturates a floating-point bound, mapping NaN to zero.
+ *
+ * Compare before converting so infinities and values that round beyond the destination's
+ * limits never reach an out-of-range floating-to-integer cast.
+ */
+inline __int128_t bounded_round(long double value, std::pair<__int128_t, __int128_t> range)
+{
+  if (std::isnan(value)) { return 0; }
+  auto const rounded = std::round(value);
+  if (rounded <= static_cast<long double>(range.first)) { return range.first; }
+  if (rounded >= static_cast<long double>(range.second)) { return range.second; }
+  return static_cast<__int128_t>(rounded);
+}
+
+/**
  * @brief Contains data parameters for all types.
  *
  * This class exposes APIs to set and get distribution parameters for each supported type.
@@ -234,29 +278,28 @@ class data_profile {
   cudf::size_type avg_run_length = 4;
 
  public:
-  template <typename T,
-            std::enable_if_t<!std::is_same_v<T, bool> && cuda::std::is_integral_v<T>, T>* = nullptr>
+  template <cudf::concepts::integral_not_bool T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<std::is_floating_point_v<T>, T>* = nullptr>
+  template <cuda::std::floating_point T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, bool>>* = nullptr>
+  template <cudf::concepts::boolean T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<cudf::is_chrono<T>()>* = nullptr>
+  template <cudf::concepts::chrono T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, cudf::string_view>>* = nullptr>
+  template <cudf::concepts::string_view T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, cudf::list_view>>* = nullptr>
+  template <cudf::concepts::list_view T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<std::is_same_v<T, cudf::struct_view>>* = nullptr>
+  template <cudf::concepts::struct_view T>
   distribution_params<T> get_distribution_params() const;
 
-  template <typename T, std::enable_if_t<cudf::is_fixed_point<T>()>* = nullptr>
+  template <cudf::concepts::fixed_point T>
   distribution_params<T> get_distribution_params() const;
 
   [[nodiscard]] auto get_bool_probability_true() const { return bool_probability_true; }
@@ -265,51 +308,70 @@ class data_profile {
   [[nodiscard]] auto get_cardinality() const { return cardinality; };
   [[nodiscard]] auto get_avg_run_length() const { return avg_run_length; };
 
-  // Users should pass integral values for bounds when setting the parameters for types that have
-  // discrete distributions (integers, strings, lists). Otherwise the call with have no effect.
-  template <typename T,
-            typename Type_enum,
-            std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
+  /**
+   * @brief Sets bounds in the parameter type read by the requested column's generator.
+   *
+   * Fractional bounds for discrete types are rounded to the nearest integer, with ties away
+   * from zero; NaN maps to zero. Bounds are saturated to each discrete parameter type's range
+   * so a type-group request can also serve narrower members without wrapping their bounds.
+   * Floating-point bounds are stored as double. BOOL8, STRUCT and DICTIONARY32 have no
+   * bound-based parameters and ignore these arguments.
+   *
+   * Fixed-point targets set without an explicit scale draw a random scale in
+   * [-digits10, digits10] of the rep type at generation time. Use the explicit-scale overload
+   * when a reproducible scale is needed.
+   */
+  template <typename T, typename Type_enum>
+    requires(cuda::std::integral<T> or cuda::std::floating_point<T>)
   void set_distribution_params(Type_enum type_or_group,
                                distribution_id dist,
                                T lower_bound,
                                T upper_bound)
   {
     for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
+      if (tid == cudf::type_id::BOOL8 or tid == cudf::type_id::STRUCT or
+          tid == cudf::type_id::DICTIONARY32) {
+        continue;
+      }
+      if (cudf::is_floating_point(cudf::data_type{tid})) {
+        float_params[tid] = {
+          dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
+        continue;
+      }
+      auto const range =
+        tid == cudf::type_id::STRING or tid == cudf::type_id::LIST
+          ? std::pair<__int128_t, __int128_t>{0, std::numeric_limits<uint32_t>::max()}
+          : integer_type_range(tid);
+      auto const convert = [range](T value) -> __int128_t {
+        if constexpr (cuda::std::floating_point<T>) {
+          return bounded_round(value, range);
+        } else {
+          if constexpr (cuda::std::unsigned_integral<T>) {
+            if (value > static_cast<__uint128_t>(range.second)) { return range.second; }
+          }
+          return std::clamp(static_cast<__int128_t>(value), range.first, range.second);
+        }
+      };
+      auto const lower = convert(lower_bound);
+      auto const upper = convert(upper_bound);
       if (tid == cudf::type_id::STRING) {
         string_dist_desc.length_params = {
-          dist, static_cast<uint32_t>(lower_bound), static_cast<uint32_t>(upper_bound)};
+          dist, static_cast<uint32_t>(lower), static_cast<uint32_t>(upper)};
       } else if (tid == cudf::type_id::LIST) {
         list_dist_desc.length_params = {
-          dist, static_cast<uint32_t>(lower_bound), static_cast<uint32_t>(upper_bound)};
+          dist, static_cast<uint32_t>(lower), static_cast<uint32_t>(upper)};
+      } else if (cudf::is_fixed_point(cudf::data_type{tid})) {
+        decimal_params[tid] = {dist, lower, upper, std::nullopt};
       } else {
-        int_params[tid] = {
-          dist, static_cast<uint64_t>(lower_bound), static_cast<uint64_t>(upper_bound)};
+        int_params[tid] = {dist, static_cast<uint64_t>(lower), static_cast<uint64_t>(upper)};
       }
     }
   }
 
-  // Users should pass floating point values for bounds when setting the parameters for types that
-  // have continuous distributions (floating point types). Otherwise the call with have no effect.
-  template <typename T,
-            typename Type_enum,
-            std::enable_if_t<std::is_floating_point_v<T>, T>* = nullptr>
-  void set_distribution_params(Type_enum type_or_group,
-                               distribution_id dist,
-                               T lower_bound,
-                               T upper_bound)
-  {
-    for (auto tid : get_type_or_group(static_cast<int32_t>(type_or_group))) {
-      float_params[tid] = {
-        dist, static_cast<double>(lower_bound), static_cast<double>(upper_bound)};
-    }
-  }
-
-  // Users should pass integral values for bounds when setting the parameters for fixed-point.
-  // Otherwise the call with have no effect.
-  template <typename T,
-            typename Type_enum,
-            std::enable_if_t<cuda::std::is_integral_v<T>, T>* = nullptr>
+  // Fixed-point parameters are normally set with integer bounds and an explicit scale via this
+  // overload. The overload above also accepts fixed-point targets without a scale, in which
+  // case a random scale in [-digits10, digits10] of the rep type is drawn at generation time.
+  template <cuda::std::integral T, typename Type_enum>
   void set_distribution_params(Type_enum type_or_group,
                                distribution_id dist,
                                T lower_bound,
@@ -322,7 +384,7 @@ class data_profile {
     }
   }
 
-  template <typename T, typename Type_enum, std::enable_if_t<cudf::is_chrono<T>(), T>* = nullptr>
+  template <cudf::concepts::chrono T, typename Type_enum>
   void set_distribution_params(Type_enum type_or_group,
                                distribution_id dist,
                                typename T::rep lower_bound,
@@ -520,8 +582,12 @@ class data_profile_builder {
    *
    * Characters are uniformly distributed in the range [lower, upper].
    * Values > 126 will produce multi-byte UTF-8 characters.
+   * The `create_ascii_string_column` function limits the upper bound to 126.
+   * Generating distinct strings (cardinality >= number of rows) appends the row index as
+   * decimal digits, so the range must include '0'-'9' in that case.
    *
-   * @param lower Lower bound of character range (inclusive, must be >= 32)
+   * @param lower Lower bound of character range (inclusive, must be >= 32 and < 127 so that
+   *              strings can always end with a single-byte character)
    * @param upper Upper bound of character range (inclusive)
    * @return this for chaining
    */
@@ -607,9 +673,9 @@ std::unique_ptr<cudf::column> create_string_column(cudf::size_type num_rows,
 /**
  * @brief Generates a string column filled with ASCII characters only
  *
- * Only the string length distribution and null probability of the profile are used.
- * The cardinality and average run length settings are ignored, so every row is
- * generated independently.
+ * This is the same as calling `create_random_column` with `cudf::type_id::STRING`
+ * except the upper bound of the profile's character range is limited to 126.
+ * All other profile settings are used as-is.
  *
  * @param profile Data profile for the output column
  * @param num_rows Number of rows in the output column
@@ -670,5 +736,5 @@ std::vector<cudf::type_id> mix_dtypes(std::pair<cudf::type_id, cudf::type_id> co
  * @param seed Optional, seed for the pseudo-random engine
  * @return null mask device buffer with random null mask data and null count
  */
-std::pair<cuda::device_buffer<std::byte>, cudf::size_type> create_random_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, cudf::size_type> create_random_null_mask(
   cudf::size_type size, std::optional<double> null_probability = std::nullopt, unsigned seed = 1);

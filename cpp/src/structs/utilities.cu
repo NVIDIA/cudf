@@ -16,6 +16,7 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <functional>
@@ -82,7 +83,7 @@ struct table_flattener {
   std::vector<null_order> const& null_precedence;
   column_nullability nullability;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   temporary_nullable_data nullable_data;
   std::vector<std::unique_ptr<column>> validity_as_column;
@@ -95,7 +96,7 @@ struct table_flattener {
                   std::vector<null_order> const& null_precedence,
                   column_nullability nullability,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cudf::memory_resources mr)
     : column_order{column_order},
       null_precedence{null_precedence},
       nullability{nullability},
@@ -192,7 +193,7 @@ std::unique_ptr<flattened_table> flatten_nested_columns(
   std::vector<null_order> const& null_precedence,
   column_nullability nullability,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const has_struct = std::any_of(input.begin(), input.end(), is_struct);
   if (not has_struct) {
@@ -224,7 +225,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                                           size_type null_count,
                                           std::unique_ptr<column>&& input,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (input->type().id() == cudf::type_id::EMPTY) {
@@ -240,8 +241,7 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                          null_count);
   } else {
     auto current_mask = input->mutable_view().null_mask();
-    std::vector<bitmask_type const*> masks{reinterpret_cast<bitmask_type const*>(null_mask),
-                                           reinterpret_cast<bitmask_type const*>(current_mask)};
+    std::vector<bitmask_type const*> masks{null_mask, current_mask};
     std::vector<size_type> begin_bits{0, 0};
     auto const valid_count = cudf::detail::inplace_bitmask_and(
       device_span<bitmask_type>(current_mask, num_bitmask_words(num_rows)),
@@ -267,11 +267,8 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
                "Child columns must have the same number of rows as the Struct column.");
 
   for (auto& child : content.children) {
-    child = superimpose_nulls(reinterpret_cast<bitmask_type const*>(content.null_mask->data()),
-                              new_null_count,
-                              std::move(child),
-                              stream,
-                              mr);
+    child =
+      superimpose_nulls(content.null_mask->data(), new_null_count, std::move(child), stream, mr);
   }
   return std::make_unique<column>(cudf::data_type{type_id::STRUCT},
                                   num_rows,
@@ -301,7 +298,7 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -401,7 +398,7 @@ std::vector<std::unique_ptr<column>> superimpose_nulls(
  * @copydoc cudf::structs::detail::push_down_nulls
  */
 std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
-  column_view const& input, cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+  column_view const& input, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto ret_nullable_data = temporary_nullable_data{};
   if (input.type().id() != type_id::STRUCT) {
@@ -421,7 +418,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
     auto parent_child_null_masks =
       std::vector<cudf::bitmask_type const*>{structs_view.null_mask(), child.null_mask()};
 
-    auto [new_child_mask, null_count] = [&] {
+    auto [new_child_mask, null_count] = [&]() -> std::pair<bitmask_type const*, size_type> {
       if (not child.nullable()) {
         // Adopt parent STRUCT's null mask.
         return std::pair{structs_view.null_mask(), 0};
@@ -440,9 +437,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls_no_sanitize(
                                                               stream,
                                                               mr);
       ret_nullable_data.new_null_masks.push_back(std::move(new_mask));
-      return std::pair{
-        reinterpret_cast<bitmask_type const*>(ret_nullable_data.new_null_masks.back().data()),
-        null_count};
+      return std::pair{ret_nullable_data.new_null_masks.back().data(), null_count};
     }();
 
     return column_view(child.type(),
@@ -495,7 +490,7 @@ std::unique_ptr<column> superimpose_and_sanitize_nulls(bitmask_type const* null_
                                                        size_type null_count,
                                                        std::unique_ptr<column>&& input,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   input = superimpose_nulls(null_mask, null_count, std::move(input), stream, mr);
@@ -518,7 +513,7 @@ std::vector<std::unique_ptr<column>> superimpose_and_sanitize_nulls(
   host_span<bitmask_type const* const> null_masks,
   std::vector<std::unique_ptr<column>> inputs,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   inputs = superimpose_nulls(null_masks, std::move(inputs), stream, mr);
@@ -538,9 +533,7 @@ std::vector<std::unique_ptr<column>> superimpose_and_sanitize_nulls(
 }
 
 std::vector<std::unique_ptr<column>> enforce_null_consistency(
-  std::vector<std::unique_ptr<column>> columns,
-  cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  std::vector<std::unique_ptr<column>> columns, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
 
@@ -551,10 +544,11 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 
   // Helper struct to store and manipulate struct column properties
   struct contents {
-    size_type null_count                                      = 0;        // Number of null values
-    std::unique_ptr<cuda::device_buffer<std::byte>> null_mask = nullptr;  // Null mask buffer
-    size_type num_children                                    = 0;        // Number of child columns
-    size_type num_elements                                    = 0;        // Number of rows
+    size_type null_count = 0;  // Number of null values
+    std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>> null_mask =
+      nullptr;                   // Null mask buffer
+    size_type num_children = 0;  // Number of child columns
+    size_type num_elements = 0;  // Number of rows
   };
 
   std::vector<contents> struct_contents;  // Store properties of each struct column
@@ -573,10 +567,9 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
       struct_contents.back().null_mask = std::move(col_contents.null_mask);
 
       // Add null mask pointers for each child of this struct
-      struct_root_masks.insert(
-        struct_root_masks.end(),
-        col_contents.children.size(),
-        reinterpret_cast<bitmask_type const*>(struct_contents.back().null_mask->data()));
+      struct_root_masks.insert(struct_root_masks.end(),
+                               col_contents.children.size(),
+                               struct_contents.back().null_mask->data());
 
       // Add all child columns from this struct
       for (auto& child : col_contents.children) {
@@ -616,12 +609,12 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
 
 std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view const& input,
                                                                 cuda::stream_ref stream,
-                                                                rmm::device_async_resource_ref mr)
+                                                                cudf::memory_resources mr)
 {
   auto output = push_down_nulls_no_sanitize(input, stream, mr);
 
   if (auto const output_view = output.first;
-      cudf::detail::has_nonempty_nulls(output_view, stream)) {
+      cudf::detail::has_nonempty_nulls(output_view, stream, mr)) {
     output.second.new_columns.emplace_back(
       cudf::detail::purge_nonempty_nulls(output_view, stream, mr));
     output.first = output.second.new_columns.back()->view();
@@ -637,7 +630,7 @@ std::pair<column_view, temporary_nullable_data> push_down_nulls(column_view cons
 
 std::pair<table_view, temporary_nullable_data> push_down_nulls(table_view const& table,
                                                                cuda::stream_ref stream,
-                                                               rmm::device_async_resource_ref mr)
+                                                               cudf::memory_resources mr)
 {
   auto processed_columns = std::vector<column_view>{};
   auto nullable_data     = temporary_nullable_data{};

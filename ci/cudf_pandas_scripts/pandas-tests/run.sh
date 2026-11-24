@@ -5,6 +5,7 @@
 set -euo pipefail
 
 source rapids-init-pip
+source rapids-init-uv
 
 EXITCODE=0
 trap "EXITCODE=1" ERR
@@ -36,10 +37,10 @@ RAPIDS_PY_CUDA_SUFFIX="$(rapids-wheel-ctk-name-gen "${RAPIDS_CUDA_VERSION}")"
 # Download the cudf, libcudf, and pylibcudf built in the previous step
 LIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_cpp libcudf cudf --cuda "$RAPIDS_CUDA_VERSION")")
 PYLIBCUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python pylibcudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
-CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --stable --cuda "$RAPIDS_CUDA_VERSION")")
+CUDF_WHEELHOUSE=$(rapids-download-from-github "$(rapids-artifact-name wheel_python cudf cudf --pure --arch any --cuda "$RAPIDS_CUDA_VERSION")")
 
-# echo to expand wildcard before adding `[extra]` requires for pip
-rapids-pip-retry install \
+# echo to expand wildcard before adding `[extra]` requires for the installer
+rapids-uv-pip install \
   "$(echo "${CUDF_WHEELHOUSE}"/cudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)[test,pandas-tests]" \
   "$(echo "${LIBCUDF_WHEELHOUSE}"/libcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)" \
   "$(echo "${PYLIBCUDF_WHEELHOUSE}"/pylibcudf_"${RAPIDS_PY_CUDA_SUFFIX}"*.whl)"
@@ -48,7 +49,12 @@ RESULTS_DIR=${RAPIDS_TESTS_DIR:-"$(mktemp -d)"}
 RAPIDS_TESTS_DIR=${RAPIDS_TESTS_DIR:-"${RESULTS_DIR}/test-results"}/
 mkdir -p "${RAPIDS_TESTS_DIR}"
 
-timeout 90m bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
+test_timeout=90m
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request && -n ${NUM_SHARDS} ]]; then
+    test_timeout=30m
+fi
+
+timeout "${test_timeout}" bash python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
   --durations=50 \
   --durations-min=1 \
   --numprocesses 8 \

@@ -13,9 +13,11 @@
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -266,7 +268,8 @@ struct expression_evaluator {
    * @param right_row_index Row index into the right table.
    * @return Element The type- and null-resolved data.
    */
-  template <typename Element, CUDF_ENABLE_IF(column_device_view::has_element_accessor<Element>())>
+  template <typename Element>
+    requires(column_device_view::has_element_accessor<Element>())
   __device__ inline possibly_null_value_t<Element, has_nulls> resolve_input(
     detail::device_data_reference const& input_reference,
     IntermediateDataType<has_nulls>* thread_intermediate_storage,
@@ -340,8 +343,7 @@ struct expression_evaluator {
     return {};
   }
 
-  template <typename Element,
-            CUDF_ENABLE_IF(not column_device_view::has_element_accessor<Element>())>
+  template <typename Element>
   __device__ inline possibly_null_value_t<Element, has_nulls> resolve_input(
     detail::device_data_reference const& device_data_reference,
     IntermediateDataType<has_nulls>* thread_intermediate_storage,
@@ -364,11 +366,7 @@ struct expression_evaluator {
    * @param output_row_index The row in the output to insert the result.
    * @param op The operator to act with.
    */
-  template <typename Input,
-            typename ResultSubclass,
-            typename T,
-            bool result_has_nulls,
-            CUDF_ENABLE_IF(!cuda::std::is_void_v<Input>)>
+  template <typename Input, typename ResultSubclass, typename T, bool result_has_nulls>
   __device__ inline void operator()(
     expression_result<ResultSubclass, T, result_has_nulls>& output_object,
     cudf::size_type const input_row_index,
@@ -389,11 +387,8 @@ struct expression_evaluator {
                             thread_intermediate_storage);
   }
 
-  template <typename Input,
-            typename ResultSubclass,
-            typename T,
-            bool result_has_nulls,
-            CUDF_ENABLE_IF(cuda::std::is_void_v<Input>)>
+  template <typename Input, typename ResultSubclass, typename T, bool result_has_nulls>
+    requires(cuda::std::is_void_v<Input>)
   __device__ inline void operator()(
     expression_result<ResultSubclass, T, result_has_nulls>& output_object,
     cudf::size_type const input_row_index,
@@ -422,12 +417,7 @@ struct expression_evaluator {
    * @param output_row_index The row in the output to insert the result.
    * @param op The operator to act with.
    */
-  template <typename LHS,
-            typename RHS,
-            typename ResultSubclass,
-            typename T,
-            bool result_has_nulls,
-            CUDF_ENABLE_IF(!cuda::std::is_void_v<LHS> && !cuda::std::is_void_v<RHS>)>
+  template <typename LHS, typename RHS, typename ResultSubclass, typename T, bool result_has_nulls>
   __device__ inline void operator()(
     expression_result<ResultSubclass, T, result_has_nulls>& output_object,
     cudf::size_type const left_row_index,
@@ -453,12 +443,8 @@ struct expression_evaluator {
                             thread_intermediate_storage);
   }
 
-  template <typename LHS,
-            typename RHS,
-            typename ResultSubclass,
-            typename T,
-            bool result_has_nulls,
-            CUDF_ENABLE_IF(cuda::std::is_void_v<LHS> || cuda::std::is_void_v<RHS>)>
+  template <typename LHS, typename RHS, typename ResultSubclass, typename T, bool result_has_nulls>
+    requires(cuda::std::is_void_v<LHS> or cuda::std::is_void_v<RHS>)
   __device__ inline void operator()(
     expression_result<ResultSubclass, T, result_has_nulls>& output_object,
     cudf::size_type const left_row_index,
@@ -617,8 +603,10 @@ struct expression_evaluator {
      * @param thread_intermediate_storage Thread-local storage for intermediate expression results
      * @param result Value to assign to output.
      */
-    template <typename Element, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires(is_rep_layout_compatible<Element>())
+    template <cudf::concepts::rep_layout_compatible Element,
+              typename ResultSubclass,
+              typename T,
+              bool result_has_nulls>
     __device__ inline void resolve_output(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       detail::device_data_reference const& device_data_reference,
@@ -651,8 +639,8 @@ struct expression_evaluator {
     }
 
     template <typename Element, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires(cuda::std::is_same_v<Element, numeric::decimal32> or
-               cuda::std::is_same_v<Element, numeric::decimal64>)  // int128 > intermediate
+      requires(cuda::std::same_as<Element, numeric::decimal32> or
+               cuda::std::same_as<Element, numeric::decimal64>)  // int128 > intermediate
     __device__ inline void resolve_output(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       detail::device_data_reference const& device_data_reference,
@@ -679,9 +667,9 @@ struct expression_evaluator {
     }
 
     template <typename Element, typename ResultSubclass, typename T, bool result_has_nulls>
-      requires(!is_rep_layout_compatible<Element>() and
-               !(cuda::std::is_same_v<Element, numeric::decimal32> or
-                 cuda::std::is_same_v<Element, numeric::decimal64>))
+      requires(not cudf::concepts::rep_layout_compatible<Element> and
+               not(cuda::std::same_as<Element, numeric::decimal32> or
+                   cuda::std::same_as<Element, numeric::decimal64>))
     __device__ inline void resolve_output(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       detail::device_data_reference const& device_data_reference,
@@ -703,6 +691,13 @@ struct expression_evaluator {
   struct unary_expression_output_handler : public expression_output_handler {
     __device__ inline unary_expression_output_handler() {}
 
+    // Prevent the compiler from inlining the cast back into the evaluator and reintroducing spills.
+    template <ast_operator op>
+    __attribute__((noinline)) __device__ static auto invoke_cast(Input input)
+    {
+      return detail::operator_functor<op>{}(input);
+    }
+
     /**
      * @brief Callable to perform a unary operation.
      *
@@ -714,12 +709,8 @@ struct expression_evaluator {
      * @param input Input to the operation.
      * @param output Output data reference.
      */
-    template <ast_operator op,
-              typename ResultSubclass,
-              typename T,
-              bool result_has_nulls,
-              CUDF_ENABLE_IF(detail::is_valid_unary_op<detail::operator_functor<op>,
-                                                       possibly_null_value_t<Input, has_nulls>>)>
+    template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
+      requires(detail::is_valid_ast_unary_op<op, possibly_null_value_t<Input, has_nulls>>)
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,
@@ -727,22 +718,38 @@ struct expression_evaluator {
       detail::device_data_reference const& output,
       IntermediateDataType<has_nulls>* thread_intermediate_storage) const
     {
-      // The output data type is the same whether or not nulls are present, so
-      // pull from the non-nullable operator.
-      using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
-      this->template resolve_output<Out>(output_object,
-                                         output,
-                                         output_row_index,
-                                         thread_intermediate_storage,
-                                         detail::operator_functor<op>{}(input));
+      if constexpr (op == ast_operator::RESCALE) {
+        using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input, int32_t>;
+        this->template resolve_output<Out>(
+          output_object,
+          output,
+          output_row_index,
+          thread_intermediate_storage,
+          detail::operator_functor<op>{}(input, output.data_type.scale()));
+      } else if constexpr (has_nulls && has_complex_type &&
+                           (op == ast_operator::CAST_TO_INT8 || op == ast_operator::CAST_TO_INT16 ||
+                            op == ast_operator::CAST_TO_INT32 ||
+                            op == ast_operator::CAST_TO_UINT8 ||
+                            op == ast_operator::CAST_TO_UINT16 ||
+                            op == ast_operator::CAST_TO_UINT32)) {
+        // Inlining these casts causes spills in the nullable-complex dispatcher, slowing unrelated
+        // string operations. Outline the cast itself while keeping null propagation inline.
+        using Out         = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
+        using Result      = cuda::std::optional<Out>;
+        auto const result = input.has_value() ? Result{invoke_cast<op>(*input)} : Result{};
+        this->template resolve_output<Out>(
+          output_object, output, output_row_index, thread_intermediate_storage, result);
+      } else {
+        using Out = cuda::std::invoke_result_t<detail::operator_functor<op>, Input>;
+        this->template resolve_output<Out>(output_object,
+                                           output,
+                                           output_row_index,
+                                           thread_intermediate_storage,
+                                           detail::operator_functor<op>{}(input));
+      }
     }
 
-    template <ast_operator op,
-              typename ResultSubclass,
-              typename T,
-              bool result_has_nulls,
-              CUDF_ENABLE_IF(!detail::is_valid_unary_op<detail::operator_functor<op>,
-                                                        possibly_null_value_t<Input, has_nulls>>)>
+    template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,
@@ -776,13 +783,10 @@ struct expression_evaluator {
      * @param rhs Right input to the operation.
      * @param output Output data reference.
      */
-    template <ast_operator op,
-              typename ResultSubclass,
-              typename T,
-              bool result_has_nulls,
-              CUDF_ENABLE_IF(detail::is_valid_binary_op<detail::operator_functor<op>,
-                                                        possibly_null_value_t<LHS, has_nulls>,
-                                                        possibly_null_value_t<RHS, has_nulls>>)>
+    template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
+      requires(detail::is_valid_binary_op<detail::operator_functor<op>,
+                                          possibly_null_value_t<LHS, has_nulls>,
+                                          possibly_null_value_t<RHS, has_nulls>>)
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,
@@ -801,13 +805,7 @@ struct expression_evaluator {
                                          detail::operator_functor<op>{}(lhs, rhs));
     }
 
-    template <ast_operator op,
-              typename ResultSubclass,
-              typename T,
-              bool result_has_nulls,
-              CUDF_ENABLE_IF(!detail::is_valid_binary_op<detail::operator_functor<op>,
-                                                         possibly_null_value_t<LHS, has_nulls>,
-                                                         possibly_null_value_t<RHS, has_nulls>>)>
+    template <ast_operator op, typename ResultSubclass, typename T, bool result_has_nulls>
     __device__ inline void operator()(
       expression_result<ResultSubclass, T, result_has_nulls>& output_object,
       cudf::size_type const output_row_index,

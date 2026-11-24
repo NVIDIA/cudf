@@ -39,6 +39,21 @@ TEST_F(StreamingChannelMetadata, HashScheme)
   EXPECT_NE(h, (hash_scheme{{2}, 16}));
 }
 
+TEST_F(StreamingChannelMetadata, RowOrdering)
+{
+  order_key key{1, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  row_ordering ordering{{key}, row_ordering_scope::RANK_LOCAL, {0}};
+
+  EXPECT_EQ(ordering.order_keys, (std::vector<order_key>{key}));
+  EXPECT_EQ(ordering.scope, row_ordering_scope::RANK_LOCAL);
+  EXPECT_EQ(ordering.group_keys, (std::vector<cudf::size_type>{0}));
+  EXPECT_EQ(ordering, (row_ordering{{key}, row_ordering_scope::RANK_LOCAL, {0}}));
+  EXPECT_THROW(static_cast<void>(row_ordering{{}, row_ordering_scope::GLOBAL}),
+               std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(row_ordering{{key}, row_ordering_scope::GLOBAL, {1}}),
+               std::invalid_argument);
+}
+
 TEST_F(StreamingChannelMetadata, OrderSchemeCtorRejectsEmptyKeys)
 {
   EXPECT_THROW(static_cast<void>(order_scheme({}, nullptr)), std::invalid_argument);
@@ -126,6 +141,7 @@ TEST_F(StreamingChannelMetadata, ChannelMetadata)
   channel_metadata m_minimal{4};
   EXPECT_EQ(m_minimal.local_count, 4);
   EXPECT_FALSE(m_minimal.duplicated);
+  EXPECT_TRUE(m_minimal.partitioning.row_orderings.empty());
 
   // Equality - create fresh partitionings and move them
   channel_metadata m_same{
@@ -145,9 +161,11 @@ TEST_F(StreamingChannelMetadata, ChannelMetadata)
 
 TEST_F(StreamingChannelMetadata, MessageRoundTrip)
 {
+  order_key key{1, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  row_ordering expected{{key}, row_ordering_scope::RANK_LOCAL, {0}};
   // channel_metadata round-trip
-  partitioning part{partitioning_spec::from_hash(hash_scheme{{0}, 16}),
-                    partitioning_spec::inherit()};
+  partitioning part{
+    partitioning_spec::from_hash(hash_scheme{{0}, 16}), partitioning_spec::inherit(), {expected}};
   auto m     = std::make_unique<channel_metadata>(4, std::move(part), false);
   auto msg_m = to_message(99, std::move(m));
   EXPECT_EQ(msg_m.sequence_number(), 99);
@@ -156,6 +174,8 @@ TEST_F(StreamingChannelMetadata, MessageRoundTrip)
   EXPECT_EQ(released.local_count, 4);
   EXPECT_FALSE(released.duplicated);
   EXPECT_EQ(released.partitioning.inter_rank.hash->modulus, 16);
+  ASSERT_EQ(released.partitioning.row_orderings.size(), 1);
+  EXPECT_EQ(released.partitioning.row_orderings.front(), expected);
   EXPECT_TRUE(msg_m.empty());
 }
 
@@ -193,7 +213,6 @@ TEST_F(StreamingChannelMetadataGPU, OrderingReplaceKeys)
   EXPECT_EQ(o2.keys[0].column_index, 5);
   EXPECT_EQ(o2.keys[0].order, cudf::order::DESCENDING);
   EXPECT_EQ(o2.strict_boundaries, o1.strict_boundaries);
-  EXPECT_EQ(o2.locally_ordered, o1.locally_ordered);
   EXPECT_EQ(o2.boundaries->shape(), o1.boundaries->shape());
   EXPECT_EQ(o2.boundaries.get(), b.get());
   EXPECT_NE(o1.keys[0].column_index, o2.keys[0].column_index);
@@ -201,18 +220,17 @@ TEST_F(StreamingChannelMetadataGPU, OrderingReplaceKeys)
   EXPECT_THROW(static_cast<void>(o1.with_keys({k0, k5})), std::invalid_argument);
 }
 
-TEST_F(StreamingChannelMetadataGPU, OrderingReplaceLocallyOrdered)
+TEST_F(StreamingChannelMetadataGPU, OrderingAsStrict)
 {
   order_key k0{0, cudf::order::ASCENDING, cudf::null_order::BEFORE};
+  ordering input({k0}, make_chunk({100, 100, 200}), /*strict_boundaries=*/false);
+  ordering expected({k0}, make_chunk({100, 200}), /*strict_boundaries=*/true);
 
-  auto b      = make_chunk({100, 200});
-  ordering o1 = ordering({k0}, b, /*strict_boundaries=*/true);
-  auto o2     = o1.with_locally_ordered(false);
+  auto result = input.as_strict(*br);
 
-  EXPECT_EQ(o2.keys[0], o1.keys[0]);
-  EXPECT_EQ(o2.strict_boundaries, o1.strict_boundaries);
-  EXPECT_FALSE(o2.locally_ordered);
-  EXPECT_EQ(o2.boundaries.get(), b.get());
+  EXPECT_EQ(result.keys, input.keys);
+  EXPECT_TRUE(result.strict_boundaries);
+  EXPECT_TRUE(result.boundaries_aligned_with(expected, *br));
 }
 
 TEST_F(StreamingChannelMetadataGPU, OrderSchemeMultipleOrderings)
@@ -228,7 +246,6 @@ TEST_F(StreamingChannelMetadataGPU, OrderSchemeMultipleOrderings)
   EXPECT_EQ(o.orderings[0].keys[0], k0);
   EXPECT_EQ(o.orderings[0].boundaries.get(), b0.get());
   EXPECT_TRUE(o.orderings[0].strict_boundaries);
-  EXPECT_TRUE(o.orderings[0].locally_ordered);
   EXPECT_EQ(o.orderings[1].keys[0], k2);
   EXPECT_EQ(o.orderings[1].boundaries.get(), b1.get());
   EXPECT_FALSE(o.orderings[1].strict_boundaries);
@@ -248,12 +265,6 @@ TEST_F(StreamingChannelMetadataGPU, OrderingBoundariesAlignedWith)
 
   ordering o_strict({k0}, make_chunk({100, 200}), /*strict_boundaries=*/true);
   EXPECT_FALSE(o1.boundaries_aligned_with(o_strict, *br));
-
-  ordering o_unordered({k0},
-                       make_chunk({100, 200}),
-                       /*strict_boundaries=*/false,
-                       /*locally_ordered=*/false);
-  EXPECT_TRUE(o1.boundaries_aligned_with(o_unordered, *br));
 
   ordering o_diff({k0}, make_chunk({100, 300}));
   EXPECT_FALSE(o1.boundaries_aligned_with(o_diff, *br));

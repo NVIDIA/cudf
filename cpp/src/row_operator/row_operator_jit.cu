@@ -138,7 +138,7 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
                                                  std::optional<type_id> high,
                                                  uint64_t seed,
                                                  cuda::stream_ref stream,
-                                                 rmm::device_async_resource_ref mr)
+                                                 cudf::memory_resources mr)
 {
   if (alg == algorithm::spark_murmurhash3_x86_32 && input.num_rows() != 0) {
     for (auto const& column : input) {
@@ -161,7 +161,7 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
   auto const d_high = high.has_value() ? outputs[1]->mutable_view().head() : nullptr;
 
   if (input.num_columns() == 0) {
-    auto policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+    auto policy = rmm::exec_policy_nosync(stream, mr.get_temporary_mr());
     // A row with no columns hashes to the seed; its second 128-bit result word is zero.
     if (alg == algorithm::xxhash_64 || alg == algorithm::murmurhash3_x64_128) {
       thrust::fill_n(policy, static_cast<uint64_t*>(d_low), input.num_rows(), seed);
@@ -179,7 +179,7 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
 
   auto const instance     = reflect_hash_kernel(alg, input);
   auto const operation    = get_kernel(alg, instance);
-  auto [storage, columns] = create_column_device_views<column_device_view>(input, stream);
+  auto [storage, columns] = create_column_device_views<column_device_view>(input, stream, mr);
   auto const nullable =
     alg == algorithm::spark_murmurhash3_x86_32 ? has_nested_nulls(input) : has_nulls(input);
 
@@ -196,7 +196,7 @@ namespace cudf::hashing::detail {
 std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
                                                uint32_t seed,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto outputs = row_operators::hash_column(row_operators::algorithm::murmurhash3_x86_32,
@@ -212,7 +212,7 @@ std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
 std::unique_ptr<column> spark_murmurhash3_x86_32_jit(table_view const& input,
                                                      uint32_t seed,
                                                      cuda::stream_ref stream,
-                                                     rmm::device_async_resource_ref mr)
+                                                     cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto outputs = row_operators::hash_column(row_operators::algorithm::spark_murmurhash3_x86_32,
@@ -228,7 +228,7 @@ std::unique_ptr<column> spark_murmurhash3_x86_32_jit(table_view const& input,
 std::unique_ptr<table> murmurhash3_x64_128_jit(table_view const& input,
                                                uint64_t seed,
                                                cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr)
+                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return std::make_unique<table>(
@@ -244,7 +244,7 @@ std::unique_ptr<table> murmurhash3_x64_128_jit(table_view const& input,
 std::unique_ptr<column> xxhash_32_jit(table_view const& input,
                                       uint32_t seed,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto outputs = row_operators::hash_column(
@@ -255,7 +255,7 @@ std::unique_ptr<column> xxhash_32_jit(table_view const& input,
 std::unique_ptr<column> xxhash_64_jit(table_view const& input,
                                       uint64_t seed,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   auto outputs = row_operators::hash_column(

@@ -61,7 +61,7 @@ public abstract class BatchedDecompressor {
       }
 
       final long tempBufferSize = batchedDecompressGetTempSize(totalChunks, chunkSize,
-        totalChunks * chunkSize);
+        totalChunks * chunkSize, stream.getStream());
       try (DeviceMemoryBuffer devAddrsSizes = buildAddrsSizesBuffer(chunkSize, totalChunks,
               inputs.getArray(), chunksPerInput, outputs, stream);
            DeviceMemoryBuffer devTemp = DeviceMemoryBuffer.allocate(tempBufferSize, stream)) {
@@ -191,10 +191,11 @@ public abstract class BatchedDecompressor {
    * @param numChunks number of chunks in the batch
    * @param maxUncompressedChunkBytes maximum uncompressed size of any chunk in bytes
    * @param maxTotalSize Upper bound on the total uncompressed size of all chunks
+   * @param stream CUDA stream to use
    * @return number of temporary storage bytes needed to decompress the batch
    */
   protected abstract long batchedDecompressGetTempSize(long numChunks,
-      long maxUncompressedChunkBytes, long maxTotalSize);
+      long maxUncompressedChunkBytes, long maxTotalSize, long stream);
 
     /**
    * Asynchronously decompress a batch of compressed data buffers.

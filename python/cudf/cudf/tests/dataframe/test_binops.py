@@ -486,10 +486,15 @@ def test_different_shapes_and_same_columns(arithmetic_op):
     assert_eq(cd_frame, pd_frame)
 
 
-def test_different_shapes_and_columns_with_unaligned_indices(arithmetic_op):
-    # ``pow`` no longer overflows here: aligning the unaligned indices
-    # introduces missing rows, which now promote the integer operands to
-    # float64 (pandas semantics), so the pow is computed in float.
+def test_different_shapes_and_columns_with_unaligned_indices(
+    request, arithmetic_op
+):
+    if arithmetic_op is operator.pow:
+        # Outside pandas-compatible mode, aligning the unaligned indices keeps
+        # the integer operands (with nulls), and cudf's INT_POW computes in
+        # int64 and overflows where pandas computes float pow
+        msg = "int64 INT_POW overflows where pandas computes float pow"
+        request.applymarker(pytest.mark.xfail(reason=msg))
 
     # Test with a RangeIndex
     pdf1 = pd.DataFrame({"x": [4, 3, 2, 1], "y": [7, 3, 8, 6]})
@@ -687,3 +692,43 @@ def test_binop_dot_preserve_index():
     result = ser @ df
     expected = ser.to_pandas() @ df.to_pandas()
     assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("dtype", ["Float32", "Int16", "float[pyarrow]"])
+@pytest.mark.parametrize("lhs_type", ["DataFrame", "Series"])
+def test_binop_dot_nullable_extension_dtype(dtype, lhs_type):
+    cols = ["a", "b"]
+    lhs = pd.DataFrame([[1, 2], [3, 4], [5, 6]], columns=cols, dtype="int32")
+    if lhs_type == "Series":
+        lhs = pd.Series([1, 2], index=cols, dtype="int32")
+    rhs = pd.DataFrame([[1, 0], [0, 1]], index=cols, dtype=dtype)
+
+    expected = lhs.dot(rhs)
+    result = cudf.from_pandas(lhs).dot(cudf.from_pandas(rhs))
+
+    assert_eq(result, expected)
+
+
+def test_binop_dot_nullable_extension_dtype_vector():
+    # pandas returns an object result for a DataFrame, so compare the values.
+    pdf = pd.DataFrame({"a": pd.Series([1, 2], dtype="Int32"), "b": [3, 4]})
+    vector = np.array([1, 1])
+
+    result = cudf.from_pandas(pdf).dot(vector)
+    assert result.to_pandas().tolist() == pdf.dot(vector).tolist()
+    assert_eq(cudf.from_pandas(pdf["a"]).dot(vector), pdf["a"].dot(vector))
+
+
+@pytest.mark.parametrize("other_type", ["DataFrame", "Series"])
+def test_binop_dot_nullable_extension_dtype_with_nulls_not_supported(
+    other_type,
+):
+    df = cudf.DataFrame([[1, 2], [3, 4]], columns=["a", "b"], dtype="int32")
+    if other_type == "DataFrame":
+        other = cudf.DataFrame(
+            [[1, None], [0, 1]], index=["a", "b"], dtype="Int32"
+        )
+    else:
+        other = cudf.Series([1, None], index=["a", "b"], dtype="Int32")
+    with pytest.raises(NotImplementedError, match="nullable extension"):
+        df.dot(other)

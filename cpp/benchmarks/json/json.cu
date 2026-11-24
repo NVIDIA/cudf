@@ -4,11 +4,13 @@
  */
 
 #include <benchmarks/common/generate_input.hpp>
+#include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/json/json.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.hpp>
@@ -183,10 +185,10 @@ static void bench_query(nvbench::state& state)
 {
   srand(5236);
 
-  auto const num_rows              = static_cast<cudf::size_type>(state.get_int64("num_rows"));
-  auto const desired_bytes         = static_cast<cudf::size_type>(state.get_int64("bytes"));
-  auto const query                 = state.get_int64("query");
-  std::string_view const json_path = queries[query];
+  auto const num_rows      = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const desired_bytes = static_cast<cudf::size_type>(state.get_int64("bytes"));
+  auto const query         = state.get_int64("query");
+  cudf::string_scalar json_path(queries[query]);
 
   auto const stream = cudf::get_default_stream();
   auto input        = build_json_string_column(desired_bytes, num_rows);
@@ -198,9 +200,12 @@ static void bench_query(nvbench::state& state)
   // going to visit every single incoming character but in spirit it does.
   state.add_global_memory_reads<nvbench::int8_t>(num_chars);
 
+  auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
     [[maybe_unused]] auto result = cudf::get_json_object(scv, json_path);
   });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 NVBENCH_BENCH(bench_query)

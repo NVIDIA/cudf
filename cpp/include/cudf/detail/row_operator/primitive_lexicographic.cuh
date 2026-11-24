@@ -9,22 +9,23 @@
 #include <cudf/column/column_device_view_base.cuh>
 #include <cudf/detail/row_operator/common_utils.cuh>
 #include <cudf/detail/row_operator/lexicographic_common.cuh>
-#include <cudf/detail/row_operator/primitive_row_operators.cuh>
+#include <cudf/detail/row_operator/primitive_common.cuh>
 #include <cudf/detail/utilities/assert.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <type_traits>
@@ -102,11 +103,10 @@ class row_lexicographic_comparator {
 
  private:
   struct element_comparator {
-    template <typename Element>
+    template <cudf::concepts::arithmetic Element>
     __device__ weak_ordering operator()(column_device_view const& col,
                                         size_type lhs_index,
                                         size_type rhs_index) const noexcept
-      requires(cudf::is_numeric<Element>())
     {
       return lexicographic::sorting_physical_element_comparator{}(col.element<Element>(lhs_index),
                                                                   col.element<Element>(rhs_index));
@@ -116,7 +116,6 @@ class row_lexicographic_comparator {
     __device__ weak_ordering operator()(column_device_view const&,
                                         size_type,
                                         size_type) const noexcept
-      requires(not cudf::is_numeric<Element>())
     {
       CUDF_UNREACHABLE("Primitive lexicographic comparison requires numeric columns.");
     }
@@ -150,9 +149,9 @@ class lexicographic_comparator {
                            host_span<null_order const> null_precedence = {},
                            cuda::stream_ref stream                     = cudf::get_default_stream())
     : _table{table_device_view::create(table, stream)},
-      _column_order{cudf::detail::make_device_uvector_async(
+      _column_order{cudf::detail::make_device_buffer_async(
         column_order, stream, cudf::get_current_device_resource_ref())},
-      _null_precedence{cudf::detail::make_device_uvector_async(
+      _null_precedence{cudf::detail::make_device_buffer_async(
         null_precedence, stream, cudf::get_current_device_resource_ref())}
   {
     if (not column_order.empty() or not null_precedence.empty()) {
@@ -180,8 +179,8 @@ class lexicographic_comparator {
                                                        rmm::device_async_resource_ref>;
 
   table_device_view_owner const _table;
-  rmm::device_uvector<order> const _column_order;
-  rmm::device_uvector<null_order> const _null_precedence;
+  cuda::device_buffer<order> const _column_order;
+  cuda::device_buffer<null_order> const _null_precedence;
 };
 
 }  // namespace cudf::detail::row::primitive

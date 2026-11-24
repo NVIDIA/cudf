@@ -23,6 +23,8 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/type_traits>
+
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -792,7 +794,7 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
     auto filter_expression =
       cudf::ast::operation(cudf::ast::ast_operator::GREATER, literal, col_ref);
     auto constexpr expected_surviving_rows =
-      num_sources * num_ordered_rows / (std::is_signed_v<T> ? 4 : 2);
+      num_sources * num_ordered_rows / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 
@@ -804,7 +806,7 @@ TYPED_TEST(HybridScanMultifilePageIndexRowMaskTest, BuildRowMaskWithPageIndexSta
     auto filter_expression =
       cudf::ast::operation(cudf::ast::ast_operator::GREATER_EQUAL, col_ref, literal);
     auto constexpr expected_surviving_rows =
-      num_sources * num_ordered_rows / (std::is_signed_v<T> ? 4 : 2);
+      num_sources * num_ordered_rows / (cuda::std::is_signed_v<T> ? 4 : 2);
     test_filter_data_pages_with_stats(filter_expression, expected_surviving_rows);
   }
 

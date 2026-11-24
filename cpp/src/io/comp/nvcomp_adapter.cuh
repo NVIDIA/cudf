@@ -10,8 +10,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <nvcomp.h>
@@ -21,10 +20,10 @@
 namespace cudf::io::detail::nvcomp {
 
 struct batched_args {
-  rmm::device_uvector<void const*> input_data_ptrs;
-  rmm::device_uvector<size_t> input_data_sizes;
-  rmm::device_uvector<void*> output_data_ptrs;
-  rmm::device_uvector<size_t> output_data_sizes;
+  cuda::device_buffer<void const*> input_data_ptrs;
+  cuda::device_buffer<size_t> input_data_sizes;
+  cuda::device_buffer<void*> output_data_ptrs;
+  cuda::device_buffer<size_t> output_data_sizes;
 };
 
 /**
@@ -43,7 +42,7 @@ batched_args create_batched_nvcomp_args(device_span<device_span<uint8_t const> c
 /**
  * @brief Prepares device arrays of input pointers and sizes for use with nvCOMP temp size APIs.
  */
-std::pair<rmm::device_uvector<void const*>, rmm::device_uvector<size_t>> create_get_temp_size_args(
+std::pair<cuda::device_buffer<void const*>, cuda::device_buffer<size_t>> create_get_temp_size_args(
   device_span<device_span<uint8_t const> const> inputs,
   cuda::stream_ref stream,
   cudf::memory_resources mr);

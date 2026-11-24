@@ -18,6 +18,7 @@
 #include <cudf/utilities/bit.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/type_traits>
 #include <thrust/host_vector.h>
 
 #include <src/rolling/detail/rolling.hpp>
@@ -53,7 +54,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
                         cudf::size_type following_window,
                         cudf::size_type min_periods)
   {
-    // Skip grouping-tests on bool8 keys. sort_helper does not support this.
+    // Skip grouping-tests on bool8 keys.
     if (keys.num_columns() > 0 && cudf::is_boolean(keys.column(0).type())) { return; }
 
     // test all supported aggregators
@@ -281,7 +282,7 @@ class GroupedRollingTest : public cudf::test::BaseFixture {
       case cudf::aggregation::SUM:
         return create_reference_output<cudf::DeviceSum,
                                        cudf::aggregation::SUM,
-                                       std::conditional_t<std::is_integral_v<T>, int64_t, T>,
+                                       std::conditional_t<cuda::std::is_integral_v<T>, int64_t, T>,
                                        false>(
           input, group_offsets, preceding_window, following_window, min_periods);
       case cudf::aggregation::MIN:
@@ -653,7 +654,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
                         cudf::size_type following_window_in_days,
                         cudf::size_type min_periods)
   {
-    // Skip grouping-tests on bool8 keys. sort_helper does not support this.
+    // Skip grouping-tests on bool8 keys.
     if (keys.num_columns() > 0 && cudf::is_boolean(keys.column(0).type())) { return; }
 
     // test all supported aggregators
@@ -980,7 +981,7 @@ class GroupedTimeRangeRollingTest : public cudf::test::BaseFixture {
       case cudf::aggregation::SUM:
         return create_reference_output<cudf::DeviceSum,
                                        cudf::aggregation::SUM,
-                                       std::conditional_t<std::is_integral_v<T>, int64_t, T>,
+                                       std::conditional_t<cuda::std::is_integral_v<T>, int64_t, T>,
                                        false>(timestamp_column,
                                               timestamp_order,
                                               input,

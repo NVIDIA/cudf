@@ -9,7 +9,7 @@ from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table_view cimport table_view
 from pylibcudf.libcudf.types cimport mask_state, size_type, bitmask_type
-from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -62,7 +62,7 @@ cpdef gpumemoryview copy_bitmask(
         A view containing ``col``'s bitmask, or an empty view if ``col`` is
         not nullable.
     """
-    cdef unique_ptr[device_buffer[byte]] db
+    cdef unique_ptr[device_buffer[bitmask_type]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
@@ -109,7 +109,7 @@ cpdef gpumemoryview copy_bitmask_from_bitmask(
             f"bitmask must satisfy Span protocol (have .ptr and .size), "
             f"got {type(bitmask).__name__}"
         )
-    cdef unique_ptr[device_buffer[byte]] db
+    cdef unique_ptr[device_buffer[bitmask_type]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
@@ -177,7 +177,7 @@ cpdef gpumemoryview create_null_mask(
     gpumemoryview
         A view of a null bitmask satisfying the desired size and state.
     """
-    cdef unique_ptr[device_buffer[byte]] db
+    cdef unique_ptr[device_buffer[bitmask_type]] db
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
@@ -214,7 +214,7 @@ cpdef tuple[gpumemoryview, int] bitmask_and(
         A tuple of the resulting mask and count of unset bits
     """
     cdef Table c_table = Table(columns)
-    cdef pair[unique_ptr[device_buffer[byte]], size_type] c_result
+    cdef pair[unique_ptr[device_buffer[bitmask_type]], size_type] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)
@@ -255,7 +255,7 @@ cpdef tuple[gpumemoryview, int] bitmask_or(
         A tuple of the resulting mask and count of unset bits
     """
     cdef Table c_table = Table(columns)
-    cdef pair[unique_ptr[device_buffer[byte]], size_type] c_result
+    cdef pair[unique_ptr[device_buffer[bitmask_type]], size_type] c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
     mr = _get_memory_resource(mr)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -11,6 +11,8 @@
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/aggregation.hpp>
+
+#include <cuda/iterator>
 
 template <typename V>
 struct groupby_count_test : public cudf::test::BaseFixture {};
@@ -32,9 +34,6 @@ TYPED_TEST(groupby_count_test, basic)
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
-
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2));
 }
@@ -52,9 +51,6 @@ TYPED_TEST(groupby_count_test, empty_cols)
 
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
 }
 
 TYPED_TEST(groupby_count_test, zero_valid_keys)
@@ -70,9 +66,6 @@ TYPED_TEST(groupby_count_test, zero_valid_keys)
 
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
 
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2));
@@ -91,9 +84,6 @@ TYPED_TEST(groupby_count_test, zero_valid_values)
 
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
 
   cudf::test::fixed_width_column_wrapper<R> expect_vals2{3};
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
@@ -121,12 +111,41 @@ TYPED_TEST(groupby_count_test, null_keys_and_values)
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
-
   cudf::test::fixed_width_column_wrapper<R> expect_vals2{3, 4, 2, 1};
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
   test_single_agg(keys, vals, expect_keys, expect_vals2, std::move(agg2));
+}
+
+using groupby_count_shape_test = groupby_count_test<int32_t>;
+
+TEST_F(groupby_count_shape_test, SingletonGroups)
+{
+  constexpr cudf::size_type num_rows = 67;
+  auto const begin                   = cuda::counting_iterator<K>{0};
+  auto const ones                    = cuda::make_constant_iterator(cudf::size_type{1});
+  auto const validity                = cudf::test::iterators::null_at(num_rows - 1);
+  cudf::test::fixed_width_column_wrapper<K> keys(begin, begin + num_rows);
+  cudf::test::fixed_width_column_wrapper<K> nullable_values(begin, begin + num_rows, validity);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_counts(ones, ones + num_rows);
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> expected_valid_counts(
+    validity, validity + num_rows);
+
+  // A partial final warp and singleton groups exercise counting without row positions.
+  test_single_agg(
+    keys, keys, keys, expected_counts, cudf::make_count_aggregation<cudf::groupby_aggregation>());
+  test_single_agg(
+    keys,
+    nullable_values,
+    keys,
+    expected_counts,
+    cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+
+  // Nullable COUNT_VALID still needs the grouped rows to identify the null singleton.
+  test_single_agg(keys,
+                  nullable_values,
+                  keys,
+                  expected_valid_counts,
+                  cudf::make_count_aggregation<cudf::groupby_aggregation>());
 }
 
 struct groupby_count_string_test : public cudf::test::BaseFixture {};
@@ -145,9 +164,6 @@ TEST_F(groupby_count_string_test, basic)
 
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
-
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
 }
 // clang-format on
 
@@ -175,9 +191,6 @@ TYPED_TEST(GroupByCountFixedPointTest, GroupByCount)
   auto agg = cudf::make_count_aggregation<cudf::groupby_aggregation>();
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg));
 
-  auto agg1 = cudf::make_count_aggregation<cudf::groupby_aggregation>();
-  test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg1), force_use_sort_impl::YES);
-
   auto agg2 = cudf::make_count_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE);
   test_single_agg(keys, vals, expect_keys, expect_vals, std::move(agg2));
 }
@@ -200,10 +213,4 @@ TEST_F(groupby_dictionary_count_test, basic)
                   expect_keys,
                   expect_vals,
                   cudf::make_count_aggregation<cudf::groupby_aggregation>());
-  test_single_agg(keys,
-                  vals,
-                  expect_keys,
-                  expect_vals,
-                  cudf::make_count_aggregation<cudf::groupby_aggregation>(),
-                  force_use_sort_impl::YES);
 }

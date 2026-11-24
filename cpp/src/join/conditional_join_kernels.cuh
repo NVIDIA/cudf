@@ -16,7 +16,7 @@
 #include <cudf/table/table_device_view.cuh>
 
 #include <cub/block/block_reduce.cuh>
-#include <cub/util_device.cuh>
+#include <cub/util_ptx.cuh>
 
 namespace cudf {
 namespace detail {

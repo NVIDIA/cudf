@@ -1,12 +1,20 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 
+#include <cudf/detail/utilities/host_worker_pool.hpp>
+
 #include <src/io/utilities/base64_utilities.hpp>
+
+#include <chrono>
+#include <future>
+#include <stdexcept>
+#include <string_view>
+#include <vector>
 
 using cudf::io::detail::base64_decode;
 using cudf::io::detail::base64_encode;
@@ -122,4 +130,42 @@ TEST(IoUtilitiesTest, Base64EncodeAndDecode)
 
   // Check equal columns
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, results);
+}
+
+TEST(IoUtilitiesTest, Base64DecodeUnpadded)
+{
+  // Decode views into a larger buffer so any read past the end of the view would pick up the
+  // trailing characters instead of stopping
+  auto const decode_prefix = [](std::string_view encoded, size_t length) {
+    return base64_decode(encoded.substr(0, length));
+  };
+  EXPECT_EQ(decode_prefix("QQAAAAAA", 2), "A");
+  EXPECT_EQ(decode_prefix("QUIAAAAA", 3), "AB");
+  EXPECT_EQ(decode_prefix("QUJDRAAA", 6), "ABCD");
+  EXPECT_EQ(decode_prefix("QUJDRAAA", 5), "");
+}
+
+TEST(IoUtilitiesTest, FuturesWaitGuardWaitsForPendingFutures)
+{
+  std::promise<int> failed;
+  std::promise<int> pending;
+  failed.set_exception(std::make_exception_ptr(std::runtime_error("failed")));
+
+  // Like the futures of a host worker pool, these futures do not wait on destruction, so the
+  // collector can only stay blocked on `pending` through the guard
+  auto collector = std::async(std::launch::async, [&] {
+    std::vector<std::future<int>> futures;
+    cudf::detail::futures_wait_guard futures_guard{futures};
+    futures.push_back(failed.get_future());
+    futures.push_back(pending.get_future());
+    for (auto& future : futures) {
+      future.get();
+    }
+  });
+
+  EXPECT_EQ(collector.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+
+  // The exception from the drained future must not replace the one that started the unwinding
+  pending.set_exception(std::make_exception_ptr(std::logic_error("pending")));
+  EXPECT_THROW(collector.get(), std::runtime_error);
 }

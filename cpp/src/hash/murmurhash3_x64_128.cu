@@ -70,7 +70,8 @@ class murmur_device_row_hasher {
    */
   class element_hasher_adapter {
    public:
-    template <typename T, CUDF_ENABLE_IF(column_device_view::has_element_accessor<T>())>
+    template <typename T>
+      requires(column_device_view::has_element_accessor<T>())
     __device__ hash_value_type operator()(column_device_view const& col,
                                           size_type row_index,
                                           Nullate const check_nulls,
@@ -84,7 +85,7 @@ class murmur_device_row_hasher {
       return hasher(col.element<T>(row_index));
     }
 
-    template <typename T, CUDF_ENABLE_IF(not column_device_view::has_element_accessor<T>())>
+    template <typename T>
     __device__ hash_value_type operator()(column_device_view const&,
                                           size_type,
                                           Nullate const,
@@ -106,7 +107,7 @@ class murmur_device_row_hasher {
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   auto output1 = make_numeric_column(
     data_type(type_id::UINT64), input.num_rows(), mask_state::UNALLOCATED, stream, mr);
@@ -138,7 +139,7 @@ std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
                                            use_jit jit,
                                            cuda::stream_ref stream,
-                                           rmm::device_async_resource_ref mr)
+                                           cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (jit == use_jit::YES || get_context().use_jit()) {

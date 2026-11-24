@@ -14,6 +14,9 @@
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/std/type_traits>
+
+#include <bit>
 #include <limits>
 #include <type_traits>
 #include <vector>
@@ -97,7 +100,7 @@ TYPED_TEST(StableSort, SingleColumnNoNull)
   auto expected =
     std::is_same_v<T, bool>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{8, 5, 0, 1, 2, 3, 4, 6, 7, 9}}
-    : std::is_unsigned_v<T>
+    : cuda::std::is_unsigned_v<T>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 8, 1, 4, 6, 3, 9, 0, 2, 7}}
       : cudf::test::fixed_width_column_wrapper<int32_t>{{2, 7, 5, 8, 1, 4, 6, 3, 9, 0}};
   run_stable_sort_test(input, expected, column_order, {}, false);
@@ -116,7 +119,7 @@ TYPED_TEST(StableSort, SingleColumnWithNull)
   auto expected =
     std::is_same_v<T, bool>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 2, 3, 7, 9, 8, 0, 1, 4, 6}}
-    : std::is_unsigned_v<T>
+    : cuda::std::is_unsigned_v<T>
       ? cudf::test::fixed_width_column_wrapper<int32_t>{{5, 3, 9, 2, 7, 8, 1, 4, 6, 0}}
       : cudf::test::fixed_width_column_wrapper<int32_t>{{2, 7, 5, 3, 9, 8, 1, 4, 6, 0}};
   run_stable_sort_test(input, expected, column_order, {}, false);
@@ -319,4 +322,66 @@ TEST_F(StableSortDouble, SlicedNumericColumnsWithNullsAndTies)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, got->view());
   run_stable_sort_test(input, expected, column_order, null_precedence, false);
   run_stable_sort_test(input, expected, column_order, null_precedence, true);
+}
+
+template <typename T>
+struct StableSortFloatingPoint : public cudf::test::BaseFixture {};
+TYPED_TEST_SUITE(StableSortFloatingPoint, cudf::test::FloatingPointTypes);
+
+TYPED_TEST(StableSortFloatingPoint, InfinityAndNaNDescending)
+{
+  using T            = TypeParam;
+  auto constexpr NaN = std::numeric_limits<T>::quiet_NaN();
+  auto constexpr Inf = std::numeric_limits<T>::infinity();
+  auto constexpr Z   = T{0};
+
+  auto input = cudf::test::fixed_width_column_wrapper<T>(
+    {-Z, -NaN, -NaN, NaN, Inf, -Inf, T{7}, T{5}, T{6}, NaN, Inf, -Inf, -NaN, -NaN, -Z});
+  auto expected =  // -nan,-nan,nan,nan,-nan,-nan,inf,inf,7,6,5,-0,-0,-inf,-inf
+    cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+      {1, 2, 3, 9, 12, 13, 4, 10, 6, 8, 7, 0, 14, 5, 11});
+  auto results = cudf::stable_sorted_order(cudf::table_view({input}), {cudf::order::DESCENDING});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected);
+
+  // A column with nulls takes the comparator path rather than the radix path;
+  // the relative order of the non-null rows must be the same.
+  auto with_nulls = cudf::test::fixed_width_column_wrapper<T>(
+    {-Z, -NaN, -NaN, NaN, Inf, -Inf, T{7}, T{5}, T{6}, NaN, Inf, -Inf, -NaN, -NaN, -Z, Z},
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0});
+  auto expected_nulls = cudf::test::fixed_width_column_wrapper<cudf::size_type>(
+    {1, 2, 3, 9, 12, 13, 4, 10, 6, 8, 7, 0, 14, 5, 11, 15});
+  results = cudf::stable_sorted_order(
+    cudf::table_view({with_nulls}), {cudf::order::DESCENDING}, {cudf::null_order::BEFORE});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(results->view(), expected_nulls);
+}
+
+TYPED_TEST(StableSortFloatingPoint, NaNPayloadOrder)
+{
+  using T    = TypeParam;
+  using Bits = std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+  // Equal NaNs are only distinguishable by their bits, so distinct payloads are used to check
+  // that the value-only radix path of stable_sort keeps them in input order
+  auto const make_nan = [](Bits payload, bool negative) {
+    auto bits = std::bit_cast<Bits>(std::numeric_limits<T>::quiet_NaN()) | payload;
+    if (negative) { bits |= Bits{1} << (sizeof(T) * 8 - 1); }
+    return std::bit_cast<T>(bits);
+  };
+  auto input = cudf::test::fixed_width_column_wrapper<T>(
+    {make_nan(1, false), T{1}, make_nan(2, true), T{2}, make_nan(3, false), make_nan(4, false)});
+  auto const bits_type =
+    cudf::data_type{sizeof(T) == 4 ? cudf::type_id::INT32 : cudf::type_id::INT64};
+  auto const as_bits = [bits_type](cudf::column_view const& col) {
+    return cudf::bit_cast(col, bits_type);
+  };
+
+  for (auto [order, indices] :
+       {std::pair{cudf::order::ASCENDING, std::vector<cudf::size_type>{1, 3, 0, 2, 4, 5}},
+        std::pair{cudf::order::DESCENDING, std::vector<cudf::size_type>{0, 2, 4, 5, 3, 1}}}) {
+    auto const gather_map =
+      cudf::test::fixed_width_column_wrapper<cudf::size_type>(indices.begin(), indices.end());
+    auto const expected = cudf::gather(cudf::table_view({input}), gather_map);
+    auto const sorted   = cudf::stable_sort(cudf::table_view({input}), {order});
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(as_bits(sorted->get_column(0).view()),
+                                   as_bits(expected->get_column(0).view()));
+  }
 }

@@ -6,29 +6,28 @@ import datetime as dt
 import gzip
 import zlib
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import quote
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
-import zstandard as zstd
 from werkzeug import Response
 
 import polars as pl
 
+import pylibcudf as plc
+
 from cudf_polars.containers import DataType
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
+from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.io import make_partitioned_source
 from cudf_polars.utils.config import ConfigOptions, ParquetOptions
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_138,
-    POLARS_VERSION_LT_139,
-    POLARS_VERSION_LT_142,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,12 +35,6 @@ if TYPE_CHECKING:
 
     from pytest_httpserver import HTTPServer
     from werkzeug import Request
-
-
-requires_hive_ir = pytest.mark.skipif(
-    POLARS_VERSION_LT_142,
-    reason="hive::HivePartitionedDf not exposed in the logical plan before 1.42",
-)
 
 
 @pytest.fixture
@@ -192,6 +185,35 @@ def test_negative_slice_pushdown_raises(engine: pl.GPUEngine, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_cloud_storage_options_raises(in_memory_engine: pl.GPUEngine) -> None:
+    # libcudf/KvikIO cannot honor storage_options (endpoint, credentials, ...),
+    # so a cloud scan that sets them must fall back to the CPU.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options={"aws_region": "us-east-1"},
+        credential_provider=None,
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("storage_options", [None, {}])
+def test_scan_cloud_empty_storage_options_translates(
+    in_memory_engine, storage_options
+) -> None:
+    # Polars serializes an empty provider config (e.g. ``{"Aws": []}``) even
+    # when the user passes no storage_options; that must not force a CPU fallback.
+    q = pl.scan_parquet(
+        "s3://bucket/x.parquet",
+        schema={"a": pl.Int64},
+        storage_options=storage_options,
+        credential_provider=None,
+    )
+    translator = Translator(q._ldf.visit(), in_memory_engine)
+    translator.translate_ir()
+    assert not translator.errors
+
+
 def test_scan_parquet_prefetch_file_metadata_in_memory_raises():
     with pytest.raises(
         NotImplementedError,
@@ -229,6 +251,7 @@ def test_scan_do_evaluate_missing_prefetch_metadata() -> None:
             parquet_options,
             None,
             [],
+            None,
             context=context,
         )
 
@@ -238,6 +261,13 @@ def test_scan_unsupported_raises(engine: pl.GPUEngine, tmp_path):
 
     df.write_ipc(tmp_path / "df.ipc")
     q = pl.scan_ipc(tmp_path / "df.ipc")
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_path):
+    pl.DataFrame({"a": [1, 2], "b": [3, 4]}).write_parquet(tmp_path / "0.parquet")
+    pl.DataFrame({"a": [5, 6]}).write_parquet(tmp_path / "1.parquet")
+    q = pl.scan_parquet(tmp_path / "*.parquet", missing_columns="insert")
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
@@ -442,6 +472,19 @@ def test_scan_ndjson_unsupported(engine: pl.GPUEngine, df, tmp_path):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+def test_scan_parquet_empty_name_null_slice(engine: pl.GPUEngine, tmp_path):
+    path = tmp_path / "null.parquet"
+    pq.write_table(
+        pa.table({"": pa.array([None], type=pa.null())}),
+        path,
+        data_page_size=1,
+        use_dictionary=True,
+    )
+    q = pl.scan_parquet(path).slice(0, 0)
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_scan_parquet_nested_null_raises(engine: pl.GPUEngine, tmp_path):
     df = pl.DataFrame({"a": pl.Series([None], dtype=pl.List(pl.Null))})
 
@@ -498,7 +541,6 @@ def test_scan_parquet_include_file_path_with_predicate(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_scan_parquet_include_file_path_with_hive(
     engine: pl.GPUEngine, hive_root: Path
 ) -> None:
@@ -508,7 +550,6 @@ def test_scan_parquet_include_file_path_with_hive(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_scan_parquet_include_file_path_with_hive_only_projection(
     engine: pl.GPUEngine, hive_root: Path
 ) -> None:
@@ -597,7 +638,7 @@ def test_select_arbitrary_order_with_row_index_column(engine: pl.GPUEngine, tmp_
     "has_header,new_columns",
     [
         (True, None),
-        (False, ["a", "b", "c"]),
+        (False, ["a", "b", "c", "d"]),
     ],
 )
 def test_scan_csv_with_and_without_header(
@@ -656,14 +697,7 @@ def test_scan_with_row_index(engine: pl.GPUEngine, tmp_path: Path) -> None:
     "subdir",
     [
         "foo",
-        pytest.param(
-            "foo=bar",
-            marks=pytest.mark.xfail(
-                condition=POLARS_VERSION_LT_142,
-                reason="https://github.com/pola-rs/polars/issues/27840",
-                strict=True,
-            ),
-        ),
+        "foo=bar",
     ],
 )
 def test_scan_from_file_uri(engine: pl.GPUEngine, tmp_path: Path, subdir: str) -> None:
@@ -700,7 +734,11 @@ def test_scan_parquet_remote(
         # parse bytes=200-500 for example (the actual data)
         rng = req.headers.get("Range")
         if rng and rng.startswith("bytes="):
-            start, end = map(int, req.headers["Range"][6:].split("-"))
+            first, last = req.headers["Range"][6:].split("-")
+            if first:
+                start, end = int(first), int(last or size - 1)
+            else:
+                start, end = max(size - int(last), 0), size - 1
             mv = memoryview(bytes_)[start : end + 1]
             return Response(
                 mv.tobytes(),
@@ -743,8 +781,7 @@ def test_scan_parquet_remote(
 
 
 @pytest.mark.xfail(
-    condition=not POLARS_VERSION_LT_139,
-    reason="polars 1.39+ ndjson remote reader requires range request support",
+    reason="polars ndjson remote reader requires range request support",
 )
 def test_scan_ndjson_remote(
     engine: pl.GPUEngine,
@@ -811,13 +848,8 @@ polars"""
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_hits_scan_row_index_duplicate(engine: pl.GPUEngine, request, tmp_path):
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=not POLARS_VERSION_LT_138,
-            reason="polars >= 1.38 raises duplicate row_index name ahead of time",
-        )
-    )
+@pytest.mark.xfail(reason="polars raises duplicate row_index name ahead of time")
+def test_hits_scan_row_index_duplicate(engine: pl.GPUEngine, tmp_path):
     pl.DataFrame({"col": [1, 2, 3]}).write_parquet(tmp_path / "a.parquet")
 
     q = pl.scan_parquet(tmp_path / "*.parquet", row_index_name="index").with_row_index(
@@ -847,9 +879,8 @@ def test_scan_compressed_file_raises(
         with path.open("wb") as f:
             f.write(zlib.compress(data))
     else:
-        cctx = zstd.ZstdCompressor()
         with path.open("wb") as f:
-            f.write(cctx.compress(data))
+            f.write(pa.compress(data, codec="zstd", asbytes=True))
 
     q = scan_fn(path)
     assert_ir_translation_raises(q, engine, NotImplementedError)
@@ -865,9 +896,6 @@ def test_scan_tiny_file_not_compressed(engine: pl.GPUEngine, tmp_path):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.skipif(
-    POLARS_VERSION_LT_138, reason="pl.LazyFrame(height=...) requires polars >= 1.38"
-)
 @pytest.mark.parametrize("custom_engine", [None, NO_CHUNK_ENGINE])
 def test_scan_parquet_zero_width_with_limit(
     engine: pl.GPUEngine, tmp_path, custom_engine
@@ -936,7 +964,6 @@ def test_scan_parquet_is_between_literal_dtype_mismatch_22622(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 @pytest.mark.parametrize(
     "query",
     [
@@ -970,7 +997,6 @@ def test_scan_parquet_hive_partitioned(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_group_by(
     engine: pl.GPUEngine, hive_root: Path
 ) -> None:
@@ -982,7 +1008,6 @@ def test_scan_parquet_hive_partitioned_group_by(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_schema_override(
     engine: pl.GPUEngine, hive_root: Path
 ) -> None:
@@ -992,7 +1017,6 @@ def test_scan_parquet_hive_partitioned_schema_override(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_single_file(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1002,7 +1026,6 @@ def test_scan_parquet_hive_partitioned_single_file(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_shadowed_column(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1015,7 +1038,6 @@ def test_scan_parquet_hive_partitioned_shadowed_column(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_null_value(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1026,7 +1048,6 @@ def test_scan_parquet_hive_partitioned_null_value(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 @pytest.mark.parametrize(
     "query",
     [
@@ -1049,7 +1070,6 @@ def test_scan_parquet_hive_partitioned_chunked(hive_root: Path, query) -> None:
     )
 
 
-@requires_hive_ir
 @pytest.mark.parametrize(
     "dtype",
     [
@@ -1077,7 +1097,6 @@ def test_scan_parquet_hive_partitioned_dtypes(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 @pytest.mark.parametrize(
     "offset,length",
     [(0, None), (0, 4), (4, None), (3, 3), (9, None), (20, 5), (0, 0)],
@@ -1096,7 +1115,6 @@ def test_scan_parquet_hive_only_projection_sliced(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_uniform_multiple_files(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1109,7 +1127,6 @@ def test_scan_parquet_hive_partitioned_uniform_multiple_files(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_uniform_null_value(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1121,7 +1138,6 @@ def test_scan_parquet_hive_partitioned_uniform_null_value(
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
-@requires_hive_ir
 @pytest.mark.parametrize(
     "query",
     [
@@ -1153,7 +1169,6 @@ def test_scan_parquet_hive_partitioned_decimal_key(
     assert_gpu_result_equal(q, engine=engine)
 
 
-@requires_hive_ir
 def test_scan_parquet_hive_partitioned_decimal_predicate(
     engine: pl.GPUEngine, tmp_path: Path
 ) -> None:
@@ -1174,3 +1189,207 @@ def test_scan_parquet_hive_partitioned_decimal_predicate(
         pl.col("price") > Decimal("2.00")
     )
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Decimal(10, 2),
+        pl.List(pl.Decimal(10, 2)),
+        pl.List(pl.Decimal(19, 2)),
+        pl.Struct({"a": pl.Decimal(5, 1)}),
+        pl.List(pl.Struct({"a": pl.Decimal(18, 1)})),
+        pl.Array(pl.Decimal(5, 1), 2),
+        pl.List(pl.Int64),
+        pl.Int8,
+    ],
+)
+def test_scan_parquet_decimal(engine: pl.GPUEngine, tmp_path, dtype):
+    path = tmp_path / "decimal.parquet"
+    pl.DataFrame({"a": [None]}, schema={"a": dtype}).write_parquet(path)
+    assert_gpu_result_equal(pl.scan_parquet(path), engine=engine)
+
+
+def test_scan_parquet_nested_narrow_decimal(engine: pl.GPUEngine, tmp_path):
+    path = tmp_path / "nested_decimal.parquet"
+    pl.DataFrame(
+        {"l": [[Decimal("1.0"), None], [Decimal("2.5")]]},
+        schema={"l": pl.List(pl.Decimal(10, 1))},
+    ).write_parquet(path)
+    assert_gpu_result_equal(pl.scan_parquet(path), engine=engine)
+
+
+def test_scan_csv_quote_char_none(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text('a,b\n1,"x"\n')
+    q = pl.scan_csv(tmp_path / "test.csv", quote_char=None)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("blank_before_header", [False, True])
+def test_scan_csv_skip_lines(engine: pl.GPUEngine, tmp_path, blank_before_header):
+    # skip_lines skips raw lines, so an unbalanced quote in them is harmless
+    blank = "\n" if blank_before_header else ""
+    (tmp_path / "test.csv").write_text(f'title "open\n{blank}a,b\n1,2\n')
+    q = pl.scan_csv(tmp_path / "test.csv", skip_lines=1)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_lossy_encoding_raises(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_bytes(b"a\n\xff\n")
+    q = pl.scan_csv(tmp_path / "test.csv", encoding="utf8-lossy")
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_csv_extra_columns_ignore(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "part_0.csv").write_text("a,b\n1,x\n")
+    (tmp_path / "part_1.csv").write_text("a,b,c\n2,y,1.5\n")
+    q = pl.scan_csv(
+        tmp_path / "part_*.csv", extra_columns="ignore", infer_schema_files=1
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_extra_columns_ignore_file_paths(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b,c\n1,2,3\n4,5,6\n")
+    q = pl.scan_csv(
+        tmp_path / "test.csv",
+        schema={"a": pl.Int64, "b": pl.Int64},
+        extra_columns="ignore",
+        include_file_paths="path",
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_extra_columns_ignore_row_index(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b,c\n1,2,3\n4,5,6\n")
+    q = pl.scan_csv(
+        tmp_path / "test.csv",
+        schema={"a": pl.Int64, "b": pl.Int64},
+        extra_columns="ignore",
+        row_index_name="idx",
+        row_index_offset=2,
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_no_columns_projected(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.csv").write_text("a,b\n1,2\n3,4\n5,6\n")
+    q = pl.scan_csv(tmp_path / "test.csv").select(pl.lit(7).filter(pl.lit(value=True)))
+    assert_gpu_result_equal(q, engine=engine)
+    q = (
+        pl.scan_csv(tmp_path / "test.csv", include_file_paths="path")
+        .select(pl.col("path"))
+        .select(pl.lit(1))
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_ndjson_nested_columns(engine: pl.GPUEngine, tmp_path):
+    (tmp_path / "test.ndjson").write_text(
+        '{"a": 1, "s": {"x": 1, "y": [1.5]}, "l": [[1, 2], [3]]}\n'
+        '{"a": 2, "s": {"x": 3, "y": []}, "l": [[4]]}\n'
+    )
+    q = pl.scan_ndjson(tmp_path / "test.ndjson")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "contents", ['{"a": 1, "b": "x"}\n', ""], ids=["data", "empty"]
+)
+@pytest.mark.parametrize(
+    "dtype", [pl.Int32, pl.List(pl.Int64), pl.Struct({"x": pl.Int8})]
+)
+def test_scan_ndjson_schema_column_missing_from_file(
+    engine: pl.GPUEngine, tmp_path, contents, dtype
+):
+    (tmp_path / "test.ndjson").write_text(contents)
+    q = pl.scan_ndjson(tmp_path / "test.ndjson", schema={"b": pl.String, "c": dtype})
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def _read_mismatched_sources(paths: list[Path]) -> plc.Table:
+    options = (
+        plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(p) for p in paths])
+        )
+        .allow_mismatched_pq_schemas(val=True)
+        .build()
+    )
+    options.set_column_names(["t"])
+    return plc.io.parquet.read_parquet(options).tbl
+
+
+@pytest.mark.parametrize("pyarrow_first", [True, False])
+@pytest.mark.parametrize("utc", [False, True])
+def test_read_parquet_sources_from_different_writers(
+    tmp_path: Path, *, pyarrow_first: bool, utc: bool
+) -> None:
+    # pyarrow writes the deprecated TIMESTAMP_MICROS converted type next to
+    # the logical type, polars writes only the logical type. Sources whose
+    # logical types are identical can be read together.
+    tz = "UTC" if utc else None
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pyarrow_path = tmp_path / "pyarrow.parquet"
+    polars_path = tmp_path / "polars.parquet"
+    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), pyarrow_path)
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+        polars_path
+    )
+    paths = [pyarrow_path, polars_path]
+    result = _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
+    assert result.columns()[0].to_arrow().to_pylist() == [t, t]
+
+
+@pytest.mark.parametrize("pyarrow_first", [True, False])
+def test_read_parquet_sources_with_different_utc_adjustment(
+    tmp_path: Path, *, pyarrow_first: bool
+) -> None:
+    # A timestamp with a time zone and one without, from different writers,
+    # are different types and must not be read together.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pyarrow_path = tmp_path / "pyarrow.parquet"
+    polars_path = tmp_path / "polars.parquet"
+    pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us"))}), pyarrow_path)
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", "UTC")}).write_parquet(
+        polars_path
+    )
+    paths = [pyarrow_path, polars_path]
+    with pytest.raises(ValueError, match="mismatching data type or schema"):
+        _read_mismatched_sources(paths if pyarrow_first else paths[::-1])
+
+
+@pytest.mark.parametrize("writer", ["polars", "pyarrow"])
+def test_read_parquet_sources_naive_and_utc_from_same_writer(
+    tmp_path: Path, writer: str
+) -> None:
+    # The reader does not use the time zone flag, so files from one writer
+    # that differ only in it can still be read together.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    paths = [tmp_path / "naive.parquet", tmp_path / "utc.parquet"]
+    for path, tz in zip(paths, (None, "UTC"), strict=True):
+        if writer == "pyarrow":
+            pq.write_table(pa.table({"t": pa.array([t], pa.timestamp("us", tz))}), path)
+        else:
+            pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+                path
+            )
+    assert _read_mismatched_sources(paths).num_rows() == 2
+
+
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ms", "ns")])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_read_parquet_sources_with_different_time_units(
+    tmp_path: Path,
+    units: tuple[Literal["ms", "us", "ns"], Literal["ms", "us", "ns"]],
+    *,
+    reverse: bool,
+) -> None:
+    # The values are copied without conversion, so sources with different
+    # time units must not be read together. Polars writes no converted type,
+    # so only the logical type tells the files apart.
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
+    paths = [tmp_path / f"{unit}.parquet" for unit in units]
+    for path, unit in zip(paths, units, strict=True):
+        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(path)
+    with pytest.raises(ValueError, match="mismatching data type or schema"):
+        _read_mismatched_sources(paths[::-1] if reverse else paths)

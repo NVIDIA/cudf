@@ -22,6 +22,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace cudf::io::parquet::detail {
@@ -111,6 +112,19 @@ template <operator_transform mode>
  * @return Whether the expression yields `BOOL8`
  */
 [[nodiscard]] bool is_boolean_valued(ast::expression const& expr);
+
+/**
+ * @brief Whether a bloom filter or a dictionary page can be queried for an equality predicate
+ * between a column and a literal
+ *
+ * @throws cudf::logic_error if the literal's type differs from the column's
+ *
+ * @param column_type Output type of the column
+ * @param literal Literal compared against the column
+ * @return Whether the predicate can be queried
+ */
+[[nodiscard]] bool is_membership_queryable(cudf::data_type column_type,
+                                           ast::literal const& literal);
 
 /**
  * @brief Collects column names from the expression ignoring the `skip_names`
@@ -364,11 +378,6 @@ class parquet_expression_simplifier {
    */
   void validate_column_reference(ast::column_reference const& col_ref) const;
 
-  /**
-   * @brief Returns a placeholder column reference for collectors to preserve logical folding
-   */
-  [[nodiscard]] ast::expression const& placeholder_expr();
-
   std::span<cudf::data_type const> _output_dtypes;
   ast::tree _tree;
 
@@ -405,17 +414,28 @@ class parquet_expression_simplifier {
  */
 class equality_literals_collector : public parquet_expression_simplifier {
  public:
+  /**
+   * @brief Collects the equality literals in `expr` that bloom filters can be queried for
+   *
+   * @param expr Filter expression to collect from
+   * @param output_dtypes Output data types of the table columns
+   * @param bloom_hash_mismatch_mask Boolean span indicating if output columns cannot use bloom
+   * filters, or empty to skip the check
+   */
   equality_literals_collector(ast::expression const& expr,
                               std::span<cudf::data_type const> output_dtypes,
-                              std::span<cudf::size_type const> output_column_schemas = {},
-                              std::span<SchemaElement const> schema_tree             = {});
+                              std::span<bool const> bloom_hash_mismatch_mask = {});
 
   /**
-   * @brief Vectors of equality literals in the AST expression, one per input table column
+   * @brief Returns vectors of collected literals and their comparison operators in the AST
+   * expression, one per input table column
    *
-   * @return Vectors of equality literals, one per input table column
+   * @return A pair of vectors of collected literals and their comparison operators, one per input
+   * table column
    */
-  [[nodiscard]] std::vector<std::vector<ast::literal*>> get_literals() &&;
+  [[nodiscard]] std::pair<std::vector<std::vector<ast::literal*>>,
+                          std::vector<std::vector<ast::ast_operator>>>
+  get_literals_and_operators() &&;
 
   /**
    * @brief Whether the membership filter built from the collected literals can prune anything
@@ -429,11 +449,12 @@ class equality_literals_collector : public parquet_expression_simplifier {
    * @brief Constructs a collector without walking for derived classes
    */
   equality_literals_collector(std::span<cudf::data_type const> output_dtypes,
-                              std::span<cudf::size_type const> output_column_schemas,
-                              std::span<SchemaElement const> schema_tree);
+                              std::span<bool const> bloom_hash_mismatch_mask);
 
   /**
-   * @brief Walks `expr` and records if the filter can prune any row groups
+   * @brief Simplifies `expr` and collects literals and operators from it
+   *
+   * @param expr Filter expression to simplify and collect from
    */
   void collect(ast::expression const& expr);
 
@@ -448,10 +469,17 @@ class equality_literals_collector : public parquet_expression_simplifier {
                                                               ast::literal const& literal) override;
 
   std::vector<std::vector<ast::literal*>> _literals;
+  std::vector<std::vector<ast::ast_operator>> _operators;
 
  private:
-  std::span<cudf::size_type const> _output_column_schemas;
-  std::span<SchemaElement const> _schema_tree;
+  /**
+   * @brief Collects literals and operators from the simplified expression
+   *
+   * @param simplified_expr Simplified expression whose leaves are `col op lit` comparisons
+   */
+  void collect_surviving_predicates(ast::expression const& simplified_expr);
+
+  std::span<bool const> _bloom_hash_mismatch_mask;
   bool _can_filter{false};
 };
 
@@ -491,6 +519,7 @@ class equality_literals_collector : public parquet_expression_simplifier {
  * @param ast_expr StatsAST or BloomfilterAST expression to filter with
  * @param input_row_group_indices Lists of input row groups to read, one per source
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  *
  * @return Collected filtered row group indices, one vector per source, if any. A std::nullopt if
  * all row groups are required or if the computed predicate is all nulls
@@ -498,7 +527,24 @@ class equality_literals_collector : public parquet_expression_simplifier {
 [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_indices(
   cudf::table_view ast_table,
   std::reference_wrapper<ast::expression const> ast_expr,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  cuda::stream_ref stream);
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
+
+/**
+ * @brief Whether column values of the physical `type` may be wider than `width` bytes
+ */
+[[nodiscard]] inline bool is_column_wider_than(Type const type,
+                                               int32_t const type_length,
+                                               std::size_t const width)
+{
+  switch (type) {
+    case Type::INT32: return width < sizeof(int32_t);
+    case Type::INT64: return width < sizeof(int64_t);
+    case Type::FIXED_LEN_BYTE_ARRAY: return std::cmp_less(width, type_length);
+    case Type::BYTE_ARRAY: return width < sizeof(__int128_t);
+    default: return false;
+  }
+}
 
 }  // namespace cudf::io::parquet::detail

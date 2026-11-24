@@ -13,8 +13,11 @@
 #include <cudf/table/table_view.hpp>
 
 #include <rmm/cuda_device.hpp>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
+
+#include <cuda/memory_resource>
 
 #include <chrono>
 #include <iostream>
@@ -43,7 +46,7 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
  *
  * Command line parameters:
  * 1. CSV file name/path
- * 2. Memory resource (optional): 'pool' or 'cuda'
+ * 2. Memory resource (optional): 'async' (default), 'pool', or 'cuda'
  *
  * The stdout includes the number of rows in the input and the output size in bytes.
  */
@@ -54,14 +57,16 @@ int main(int argc, char const** argv)
     return 1;
   }
 
-  auto const mr_name = std::string{argc > 2 ? std::string(argv[2]) : std::string("cuda")};
-  rmm::mr::cuda_memory_resource cuda_mr{};
-  rmm::mr::pool_memory_resource pool_mr{cuda_mr, rmm::percent_of_free_device_memory(50)};
-  if (mr_name == "pool") {
-    cudf::set_current_device_resource(pool_mr);
-  } else {
-    cudf::set_current_device_resource(cuda_mr);
-  }
+  auto const mr_name = std::string{argc > 2 ? argv[2] : "async"};
+  auto mr            = [&]() -> cuda::mr::any_resource<cuda::mr::device_accessible> {
+    if (mr_name == "pool") {
+      return rmm::mr::pool_memory_resource{rmm::mr::cuda_memory_resource{},
+                                           rmm::percent_of_free_device_memory(50)};
+    }
+    if (mr_name == "async") { return rmm::mr::cuda_async_memory_resource{}; }
+    return rmm::mr::cuda_memory_resource{};
+  }();
+  cudf::set_current_device_resource(mr);
 
   auto const csv_file   = std::string{argv[1]};
   auto const csv_result = [csv_file] {

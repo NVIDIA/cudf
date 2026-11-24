@@ -1,10 +1,26 @@
 # AI Code Review Guidelines - cuDF C++/CUDA
 
-**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Focus ONLY on CRITICAL and HIGH issues.
+**Role**: Act as a principal engineer with 10+ years experience in GPU computing, Modern C++, and high-performance data processing. Strongly prefer modern C++ and established CUDA/C++ library algorithms over raw loops. Prioritize concrete correctness, compatibility, performance, and test coverage risks; assign severity by impact.
 
-**Target**: Sub-3% false positive rate. Be direct, concise, minimal.
+Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including their severity definitions and evidence requirements.
 
 **Context**: cuDF C++ layer (libcudf) provides GPU-accelerated DataFrame operations using CUDA, with dependencies on RMM, libcudacxx, thrust, and CUB. The authoritative reference for libcudf conventions is `cpp/doxygen/developer_guide/DEVELOPER_GUIDE.md`.
+
+## Regression evidence
+
+- Check the dispatch and boundary conditions affected by the change, including
+  relevant input sizes, types, nullability, and configuration. Identify a concrete
+  coverage gap rather than requesting every combination for every change.
+- For numerical changes, inspect NaN, infinity, overflow, cancellation, and
+  reduction-order behavior against the intended reference semantics.
+- Check asynchronous buffer ownership through completion, including exception
+  paths and repeated use on different streams.
+- For optimization claims, identify the affected small and large workloads,
+  initialization cost, peak memory, and cache state.
+  Do not infer a measured regression from a source-level concern.
+- Before proposing a replacement for custom code, name the existing helper or
+  library primitive and check its semantic constraints; measurements can justify
+  keeping the custom implementation.
 
 ## IGNORE These Issues
 
@@ -14,7 +30,7 @@
 - Nits that don't affect functionality
 - Already-covered issues (one comment per root cause)
 
-## CRITICAL Issues (Always Comment)
+## CRITICAL Issues (Report confirmed issues)
 
 ### GPU/CUDA Errors
 - Unchecked CUDA errors (kernel launches, memory operations, synchronization)
@@ -33,6 +49,7 @@
 
 ### Device Code Errors
 - Use of relaxed constexpr in device code — `--expt-relaxed-constexpr` is **not** enabled; every `constexpr` function callable from device code must be explicitly annotated `__device__` or `CUDF_HOST_DEVICE`
+- Host code calling `__device__`-only functions or member functions: nvcc does **not** diagnose a templated host function calling a `__device__` function. Any `__device__` function or member function that is also reachable from host code, `constexpr` or not, must be annotated `CUDF_HOST_DEVICE` instead
 - Using `std::` type traits, algorithms, or constexpr functions instead of `cuda::std::` in `__device__` / `CUDF_HOST_DEVICE` code and in templates instantiated in device code (e.g., must use `cuda::std::is_void_v<T>`, `cuda::std::min`, `cuda::std::numeric_limits<T>`)
 - Extended `__device__` lambdas passed to device algorithms should declare their return type, preferably with a trailing `-> T` (fall back to `cuda::proclaim_return_type<T>(...)`). Some host-side APIs (e.g. CUB `DeviceSelect`, transform iterators) query the return type in host code and fail to compile without it; declaring it uniformly avoids surprises as APIs change
 
@@ -41,6 +58,7 @@
 - CUDA stream/event leaks or improper cleanup
 - Missing RAII or proper cleanup, including in exception paths
 - Raw owning pointers instead of `std::unique_ptr`, `std::shared_ptr`, `std::reference_wrapper`
+- Moving from the raw pointer returned by `std::unique_ptr::release()` (e.g. `std::move(*ptr.release())`, `ptr.release()[0]`, `auto p = contents.data.release();`) leaks the host object; use `std::move(*ptr)` instead. (`table::release()` and `device_uvector::release()` return owning values and are fine.)
 
 ### API Breaking Changes
 - C++ API changes without proper deprecation warnings
@@ -78,6 +96,10 @@
 - Owning vectors passed by copy/reference instead of being moved (transferring ownership)
 - Missing `[[nodiscard]]` on side-effect-free functions returning non-void results
 
+### Code Reuse
+- New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a correctness reason or a measured performance, build-time, or binary-size justification stated in the PR
+- New code beyond what the change needs: dead code, unused parameters, template flexibility with a single user, or a second code path for a special case without a measurement
+
 ### Concurrency & Stream Safety
 - Stream and MR parameters not propagated across all internal APIs
 - Implicit CUDA default stream use outside tests, benchmarks, and public API default parameters
@@ -85,7 +107,8 @@
 - Operations incorrectly ordered on different streams without events or explicit dependencies
 
 ### Type Dispatch Patterns
-- New dispatch functors using `CUDF_ENABLE_IF` instead of C++20 `requires` clauses
+- New code using `CUDF_ENABLE_IF` or `std::enable_if_t` instead of C++20 concepts and `requires` clauses
+- Constraints written with `is_*<T>()` trait functions where a concept from `cudf/utilities/concepts.hpp` or `cuda::std` exists
 - Unsupported type overloads not calling `CUDF_FAIL` or `CUDF_UNREACHABLE`
 - Missing `static constexpr bool is_supported()` helper where useful
 
@@ -97,6 +120,7 @@
 - Test code not in the global namespace
 - Benchmarks not using NVBench (not Google Benchmark)
 - **Using external datasets** (tests must not depend on external resources)
+- New tests that duplicate existing coverage (same function, same class of input, same assertion) instead of extending an existing test, type list, or `INSTANTIATE_TEST_SUITE_P` list; cite the covering test
 
 ## MEDIUM Issues (Comment Selectively)
 
@@ -113,13 +137,13 @@
 - Prefer `cuda::std` / libcudacxx utilities in device-callable code and C++ standard library algorithms for host-only code
 - Prefer kernel fusion when multiple outputs depend on the same input traversal
 - Treat each kernel launch and memory pass as expensive; minimize redundant global memory reads and writes when operations can be combined without sacrificing clarity or reuse
-- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness or substantial performance cost
+- Treat custom kernels and raw loops as justified only when existing CUB, Thrust, STL, or libcudf utilities cannot express the operation without a correctness cost or a measured performance, build-time, or binary-size cost
 
 ## Quality Threshold
 
 Before commenting, ask:
 1. Is this actually wrong/risky, or just different?
-2. Would this cause a real problem (crash, wrong results, leak)?
+2. Would this cause a real problem (crash, wrong results, leak), or leave code or tests the repository does not need (dead code, or a copy of an existing helper or test that you can name)?
 3. Does this comment add unique value?
 
 **If no to any: Skip the comment.**
@@ -219,6 +243,7 @@ Suggested fix:
 - Use `host_span`/`device_span`; no owning vectors passed by copy/reference unless explicitly moved
 - Prefer span parameters over pointer + size/length pairs (e.g. `T const* data, size_t size`)
 - Prefer `std::span` over `host_span<T>` whenever no host-device communication is required
+- Flag `host_span` passed as `std::span` anywhere in an API chain where `is_device_accessible()` is useful (e.g. a path to a host-device copy): the implicit conversion silently drops it and the copy takes the pageable path
 
 **Stream Management**:
 - Stream and MR as last two parameters (stream before MR)
@@ -242,7 +267,7 @@ Suggested fix:
 - Use `[[nodiscard]]` on side-effect-free functions with non-void return
 
 **C++ Style**:
-- Prefer C++20 `requires` clauses over `CUDF_ENABLE_IF` for type-gating dispatch functors
+- Constrain templates with concepts (`cudf::concepts`, `cuda::std`), as constrained template parameters or `requires` clauses; never `CUDF_ENABLE_IF`
 - Use CUB (most preferred)/Thrust/STL algorithms over raw loops and raw kernels
 - Use modern C++20: `concepts`, `std::ranges`, `std::transform` over manual implementations
 - Use `static_assert` with clear messages to prevent template misuse

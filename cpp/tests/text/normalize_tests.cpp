@@ -15,6 +15,7 @@
 
 #include <cuda/iterator>
 
+#include <string>
 #include <vector>
 
 struct TextNormalizeTest : public cudf::test::BaseFixture {};
@@ -51,6 +52,49 @@ TEST_F(TextNormalizeTest, NormalizeSpaces)
 
   auto const results = nvtext::normalize_spaces(strings_view);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeSpacesLong)
+{
+  // rows and whitespace runs that span multiple warps and blocks
+  auto const spaces = std::string(5000, ' ');
+  auto const words  = std::string("the\tquíck\n\nbröwn  fox ñ ");
+  std::string long_row;
+  for (int i = 0; i < 200; ++i) {
+    long_row += words;
+  }
+  std::string long_expected;
+  for (int i = 0; i < 200; ++i) {
+    long_expected += "the quíck bröwn fox ñ ";
+  }
+  long_expected.pop_back();
+
+  auto validity = {true, true, true, true, false, true, true, true, true};
+  auto input    = cudf::test::strings_column_wrapper({" a",
+                                                      long_row,
+                                                      spaces + "b" + spaces + "c" + spaces,
+                                                      spaces,
+                                                      "",
+                                                      "",
+                                                      "x" + spaces,
+                                                      long_row + spaces + long_row,
+                                                      "d\t"},
+                                                  validity);
+  auto expected = cudf::test::strings_column_wrapper(
+    {"a", long_expected, "b c", "", "", "", "x", long_expected + " " + long_expected, "d"},
+    validity);
+  auto results = nvtext::normalize_spaces(cudf::strings_column_view(input));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  auto sliced          = cudf::slice(input, {1, 8}).front();
+  auto sliced_expected = cudf::slice(expected, {1, 8}).front();
+  results              = nvtext::normalize_spaces(cudf::strings_column_view(sliced));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, sliced_expected);
+
+  sliced          = cudf::slice(input, {3, 6}).front();
+  sliced_expected = cudf::slice(expected, {3, 6}).front();
+  results         = nvtext::normalize_spaces(cudf::strings_column_view(sliced));
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, sliced_expected);
 }
 
 TEST_F(TextNormalizeTest, NormalizeEmptyTest)
@@ -191,6 +235,74 @@ TEST_F(TextNormalizeTest, SpecialTokens)
        long_row});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
   results = nvtext::normalize_characters(sv, *normalizer);  // and again
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeCharactersStripAccents)
+{
+  // Tests normalize_flags::STRIP_ACCENTS via the flags overload of normalize_characters.
+  // Row 2: NFD form — plain 'a' followed by U+0301 (combining acute accent) followed by 'b'.
+  // Constructed via char casts to avoid source-encoding ambiguity with precomposed á (U+00E1).
+  char const u0301[]        = {(char)0xcc, (char)0x81, 0};  // UTF-8 for U+0301
+  std::string const nfd_str = std::string("a") + u0301 + "b";
+  auto input                = cudf::test::strings_column_wrapper({
+    "éàïü",   // lowercase precomposed NFC accented
+    "ÉÀÏÜ",   // uppercase precomposed NFC accented
+    nfd_str,  // NFD: a + U+0301 (combining acute accent) + b
+    "ACENU",  // no accents
+  });
+  auto sv                   = cudf::strings_column_view(input);
+
+  // strip_accents=true, do_lower_case=false: de-accent while preserving case
+  auto normalizer = nvtext::create_character_normalizer(false);
+  auto flags    = nvtext::normalize_flags::STRIP_ACCENTS | nvtext::normalize_flags::PAD_PUNCTUATION;
+  auto results  = nvtext::normalize_characters(sv, *normalizer, flags);
+  auto expected = cudf::test::strings_column_wrapper({"eaiu", "EAIU", "ab", "ACENU"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // strip_accents=true, do_lower_case=true: same result as do_lower_case=true alone
+  normalizer = nvtext::create_character_normalizer(true);
+  results    = nvtext::normalize_characters(sv, *normalizer, flags);
+  expected   = cudf::test::strings_column_wrapper({"eaiu", "eaiu", "ab", "acenu"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeCharactersNoTokenizePunctuation)
+{
+  // Tests normalize_flags::NONE / pad_punctuation=false.
+  // Punctuation and CJK characters should not receive padding spaces.
+  // Whitespace normalization (tab→space via ALWAYS_REPLACE) is unaffected.
+  auto input = cudf::test::strings_column_wrapper({"P^NP", "$41.07", "[a,b]", "丏丟", "éè\tâ"});
+  auto sv    = cudf::strings_column_view(input);
+
+  // no pad_punctuation, do_lower_case=false: chars pass through unchanged
+  auto normalizer = nvtext::create_character_normalizer(false);
+  auto results    = nvtext::normalize_characters(sv, *normalizer, nvtext::normalize_flags::NONE);
+  auto expected   = cudf::test::strings_column_wrapper({"P^NP", "$41.07", "[a,b]", "丏丟", "éè â"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+
+  // no pad_punctuation, do_lower_case=true: lowercase + de-accent, no punct padding
+  normalizer = nvtext::create_character_normalizer(true);
+  results    = nvtext::normalize_characters(sv, *normalizer, nvtext::normalize_flags::NONE);
+  expected   = cudf::test::strings_column_wrapper({"p^np", "$41.07", "[a,b]", "丏丟", "ee a"});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
+}
+
+TEST_F(TextNormalizeTest, NormalizeCharactersSpecialTokensNoPadPunctuation)
+{
+  // When normalize_flags::NONE is used (pad_punctuation=false), the special_tokens_kernel
+  // must not run: special tokens should pass through exactly as-is.
+  auto input = cudf::test::strings_column_wrapper(
+    {"hello world", "[PAD]", "[CLS] how are you", "normal text [SEP]"});
+  auto sv = cudf::strings_column_view(input);
+
+  auto special_tokens_col = cudf::test::strings_column_wrapper({"[CLS]", "[PAD]", "[SEP]"});
+  auto normalizer =
+    nvtext::create_character_normalizer(false, cudf::strings_column_view(special_tokens_col));
+
+  auto results  = nvtext::normalize_characters(sv, *normalizer, nvtext::normalize_flags::NONE);
+  auto expected = cudf::test::strings_column_wrapper(
+    {"hello world", "[PAD]", "[CLS] how are you", "normal text [SEP]"});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(*results, expected);
 }
 

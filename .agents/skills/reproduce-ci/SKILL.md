@@ -71,7 +71,7 @@ gh api repos/NVIDIA/cudf/actions/runs/$RUN_ID/jobs \
 ```
 
 From the job JSON, note:
-- `name` — job name (e.g. `conda-cpp-build / 12.9.1, 3.11, amd64, rockylinux8`)
+- `name` — job name (e.g. `conda-cpp-build / 12.9.2, 3.14, amd64, rockylinux8`)
 - `steps[].name` and `steps[].conclusion` — which steps ran and their outcome
 
 Download the full job log:
@@ -82,7 +82,7 @@ gh run view "$RUN_ID" --repo NVIDIA/cudf --job "$JOB_ID" --log > /tmp/ci_job_log
 
 Read through the log to identify:
 1. The **container image** — look for the `Initialize Containers` step or docker pull lines (e.g. `rapidsai/ci-conda:<tag>`)
-2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python.sh`)
+2. The **CI script** executed (e.g. `./ci/build_cpp.sh`, `./ci/test_python_cudf.sh`)
 3. The **final outcome** — whether the job passed or failed
 4. If failed, the **exact failure** — error messages, test names, assertion text
 
@@ -129,7 +129,7 @@ Use `--dry-run` first to preview the exact docker command before executing:
 Examples:
 ```bash
 .agents/skills/reproduce-ci/run.sh rapidsai/ci-conda:$(head -1 VERSION | cut -d. -f1,2)-latest ci/test_cmake.sh 22538
-.agents/skills/reproduce-ci/run.sh rapidsai/ci-conda:$(head -1 VERSION | cut -d. -f1,2)-latest ci/test_java.sh 22538 --gpu
+.agents/skills/reproduce-ci/run.sh rapidsai/ci-conda:$(head -1 VERSION | cut -d. -f1,2)-latest ci/test_cpp.sh 22538 --gpu
 .agents/skills/reproduce-ci/run.sh rapidsai/citestwheel:$(head -1 VERSION | cut -d. -f1,2)-latest "ci/cudf_pandas_scripts/pandas-tests/run.sh pr" 22538 --gpu
 ```
 

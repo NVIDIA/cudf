@@ -7,7 +7,7 @@
 
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/types.hpp>
-#include <cudf/utilities/export.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/resource_ref.hpp>
 
@@ -30,7 +30,7 @@ std::unique_ptr<column> murmurhash3_x86_32(
   size_type num_rows,
   uint32_t seed,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 }  // namespace hashing::detail
 }  // namespace cudf

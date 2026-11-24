@@ -227,6 +227,7 @@ struct column_name_info {
   std::string name;                        ///< Column name
   std::optional<bool> is_nullable;         ///< Column nullability
   std::optional<bool> is_binary;           ///< Column is binary (i.e. not a list)
+  std::optional<bool> is_file;             ///< Column is a struct read from a Parquet FILE group
   std::optional<int32_t> type_length;      ///< Byte width of data (for fixed length data)
   std::vector<column_name_info> children;  ///< Child column names
 
@@ -350,7 +351,8 @@ struct source_info {
    *
    * @param host_buffers Input buffers in host memory
    */
-  template <typename T, CUDF_ENABLE_IF(is_byte_like_type<std::remove_cv_t<T>>())>
+  template <typename T>
+    requires(is_byte_like_type<std::remove_cv_t<T>>())
   explicit source_info(cudf::host_span<cudf::host_span<T>> const host_buffers)
     : _type(io_type::HOST_BUFFER), _num_sources(host_buffers.size())
   {
@@ -373,7 +375,8 @@ struct source_info {
    *
    * @param host_data Input buffer in host memory
    */
-  template <typename T, CUDF_ENABLE_IF(is_byte_like_type<std::remove_cv_t<T>>())>
+  template <typename T>
+    requires(is_byte_like_type<std::remove_cv_t<T>>())
   explicit source_info(cudf::host_span<T> host_data)
     : _type(io_type::HOST_BUFFER),
       _num_sources(1),

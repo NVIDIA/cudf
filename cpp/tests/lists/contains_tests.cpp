@@ -13,11 +13,13 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/lists/contains.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
+#include <cudf/utilities/concepts.hpp>
+
+#include <cuda/std/concepts>
 
 namespace {
-template <typename T>
+template <cudf::concepts::arithmetic T>
 auto create_scalar_search_key(T const& value)
-  requires(cudf::is_numeric<T>())
 {
   auto search_key = cudf::make_numeric_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(true);
@@ -25,16 +27,14 @@ auto create_scalar_search_key(T const& value)
   return search_key;
 }
 
-template <typename T>
+template <cuda::std::same_as<std::string> T>
 auto create_scalar_search_key(std::string const& value)
-  requires(std::is_same_v<T, std::string>)
 {
   return cudf::make_string_scalar(value);
 }
 
-template <typename T>
+template <cudf::concepts::timestamp T>
 auto create_scalar_search_key(typename T::rep const& value)
-  requires(cudf::is_timestamp<T>())
 {
   auto search_key = cudf::make_timestamp_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(true);
@@ -42,9 +42,8 @@ auto create_scalar_search_key(typename T::rep const& value)
   return search_key;
 }
 
-template <typename T>
+template <cudf::concepts::duration T>
 auto create_scalar_search_key(typename T::rep const& value)
-  requires(cudf::is_duration<T>())
 {
   auto search_key = cudf::make_duration_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(true);
@@ -58,27 +57,24 @@ auto make_struct_scalar(Args&&... args)
   return cudf::struct_scalar(std::vector<cudf::column_view>{std::forward<Args>(args)...});
 }
 
-template <typename T>
+template <cudf::concepts::arithmetic T>
 auto create_null_search_key()
-  requires(cudf::is_numeric<T>())
 {
   auto search_key = cudf::make_numeric_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(false);
   return search_key;
 }
 
-template <typename T>
+template <cudf::concepts::timestamp T>
 auto create_null_search_key()
-  requires(cudf::is_timestamp<T>())
 {
   auto search_key = cudf::make_timestamp_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(false);
   return search_key;
 }
 
-template <typename T>
+template <cudf::concepts::duration T>
 auto create_null_search_key()
-  requires(cudf::is_duration<T>())
 {
   auto search_key = cudf::make_duration_scalar(cudf::data_type{cudf::type_to_id<T>()});
   search_key->set_valid_async(false);
@@ -1592,29 +1588,29 @@ TYPED_TEST(TypedListContainsTest, ScalarKeyLists)
   using tdata_col = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
   using lists_col = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
 
-  auto const lists_no_nulls = lists_col{lists_col{{0, 1, 2},  // list0
-                                                  {3, 4, 5},
-                                                  {0, 1, 2},
-                                                  {9, 0, 1, 3, 1}},
-                                        lists_col{{2, 3, 4},  // list1
-                                                  {3, 4, 5},
-                                                  {8, 9, 0},
-                                                  {}},
-                                        lists_col{{0, 2, 1},  // list2
-                                                  {}}};
+  auto const lists_no_nulls = lists_col{{{0, 1, 2},  // list0
+                                         {3, 4, 5},
+                                         {0, 1, 2},
+                                         {9, 0, 1, 3, 1}},
+                                        {{2, 3, 4},  // list1
+                                         {3, 4, 5},
+                                         {8, 9, 0},
+                                         {}},
+                                        {{0, 2, 1},  // list2
+                                         {}}};
 
-  auto const lists_have_nulls = lists_col{lists_col{{{0, 1, 2},  // list0
-                                                     {} /*NULL*/,
-                                                     {0, 1, 2},
-                                                     {9, 0, 1, 3, 1}},
-                                                    null_at(1)},
-                                          lists_col{{{} /*NULL*/,  // list1
-                                                     {3, 4, 5},
-                                                     {8, 9, 0},
-                                                     {}},
-                                                    null_at(0)},
-                                          lists_col{{0, 2, 1},  // list2
-                                                    {}}};
+  auto const lists_have_nulls = lists_col{{{{0, 1, 2},  // list0
+                                            {} /*NULL*/,
+                                            {0, 1, 2},
+                                            {9, 0, 1, 3, 1}},
+                                           null_at(1)},
+                                          {{{} /*NULL*/,  // list1
+                                            {3, 4, 5},
+                                            {8, 9, 0},
+                                            {}},
+                                           null_at(0)},
+                                          {{0, 2, 1},  // list2
+                                           {}}};
 
   auto const key = [] {
     auto const child = tdata_col{0, 1, 2};
@@ -1657,53 +1653,53 @@ TYPED_TEST(TypedListContainsTest, SlicedListsColumn)
   using tdata_col = cudf::test::fixed_width_column_wrapper<TypeParam, int32_t>;
   using lists_col = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
 
-  auto const lists_no_nulls_original = lists_col{lists_col{{0, 0, 0},  // list-2 (don't care)
-                                                           {0, 1, 2},
-                                                           {0, 1, 2},
-                                                           {0, 0, 0}},
-                                                 lists_col{{0, 0, 0},  // list-1 (don't care)
-                                                           {0, 1, 2},
-                                                           {0, 1, 2},
-                                                           {0, 0, 0}},
-                                                 lists_col{{0, 1, 2},  // list0
-                                                           {3, 4, 5},
-                                                           {0, 1, 2},
-                                                           {9, 0, 1, 3, 1}},
-                                                 lists_col{{2, 3, 4},  // list1
-                                                           {3, 4, 5},
-                                                           {8, 9, 0},
-                                                           {}},
-                                                 lists_col{{0, 2, 1},  // list2
-                                                           {}},
-                                                 lists_col{{0, 0, 0},  // list3 (don't care)
-                                                           {0, 1, 2},
-                                                           {0, 1, 2},
-                                                           {0, 0, 0}},
-                                                 lists_col{{0, 0, 0},  // list4 (don't care)
-                                                           {0, 1, 2},
-                                                           {0, 1, 2},
-                                                           {0, 0, 0}}};
+  auto const lists_no_nulls_original = lists_col{{{0, 0, 0},  // list-2 (don't care)
+                                                  {0, 1, 2},
+                                                  {0, 1, 2},
+                                                  {0, 0, 0}},
+                                                 {{0, 0, 0},  // list-1 (don't care)
+                                                  {0, 1, 2},
+                                                  {0, 1, 2},
+                                                  {0, 0, 0}},
+                                                 {{0, 1, 2},  // list0
+                                                  {3, 4, 5},
+                                                  {0, 1, 2},
+                                                  {9, 0, 1, 3, 1}},
+                                                 {{2, 3, 4},  // list1
+                                                  {3, 4, 5},
+                                                  {8, 9, 0},
+                                                  {}},
+                                                 {{0, 2, 1},  // list2
+                                                  {}},
+                                                 {{0, 0, 0},  // list3 (don't care)
+                                                  {0, 1, 2},
+                                                  {0, 1, 2},
+                                                  {0, 0, 0}},
+                                                 {{0, 0, 0},  // list4 (don't care)
+                                                  {0, 1, 2},
+                                                  {0, 1, 2},
+                                                  {0, 0, 0}}};
 
-  auto const lists_have_nulls_original = lists_col{lists_col{{0, 0, 0},  // list-1 (don't care)
-                                                             {0, 1, 2},
-                                                             {0, 1, 2},
-                                                             {0, 0, 0}},
-                                                   lists_col{{{0, 1, 2},  // list0
-                                                              {} /*NULL*/,
-                                                              {0, 1, 2},
-                                                              {9, 0, 1, 3, 1}},
-                                                             null_at(1)},
-                                                   lists_col{{{} /*NULL*/,  // list1
-                                                              {3, 4, 5},
-                                                              {8, 9, 0},
-                                                              {}},
-                                                             null_at(0)},
-                                                   lists_col{{0, 2, 1},  // list2
-                                                             {}},
-                                                   lists_col{{0, 0, 0},  // list3 (don't care)
-                                                             {0, 1, 2},
-                                                             {0, 1, 2},
-                                                             {0, 0, 0}}};
+  auto const lists_have_nulls_original = lists_col{{{0, 0, 0},  // list-1 (don't care)
+                                                    {0, 1, 2},
+                                                    {0, 1, 2},
+                                                    {0, 0, 0}},
+                                                   {{{0, 1, 2},  // list0
+                                                     {} /*NULL*/,
+                                                     {0, 1, 2},
+                                                     {9, 0, 1, 3, 1}},
+                                                    null_at(1)},
+                                                   {{{} /*NULL*/,  // list1
+                                                     {3, 4, 5},
+                                                     {8, 9, 0},
+                                                     {}},
+                                                    null_at(0)},
+                                                   {{0, 2, 1},  // list2
+                                                    {}},
+                                                   {{0, 0, 0},  // list3 (don't care)
+                                                    {0, 1, 2},
+                                                    {0, 1, 2},
+                                                    {0, 0, 0}}};
 
   auto const lists_no_nulls   = cudf::slice(lists_no_nulls_original, {2, 5})[0];
   auto const lists_have_nulls = cudf::slice(lists_have_nulls_original, {1, 4})[0];
@@ -1749,36 +1745,35 @@ TYPED_TEST(TypedListContainsTest, ColumnKeyLists)
   using lists_col     = cudf::test::lists_column_wrapper<TypeParam, int32_t>;
   auto constexpr null = int32_t{0};
 
-  auto const lists_no_nulls = lists_col{lists_col{{0, 0, 2},  // list0
-                                                  {3, 4, 5},
-                                                  {0, 0, 2},
-                                                  {9, 0, 1, 3, 1}},
-                                        lists_col{{2, 3, 4},  // list1
-                                                  {3, 4, 5},
-                                                  {2, 3, 4},
-                                                  {}},
-                                        lists_col{{0, 2, 0},  // list2
-                                                  {0, 2, 0},
-                                                  {3, 4, 5},
-                                                  {}}};
+  auto const lists_no_nulls = lists_col{{{0, 0, 2},  // list0
+                                         {3, 4, 5},
+                                         {0, 0, 2},
+                                         {9, 0, 1, 3, 1}},
+                                        {{2, 3, 4},  // list1
+                                         {3, 4, 5},
+                                         {2, 3, 4},
+                                         {}},
+                                        {{0, 2, 0},  // list2
+                                         {0, 2, 0},
+                                         {3, 4, 5},
+                                         {}}};
 
-  auto const lists_have_nulls = lists_col{lists_col{{lists_col{{0, null, 2}, null_at(1)},  // list0
-                                                     lists_col{} /*NULL*/,
-                                                     lists_col{{0, null, 2}, null_at(1)},
-                                                     lists_col{9, 0, 1, 3, 1}},
-                                                    null_at(1)},
-                                          lists_col{{lists_col{} /*NULL*/,  // list1
-                                                     lists_col{3, 4, 5},
-                                                     lists_col{2, 3, 4},
-                                                     lists_col{}},
-                                                    null_at(0)},
-                                          lists_col{lists_col{0, 2, 1},  // list2
-                                                    lists_col{{0, 2, null}, null_at(2)},
-                                                    lists_col{3, 4, 5},
-                                                    lists_col{}}};
+  auto const lists_have_nulls = lists_col{{{{{0, null, 2}, null_at(1)},  // list0
+                                            {} /*NULL*/,
+                                            {{0, null, 2}, null_at(1)},
+                                            {9, 0, 1, 3, 1}},
+                                           null_at(1)},
+                                          {{{} /*NULL*/,  // list1
+                                            {3, 4, 5},
+                                            {2, 3, 4},
+                                            {}},
+                                           null_at(0)},
+                                          {{0, 2, 1},  // list2
+                                           {{0, 2, null}, null_at(2)},
+                                           {3, 4, 5},
+                                           {}}};
 
-  auto const key = lists_col{
-    lists_col{{0, null, 2}, null_at(1)}, lists_col{2, 3, 4}, lists_col{{0, 2, null}, null_at(2)}};
+  auto const key = lists_col{{{0, null, 2}, null_at(1)}, {2, 3, 4}, {{0, 2, null}, null_at(2)}};
 
   auto const do_test = [&](auto const& lists, bool has_nulls) {
     {

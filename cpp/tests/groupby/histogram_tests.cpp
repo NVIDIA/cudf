@@ -89,6 +89,85 @@ TYPED_TEST(GroupbyHistogramTest, EmptyInput)
   ASSERT_EQ(res_histogram->size(), 0);
 }
 
+using GroupbySingletonHistogramTest = GroupbyHistogramTest<int32_t>;
+
+TEST_F(GroupbySingletonHistogramTest, SlicedSingletonGroupsWithNullValuesAndExcludedKeys)
+{
+  auto const keys_original      = int32s_col{{88, 2, 0, 99, 1, 77}, {1, 1, 1, 0, 1, 1}};
+  auto const values_original    = int32s_col{{-8, 0, 7, 55, -2, 9}, {1, 0, 1, 1, 1, 1}};
+  auto const keys               = cudf::slice(keys_original, {1, 5})[0];
+  auto const values             = cudf::slice(values_original, {1, 5})[0];
+  auto const expected_keys      = int32s_col{0, 1, 2};
+  auto const expected_histogram = [] {
+    auto values  = int32s_col{{7, -2, 0}, {1, 1, 0}};
+    auto counts  = int64s_col{1, 1, 1};
+    auto entries = structs_col{{values, counts}};
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 1, 2, 3}.release(),
+                                   entries.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  }();
+
+  auto const [result_keys, result_histogram] =
+    groupby_histogram(keys, values, cudf::aggregation::HISTOGRAM);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected_keys, *result_keys);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(*expected_histogram, *result_histogram);
+}
+
+TEST_F(GroupbySingletonHistogramTest, NullableValuesRemainOwnedForLaterAggregations)
+{
+  auto const keys               = int32s_col{0, 1, 2};
+  auto values                   = int32s_col{{7, 0, 9}, {1, 0, 1}};
+  auto const expected_histogram = [&] {
+    auto counts  = int64s_col{1, 1, 1};
+    auto entries = structs_col{{values, counts}};
+    return cudf::make_lists_column(3,
+                                   int32s_col{0, 1, 2, 3}.release(),
+                                   entries.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  }();
+  cudf::test::lists_column_wrapper<int32_t> expected_include{
+    {7}, {{0}, cudf::test::iterators::all_nulls()}, {9}};
+  std::vector<cudf::column_view> const expected{*expected_histogram, values, expected_include};
+
+  for (auto const sorted : {cudf::sorted::NO, cudf::sorted::YES}) {
+    SCOPED_TRACE(static_cast<int>(sorted));
+    std::vector<cudf::groupby::aggregation_request> requests(1);
+    requests[0].values = values;
+    auto& aggs         = requests[0].aggregations;
+    aggs.push_back(cudf::make_histogram_aggregation<cudf::groupby_aggregation>());
+    aggs.push_back(
+      cudf::make_nth_element_aggregation<cudf::groupby_aggregation>(0, cudf::null_policy::INCLUDE));
+    aggs.push_back(
+      cudf::make_collect_list_aggregation<cudf::groupby_aggregation>(cudf::null_policy::INCLUDE));
+    cudf::groupby::groupby gb(cudf::table_view{{keys}}, cudf::null_policy::EXCLUDE, sorted);
+    auto const [result_keys, results] = gb.aggregate(requests);
+    auto const order                  = cudf::sorted_order(result_keys->view());
+    auto const sorted_keys            = cudf::gather(result_keys->view(), order->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(keys, sorted_keys->view().column(0));
+    ASSERT_EQ(results.size(), 1);
+    ASSERT_EQ(results[0].results.size(), expected.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      SCOPED_TRACE(i);
+      auto const actual = cudf::gather(cudf::table_view{{*results[0].results[i]}}, order->view());
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected[i], actual->view().column(0));
+    }
+  }
+}
+
+TEST_F(GroupbySingletonHistogramTest, RejectsNestedValues)
+{
+  auto const keys    = int32s_col{0};
+  auto const lists   = cudf::test::lists_column_wrapper<int32_t>{{1, 2}};
+  auto child         = int32s_col{1};
+  auto const structs = structs_col{{child}};
+  EXPECT_THROW(groupby_histogram(keys, lists, cudf::aggregation::HISTOGRAM), std::invalid_argument);
+  EXPECT_THROW(groupby_histogram(keys, structs, cudf::aggregation::HISTOGRAM),
+               std::invalid_argument);
+}
+
 TYPED_TEST(GroupbyHistogramTest, SimpleInputNoNull)
 {
   using col_data = cudf::test::fixed_width_column_wrapper<TypeParam, int>;

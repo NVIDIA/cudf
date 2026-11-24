@@ -24,7 +24,6 @@ from cudf_polars.dsl.utils.windows import (
     offsets_to_windows,
     range_window_bounds,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -106,14 +105,11 @@ def to_request(
     elif isinstance(value, expr.Agg):
         child = value.children[0]
         col_obj = child.evaluate(df, context=ExecutionContext.ROLLING).obj
-        if (POLARS_VERSION_LT_136 or not POLARS_VERSION_LT_139) and value.name == "var":
+        if value.name == "var":
             # Polars variance produces null if nvalues <= ddof
             # libcudf produces NaN. However, we can get the polars
             # behaviour by setting the minimum window size to ddof +
             # 1.
-            # In polars 1.36-1.38 this code path is not hit because
-            # rolling goes through the IR path (not RollingWindow).
-            # See https://github.com/pola-rs/polars/pull/25117
             min_periods = value.options + 1
     else:
         col_obj = value.evaluate(
@@ -132,7 +128,7 @@ def to_request(
     return plc.rolling.RollingRequest(col_obj, min_periods, value.agg_request)
 
 
-class RollingWindow(Expr):  # pragma: no cover; polars >1.36 uses AExpr::Rolling now
+class RollingWindow(Expr):  # pragma: no cover; polars uses AExpr::Rolling now
     __slots__ = (
         "closed_window",
         "following_ordinal",
@@ -182,9 +178,7 @@ class RollingWindow(Expr):  # pragma: no cover; polars >1.36 uses AExpr::Rolling
             raise NotImplementedError(
                 "Incorrect handling of empty groups for list collection"
             )
-        if (
-            POLARS_VERSION_LT_136 or not POLARS_VERSION_LT_139
-        ) and not plc.rolling.is_valid_rolling_aggregation(
+        if not plc.rolling.is_valid_rolling_aggregation(
             agg.dtype.plc_type, agg.agg_request
         ):
             raise NotImplementedError(f"Unsupported rolling aggregation {agg}")
@@ -408,22 +402,19 @@ class GroupedWindow(Expr):
             raise NotImplementedError(
                 f"Unsupported over(...) only expression: {kinds}="
             )
-        if has_order_by:
-            ob = self._order_by_expr
-            is_multi_order_by = (
-                isinstance(ob, expr.UnaryFunction)
-                and ob.name == "as_struct"
-                and len(ob.children) > 1
+        if any(
+            isinstance(ne.value, expr.UnaryFunction)
+            and ne.value.name == "fill_null_with_strategy"
+            and not ne.value.children[0].is_pointwise
+            and not (
+                isinstance(ne.value.children[0], expr.UnaryFunction)
+                and ne.value.children[0].name == "cum_sum"
             )
-            has_order_sensitive_agg = any(
-                isinstance(ne.value, expr.Agg)
-                and ne.value.agg_request.kind() == plc.aggregation.Kind.NTH_ELEMENT
-                for ne in self.named_aggs
+            for ne in self.named_aggs
+        ):
+            raise NotImplementedError(
+                "fill_null over(...) of a non-pointwise expression other than cum_sum"
             )
-            if is_multi_order_by and has_order_sensitive_agg:
-                raise NotImplementedError(
-                    "Multiple order_by keys with order-sensitive aggregations"
-                )
 
     @staticmethod
     def _sorted_grouper(by_cols_for_scan: list[Column]) -> plc.groupby.GroupBy:
@@ -870,7 +861,7 @@ class GroupedWindow(Expr):
     def _reorder_to_input(
         self,
         row_id: plc.Column,
-        by_cols: list[Column],
+        grouper: plc.groupby.GroupBy,
         n_rows: int,
         rank_tables: list[plc.Table],
         rank_out_names: list[str],
@@ -881,14 +872,13 @@ class GroupedWindow(Expr):
     ) -> list[Column]:
         # Reorder scan results from grouped-order back to input row order
         if order_index is None:
-            key_orders = [k.order for k in by_cols]
-            key_nulls = [k.null_order for k in by_cols]
-            order_index = plc.sorting.stable_sorted_order(
-                plc.Table([*(c.obj for c in by_cols), row_id]),
-                [*key_orders, plc.types.Order.ASCENDING],
-                [*key_nulls, plc.types.NullOrder.AFTER],
-                stream=stream,
+            # The grouper keeps input order within each group but places the
+            # groups in an unspecified order, so ask it for the row ids in
+            # the order it produced the results rather than sorting the keys.
+            _, _, grouped_row_ids = grouper.get_groups(
+                plc.Table([row_id]), stream=stream
             )
+            order_index = grouped_row_ids.columns()[0]
 
         return [
             Column(
@@ -1159,7 +1149,7 @@ class GroupedWindow(Expr):
         )
         return self._reorder_to_input(
             row_id,
-            by_cols,
+            grouper,
             df.num_rows,
             tables,
             names,
@@ -1376,7 +1366,7 @@ class GroupedWindow(Expr):
                     broadcasted_cols.extend(
                         self._reorder_to_input(
                             row_id,
-                            by_cols,
+                            grouper,
                             df.num_rows,
                             tables,
                             names,
@@ -1396,7 +1386,7 @@ class GroupedWindow(Expr):
                 broadcasted_cols.extend(
                     self._reorder_to_input(
                         row_id,
-                        by_cols,
+                        grouper,
                         df.num_rows,
                         tables,
                         names,
@@ -1445,7 +1435,7 @@ class GroupedWindow(Expr):
                 broadcasted_cols.extend(
                     self._reorder_to_input(
                         row_id,
-                        by_cols,
+                        grouper,
                         df.num_rows,
                         tables,
                         names,

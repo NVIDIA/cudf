@@ -12,10 +12,10 @@
 #include <cudf/strings/detail/copying.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -23,7 +23,6 @@
 
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/copy.h>
 #include <thrust/transform.h>
 
 #include <algorithm>
@@ -38,12 +37,12 @@ inline bool __device__ out_of_bounds(size_type size, size_type idx)
   return idx < 0 || idx >= size;
 }
 
-std::pair<cuda::device_buffer<std::byte>, size_type> create_null_mask(
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> create_null_mask(
   column_device_view const& input,
   size_type offset,
   scalar const& fill_value,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   auto const size = input.size();
   auto func_validity =
@@ -61,18 +60,17 @@ std::pair<cuda::device_buffer<std::byte>, size_type> create_null_mask(
 struct shift_functor {
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&...)
-    requires(not cudf::is_fixed_width<T>() and not std::is_same_v<cudf::string_view, T>)
+    requires(not cudf::concepts::fixed_width<T> and not cudf::concepts::string_view<T>)
   {
     CUDF_FAIL("shift only supports fixed-width or string types.", cudf::data_type_error);
   }
 
-  template <typename T, typename... Args>
+  template <cudf::concepts::string_view T, typename... Args>
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(std::is_same_v<cudf::string_view, T>)
+                                     cudf::memory_resources mr)
   {
     auto output = cudf::strings::detail::shift(
       cudf::strings_column_view(input), offset, fill_value, stream, mr);
@@ -86,13 +84,12 @@ struct shift_functor {
     return output;
   }
 
-  template <typename T>
+  template <cudf::concepts::fixed_width T>
   std::unique_ptr<column> operator()(column_view const& input,
                                      size_type offset,
                                      scalar const& fill_value,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
-    requires(cudf::is_fixed_width<T>())
+                                     cudf::memory_resources mr)
   {
     using ScalarType = cudf::scalar_type_t<T>;
     auto& scalar     = static_cast<ScalarType const&>(fill_value);
@@ -150,7 +147,7 @@ std::unique_ptr<column> shift(column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(cudf::have_same_types(input, fill_value),
                "shift requires each fill value type to match the corresponding column type.",
@@ -168,7 +165,7 @@ std::unique_ptr<column> shift(column_view const& input,
                               size_type offset,
                               scalar const& fill_value,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::shift(input, offset, fill_value, stream, mr);

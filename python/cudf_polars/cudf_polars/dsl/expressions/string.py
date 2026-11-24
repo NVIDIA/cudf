@@ -18,19 +18,16 @@ from polars.exceptions import InvalidOperationError
 import pylibcudf as plc
 
 from cudf_polars.containers import Column
+from cudf_polars.containers.column import with_mask_from
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal, LiteralColumn
 from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils.dtypes import make_empty_column
-from cudf_polars.utils.versions import (
-    POLARS_VERSION_LT_136,
-    POLARS_VERSION_LT_138,
-)
 
 if TYPE_CHECKING:
     from typing import Self
 
-    from polars import polars  # type: ignore[attr-defined]
+    from polars import _plr as polars
 
     from cudf_polars.containers import DataFrame, DataType
 
@@ -265,14 +262,11 @@ class StringFunction(Expr):
                     "libcudf replace does not support empty strings"
                 )
         elif self.name is StringFunction.Name.ReplaceMany:
-            if POLARS_VERSION_LT_136:
-                (ascii_case_insensitive,) = self.options  # pragma: no cover
-            else:
-                ascii_case_insensitive, leftmost = self.options
-                if leftmost:
-                    raise NotImplementedError(
-                        "leftmost=True not implemented for replace_many"
-                    )
+            ascii_case_insensitive, leftmost = self.options
+            if leftmost:
+                raise NotImplementedError(
+                    "leftmost=True not implemented for replace_many"
+                )
             if ascii_case_insensitive:
                 raise NotImplementedError(
                     "ascii_case_insensitive not implemented for replace_many"
@@ -292,17 +286,23 @@ class StringFunction(Expr):
                     "for empty strings"
                 )
         elif self.name is StringFunction.Name.Slice:
-            if not all(isinstance(child, Literal) for child in self.children[1:]):
+            offsets = [
+                child for child in self.children[1:] if isinstance(child, Literal)
+            ]
+            if len(offsets) != len(self.children) - 1:
                 raise NotImplementedError(
                     "Slice only supports literal start and stop values"
+                )
+            if any(isinstance(child.value, float) for child in offsets):
+                raise NotImplementedError(
+                    "Slice does not support float literal start and stop values"
                 )
         elif self.name is StringFunction.Name.SplitExact:
             (_, inclusive) = self.options
             if inclusive:
                 raise NotImplementedError(f"{inclusive=} is not supported for split")
-        elif not POLARS_VERSION_LT_138 and self.name is StringFunction.Name.SplitRegex:
+        elif self.name is StringFunction.Name.SplitRegex:
             # See https://github.com/pola-rs/polars/pull/26060
-            # SplitRegex introduced in polars>=1.38, but we don't support it yet
             raise NotImplementedError(
                 "String split with regex (literal=False) is not supported."
             )
@@ -314,6 +314,13 @@ class StringFunction(Expr):
                 raise NotImplementedError("Strptime cache is a CPU feature")
             if not exact:
                 raise NotImplementedError("Strptime does not support exact=False")
+            if format is not None and re.search(r"(?<!%)(?:%%)*%#", format):
+                # libcudf rejects chrono's "#" flag (e.g. "%#z") at evaluation
+                # time, which is too late to fall back to the CPU. Escaped
+                # "%%" pairs are skipped, so "%%#z" (a literal "%#z") is fine.
+                raise NotImplementedError(
+                    f"Strptime format {format!r} uses the unsupported '#' flag"
+                )
         elif self.name in {
             StringFunction.Name.StripChars,
             StringFunction.Name.StripCharsStart,
@@ -500,10 +507,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, dtype=self.dtype)
             else:
                 return Column(
@@ -517,14 +521,6 @@ class StringFunction(Expr):
             child, arg = self.children
             plc_column = child.evaluate(df, context=context).obj
             plc_targets = arg.evaluate(df, context=context).obj
-            if plc_column.size() == 0:
-                # contains_multiple launches a kernel with grid_1d sized
-                # against the input rows, which asserts num_blocks > 0.
-                # Skip the kernel call on empty input.
-                return Column(
-                    make_empty_column(self.dtype, df.stream),
-                    dtype=self.dtype,
-                )
             if ascii_case_insensitive:
                 plc_column = plc.strings.case.to_lower(plc_column, stream=df.stream)
                 plc_targets = plc.strings.case.to_lower(plc_targets, stream=df.stream)
@@ -580,9 +576,8 @@ class StringFunction(Expr):
         elif self.name is StringFunction.Name.Find:
             literal, _ = self.options
             (child, expr) = self.children
-            plc_column = child.evaluate(df, context=context).obj
-            input_null_mask = plc_column.null_mask()
-            input_null_count = plc_column.null_count()
+            column = child.evaluate(df, context=context)
+            plc_column = column.obj
             if literal:
                 assert isinstance(expr, Literal)
                 plc_column = plc.strings.find.find(
@@ -605,8 +600,9 @@ class StringFunction(Expr):
                     plc_column.size(),
                     stream=df.stream,
                 )
-                plc_column = plc_column.with_mask(input_null_mask, input_null_count)
-                return Column(plc_column, dtype=self.dtype)
+                return Column(
+                    with_mask_from(plc_column, column, df.stream), dtype=self.dtype
+                )
             else:
                 plc_column = plc.strings.findall.find_re(
                     plc_column, self._regex_program, stream=df.stream
@@ -1000,10 +996,7 @@ class StringFunction(Expr):
                     column.size,
                     stream=df.stream,
                 )
-                if column.obj.null_mask():
-                    result = result.with_mask(
-                        column.obj.null_mask(), column.obj.null_count()
-                    )
+                result = with_mask_from(result, column, df.stream)
                 return Column(result, self.dtype)
 
             if self.name is StringFunction.Name.Tail:
@@ -1037,6 +1030,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.EndsWith:
             column, suffix = columns
+            if suffix.is_scalar and suffix.null_count:
+                # libcudf requires a valid target; a null suffix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.ends_with(
                     column.obj,
@@ -1049,6 +1052,16 @@ class StringFunction(Expr):
             )
         elif self.name is StringFunction.Name.StartsWith:
             column, prefix = columns
+            if prefix.is_scalar and prefix.null_count:
+                # libcudf requires a valid target; a null prefix matches nothing
+                return Column(
+                    plc.Column.from_scalar(
+                        plc.Scalar.from_py(None, self.dtype.plc_type, stream=df.stream),
+                        column.size,
+                        stream=df.stream,
+                    ),
+                    dtype=self.dtype,
+                )
             return Column(
                 plc.strings.find.starts_with(
                     column.obj,

@@ -20,8 +20,7 @@ FileMetaData read_parquet_footer_bytes(std::span<uint8_t const> footer_bytes,
 {
   CUDF_FUNC_RANGE();
   FileMetaData metadata;
-  detail::decode_footer_bytes(
-    cudf::host_span<uint8_t const>{footer_bytes.data(), footer_bytes.size()}, &metadata, mode);
+  detail::decode_footer_bytes(footer_bytes, &metadata, mode);
   return metadata;
 }
 

@@ -12,20 +12,26 @@
 #include "unbz2.hpp"  // bz2 uncompress
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <cuda/buffer>
 
 #include <zlib.h>  // uncompress
 #include <zstd.h>
 
+#include <array>
 #include <cstdint>
 #include <cstring>  // memset
 #include <future>
+#include <optional>
 #include <sstream>
 
 namespace cudf::io::detail {
@@ -567,6 +573,7 @@ void host_decompress(compression_type compression,
   stream.sync();
 
   std::vector<std::future<size_t>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);
@@ -619,6 +626,60 @@ void host_decompress(compression_type compression,
   CUDF_FAIL("Invalid LIBCUDF_HOST_DECOMPRESSION value: " + env_var);
 }
 
+/**
+ * @brief Device decompression path for a compression type, which determines the scratch size
+ */
+enum class device_decompressor : uint8_t {
+  NONE,           ///< No device decompression: uncompressed data or host decompression forced ON
+  NVCOMP,         ///< nvCOMP batched decompression
+  BROTLI_KERNEL,  ///< nvCOMP disabled; libcudf Brotli kernel, which needs scratch space
+  OTHER_KERNEL,   ///< nvCOMP disabled; a libcudf kernel that does not need scratch space
+};
+
+/**
+ * @brief Resolves which device decompression path is used for the given compression type.
+ *
+ * Reads environment variables and queries (mutex-protected) nvCOMP feature status, so callers
+ * that handle many elements should resolve this once per compression type.
+ */
+[[nodiscard]] device_decompressor get_device_decompressor(compression_type compression)
+{
+  if (compression == compression_type::NONE or
+      get_host_engine_state(compression) == host_engine_state::ON) {
+    return device_decompressor::NONE;
+  }
+
+  auto const nvcomp_type     = to_nvcomp_compression(compression);
+  auto const nvcomp_disabled = nvcomp_type.has_value()
+                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
+                                 : "invalid compression type";
+  if (not nvcomp_disabled) { return device_decompressor::NVCOMP; }
+  return compression == compression_type::BROTLI ? device_decompressor::BROTLI_KERNEL
+                                                 : device_decompressor::OTHER_KERNEL;
+}
+
+/**
+ * @brief Computes the scratch space for `di` given its resolved device decompression path.
+ */
+[[nodiscard]] size_t compute_scratch_size(device_decompressor decompressor,
+                                          decompression_info const& di,
+                                          cuda::stream_ref stream)
+{
+  switch (decompressor) {
+    case device_decompressor::NVCOMP:
+      return nvcomp::batched_decompress_temp_size(*to_nvcomp_compression(di.type),
+                                                  di.num_pages,
+                                                  di.max_page_decompressed_size,
+                                                  di.total_decompressed_size,
+                                                  stream);
+    case device_decompressor::BROTLI_KERNEL: return get_gpu_debrotli_scratch_size(di.num_pages);
+    // Only the Brotli kernel requires scratch memory
+    case device_decompressor::NONE:
+    case device_decompressor::OTHER_KERNEL: return 0;
+  }
+  CUDF_FAIL("Invalid device decompressor");
+}
+
 }  // namespace
 
 size_t get_uncompressed_size(compression_type compression, host_span<uint8_t const> src)
@@ -629,26 +690,30 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
 [[nodiscard]] size_t get_decompression_scratch_size(decompression_info const& di,
                                                     cuda::stream_ref stream)
 {
-  if (di.type == compression_type::NONE or
-      get_host_engine_state(di.type) == host_engine_state::ON) {
-    return 0;
-  }
+  return compute_scratch_size(get_device_decompressor(di.type), di, stream);
+}
 
-  auto const nvcomp_type     = to_nvcomp_compression(di.type);
-  auto const nvcomp_disabled = nvcomp_type.has_value()
-                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
-                                 : "invalid compression type";
-  if (not nvcomp_disabled) {
-    return nvcomp::batched_decompress_temp_size(nvcomp_type.value(),
-                                                di.num_pages,
-                                                di.max_page_decompressed_size,
-                                                di.total_decompressed_size,
-                                                stream);
+void get_decompression_scratch_sizes(host_span<decompression_info const> infos,
+                                     host_span<size_t> sizes,
+                                     cuda::stream_ref stream)
+{
+  CUDF_EXPECTS(infos.size() == sizes.size(), "infos and sizes must have the same size");
+  // Resolve the decompression path once per compression type; doing it for every page of a large
+  // file is far too expensive (see `get_device_decompressor`).
+  std::array<std::optional<device_decompressor>,
+             static_cast<std::size_t>(compression_type::ZSTD) + 1>
+    decompressors;
+  auto const decompressor_of = [&](compression_type type) {
+    auto const idx = static_cast<std::size_t>(type);
+    CUDF_EXPECTS(idx < decompressors.size(), "Invalid compression type");
+    auto& cached = decompressors[idx];
+    if (not cached.has_value()) { cached = get_device_decompressor(type); }
+    return *cached;
+  };
+  for (size_t i = 0; i < infos.size(); ++i) {
+    auto const& di = infos[i];
+    sizes[i] = di.num_pages == 0 ? 0 : compute_scratch_size(decompressor_of(di.type), di, stream);
   }
-
-  if (di.type == compression_type::BROTLI) return get_gpu_debrotli_scratch_size(di.num_pages);
-  // only Brotli kernel requires scratch memory
-  return 0;
 }
 
 [[nodiscard]] size_t get_decompression_scratch_size_ex(
@@ -659,20 +724,17 @@ size_t get_uncompressed_size(compression_type compression, host_span<uint8_t con
   cuda::stream_ref stream,
   cudf::memory_resources mr)
 {
-  if (compression == compression_type::NONE or
-      get_host_engine_state(compression) == host_engine_state::ON) {
-    return 0;
-  }
-
-  auto const nvcomp_type     = to_nvcomp_compression(compression);
-  auto const nvcomp_disabled = nvcomp_type.has_value()
-                                 ? nvcomp::is_decompression_disabled(*nvcomp_type)
-                                 : "invalid compression type";
+  auto const decompressor = get_device_decompressor(compression);
+  if (decompressor == device_decompressor::NONE) { return 0; }
   CUDF_EXPECTS(
-    !nvcomp_disabled,
+    decompressor == device_decompressor::NVCOMP,
     "Cannot compute decompression scratch size for " + compression_type_name(compression));
-  return nvcomp::batched_decompress_temp_size_ex(
-    nvcomp_type.value(), inputs, max_uncomp_chunk_size, max_total_uncomp_size, stream, mr);
+  return nvcomp::batched_decompress_temp_size_ex(*to_nvcomp_compression(compression),
+                                                 inputs,
+                                                 max_uncomp_chunk_size,
+                                                 max_total_uncomp_size,
+                                                 stream,
+                                                 mr);
 }
 
 [[nodiscard]] bool is_decompression_scratch_size_ex_supported(compression_type compression)
@@ -801,8 +863,7 @@ void decompress(compression_type compression,
                                                       default_host_device_decompression_cost_ratio),
                               stream);
 
-  auto tmp_results =
-    cudf::detail::make_device_uvector_async<detail::codec_exec_result>(results, stream, temp_mr);
+  auto tmp_results = cuda::device_buffer<codec_exec_result>(stream, temp_mr, results);
   device_span<codec_exec_result> results_view = tmp_results;
 
   // Chunks [0, split_idx) go to the host engine, [split_idx, end) to the device engine.
@@ -812,19 +873,29 @@ void decompress(compression_type compression,
   // Only fork/join when both host and device have work.
   if (has_host_work and has_device_work) {
     auto const streams = cudf::detail::fork_streams(stream, 2);
-    detail::device_decompress(compression,
-                              inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                              outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                              results_view.subspan(split_idx, results_view.size() - split_idx),
-                              max_uncomp_chunk_size,
-                              max_total_uncomp_size,
-                              streams[0],
-                              mr);
-    detail::host_decompress(compression,
-                            inputs_view.subspan(0, split_idx),
-                            outputs_view.subspan(0, split_idx),
-                            results_view.subspan(0, split_idx),
-                            streams[1]);
+    try {
+      detail::device_decompress(compression,
+                                inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                                outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                                results_view.subspan(split_idx, results_view.size() - split_idx),
+                                max_uncomp_chunk_size,
+                                max_total_uncomp_size,
+                                streams[0],
+                                mr);
+      detail::host_decompress(compression,
+                              inputs_view.subspan(0, split_idx),
+                              outputs_view.subspan(0, split_idx),
+                              results_view.subspan(0, split_idx),
+                              streams[1]);
+    } catch (...) {
+      // Buffers are freed in `stream` order, so it must wait for work already queued on the forks
+      try {
+        cudf::detail::join_streams(streams, stream);
+      } catch (...) {
+        // A join failure means the context is already faulted; it must not replace the original
+      }
+      throw;
+    }
     cudf::detail::join_streams(streams, stream);
   } else if (has_device_work) {
     detail::device_decompress(compression,

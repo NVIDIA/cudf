@@ -1,16 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Query 92."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 import polars as pl
 
 from cudf_polars.streaming.benchmarks.pdsds_parameters import load_parameters
+from cudf_polars.streaming.benchmarks.pdsds_queries import sql_sum
 from cudf_polars.streaming.benchmarks.utils import QueryResult, get_data
 
 if TYPE_CHECKING:
@@ -67,9 +68,10 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     web_sales = get_data(run_config.dataset_path, "web_sales", run_config.suffix)
     item = get_data(run_config.dataset_path, "item", run_config.suffix)
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
-    start_date_py = datetime.strptime(date, "%Y-%m-%d")
-    start_date = pl.lit(start_date_py, dtype=pl.Datetime("us"))
-    end_date = start_date + pl.duration(days=90)
+    start_date_py = datetime.strptime(date, "%Y-%m-%d").date()
+    end_date_py = start_date_py + timedelta(days=90)
+    start_date = pl.lit(start_date_py, dtype=pl.Date)
+    end_date = pl.lit(end_date_py, dtype=pl.Date)
     avg_discounts = (
         web_sales.join(
             date_dim, left_on="ws_sold_date_sk", right_on="d_date_sk", how="inner"
@@ -99,9 +101,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
                 & (pl.col("d_date") <= end_date)
                 & (pl.col("ws_ext_discount_amt") > pl.col("threshold_discount"))
             )
-            .select(
-                [pl.col("ws_ext_discount_amt").sum().alias("Excess Discount Amount")]
-            )
+            .select([sql_sum("ws_ext_discount_amt").alias("Excess Discount Amount")])
             .sort("Excess Discount Amount", nulls_last=True)
             .limit(100)
         ),

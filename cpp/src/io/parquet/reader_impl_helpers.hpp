@@ -12,10 +12,14 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/io/text/byte_range_info.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+
+#include <cuda/buffer>
+#include <thrust/host_vector.h>
 
 #include <algorithm>
-#include <exception>
 #include <functional>
 #include <future>
 #include <memory>
@@ -46,7 +50,7 @@ namespace cudf::io::parquet::detail {
  * @return Constructed metadata objects, in input order
  */
 template <typename T, typename UnaryOp>
-[[nodiscard]] auto parallel_construct_metadatas(cudf::host_span<T const> inputs, UnaryOp op)
+[[nodiscard]] auto parallel_construct_metadatas(std::span<T const> inputs, UnaryOp op)
 {
   using result_type = std::invoke_result_t<UnaryOp, T const&>;
 
@@ -60,27 +64,18 @@ template <typename T, typename UnaryOp>
   }
 
   std::vector<std::future<result_type>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   tasks.reserve(inputs.size());
 
-  auto pending_exception = std::exception_ptr{};
-  try {
-    std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
-      return cudf::detail::host_worker_pool().submit_task(
-        [&op, input_ptr = &input] { return op(*input_ptr); });
-    });
-  } catch (...) {
-    pending_exception = std::current_exception();
-  }
+  std::transform(inputs.begin(), inputs.end(), std::back_inserter(tasks), [&op](T const& input) {
+    return cudf::detail::host_worker_pool().submit_task(
+      [&op, input_ptr = &input] { return op(*input_ptr); });
+  });
 
+  // Rethrows the first task failure; the guard waits for the remaining tasks on unwinding
   for (auto& task : tasks) {
-    try {
-      results.emplace_back(task.get());
-    } catch (...) {
-      if (not pending_exception) { pending_exception = std::current_exception(); }
-    }
+    results.emplace_back(task.get());
   }
-
-  if (pending_exception) { std::rethrow_exception(pending_exception); }
 
   return results;
 }
@@ -150,6 +145,7 @@ struct row_group_size_info {
  * @brief Translates Parquet datatype to cuDF type enum
  */
 [[nodiscard]] type_id to_type_id(SchemaElement const& schema,
+                                 std::optional<type_id> arrow_type,
                                  bool strings_to_categorical,
                                  type_id timestamp_type_id,
                                  type_id decimal_type_id);
@@ -201,12 +197,34 @@ struct metadata : public FileMetaData {
   metadata& operator=(metadata&& other)      = default;
   ~metadata();
 
-  void setup_page_index(cudf::host_span<uint8_t const> page_index_bytes, int64_t min_offset);
+  /**
+   * @brief Computes the byte range of the page index, or an empty range if
+   *  it is not available or already set up
+   *
+   * @throws std::overflow_error if the byte ranges overflow int64_t
+   */
+  [[nodiscard]] text::byte_range_info page_index_byte_range() const;
 
+  /**
+   * @brief Parses column and offset indexes from the page index bytes starting at `min_offset`
+   */
+  void setup_page_index(std::span<uint8_t const> page_index_bytes, int64_t min_offset);
+
+  /**
+   * @brief Returns whether the page index has been set up
+   */
   [[nodiscard]] bool is_page_index_setup() const { return is_page_index_setup_; }
 
  protected:
   void sanitize_schema();
+
+  /**
+   * @brief Decodes the arrow:schema from the key value metadata, if any, and sets the arrow types
+   * of the corresponding schema elements
+   *
+   * Resets all previously set arrow types first so it is safe to call more than once.
+   */
+  void apply_arrow_schema();
 
  private:
   bool is_page_index_setup_ = false;
@@ -275,6 +293,7 @@ class aggregate_reader_metadata {
   std::vector<std::unordered_map<std::string, std::string>> keyval_maps;
   std::vector<std::unordered_map<int32_t, int32_t>> schema_idx_maps;
   std::unordered_set<int32_t> nullable_across_sources;
+  bool use_arrow_schema = false;  ///< Whether to use the arrow:schema types of the sources
 
   int64_t num_rows;
   size_type num_row_groups;
@@ -283,7 +302,7 @@ class aggregate_reader_metadata {
    * @brief Create a metadata object from each element in the source vector
    */
   static std::vector<metadata> metadatas_from_sources(
-    host_span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
+    std::span<std::unique_ptr<datasource> const> sources, bool read_page_indexes = true);
 
   /**
    * @brief Collect the keyvalue maps from each per-file metadata object into a vector of maps.
@@ -312,25 +331,6 @@ class aggregate_reader_metadata {
    * @param src Corresponding SchemaElement in another source
    */
   void propagate_optional_field(int schema_idx, SchemaElement const& src);
-
-  /**
-   * @brief Decodes and constructs the arrow schema from the ARROW_SCHEMA_KEY IPC message
-   * in key value metadata section of Parquet file footer
-   */
-  [[nodiscard]] arrow_schema_data_types collect_arrow_schema() const;
-
-  /**
-   * @brief Co-walks the collected arrow and Parquet schema, updates
-   * dtypes and destroys the no longer needed arrow schema object(s).
-   */
-  void apply_arrow_schema();
-
-  /**
-   * @brief Decode an arrow:IPC message and returns an optional string_view of
-   * its metadata header
-   */
-  [[nodiscard]] std::optional<std::string_view> decode_ipc_message(
-    std::string_view const serialized_message) const;
 
   /**
    * @brief Sums up the number of rows of each source
@@ -364,26 +364,23 @@ class aggregate_reader_metadata {
    * @return A pair of the device buffers backing the bloom filter bitsets and a flattened,
    * per-chunk list of bitset device spans (empty spans for chunks without a bloom filter)
    */
-  [[nodiscard]] std::pair<std::vector<rmm::device_buffer>,
+  [[nodiscard]] std::pair<std::vector<cuda::device_buffer<uint8_t>>,
                           std::vector<cudf::device_span<cuda::std::byte const>>>
-  read_bloom_filters(host_span<std::unique_ptr<datasource> const> sources,
-                     host_span<std::vector<size_type> const> row_group_indices,
-                     host_span<int const> column_schemas,
+  read_bloom_filters(std::span<std::unique_ptr<datasource> const> sources,
+                     std::span<std::vector<size_type> const> row_group_indices,
+                     std::span<int const> column_schemas,
                      size_type num_row_groups,
                      cuda::stream_ref stream,
-                     rmm::device_async_resource_ref mr) const;
+                     cudf::memory_resources mr) const;
 
   /**
    * @brief Collects Parquet types for the columns with the specified schema indices
    *
-   * @param row_group_indices Lists of row groups, once per source
    * @param column_schemas Schema indices of columns whose types will be collected
    *
    * @return A list of parquet types for the columns matching the provided schema indices
    */
-  [[nodiscard]] std::vector<Type> get_parquet_types(
-    host_span<std::vector<size_type> const> row_group_indices,
-    host_span<int const> column_schemas) const;
+  [[nodiscard]] std::vector<Type> get_parquet_types(std::span<int const> column_schemas) const;
 
   /**
    * @brief Filters the row groups using row bounds (`skip_rows` and `num_rows`)
@@ -400,7 +397,7 @@ class aggregate_reader_metadata {
                            std::vector<std::vector<size_type>>,
                            std::vector<std::vector<size_t>>,
                            std::vector<std::vector<size_t>>>
-  apply_row_bounds_filter(cudf::host_span<std::vector<size_type> const> input_row_group_indices,
+  apply_row_bounds_filter(std::span<std::vector<size_type> const> input_row_group_indices,
                           int64_t rows_to_skip,
                           int64_t rows_to_read) const;
 
@@ -420,7 +417,7 @@ class aggregate_reader_metadata {
    * @return A vector of surviving row group indices
    */
   [[nodiscard]] std::vector<std::vector<size_type>> apply_byte_bounds_filter(
-    host_span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<size_type> const> input_row_group_indices,
     size_t bytes_to_skip,
     std::optional<size_t> const& bytes_to_read) const;
 
@@ -439,10 +436,26 @@ class aggregate_reader_metadata {
    * @return True if any filter column carries row-group statistics
    */
   [[nodiscard]] bool any_row_group_stats_available(
-    host_span<std::vector<size_type> const> input_row_group_indices,
-    host_span<int const> filter_column_schemas) const;
+    std::span<std::vector<size_type> const> input_row_group_indices,
+    std::span<int const> filter_column_schemas) const;
 
  protected:
+  /**
+   * @brief Computes a boolean mask indicating if an output column's bloom filters cannot be queried
+   * with a literal of its output type
+   *
+   * A column is flagged if, in any source, it is a timestamp whose Parquet logical type requires
+   * rescaling to the output clock rate, or a decimal whose physical values may be wider than its
+   * output storage type.
+   *
+   * @param output_dtypes Output column data types
+   * @param output_column_schemas Output column schema indices
+   *
+   * @return Boolean vector indicating if the output column cannot use bloom filters
+   */
+  [[nodiscard]] thrust::host_vector<bool> calc_bloom_hash_mismatch_mask(
+    std::span<data_type const> output_dtypes, std::span<int const> output_column_schemas) const;
+
   /**
    * @brief Filters the row groups using stats filter
    *
@@ -452,40 +465,46 @@ class aggregate_reader_metadata {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
   [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> apply_stats_filters(
-    host_span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<size_type> const> input_row_group_indices,
     size_type total_row_groups,
-    host_span<data_type const> output_dtypes,
-    host_span<int const> output_column_schemas,
+    std::span<data_type const> output_dtypes,
+    std::span<int const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Filters the row groups using bloom filters
    *
    * @param bloom_filter_data Device spans of bloom filter data for each input row group
    * @param input_row_group_indices Lists of input row groups, one per source
-   * @param literals Lists of equality literals, one per each input row group
+   * @param literals Lists of equality literals, one per output column
+   * @param operators Lists of comparison operators for `literals`, one per output column
    * @param total_row_groups Total number of row groups in `input_row_group_indices`
    * @param output_dtypes Datatypes of output columns
    * @param bloom_filter_col_schemas Schema indices of bloom filter columns only
    * @param filter AST expression to filter row groups based on bloom filter membership
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Surviving row group indices if any of them are filtered.
    */
   [[nodiscard]] std::optional<std::vector<std::vector<size_type>>> apply_bloom_filters(
-    cudf::host_span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
-    host_span<std::vector<size_type> const> input_row_group_indices,
-    host_span<std::vector<ast::literal*> const> literals,
+    std::span<cudf::device_span<cuda::std::byte const> const> bloom_filter_data,
+    std::span<std::vector<size_type> const> input_row_group_indices,
+    std::span<std::vector<ast::literal*> const> literals,
+    std::span<std::vector<ast::ast_operator> const> operators,
     size_type total_row_groups,
-    host_span<data_type const> output_dtypes,
-    host_span<int const> bloom_filter_col_schemas,
+    std::span<data_type const> output_dtypes,
+    std::span<int const> bloom_filter_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Initialize the internal variables
@@ -493,7 +512,7 @@ class aggregate_reader_metadata {
   void initialize_internals(bool use_arrow_schema, bool has_cols_from_mismatched_srcs);
 
  public:
-  aggregate_reader_metadata(host_span<std::unique_ptr<datasource> const> sources,
+  aggregate_reader_metadata(std::span<std::unique_ptr<datasource> const> sources,
                             bool use_arrow_schema,
                             bool has_cols_from_mismatched_srcs,
                             bool read_page_indexes = true);
@@ -601,7 +620,7 @@ class aggregate_reader_metadata {
   [[nodiscard]] std::unique_ptr<table> read_column_chunk_bounds(
     std::span<std::string const> column_names,
     cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr) const;
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Get total number of rows across all files
@@ -666,6 +685,19 @@ class aggregate_reader_metadata {
   [[nodiscard]] int map_schema_index(int schema_idx, int pfm_idx) const;
 
   /**
+   * @brief Maps schema index from 0th source file to every source file
+   *
+   * @note Only columns selected by `select_columns` are mapped.
+   *
+   * @throws std::out_of_range if `schema_idx` is not mapped to some source
+   *
+   * @param schema_idx The index of the SchemaElement in the zeroth file.
+   *
+   * @return Mapped schema indices, one per source
+   */
+  [[nodiscard]] std::vector<int> map_schema_index_to_sources(int schema_idx) const;
+
+  /**
    * @brief Checks if a field that is REQUIRED in the zeroth source is nullable in another source
    *
    * @note Only columns selected by `select_columns` are tracked.
@@ -678,6 +710,19 @@ class aggregate_reader_metadata {
   {
     return nullable_across_sources.contains(schema_idx);
   }
+
+  /**
+   * @brief Checks if a schema element is a binary BYTE_ARRAY leaf of a logical group, i.e. the
+   * `inline` child of a valid FILE group or the `metadata` / `value` child of a VARIANT group
+   *
+   * Such leaves are always read as `list<uint8>` and are never converted to categories.
+   *
+   * @param schema_idx The index of the SchemaElement in the pfm_idx'th file
+   * @param pfm_idx The index of the per_file_metadata, default = 0 if not specified
+   *
+   * @return True if the schema element is a binary leaf of a logical group
+   */
+  [[nodiscard]] bool is_binary_leaf(int schema_idx, int pfm_idx = 0) const;
 
   /**
    * @brief Extracts the schema_idx'th SchemaElement from the pfm_idx'th file
@@ -695,6 +740,17 @@ class aggregate_reader_metadata {
       "Parquet reader encountered an invalid schema_idx or pfm_idx",
       std::out_of_range);
     return per_file_metadata[pfm_idx].schema[schema_idx];
+  }
+
+  /**
+   * @brief Returns the arrow:schema type of a column, if any and if arrow:schema is in use
+   *
+   * @param schema_idx Schema index in the `pfm_idx`th source
+   * @param pfm_idx Source index
+   */
+  [[nodiscard]] std::optional<type_id> arrow_type(int schema_idx, int pfm_idx = 0) const
+  {
+    return use_arrow_schema ? get_schema(schema_idx, pfm_idx).arrow_type : std::nullopt;
   }
 
   [[nodiscard]] auto const& get_schema_tree(int pfm_idx = 0) const
@@ -768,11 +824,11 @@ class aggregate_reader_metadata {
    */
   [[nodiscard]] std::pair<std::optional<std::vector<std::vector<size_type>>>,
                           surviving_row_group_metrics>
-  filter_row_groups(host_span<std::unique_ptr<datasource> const> sources,
-                    host_span<std::vector<size_type> const> input_row_group_indices,
+  filter_row_groups(std::span<std::unique_ptr<datasource> const> sources,
+                    std::span<std::vector<size_type> const> input_row_group_indices,
                     size_type total_row_groups,
-                    host_span<data_type const> output_dtypes,
-                    host_span<int const> output_column_schemas,
+                    std::span<data_type const> output_dtypes,
+                    std::span<int const> output_column_schemas,
                     std::reference_wrapper<ast::expression const> filter,
                     cuda::stream_ref stream) const;
 
@@ -802,14 +858,14 @@ class aggregate_reader_metadata {
                            std::vector<size_t>,
                            size_type,
                            surviving_row_group_metrics>
-  select_row_groups(host_span<std::unique_ptr<datasource> const> sources,
-                    host_span<std::vector<size_type> const> row_group_indices,
+  select_row_groups(std::span<std::unique_ptr<datasource> const> sources,
+                    std::span<std::vector<size_type> const> row_group_indices,
                     int64_t row_start,
                     std::optional<int64_t> const& row_count,
                     size_t start_byte,
                     std::optional<size_t> const& byte_count,
-                    host_span<data_type const> output_dtypes,
-                    host_span<int const> output_column_schemas,
+                    std::span<data_type const> output_dtypes,
+                    std::span<int const> output_column_schemas,
                     std::optional<std::reference_wrapper<ast::expression const>> filter,
                     cuda::stream_ref stream) const;
 

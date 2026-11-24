@@ -6,6 +6,7 @@ these methods:
 1. With Jupyter/IPython magics: `%load_ext cudf.pandas`
 2. When executing a Python script from the command line: `python -m cudf.pandas script.py`
 3. From a script or from the Python interpreter: `import cudf.pandas; cudf.pandas.install()`
+4. In JupyterLab, with the **GPU Accel** toolbar toggle from `jupyterlab-nvdashboard` (no `%load_ext` needed)
 
 See the instructions below for more information about each method.
 
@@ -32,6 +33,26 @@ you will need to restart your kernel and run `%load_ext cudf.pandas` as the
 first command before any pandas imports or usage.
 ```
 
+(cudf-pandas-jupyterlab-toggle)=
+
+## JupyterLab Usage with jupyterlab-nvdashboard
+
+In JupyterLab, you can enable `cudf.pandas` from the GPU accelerator toggle
+provided by the
+[jupyterlab-nvdashboard](https://github.com/rapidsai/jupyterlab-nvdashboard#installation)
+extension. **No `%load_ext cudf.pandas` is needed**: you do not have to change
+your notebook at all.
+
+1. Install `jupyterlab-nvdashboard` in the same environment as cuDF.
+2. Open the **GPU Accel** menu in the notebook toolbar.
+3. Select **cuDF pandas**. This option is shown only when cuDF is installed in
+   the notebook's environment.
+4. Restart the kernel when prompted, then `import pandas` as usual.
+
+See the
+[GPU Accelerators documentation](https://github.com/rapidsai/jupyterlab-nvdashboard#gpu-accelerators)
+for a demo and details.
+
 ## Command Line Usage
 
 From the command line, run your Python scripts with `-m cudf.pandas`:
@@ -52,6 +73,7 @@ in Jupyter notebook or IPython environments.
 
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 
 import pandas as pd
@@ -73,6 +95,7 @@ For example
 # workers too. These two lines must run before pandas is imported,
 # either directly or transitively.
 import cudf.pandas
+
 cudf.pandas.install()
 
 from multiprocessing import Pool
@@ -163,6 +186,7 @@ when more control over profiling is needed.
 
 ```python
 import cudf.pandas
+
 cudf.pandas.install()
 
 from cudf.pandas.profiler import Profiler

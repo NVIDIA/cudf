@@ -55,6 +55,7 @@
 #include <arrow/ipc/api.h>
 
 #include <algorithm>
+#include <span>
 
 namespace cudf {
 namespace jni {
@@ -576,6 +577,23 @@ std::vector<cudf::null_order> resolve_null_precedence(JNIEnv* env,
   return null_precedence;
 }
 
+jlongArray gather_maps_to_java(
+  JNIEnv* env,
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
+{
+  // release the underlying device buffer to Java
+  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
+  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
+  cudf::jni::native_jlongArray result(env, 5);
+  result[0] = static_cast<jlong>(left_map_buffer->size());
+  result[1] = ptr_as_jlong(left_map_buffer->data());
+  result[2] = release_as_jlong(left_map_buffer);
+  result[3] = ptr_as_jlong(right_map_buffer->data());
+  result[4] = release_as_jlong(right_map_buffer);
+  return result.get_jArray();
+}
+
 namespace {
 
 int set_column_metadata(cudf::io::column_in_metadata& column_metadata,
@@ -707,30 +725,6 @@ bool valid_window_parameters(native_jintArray const& values,
 {
   return values.size() == ops.size() && values.size() == min_periods.size() &&
          values.size() == preceding.size() && values.size() == following.size();
-}
-
-// Convert a cudf gather map pair into the form that Java expects
-// The resulting Java long array contains the following at each index:
-//   0: Size of each gather map in bytes
-//   1: Device address of the gather map for the left table
-//   2: Host address of the rmm::device_buffer instance that owns the left gather map data
-//   3: Device address of the gather map for the right table
-//   4: Host address of the rmm::device_buffer instance that owns the right gather map data
-jlongArray gather_maps_to_java(
-  JNIEnv* env,
-  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
-            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
-{
-  // release the underlying device buffer to Java
-  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
-  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
-  cudf::jni::native_jlongArray result(env, 5);
-  result[0] = static_cast<jlong>(left_map_buffer->size());
-  result[1] = ptr_as_jlong(left_map_buffer->data());
-  result[2] = release_as_jlong(left_map_buffer);
-  result[3] = ptr_as_jlong(right_map_buffer->data());
-  result[4] = release_as_jlong(right_map_buffer);
-  return result.get_jArray();
 }
 
 // Convert a cudf gather map into the form that Java expects
@@ -1142,7 +1136,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_deleteCudfTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::table_view*>(j_cudf_table_view);
+    cudf::jni::safe_delete<cudf::table_view>(j_cudf_table_view);
   }
   JNI_CATCH(env, );
 }
@@ -1762,7 +1756,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_TableWithMeta_close(JNIEnv* env, jcla
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete reinterpret_cast<cudf::io::table_with_metadata*>(handle);
+    cudf::jni::safe_delete<cudf::io::table_with_metadata>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -2980,7 +2974,7 @@ JNIEXPORT void JNICALL Java_ai_rapids_cudf_Table_closeArrowTable(JNIEnv* env,
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    delete handle;
+    cudf::jni::safe_delete<std::shared_ptr<arrow::Table>>(handle);
   }
   JNI_CATCH(env, );
 }
@@ -4452,7 +4446,8 @@ JNIEXPORT jobjectArray JNICALL Java_ai_rapids_cudf_Table_contiguousSplit(JNIEnv*
     std::vector<cudf::size_type> indices(n_split_indices.data(),
                                          n_split_indices.data() + n_split_indices.size());
 
-    std::vector<cudf::packed_table> result = cudf::contiguous_split(*n_table, indices);
+    std::vector<cudf::packed_table> result =
+      cudf::contiguous_split(*n_table, std::span<cudf::size_type const>{indices});
     cudf::jni::native_jobjectArray<jobject> n_result =
       cudf::jni::contiguous_table_array(env, result.size());
     for (size_t i = 0; i < result.size(); i++) {
@@ -5025,7 +5020,8 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
     if (!split_indices.empty()) { split_indices.erase(split_indices.begin()); }
 
     // 2) Splits the groups.
-    std::vector<cudf::packed_table> result = cudf::contiguous_split(grouped_view, split_indices);
+    std::vector<cudf::packed_table> result =
+      cudf::contiguous_split(grouped_view, std::span<cudf::size_type const>{split_indices});
     // Release the grouped table right away after split done.
     groups.keys.reset(nullptr);
     groups.values.reset(nullptr);

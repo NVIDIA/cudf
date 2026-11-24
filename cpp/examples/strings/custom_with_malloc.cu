@@ -8,9 +8,9 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 #include <cuda_runtime.h>
 #include <nvtx3/nvToolsExt.h>
@@ -126,7 +126,8 @@ std::unique_ptr<cudf::column> redact_strings(cudf::column_view const& names,
   nvtxRangePushA("redact_strings");
 
   // create a vector for the output strings' pointers
-  auto str_ptrs = new rmm::device_uvector<cudf::string_view>(names.size(), stream);
+  auto str_ptrs = new cuda::device_buffer<cudf::string_view>(
+    stream, cudf::get_current_device_resource_ref(), names.size(), cuda::no_init);
 
   auto result = [&] {
     // build the output strings

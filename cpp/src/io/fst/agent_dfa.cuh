@@ -132,14 +132,14 @@ class DFAWriteCallbackWrapper {
             typename SymbolIndexT,
             typename SymbolT,
             int MaxTranslatedOutChars_>
-  __device__ __forceinline__
-    typename ::cuda::std::enable_if<(MaxTranslatedOutChars_ <= 2), void>::type
-    ReadSymbol(CharIndexT const character_index,
-               StateIndexT const old_state,
-               StateIndexT const new_state,
-               SymbolIndexT const symbol_id,
-               SymbolT const read_symbol,
-               cuda::std::integral_constant<int, MaxTranslatedOutChars_> /*MaxTranslatedOutChars*/)
+  __device__ __forceinline__ void ReadSymbol(
+    CharIndexT const character_index,
+    StateIndexT const old_state,
+    StateIndexT const new_state,
+    SymbolIndexT const symbol_id,
+    SymbolT const read_symbol,
+    cuda::std::integral_constant<int, MaxTranslatedOutChars_> /*MaxTranslatedOutChars*/)
+    requires(MaxTranslatedOutChars_ <= 2)
   {
     uint32_t const count = transducer_table(old_state, symbol_id, read_symbol);
 
@@ -159,14 +159,14 @@ class DFAWriteCallbackWrapper {
             typename SymbolIndexT,
             typename SymbolT,
             int MaxTranslatedOutChars_>
-  __device__ __forceinline__
-    typename ::cuda::std::enable_if<(MaxTranslatedOutChars_ > 2), void>::type
-    ReadSymbol(CharIndexT const character_index,
-               StateIndexT const old_state,
-               StateIndexT const new_state,
-               SymbolIndexT const symbol_id,
-               SymbolT const read_symbol,
-               cuda::std::integral_constant<int, MaxTranslatedOutChars_>)
+  __device__ __forceinline__ void ReadSymbol(
+    CharIndexT const character_index,
+    StateIndexT const old_state,
+    StateIndexT const new_state,
+    SymbolIndexT const symbol_id,
+    SymbolT const read_symbol,
+    cuda::std::integral_constant<int, MaxTranslatedOutChars_>)
+    requires(MaxTranslatedOutChars_ > 2)
   {
     uint32_t const count = transducer_table(old_state, symbol_id, read_symbol);
 

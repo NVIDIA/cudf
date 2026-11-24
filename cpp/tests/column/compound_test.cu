@@ -11,10 +11,11 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/default_stream.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <thrust/logical.h>
 #include <thrust/sequence.h>
@@ -56,7 +57,8 @@ struct checker_for_level2 {
 
 TEST_F(CompoundColumnTest, ChildrenLevel1)
 {
-  rmm::device_uvector<int32_t> data(1000, cudf::get_default_stream());
+  cuda::device_buffer<int32_t> data(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 1000, cuda::no_init);
   thrust::sequence(
     rmm::exec_policy_nosync(cudf::get_default_stream()), data.begin(), data.end(), 1);
 
@@ -114,7 +116,8 @@ TEST_F(CompoundColumnTest, ChildrenLevel1)
 
 TEST_F(CompoundColumnTest, ChildrenLevel2)
 {
-  rmm::device_uvector<int32_t> data(1000, cudf::get_default_stream());
+  cuda::device_buffer<int32_t> data(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 1000, cuda::no_init);
   thrust::sequence(
     rmm::exec_policy_nosync(cudf::get_default_stream()), data.begin(), data.end(), 1);
 

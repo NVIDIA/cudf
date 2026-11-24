@@ -10,9 +10,11 @@
 #include <cudf/lists/detail/copying.hpp>
 #include <cudf/lists/detail/scatter_helper.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -27,26 +29,26 @@ namespace detail {
 /**
  * @brief Constructs null mask for a scattered list's child column
  *
- * @param parent_list_vector Vector of unbound_list_view, for parent lists column
+ * @param parent_list_span Span of unbound_list_view, for parent lists column
  * @param parent_list_offsets List column offsets for parent lists column
  * @param source_lists Source lists column for scatter operation
  * @param target_lists Target lists column for scatter operation
  * @param num_child_rows Number of rows in child column
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate child column's null mask
- * @return std::pair<cuda::device_buffer<std::byte>, size_type> Child column's null mask and null
- * row count
+ * @return std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> Child column's null mask
+ * and null row count
  */
-std::pair<cuda::device_buffer<std::byte>, size_type> construct_child_nullmask(
-  rmm::device_uvector<unbound_list_view> const& parent_list_vector,
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> construct_child_nullmask(
+  device_span<unbound_list_view const> parent_list_span,
   column_view const& parent_list_offsets,
   cudf::lists_column_device_view const& source_lists,
   cudf::lists_column_device_view const& target_lists,
   size_type num_child_rows,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
-  auto is_valid_predicate = [d_list_vector  = parent_list_vector.begin(),
+  auto is_valid_predicate = [d_list_vector  = parent_list_span.begin(),
                              d_offsets      = parent_list_offsets.template data<int32_t>(),
                              d_offsets_size = parent_list_offsets.size(),
                              source_lists,
@@ -74,7 +76,7 @@ std::pair<cuda::device_buffer<std::byte>, size_type> construct_child_nullmask(
  * The protocol is as follows:
  *
  * Inputs:
- *  1. list_vector:  A device_uvector of unbound_list_view, with each element
+ *  1. list_vector:  A span of unbound_list_view, with each element
  *                   indicating the position, size, and which column the list
  *                   row came from.
  *  2. list_offsets: The offsets column for the (outer) lists column, each offset
@@ -119,23 +121,11 @@ std::pair<cuda::device_buffer<std::byte>, size_type> construct_child_nullmask(
  *    element sizes.
  */
 struct list_child_constructor {
- private:
-  /**
-   * @brief Determine whether the child column type is supported with scattering lists.
-   *
-   * @tparam T The data type of the child column of the list being scattered.
-   */
-  template <typename T>
-  struct is_supported_child_type {
-    static bool const value = cudf::is_fixed_width<T>() || std::is_same_v<T, string_view> ||
-                              std::is_same_v<T, list_view> || std::is_same_v<T, struct_view>;
-  };
-
- public:
-  // SFINAE catch-all, for unsupported child column types.
+  // Catch-all for unsupported child column types.
   template <typename T, typename... Args>
   std::unique_ptr<column> operator()(Args&&... args)
-    requires(!is_supported_child_type<T>::value)
+    requires(not(cudf::concepts::fixed_width<T> or cudf::concepts::string_view<T> or
+                 cudf::concepts::nested<T>))
   {
     CUDF_FAIL("list_child_constructor unsupported!");
   }
@@ -143,14 +133,13 @@ struct list_child_constructor {
   /**
    * @brief Implementation for fixed_width child column types.
    */
-  template <typename T>
-  std::unique_ptr<column> operator()(rmm::device_uvector<unbound_list_view> const& list_vector,
+  template <cudf::concepts::fixed_width T>
+  std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(cudf::is_fixed_width<T>())
+                                     cudf::memory_resources mr) const
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -202,14 +191,13 @@ struct list_child_constructor {
   /**
    * @brief Implementation for list child columns that contain strings.
    */
-  template <typename T>
-  std::unique_ptr<column> operator()(rmm::device_uvector<unbound_list_view> const& list_vector,
+  template <cudf::concepts::string_view T>
+  std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, string_view>)
+                                     cudf::memory_resources mr) const
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -223,7 +211,8 @@ struct list_child_constructor {
 
     if (num_child_rows == 0) { return make_empty_column(type_id::STRING); }
 
-    auto string_views = rmm::device_uvector<string_view>(num_child_rows, stream);
+    auto string_views = cuda::device_buffer<string_view>(
+      stream, cudf::get_current_device_resource_ref(), num_child_rows, cuda::no_init);
 
     auto const null_string_view = string_view{nullptr, 0};  // placeholder for factory function
 
@@ -265,14 +254,13 @@ struct list_child_constructor {
   /**
    * @brief (Recursively) Constructs a child column that is itself a list column.
    */
-  template <typename T>
-  std::unique_ptr<column> operator()(rmm::device_uvector<unbound_list_view> const& list_vector,
+  template <cudf::concepts::list_view T>
+  std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, list_view>)
+                                     cudf::memory_resources mr) const
   {
     auto source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -289,7 +277,8 @@ struct list_child_constructor {
       return empty_like(source_lists_column_view.child());
     }
 
-    auto child_list_views = rmm::device_uvector<unbound_list_view>(num_child_rows, stream, mr);
+    auto child_list_views = cuda::device_buffer<unbound_list_view>(
+      stream, cudf::get_current_device_resource_ref(), num_child_rows, cuda::no_init);
 
     // Convert from parent list_device_view instances to child list_device_views.
     // For instance, if a parent list_device_view has 3 elements, it should have 3 corresponding
@@ -359,14 +348,13 @@ struct list_child_constructor {
   /**
    * @brief (Recursively) constructs child columns that are structs.
    */
-  template <typename T>
-  std::unique_ptr<column> operator()(rmm::device_uvector<unbound_list_view> const& list_vector,
+  template <cudf::concepts::struct_view T>
+  std::unique_ptr<column> operator()(device_span<unbound_list_view const> list_vector,
                                      cudf::column_view const& list_offsets,
                                      cudf::lists_column_view const& source_lists_column_view,
                                      cudf::lists_column_view const& target_lists_column_view,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr) const
-    requires(std::is_same_v<T, struct_view>)
+                                     cudf::memory_resources mr) const
   {
     auto const source_column_device_view =
       column_device_view::create(source_lists_column_view.parent(), stream);
@@ -451,12 +439,12 @@ struct list_child_constructor {
 
 std::unique_ptr<column> build_lists_child_column_recursive(
   data_type child_column_type,
-  rmm::device_uvector<unbound_list_view> const& list_vector,
+  cuda::device_buffer<unbound_list_view> const& list_vector,
   cudf::column_view const& list_offsets,
   cudf::lists_column_view const& source_lists_column_view,
   cudf::lists_column_view const& target_lists_column_view,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   return cudf::type_dispatcher<dispatch_storage_type>(child_column_type,
                                                       list_child_constructor{},

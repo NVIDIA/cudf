@@ -4,10 +4,15 @@
  */
 
 #include <cudf/strings/detail/utilities.hpp>
+#include <cudf/strings/mutable_string_view.hpp>
+#include <cudf/strings/string_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/error.hpp>
 
 #include <cuda/stream>
+
+static_assert(sizeof(cudf::mutable_string_view) == sizeof(cudf::string_view),
+              "Size of mutable_string_view must match size of string_view");
 
 namespace cudf {
 //

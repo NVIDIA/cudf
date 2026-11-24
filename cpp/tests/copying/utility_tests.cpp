@@ -6,12 +6,14 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -62,6 +64,22 @@ TEST_F(EmptyLikeStringTest, ColumnStringTest)
 
   auto got = cudf::empty_like(strings);
   check_empty_string_columns(got->view(), strings);
+}
+
+TEST_F(EmptyLikeStringTest, ColumnDictionaryTest)
+{
+  cudf::test::dictionary_column_wrapper<std::string> input({"a", "b", "a"});
+
+  auto got = cudf::empty_like(input);
+
+  EXPECT_EQ(got->type(), cudf::data_type{cudf::type_id::DICTIONARY32});
+  EXPECT_EQ(got->size(), 0);
+  auto const view = cudf::dictionary_column_view(got->view());
+  ASSERT_EQ(view.parent().num_children(), 2);
+  EXPECT_EQ(view.indices().type(), cudf::dictionary_column_view(input).indices().type());
+  EXPECT_EQ(view.indices().size(), 0);
+  EXPECT_EQ(view.keys().type().id(), cudf::type_id::STRING);
+  EXPECT_EQ(view.keys().size(), 0);
 }
 
 template <typename T>
@@ -212,6 +230,46 @@ TYPED_TEST(AllocateLikeTest, ColumnNumericTestSpecifiedSize)
   EXPECT_EQ(0, got->null_count());
   EXPECT_EQ(input->nullable(), got->nullable());
   EXPECT_EQ(input->num_children(), got->num_children());
+}
+
+struct AllocateLikeMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(AllocateLikeMemoryResourcesTest, BothOverloadsAndMaskPolicies)
+{
+  auto const stream = cudf::test::get_default_stream();
+  for (bool nullable : {false, true}) {
+    for (auto policy : {cudf::mask_allocation_policy::NEVER,
+                        cudf::mask_allocation_policy::RETAIN,
+                        cudf::mask_allocation_policy::ALWAYS}) {
+      for (bool explicit_size : {false, true}) {
+        auto harness = cudf::test::memory_resource_test_harness{};
+        auto input   = cudf::make_numeric_column(
+          cudf::data_type{cudf::type_id::INT32},
+          3,
+          nullable ? cudf::mask_state::ALL_VALID : cudf::mask_state::UNALLOCATED,
+          stream,
+          harness.setup_mr());
+        auto const expected_size     = explicit_size ? 5 : input->size();
+        auto const expected_nullable = policy == cudf::mask_allocation_policy::ALWAYS ||
+                                       (policy == cudf::mask_allocation_policy::RETAIN && nullable);
+
+        cudf::test::expect_api_uses_memory_resources(
+          harness,
+          [&](cudf::memory_resources mr) {
+            return explicit_size ? cudf::allocate_like(input->view(), 5, policy, stream, mr)
+                                 : cudf::allocate_like(input->view(), policy, stream, mr);
+          },
+          [](auto const& result) { return result->alloc_size(); },
+          [&](auto const& result) {
+            EXPECT_EQ(result->type(), input->type());
+            EXPECT_EQ(result->size(), expected_size);
+            EXPECT_EQ(result->nullable(), expected_nullable);
+          },
+          {},
+          stream);
+      }
+    }
+  }
 }
 
 CUDF_TEST_PROGRAM_MAIN()

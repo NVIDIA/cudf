@@ -29,7 +29,6 @@ import pyarrow as pa
 import pylibcudf as plc
 
 import cudf
-from cudf._lib import strings_udf
 from cudf.api.extensions import no_default
 from cudf.api.types import (
     is_dict_like,
@@ -60,9 +59,12 @@ from cudf.core.index import Index, RangeIndex, _index_from_data, ensure_index
 from cudf.core.missing import NA
 from cudf.core.multiindex import MultiIndex
 from cudf.core.resample import _Resampler
+from cudf.core.udf.mlir_backend.strings_typing import ManagedStrArrayWrapper
 from cudf.core.udf.utils import (
     _get_input_args_from_frame,
     _make_free_string_kernel,
+    _mlir_string_array_to_column,
+    _output_args_for_udf_kernel,
     _return_arr_from_dtype,
 )
 from cudf.core.window import ExponentialMovingWindow, Rolling
@@ -81,6 +83,7 @@ from cudf.utils.dtypes import (
     is_mixed_with_object_dtype,
     is_pandas_nullable_extension_dtype,
     is_pandas_nullable_numpy_dtype,
+    np_dtypes_to_pandas_dtypes,
 )
 from cudf.utils.performance_tracking import _performance_tracking
 from cudf.utils.utils import _warn_no_dask_cudf
@@ -1274,6 +1277,17 @@ class IndexedFrame(Frame):
         np.int64(10)
         """
         # TODO: This function does not currently support nulls.
+        ext_dtypes = []
+        for obj in (self, other):
+            if isinstance(obj, (cudf.Series, cudf.DataFrame)):
+                for col in obj._columns:
+                    if is_pandas_nullable_extension_dtype(col.dtype):
+                        if col.has_nulls():
+                            raise NotImplementedError(
+                                "dot does not support nulls in pandas "
+                                "nullable extension dtypes."
+                            )
+                        ext_dtypes.append(col.dtype)
         lhs = self.values
         result_index = None
         result_cols = None
@@ -1323,16 +1337,25 @@ class IndexedFrame(Frame):
             lhs, rhs = rhs, lhs
 
         result = lhs.dot(rhs)
+        # pandas keeps the nullable extension dtype family of the operands.
+        result_dtype = None
+        if ext_dtypes and result.ndim > 0:
+            if any(isinstance(dt, pd.ArrowDtype) for dt in ext_dtypes):
+                result_dtype = pd.ArrowDtype(pa.from_numpy_dtype(result.dtype))
+            else:
+                result_dtype = np_dtypes_to_pandas_dtypes.get(result.dtype)
         if result.ndim == 1:
             return cudf.Series(
                 result,
                 index=self.index if result_index is None else result_index,
+                dtype=result_dtype,
             )
         if result.ndim == 2:
             return cudf.DataFrame(
                 result,
                 index=self.index if result_index is None else result_index,
                 columns=result_cols,
+                dtype=result_dtype,
             )
         # 0-d result: return a numpy scalar (e.g. np.int64) to match
         # pandas' ``np.matmul(Series, Series)`` semantics rather than the
@@ -3542,7 +3565,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """
@@ -3566,7 +3589,7 @@ class IndexedFrame(Frame):
         *,
         axis: Axis | None = None,
         inplace: bool = False,
-        limit: None | int = None,
+        limit: int | None = None,
         limit_area: Literal["inside", "outside", None] = None,
     ) -> Self | None:
         """
@@ -3719,7 +3742,7 @@ class IndexedFrame(Frame):
         # Mask and data column preallocated
         ans_col = _return_arr_from_dtype(retty, len(self))
         ans_mask = as_column(True, length=len(self), dtype=np.dtype("bool"))
-        output_args = [(ans_col, ans_mask), len(self)]
+        output_args = _output_args_for_udf_kernel(ans_col, ans_mask, len(self))
         input_args = _get_input_args_from_frame(self)
         launch_args = output_args + input_args + list(args)
         try:
@@ -3729,13 +3752,14 @@ class IndexedFrame(Frame):
             raise RuntimeError("UDF kernel execution failed.") from e
 
         if is_dtype_obj_string(retty):
-            plc_col = strings_udf.column_from_managed_udf_string_array(ans_col)
+            plc_col = _mlir_string_array_to_column(ans_col, len(self))
             col = ColumnBase.create(
                 plc_col, dtype=dtype_from_pylibcudf_column(plc_col)
             )
             free_kernel = _make_free_string_kernel()
+            wrapped_col = ManagedStrArrayWrapper(ans_col)
             with _CUDFNumbaConfig():
-                free_kernel.forall(len(col))(ans_col, len(col))
+                free_kernel.forall(len(col))(wrapped_col, len(col))
         else:
             col = as_column(ans_col, retty)
 
@@ -3911,8 +3935,10 @@ class IndexedFrame(Frame):
                 keep_index=True,
             )
         elif keep == "last":
+            # The sort order is reversed and read from the end, so nulls
+            # must go first to end up after the valid values.
             indices = self._get_columns_by_label(columns)._get_sorted_inds(
-                ascending=largest
+                ascending=largest, na_position="first"
             )
 
             if n <= 0:
@@ -4592,8 +4618,8 @@ class IndexedFrame(Frame):
         >>> df = cudf.DataFrame({"name": ['Alfred', 'Batman', 'Catwoman'],
         ...                    "toy": ['Batmobile', None, 'Bullwhip'],
         ...                    "born": [np.datetime64("1940-04-25"),
-        ...                             np.datetime64("NaT"),
-        ...                             np.datetime64("NaT")]})
+        ...                             np.datetime64("NaT", "ns"),
+        ...                             np.datetime64("NaT", "ns")]})
         >>> df
                name        toy                           born
         0    Alfred  Batmobile  1940-04-25 00:00:00.000000000

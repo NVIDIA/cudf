@@ -57,3 +57,66 @@ def test_array_dtype_uses_physical_list():
 
     assert result.polars_type == dtype
     assert result.id() == plc.TypeId.LIST
+
+
+@pytest.mark.parametrize("inner", [pl.String(), pl.List(pl.Int8())])
+def test_array_dtype_requires_fixed_width_inner(inner):
+    with pytest.raises(NotImplementedError, match="fixed-width"):
+        DataType(pl.Array(inner, 2))
+
+
+def test_time_dtype_uses_nanosecond_timestamp():
+    result = DataType(pl.Time())
+
+    assert result.polars_type == pl.Time()
+    assert result.id() == plc.TypeId.TIMESTAMP_NANOSECONDS
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.List(pl.Time()),
+        pl.Array(pl.Time(), 2),
+        pl.Struct({"a": pl.Time()}),
+        pl.List(pl.Struct({"a": pl.Time()})),
+    ],
+)
+def test_nested_time_raises(dtype):
+    with pytest.raises(NotImplementedError, match="Time nested"):
+        DataType(dtype)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.Categorical(),
+        pl.Categorical("fruit"),
+        pl.Categorical(pl.Categories("x", physical=pl.UInt8)),
+        pl.Categorical(pl.Categories("y", "ns", pl.UInt16)),
+        pl.Enum([]),
+        pl.Enum([str(i) for i in range(3)]),
+    ],
+    ids=["global", "named", "uint8", "uint16", "enum0", "enum3"],
+)
+def test_categorical_dtype_uses_dictionary(dtype):
+    result = DataType(dtype)
+
+    assert result.polars_type == dtype
+    assert result.id() == plc.TypeId.DICTIONARY32
+    assert result.is_categorical
+    assert result.children == []
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pl.List(pl.Categorical()),
+        pl.List(pl.List(pl.Enum(["x"]))),
+        pl.Struct({"a": pl.Enum(["x"])}),
+        pl.Array(pl.Enum(["x"]), 2),
+    ],
+    ids=repr,
+)
+def test_nested_categorical_raises(dtype):
+    with pytest.raises(NotImplementedError, match="Categorical nested"):
+        DataType(dtype)

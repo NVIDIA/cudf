@@ -24,7 +24,8 @@ void fill_in_place(mutable_column_view& destination,
                    size_type begin,
                    size_type end,
                    scalar const& value,
-                   cuda::stream_ref stream);
+                   cuda::stream_ref stream,
+                   cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::fill
@@ -34,7 +35,7 @@ std::unique_ptr<column> fill(column_view const& input,
                              size_type end,
                              scalar const& value,
                              cuda::stream_ref stream,
-                             rmm::device_async_resource_ref mr);
+                             cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

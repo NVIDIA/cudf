@@ -7,7 +7,7 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/types.hpp>
 
-#include <cub/util_type.cuh>
+#include <cuda/cmath>
 
 #include <cstdint>
 
@@ -28,7 +28,7 @@ class MultiFragmentInRegArray {
  private:
   /// Minimum number of bits required to represent all values from [0, MAX_ITEM_VALUE]
   static constexpr uint32_t MIN_BITS_PER_ITEM =
-    (MAX_ITEM_VALUE == 0) ? 1 : cub::Log2<(MAX_ITEM_VALUE + 1)>::VALUE;
+    (MAX_ITEM_VALUE == 0) ? 1 : cuda::ceil_ilog2(MAX_ITEM_VALUE + 1);
 
   /// Number of bits that each fragment can store
   static constexpr uint32_t NUM_BITS_PER_FRAGMENT = sizeof(BackingFragmentT) * 8;
@@ -39,11 +39,11 @@ class MultiFragmentInRegArray {
   /// The number of bits per item per fragment to be a power of two to avoid costly integer
   /// multiplication
   static constexpr uint32_t BITS_PER_FRAG_ITEM =
-    0x01U << (cub::Log2<(AVAIL_BITS_PER_FRAG_ITEM + 1)>::VALUE - 1);
+    0x01U << (cuda::ceil_ilog2(AVAIL_BITS_PER_FRAG_ITEM + 1) - 1);
 
   // The total number of fragments required to store all the items
   static constexpr uint32_t FRAGMENTS_PER_ITEM =
-    cudf::util::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
+    cudf::detail::div_rounding_up_safe(MIN_BITS_PER_ITEM, BITS_PER_FRAG_ITEM);
 
   //------------------------------------------------------------------------------
   // HELPER FUNCTIONS

@@ -8,6 +8,7 @@
 #include "io/utilities/block_utils.cuh"
 #include "page_string_utils.cuh"
 #include "parquet_gpu.cuh"
+#include "timestamp_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/iterator.cuh>
@@ -17,14 +18,17 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cooperative_groups.h>
 #include <cub/block/block_reduce.cuh>
 #include <cub/block/block_scan.cuh>
 #include <cub/warp/warp_reduce.cuh>
+#include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.any_of.h>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/chrono>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
@@ -33,10 +37,7 @@
 #include <cuda/std/utility>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
-#include <thrust/gather.h>
-#include <thrust/merge.h>
-#include <thrust/scan.h>
-#include <thrust/scatter.h>
+#include <thrust/execution_policy.h>
 
 #include <bitset>
 
@@ -57,7 +58,7 @@ __device__ constexpr int rolling_idx(int pos) { return rolling_index<rle_buffer_
 
 // max V1 header size
 // also valid for dict page header (V1 or V2)
-constexpr int MAX_V1_HDR_SIZE = util::round_up_unsafe(27, 8);
+constexpr int MAX_V1_HDR_SIZE = cuda::round_up(27, 8);
 
 // do not truncate statistics
 constexpr int32_t NO_TRUNC_STATS = 0;
@@ -67,9 +68,6 @@ constexpr size_t MIN_STATS_SCRATCH_SIZE = sizeof(__int128_t);
 
 // mask to determine lane id
 constexpr uint32_t WARP_MASK = cudf::detail::warp_size - 1;
-
-// currently 64k - 1
-constexpr uint32_t MAX_GRID_Y_SIZE = (1 << 16) - 1;
 
 struct frag_init_state_s {
   parquet_column_device_view col;
@@ -518,7 +516,7 @@ __device__ size_t delta_data_len(Type physical_type,
   }();
 
   auto const vals_per_block = delta::block_size;
-  size_t const num_blocks   = util::div_rounding_up_unsafe(num_values, vals_per_block);
+  size_t const num_blocks   = cuda::ceil_div(num_values, vals_per_block);
   // need max dtype_len + 1 bytes for min_delta (because we only encode 7 bits per byte)
   // one byte per mini block for the bitwidth
   auto const mini_block_header_size = dtype_len + 1 + delta::num_mini_blocks;
@@ -526,7 +524,7 @@ __device__ size_t delta_data_len(Type physical_type,
   auto const max_bits = dtype_len * 8 + 1;
   // each data block will then be max_bits * values per block. vals_per_block is guaranteed to be
   // divisible by 128 (via static assert on delta::block_size), but do safe division anyway.
-  auto const bytes_per_block = cudf::util::div_rounding_up_unsafe(max_bits * vals_per_block, 8);
+  auto const bytes_per_block = cuda::ceil_div(max_bits * vals_per_block, 8);
   auto const block_size      = mini_block_header_size + bytes_per_block;
   // the number of DELTA_BINARY_PACKED blocks to encode
   auto const num_dbp_blocks = encoding == encode_kernel_mask::DELTA_BYTE_ARRAY ? 2 : 1;
@@ -640,7 +638,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.max_lvl_size    = 0;
         page_g.comp_data_size  = 0;
         page_g.is_compressed   = false;
-        page_g.max_hdr_size    = MAX_V1_HDR_SIZE;
+        page_g.max_hdr_size    = cuda::round_up<uint32_t>(MAX_V1_HDR_SIZE, page_align);
         page_g.max_data_size   = ck_g.uniq_data_size;
         page_g.data_size       = ck_g.uniq_data_size;
         page_g.start_row       = cur_row;
@@ -648,10 +646,11 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_g.num_leaf_values = ck_g.num_dict_entries;
         page_g.num_values      = ck_g.num_dict_entries;  // TODO: shouldn't matter for dict page
         page_g.dict_rle_bits   = ck_g.dict_rle_bits;     // TODO: shouldn't matter for dict page
-        page_offset +=
-          util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+        page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
         if (not comp_page_sizes.empty()) {
-          comp_page_offset += page_g.max_hdr_size + comp_page_sizes[ck_g.first_page];
+          // Pad to `page_align` so the next page's compressor output stays aligned
+          comp_page_offset +=
+            cuda::round_up(page_g.max_hdr_size + comp_page_sizes[ck_g.first_page], page_align);
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
         }
         page_headers_size += page_g.max_hdr_size;
@@ -699,10 +698,10 @@ CUDF_KERNEL void __launch_bounds__(128)
         frag_g.num_rows           = 0;
       }
       __syncwarp();
-      auto const fragment_data_size =
-        (ck_g.use_dictionary) ? static_cast<size_t>(frag_g.num_leaf_values) *
-                                  util::div_rounding_up_unsafe<size_t>(ck_g.dict_rle_bits, 8)
-                              : frag_g.fragment_data_size;
+      auto const fragment_data_size = (ck_g.use_dictionary)
+                                        ? static_cast<size_t>(frag_g.num_leaf_values) *
+                                            cuda::ceil_div<size_t, size_t>(ck_g.dict_rle_bits, 8)
+                                        : frag_g.fragment_data_size;
 
       // TODO (dm): this convoluted logic to limit page size needs refactoring
       size_t this_max_page_size = (values_in_page * 2 >= ck_g.num_values)   ? 256 * 1024
@@ -758,9 +757,13 @@ CUDF_KERNEL void __launch_bounds__(128)
             } else {
               stats_hdr_len += ((col_g.stats_dtype >= dtype_int64) ? 10 : 5) * 3;
             }
+            // nan_count
+            if (col_g.stats_dtype == dtype_float32 || col_g.stats_dtype == dtype_float64) {
+              stats_hdr_len += 6;
+            }
             page_g.max_hdr_size += stats_hdr_len;
           }
-          page_g.max_hdr_size = util::round_up_unsafe(page_g.max_hdr_size, page_align);
+          page_g.max_hdr_size = cuda::round_up(page_g.max_hdr_size, page_align);
           page_g.page_data    = ck_g.uncompressed_bfr + page_offset;
           if (not comp_page_sizes.empty()) {
             page_g.compressed_data = ck_g.compressed_bfr + comp_page_offset;
@@ -775,9 +778,9 @@ CUDF_KERNEL void __launch_bounds__(128)
           auto const rep_level_size = max_RLE_page_size(col_g.num_rep_level_bits(), values_in_page);
           // V2 headers keep the level data outside the page payload, so it is padded out to
           // `page_align`. Store in a local size_t until page size has been validated below.
-          size_t const lvl_size = write_v2_headers ? util::round_up_unsafe<size_t>(
-                                                       def_level_size + rep_level_size, page_align)
-                                                   : def_level_size + rep_level_size;
+          size_t const lvl_size =
+            write_v2_headers ? cuda::round_up<size_t>(def_level_size + rep_level_size, page_align)
+                             : def_level_size + rep_level_size;
           // get a different bound if using delta encoding
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
@@ -802,8 +805,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.max_data_size    = static_cast<uint32_t>(max_data_size);
           pagestats_g.start_chunk = ck_g.first_fragment + page_start;
           pagestats_g.num_chunks  = page_g.num_fragments;
-          page_offset +=
-            util::round_up_unsafe(page_g.max_hdr_size + page_g.max_data_size, page_align);
+          page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_data_size, page_align);
           // if encoding delta_byte_array, need to allocate some space for scratch data.
           // if there are leaf nulls, we need space for a mapping array:
           //   sizeof(size_type) * num_leaf_values
@@ -811,7 +813,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           if (page_g.kernel_mask == encode_kernel_mask::DELTA_BYTE_ARRAY) {
             // scratch needs to be aligned to a size_type boundary
             auto const pg_end = reinterpret_cast<uintptr_t>(ck_g.uncompressed_bfr + page_offset);
-            auto scratch      = util::round_up_unsafe(pg_end, sizeof(size_type));
+            auto scratch      = cuda::round_up(pg_end, sizeof(size_type));
             if (page_g.num_valid != page_g.num_leaf_values) {
               scratch += sizeof(size_type) * page_g.num_leaf_values;
             }
@@ -820,9 +822,12 @@ CUDF_KERNEL void __launch_bounds__(128)
               cuda::std::distance(ck_g.uncompressed_bfr, reinterpret_cast<uint8_t*>(scratch));
           }
           if (not comp_page_sizes.empty()) {
-            // V2 does not include level data in compressed size estimate
-            comp_page_offset += page_g.max_hdr_size + page_g.max_lvl_size +
-                                comp_page_sizes[ck_g.first_page + num_pages];
+            // V2 does not include level data in compressed size estimate. The max compressed size
+            // need not be a multiple of `page_align`, so pad it to keep the compressor output of
+            // the next page or column chunk aligned.
+            comp_page_offset += cuda::round_up(page_g.max_hdr_size + page_g.max_lvl_size +
+                                                 comp_page_sizes[ck_g.first_page + num_pages],
+                                               page_align);
           }
           page_headers_size += page_g.max_hdr_size;
           max_page_data_size = max(max_page_data_size, page_g.max_data_size);
@@ -876,7 +881,7 @@ CUDF_KERNEL void __launch_bounds__(128)
     __syncwarp();
     if (!t) {
       if (ck_g.ck_stat_size == 0 && ck_g.stats) {
-        uint32_t ck_stat_size = util::round_up_unsafe(48 + 2 * ck_max_stats_len, page_align);
+        uint32_t ck_stat_size = cuda::round_up(48 + 2 * ck_max_stats_len, page_align);
         page_offset += ck_stat_size;
         comp_page_offset += ck_stat_size;
         ck_g.ck_stat_size = ck_stat_size;
@@ -1290,41 +1295,6 @@ static __device__ void PlainBoolEncode(rle_page_enc_state_s* s,
     s->rle_numvals = numvals;
     s->rle_out     = dst;
   }
-}
-
-/**
- * @brief Determines the difference between the Proleptic Gregorian Calendar epoch (1970-01-01
- * 00:00:00 UTC) and the Julian date epoch (-4713-11-24 12:00:00 UTC).
- *
- * @return The difference between two epochs in `cuda::std::chrono::duration` format with a period
- * of hours.
- */
-__device__ constexpr auto julian_calendar_epoch_diff()
-{
-  using namespace cuda::std::chrono;
-  using namespace cuda::std::chrono_literals;
-  return sys_days{January / 1 / 1970} - (sys_days{November / 24 / -4713} + 12h);
-}
-
-/**
- * @brief Converts number `v` of periods of type `PeriodT` into a pair with nanoseconds since
- * midnight and number of Julian days. Does not deal with time zones. Used by INT96 code.
- *
- * @tparam PeriodT a ratio representing the tick period in duration
- * @param v count of ticks since epoch
- * @return A pair of (nanoseconds, days) where nanoseconds is the number of nanoseconds
- * elapsed in the day and days is the number of days from Julian epoch.
- */
-template <typename PeriodT>
-__device__ auto julian_days_with_time(int64_t v)
-{
-  using namespace cuda::std::chrono;
-  auto const dur_total             = duration<int64_t, PeriodT>{v};
-  auto const dur_days              = floor<days>(dur_total);
-  auto const dur_time_of_day       = dur_total - dur_days;
-  auto const dur_time_of_day_nanos = duration_cast<nanoseconds>(dur_time_of_day);
-  auto const julian_days           = dur_days + ceil<days>(julian_calendar_epoch_diff());
-  return cuda::std::pair{dur_time_of_day_nanos, julian_days};
 }
 
 // this has been split out into its own kernel because of the amount of shared memory required
@@ -1764,24 +1734,19 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
           }
 
           auto const [last_day_nanos, julian_days] = [&] {
-            using namespace cuda::std::chrono;
             switch (s->col.leaf_column->type().id()) {
               case type_id::TIMESTAMP_SECONDS:
-              case type_id::TIMESTAMP_MILLISECONDS: {
-                return julian_days_with_time<cuda::std::milli>(v);
-              } break;
+              case type_id::TIMESTAMP_MILLISECONDS: return duration_to_int96(duration_ms{v});
               case type_id::TIMESTAMP_MICROSECONDS:
-              case type_id::TIMESTAMP_NANOSECONDS: {
-                return julian_days_with_time<cuda::std::micro>(v);
-              } break;
+              case type_id::TIMESTAMP_NANOSECONDS: return duration_to_int96(duration_us{v});
+              default: return duration_to_int96(duration_ns{0});
             }
-            return julian_days_with_time<cuda::std::nano>(0);
           }();
 
           // the 12 bytes of fixed length data.
-          v = last_day_nanos.count();
+          v = last_day_nanos;
           encode_value(dst + pos, v, 1);
-          uint32_t w = julian_days.count();
+          uint32_t w = julian_days;
           encode_value(dst + pos + 8, w, 1);
         } break;
 
@@ -2278,7 +2243,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
     // set pointer to beginning of scratch space (aligned to size_type boundary)
     auto scratch_start =
       reinterpret_cast<uintptr_t>(s->page.page_data + s->page.max_hdr_size + s->page.max_data_size);
-    scratch_start = util::round_up_unsafe(scratch_start, sizeof(size_type));
+    scratch_start = cuda::round_up(scratch_start, sizeof(size_type));
     scratch_data  = reinterpret_cast<uint8_t*>(scratch_start);
   }
   __syncthreads();
@@ -2410,7 +2375,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
   non_zero = block_reduce(temp_storage.reduce_storage).Sum(non_zero);
   __syncthreads();
   suffix_bytes = block_reduce(temp_storage.reduce_storage).Sum(suffix_bytes);
-  if (t == 0) { avg_suffix_len = util::div_rounding_up_unsafe(suffix_bytes, non_zero); }
+  if (t == 0) { avg_suffix_len = non_zero == 0 ? 0 : cuda::ceil_div(suffix_bytes, non_zero); }
   __syncthreads();
 
   // Now copy the byte array data. For shorter suffixes (<= 64 bytes), it is faster to use
@@ -3001,6 +2966,8 @@ __device__ uint8_t* EncodeStatistics(uint8_t* start,
     encoder.field_bool(7, true);
     encoder.field_bool(8, true);
   }
+  // nan_count must be written for floating point columns, even if zero
+  if (dtype == dtype_float32 or dtype == dtype_float64) { encoder.field_int64(9, s->nan_count); }
   encoder.end(&end);
   return end;
 }
@@ -3304,6 +3271,14 @@ CUDF_KERNEL void __launch_bounds__(1)
   uint32_t const pageidx         = ck_g->first_page;
   size_t var_bytes               = 0;
 
+  // Float pages with NaNs have no min/max (see merge_group_statistics), so no column index is
+  // written for their chunk (the histograms and var_bytes below are still needed)
+  auto const is_float   = col_g.stats_dtype == dtype_float32 or col_g.stats_dtype == dtype_float64;
+  auto const has_nan    = [](statistics_chunk const& stats) { return stats.nan_count > 0; };
+  auto const page_stats = column_stats.begin() + pageidx;
+  auto const has_nan_page =
+    is_float and cuda::std::any_of(page_stats + first_data_page, page_stats + num_pages, has_nan);
+
   header_encoder encoder(ck_g->column_index_blob);
 
   // make sure scratch is aligned properly. here column_index_size indicates
@@ -3387,6 +3362,15 @@ CUDF_KERNEL void __launch_bounds__(1)
     encoder.field_list_end(7);
   }
 
+  // nan_counts
+  if (is_float) {
+    encoder.field_list_begin(8, num_data_pages, FieldType::I64);
+    for (uint32_t page = first_data_page; page < num_pages; page++) {
+      encoder.put_int64(column_stats[pageidx + page].nan_count);
+    }
+    encoder.field_list_end(8);
+  }
+
   if (col_g.physical_type == Type::BYTE_ARRAY) {
     thrust::for_each(thrust::seq, page_start, page_end, [&] __device__(auto const& page) {
       var_bytes += page.var_bytes_size;
@@ -3396,8 +3380,9 @@ CUDF_KERNEL void __launch_bounds__(1)
   encoder.end(&col_idx_end, false);
 
   // now reset column_index_size to the actual size of the encoded column index blob
-  ck_g->column_index_size = static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
-  ck_g->var_bytes_size    = var_bytes;
+  ck_g->column_index_size =
+    has_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
+  ck_g->var_bytes_size = var_bytes;
 }
 
 void InitRowGroupFragments(device_2dspan<PageFragment> frag,
@@ -3430,7 +3415,7 @@ void InitFragmentStatistics(device_span<statistics_group> groups,
 {
   int const num_fragments = fragments.size();
   int const dim =
-    util::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
+    cudf::detail::div_rounding_up_safe(num_fragments, encode_block_size / cudf::detail::warp_size);
   gpuInitFragmentStats<<<dim, encode_block_size, 0, stream.get()>>>(groups, fragments);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -3479,9 +3464,15 @@ void EncodePages(device_span<EncPage> pages,
 {
   auto num_pages = pages.size();
 
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
   // determine which kernels to invoke
-  auto kernel_mask = cudf::detail::transform_reduce(
-    pages.begin(), pages.end(), mask_tform{}, uint32_t{0}, cuda::std::bit_or<uint32_t>{}, stream);
+  auto kernel_mask = cudf::detail::transform_reduce(pages.begin(),
+                                                    pages.end(),
+                                                    mask_tform{},
+                                                    uint32_t{0},
+                                                    cuda::std::bit_or<uint32_t>{},
+                                                    stream,
+                                                    mr.as_temporary());
 
   // get the number of streams we need from the pool
   int nkernels = std::bitset<32>(kernel_mask).count();
@@ -3554,7 +3545,7 @@ void decide_compression(device_span<EncColumnChunk> chunks,
                         cuda::stream_ref stream)
 {
   auto const num_blocks =
-    util::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
+    cudf::detail::div_rounding_up_safe<int>(chunks.size(), decide_compression_warps_in_block);
   decide_compression_kernel<<<num_blocks, decide_compression_block_size, 0, stream.get()>>>(
     chunks, page_level_compression);
   CUDF_CUDA_TRY(cudaGetLastError());
@@ -3566,7 +3557,7 @@ void EncodePageHeaders(device_span<EncPage> pages,
                        statistics_chunk const* chunk_stats,
                        cuda::stream_ref stream)
 {
-  auto const num_blocks = util::div_rounding_up_safe<int>(pages.size(), encode_block_size);
+  auto const num_blocks = cudf::detail::div_rounding_up_safe<int>(pages.size(), encode_block_size);
   gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.get()>>>(
     pages, comp_results, page_stats, chunk_stats);
   CUDF_CUDA_TRY(cudaGetLastError());

@@ -21,7 +21,7 @@
 #include <cudf/reduction/bloom_filter.cuh>
 
 #include <cuco/bloom_filter_ref.cuh>
-#include <cuco/hash_functions.cuh>
+#include <cuco/extent.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
 #ifdef __clang__
 #pragma clang diagnostic pop
@@ -31,6 +31,7 @@
 
 #include <cudf/hashing.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 
 #include <cudf_streaming/detail/device_bloom_filter.hpp>
 
@@ -38,6 +39,7 @@
 #include <rmm/resource_ref.hpp>
 
 #include <cub/device/device_transform.cuh>
+#include <cuda/buffer>
 #include <cuda/std/tuple>
 #include <cuda/stream>
 
@@ -55,13 +57,17 @@ namespace cudf_streaming::detail {
 namespace {
 using key_type = std::uint64_t;
 
-using bloom_filter_policy_type =
-  cudf::arrow_bloom_filter_policy<key_type, cuco::identity_hash<key_type>>;
-using bloom_filter_ref_type = cuco::bloom_filter_ref<key_type,
-                                                     cuco::extent<std::size_t>,
-                                                     cuco::thread_scope_device,
-                                                     bloom_filter_policy_type>;
-using storage_type          = bloom_filter_ref_type::filter_block_type;
+// The keys are already row hashes.
+struct identity_hash {
+  CUDF_HOST_DEVICE constexpr key_type operator()(key_type key) const noexcept { return key; }
+};
+
+using bloom_filter_policy_type = cudf::arrow_bloom_filter_policy<key_type, identity_hash>;
+using bloom_filter_ref_type    = cuco::bloom_filter_ref<key_type,
+                                                        cuco::extent<std::size_t>,
+                                                        cuco::thread_scope_device,
+                                                        bloom_filter_policy_type>;
+using storage_type             = bloom_filter_ref_type::filter_block_type;
 
 std::size_t num_blocks(std::size_t filter_size)
 {
@@ -127,7 +133,7 @@ void device_bloom_filter::merge(device_bloom_filter const& other, cuda::stream_r
   ref_this.merge_async(ref_other, stream);
 }
 
-rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& values,
+cuda::device_buffer<bool> device_bloom_filter::contains(cudf::table_view const& values,
                                                         cuda::stream_ref stream,
                                                         rmm::device_async_resource_ref mr) const
 {
@@ -136,7 +142,8 @@ rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& 
     static_cast<storage_type*>(storage_), num_blocks_, cuco::thread_scope_device, {}};
   auto hashes = cudf::hashing::xxhash_64(values, seed_, cudf::use_jit::NO, stream, mr);
   auto view   = hashes->view();
-  rmm::device_uvector<bool> result{static_cast<std::size_t>(view.size()), stream, mr};
+  cuda::device_buffer<bool> result{
+    stream, mr, static_cast<std::size_t>(view.size()), cuda::no_init};
   filter_ref.contains_async(view.begin<key_type>(), view.end<key_type>(), result.begin(), stream);
   return result;
 }

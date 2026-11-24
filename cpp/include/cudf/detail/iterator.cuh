@@ -365,6 +365,8 @@ struct scalar_value_accessor {
  *
  * For `p = *(iter + i)`, `p` is the value stored in the scalar.
  *
+ * For fixed-point scalars, the returned value preserves the scalar's scale.
+ *
  * The behavior is undefined if the scalar is destroyed before iterator dereferencing.
  *
  * @throws cudf::logic_error if scalar datatype and Element type mismatch.
@@ -378,7 +380,7 @@ struct scalar_value_accessor {
 template <typename Element>
 auto inline make_scalar_iterator(scalar const& scalar_value)
 {
-  CUDF_EXPECTS(data_type(type_to_id<Element>()) == scalar_value.type(), "the data type mismatch");
+  CUDF_EXPECTS(type_to_id<Element>() == scalar_value.type().id(), "the data type mismatch");
   CUDF_EXPECTS(scalar_value.is_valid(), "the scalar value must be valid");
   return cuda::transform_iterator(cuda::make_constant_iterator<size_type>(0),
                                   scalar_value_accessor<Element>{scalar_value});
@@ -423,15 +425,7 @@ struct scalar_optional_accessor : public scalar_value_accessor<Element> {
   {
     if (has_nulls && !super_t::dscalar.is_valid()) { return value_type{cuda::std::nullopt}; }
 
-    if constexpr (cudf::is_fixed_point<Element>()) {
-      using namespace numeric;
-      using rep        = typename Element::rep;
-      auto const value = super_t::dscalar.rep();
-      auto const scale = scale_type{super_t::dscalar.type().scale()};
-      return Element{scaled_integer<rep>{value, scale}};
-    } else {
-      return Element{super_t::dscalar.value()};
-    }
+    return Element{super_t::dscalar.value()};
   }
 
   Nullate has_nulls{};
@@ -458,23 +452,10 @@ struct scalar_pair_accessor : public scalar_value_accessor<Element> {
 };
 
 /**
- * @brief Utility to discard template type arguments.
- *
- * Substitute for std::void_t.
- *
- * @tparam T Ignored template parameter
- */
-template <typename... T>
-using void_t = void;
-
-/**
  * @brief Compile-time reflection to check if `Element` type has a `rep()` member.
  */
-template <typename Element, typename = void>
-struct has_rep_member : std::false_type {};
-
 template <typename Element>
-struct has_rep_member<Element, void_t<decltype(std::declval<Element>().rep())>> : std::true_type {};
+constexpr inline bool has_rep_member = requires { cuda::std::declval<Element>().rep(); };
 
 /**
  * @brief Pair accessor for scalar's representation value and validity.
@@ -497,14 +478,14 @@ struct scalar_representation_pair_accessor : public scalar_value_accessor<Elemen
  private:
   template <typename DeviceScalar>
   __device__ inline rep_type get_rep(DeviceScalar const& dscalar) const
-    requires(!has_rep_member<DeviceScalar>::value)
+    requires(!has_rep_member<DeviceScalar>)
   {
     return dscalar.value();
   }
 
   template <typename DeviceScalar>
   __device__ inline rep_type get_rep(DeviceScalar const& dscalar) const
-    requires(has_rep_member<DeviceScalar>::value)
+    requires(has_rep_member<DeviceScalar>)
   {
     return dscalar.rep();
   }

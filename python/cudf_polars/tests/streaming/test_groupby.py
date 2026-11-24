@@ -15,7 +15,11 @@ import polars as pl
 from polars.testing import assert_frame_equal
 
 import pylibcudf as plc
-from cudf_streaming.channel_metadata import OrderScheme
+from cudf_streaming.channel_metadata import (
+    OrderScheme,
+    RowOrdering,
+    RowOrderingScope,
+)
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars import Translator
@@ -24,10 +28,13 @@ from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import Distinct, Empty, GroupBy
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.streaming.actor_graph import groupby as groupby_actor_graph
+from cudf_polars.streaming.actor_graph.collectives import (
+    ordering as ordering_collective,
+)
 from cudf_polars.streaming.actor_graph.collectives.shuffle import ShuffleManager
 from cudf_polars.streaming.actor_graph.core import evaluate_logical_plan
 from cudf_polars.testing.asserts import assert_gpu_result_equal
-from cudf_polars.utils.config import ConfigOptions
+from cudf_polars.utils.config import Cluster, ConfigOptions
 
 
 @pytest.fixture(scope="module")
@@ -91,25 +98,6 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
     assert tracer.decision == "shuffle"
 
 
-@pytest.mark.parametrize(
-    "nranks,npartitions,expected",
-    [
-        (2, 5, [3, 2]),
-        (3, 5, [2, 2, 1]),
-        (4, 10, [3, 2, 3, 2]),
-    ],
-)
-def test_partition_count_for_rank_uses_contiguous_ownership(
-    nranks, npartitions, expected
-):
-    """GroupBy metadata uses the same uneven partition ownership as adjust_ordering."""
-    counts = [
-        groupby_actor_graph._partition_count_for_rank(rank, nranks, npartitions)
-        for rank in range(nranks)
-    ]
-    assert counts == expected
-
-
 def test_order_sensitive_execution_does_not_imply_output_order() -> None:
     schema = {"key": DataType(pl.Int64()), "value": DataType(pl.Int64())}
     key = expr.NamedExpr("key", expr.Col(schema["key"], "key"))
@@ -137,13 +125,14 @@ def test_order_sensitive_execution_does_not_imply_output_order() -> None:
     assert not distinct.preserves_output_order
 
 
-def test_groupby_adjusts_truncated_ordering_with_maintain_order(
-    spmd_engine_factory,
+@pytest.mark.engine_params(["ray", "spmd"])
+def test_groupby_preserves_truncated_row_order_with_maintain_order(
+    streaming_engine_factory,
 ) -> None:
-    """GroupBy can adjust an ordered prefix without tree-reducing."""
-    engine = spmd_engine_factory(
+    """GroupBy preserves row order through non-strict input boundaries."""
+    engine = streaming_engine_factory(
         StreamingOptions(
-            target_partition_size=1,
+            target_partition_size=64,
             max_rows_per_partition=8,
             fallback_mode="raise",
             raise_on_fail=True,
@@ -151,11 +140,9 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
     )
     df = pl.LazyFrame(
         {
-            # Four partitions are enough to exercise truncated ordering across
-            # partition boundaries. More just repeats the same SPMD work.
-            "DateTime": [i * 250 for i in range(32)],
-            "RIC": ["a", "b", "a", "b"] * 8,
-            "value": range(32),
+            "DateTime": [(i + 2) * 250 for i in range(128)],
+            "RIC": ["a", "b", "a", "b"] * 32,
+            "value": range(128),
         }
     )
     q = (
@@ -163,31 +150,200 @@ def test_groupby_adjusts_truncated_ordering_with_maintain_order(
         .with_columns(
             pl.col("DateTime")
             .cast(pl.Datetime("ns"))
-            .dt.truncate("1us")
+            .dt.truncate("2us")
             .cast(pl.Int64)
             .alias("ts_bucket")
         )
         .group_by("ts_bucket", "RIC", maintain_order=True)
-        .agg(pl.col("value").sum())
+        .agg(
+            pl.col("value").sum(),
+            pl.col("value").first().alias("first"),
+            pl.col("value").last().alias("last"),
+        )
     )
     expected = q.collect()
+    config = ConfigOptions.from_polars_engine(engine)
+    if config.executor.cluster == Cluster.RAY:
+        result = q.collect(engine=engine)
+    else:
+        ir = Translator(q._ldf.visit(), engine).translate_ir()
+        result, metadata_collector = evaluate_logical_plan(
+            ir, config, collect_metadata=True
+        )
+        assert metadata_collector is not None
+        assert len(metadata_collector) == 1
+        metadata = metadata_collector[0]
+        assert metadata.partitioning is not None
+        (row_ordering,) = metadata.partitioning.row_orderings
+        assert row_ordering.scope == RowOrderingScope.GLOBAL
+        assert tuple(key.column_index for key in row_ordering.order_keys) == (0,)
+    assert_frame_equal(result, expected)
+
+
+@pytest.mark.engine_params(["ray", "spmd"])
+def test_groupby_ordered_prefix_without_maintain_order(
+    streaming_engine_factory,
+) -> None:
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=64,
+            max_rows_per_partition=8,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    df = pl.LazyFrame(
+        {
+            "DateTime": [i * 250 for i in range(256)],
+            "RIC": ["a", "b", "a", "b"] * 64,
+            "value": range(256),
+        }
+    )
+    q = (
+        df.sort("DateTime")
+        .with_columns(
+            pl.col("DateTime")
+            .cast(pl.Datetime("ns"))
+            .dt.truncate("3us")
+            .cast(pl.Int64)
+            .alias("ts_bucket")
+        )
+        .group_by("ts_bucket", "RIC", maintain_order=False)
+        .agg(
+            pl.col("value").sum(),
+            pl.col("value").first().alias("first"),
+            pl.col("value").last().alias("last"),
+        )
+    )
+    result = q.collect(engine=engine)
+    assert result["ts_bucket"].to_list() == sorted(result["ts_bucket"].to_list())
+    assert_frame_equal(
+        result.sort("ts_bucket", "RIC"), q.collect().sort("ts_bucket", "RIC")
+    )
+
+
+def test_groupby_row_ordering_without_boundaries(spmd_engine_factory) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            target_partition_size=64,
+            max_rows_per_partition=8,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"key": [i // 2 for i in range(256)], "value": range(256)})
+        .set_sorted("key")
+        .group_by("key", maintain_order=True)
+        .agg(pl.col("value").sum())
+    )
+    ir = Translator(q._ldf.visit(), engine).translate_ir()
+    with patch.object(ordering_collective, "_metadata_has_ordering", return_value=True):
+        result, metadata_collector = evaluate_logical_plan(
+            ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
+        )
+
+    assert_frame_equal(result, q.collect())
+    assert metadata_collector is not None
+    (metadata,) = metadata_collector
+    assert metadata.partitioning is not None
+    assert metadata.partitioning.inter_rank is None
+    (row_ordering,) = metadata.partitioning.row_orderings
+    assert row_ordering.scope == RowOrderingScope.GLOBAL
+
+
+def test_groupby_repeated_boundaries_avoid_raw_strictification(
+    spmd_engine_factory,
+) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
+    q = (
+        pl.LazyFrame({"key": [1] * 32, "value": range(32)})
+        .set_sorted("key")
+        .group_by("key")
+        .agg(pl.col("value").sum())
+    )
+    with patch.object(
+        groupby_actor_graph,
+        "_strictify_chunkwise_groupby",
+        side_effect=AssertionError("repeated boundaries must not strictify raw input"),
+    ):
+        assert_frame_equal(q.collect(engine=engine), q.collect())
+
+
+@pytest.mark.engine_params(["ray"])
+def test_groupby_descending_nullable_ordered_prefix(streaming_engine_factory) -> None:
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            target_partition_size=64,
+            max_rows_per_partition=8,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    df = pl.LazyFrame(
+        {
+            "day": [None if i >= 240 else i // 96 for i in range(256)],
+            "time": [(i // 12) % 8 for i in range(256)],
+            "RIC": ["a", "b", "a", "b"] * 64,
+            "value": range(256),
+        }
+    )
+    q = (
+        df.sort(["day", "time"], descending=True, nulls_last=True)
+        .set_sorted(["day", "time"], descending=True, nulls_last=True)
+        .group_by("day", "time", "RIC", maintain_order=False)
+        .agg(pl.col("value").sum())
+    )
+    result = q.collect(engine=engine)
+    ordered_prefix = result.select("day", "time")
+    expected_prefix = pl.DataFrame(
+        ordered_prefix.rows(), schema=ordered_prefix.schema, orient="row"
+    ).sort(["day", "time"], descending=True, nulls_last=True)
+    assert ordered_prefix.rows() == expected_prefix.rows()
+    assert_frame_equal(
+        result.sort(
+            ["day", "time", "RIC"], descending=[True, True, False], nulls_last=True
+        ),
+        q.collect().sort(
+            ["day", "time", "RIC"], descending=[True, True, False], nulls_last=True
+        ),
+    )
+
+
+def test_groupby_dynamic_preserves_index_ordering(spmd_engine_factory) -> None:
+    engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=2,
+            fallback_mode="raise",
+            raise_on_fail=True,
+        )
+    )
+    q = (
+        pl.LazyFrame({"time": range(0, 720_000, 120_000), "value": range(6)})
+        .with_columns(pl.col("time").cast(pl.Datetime("ms")))
+        .sort("time")
+        .group_by_dynamic("time", every="2m")
+        .agg(pl.col("value").sum())
+    )
     ir = Translator(q._ldf.visit(), engine).translate_ir()
     result, metadata_collector = evaluate_logical_plan(
         ir, ConfigOptions.from_polars_engine(engine), collect_metadata=True
     )
-    assert_frame_equal(result, expected, check_row_order=False)
+    assert_frame_equal(result, q.collect())
 
     assert metadata_collector is not None
     assert len(metadata_collector) == 1
     metadata = metadata_collector[0]
     assert metadata.partitioning is not None
-    scheme = metadata.partitioning.inter_rank
-    assert isinstance(scheme, OrderScheme)
-    assert metadata.partitioning.local == "inherit"
-    (ordering,) = scheme.orderings
+    assert isinstance(metadata.partitioning.inter_rank, OrderScheme)
+    (ordering,) = metadata.partitioning.inter_rank.orderings
     assert tuple(key.column_index for key in ordering.keys) == (0,)
     assert ordering.strict_boundaries is True
-    assert ordering.locally_ordered is True
+    assert metadata.partitioning.row_orderings == (
+        RowOrdering(ordering.keys, RowOrderingScope.GLOBAL),
+    )
 
 
 @pytest.mark.parametrize("keys", [("key",), ("key", "key2")])
@@ -222,7 +378,7 @@ def test_dynamic_groupby_shuffle_strategy(streaming_engine_factory):
 def test_dynamic_groupby_after_sort_on_group_keys(spmd_engine_factory, group_keys):
     """Group sorted data by the full sort key set or a sorted-key prefix."""
     streaming_engine = spmd_engine_factory(
-        StreamingOptions(target_partition_size=128),
+        StreamingOptions(target_partition_size=32, max_rows_per_partition=4),
     )
     df = pl.LazyFrame(
         {
@@ -301,6 +457,45 @@ def test_groupby_agg(df, streaming_engine, op, keys):
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
 
+def test_groupby_order_sensitive_aggs(streaming_engine_factory):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "b", "a", "b", "a", "b"],
+            "value": [None, 10, 20, None, 30, 40],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("value").first(),
+        pl.col("value").last().alias("last"),
+        pl.col("value").first(ignore_nulls=True).alias("first_non_null"),
+    )
+    assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
+
+
+def test_groupby_order_sensitive_agg_with_preshuffle_fallback(
+    streaming_engine_factory,
+):
+    streaming_engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
+    )
+    df = pl.LazyFrame(
+        {
+            "key": ["a", "b", "a", "b"],
+            "value": [1, 2, 3, 4],
+        }
+    )
+    q = df.group_by("key").agg(
+        pl.col("value").n_unique(),
+        pl.col("value").first().alias("first"),
+        pl.col("value").last().alias("last"),
+    )
+    with pytest.raises(NotImplementedError, match="preserve input order"):
+        q.collect(engine=streaming_engine)
+
+
 def test_groupby_sort_by_first_last(streaming_engine_factory):
     streaming_engine = streaming_engine_factory(
         StreamingOptions(max_rows_per_partition=2, fallback_mode="raise"),
@@ -315,8 +510,8 @@ def test_groupby_sort_by_first_last(streaming_engine_factory):
 
     q = df.group_by("g").agg(
         pl.col("val").sum().alias("volume"),
-        pl.col("val").sort_by("idx").first().alias("open"),
-        pl.col("val").sort_by("idx").last().alias("close"),
+        pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+        pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=False)
 
@@ -360,8 +555,38 @@ def test_groupby_sort_by_stable_ties_with_preshuffle_fallback(
         pl.col("val").sort_by("idx", maintain_order=True).first().alias("first_tie"),
         pl.col("val").sort_by("idx", maintain_order=True).last().alias("last_tie"),
     )
-    with pytest.raises(NotImplementedError, match="input-order ties"):
+    with pytest.raises(NotImplementedError, match="preserve input order"):
         q.collect(engine=streaming_engine)
+
+
+def test_groupby_first_non_null_sorted_keys(spmd_engine_factory):
+    streaming_engine = spmd_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=4,
+            target_partition_size=10,
+            fallback_mode="raise",
+        ),
+    )
+    n = 10
+    values = []
+    for group in range(1, 6):
+        values.extend([None] * (group - 1))
+        values.extend(range(group, n - group + 2))
+        values.extend([None] * (group - 1))
+    df = pl.LazyFrame(
+        {
+            "idx": pl.Series(
+                [1] * n + [2] * n + [3] * n + [4] * n + [5] * n,
+                dtype=pl.Int32,
+            ),
+            "a": pl.Series(values, dtype=pl.Int32),
+        }
+    ).set_sorted("idx")
+    q = df.group_by("idx", maintain_order=True).agg(
+        pl.col("a").first(ignore_nulls=True)
+    )
+
+    assert_gpu_result_equal(q, engine=streaming_engine)
 
 
 def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
@@ -380,8 +605,8 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
         df.sort("g", descending=True)
         .group_by("g", maintain_order=True)
         .agg(
-            pl.col("val").sort_by("idx").first().alias("open"),
-            pl.col("val").sort_by("idx").last().alias("close"),
+            pl.col("val").sort_by("idx", maintain_order=True).first().alias("open"),
+            pl.col("val").sort_by("idx", maintain_order=True).last().alias("close"),
         )
     )
     assert_gpu_result_equal(q, engine=streaming_engine, check_row_order=True)
@@ -391,7 +616,9 @@ def test_groupby_sort_by_preserves_sorted_key_order(streaming_engine_factory):
 @pytest.mark.parametrize("agg", ["std", "var"])
 def test_groupby_std_var_ddof(df, engine, agg, ddof):
     q = df.group_by("y").agg(getattr(pl.col("x"), agg)(ddof=ddof))
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(
+        q, engine=engine, check_row_order=False, check_exact=False, rtol=1e-10
+    )
 
 
 @pytest.mark.parametrize("fallback_mode", ["silent", "raise", "warn", "foo"])

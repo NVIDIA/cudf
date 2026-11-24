@@ -24,6 +24,7 @@ from cudf_polars.dsl.ir import (
 from cudf_polars.dsl.traversal import CachingVisitor, traversal
 from cudf_polars.dsl.utils.column_domain import ColumnRef
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.quent._context import QuentConfig
 from cudf_polars.streaming.base import PartitionInfo, StatsCollector
 from cudf_polars.streaming.filter_hint import (
     JoinInputDomain,
@@ -38,6 +39,7 @@ from cudf_polars.streaming.join import (
 from cudf_polars.streaming.join_filter_pushdown import (
     CompositeCandidate,
     Decision,
+    JoinFilterPushdownDecision,
     PlanFacts,
     SimpleCandidate,
     _select_candidate,
@@ -53,6 +55,7 @@ from cudf_polars.streaming.parallel import (
     optimize_with_stats,
     remove_cache_nodes,
 )
+from cudf_polars.streaming.plan_metadata import PlanMetadata
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.testing.asserts import assert_gpu_result_equal
@@ -78,10 +81,14 @@ def engine(spmd_engine_factory) -> SPMDEngine:
 
 
 def make_config(
-    *, dynamic_planning: bool = True, join_filter_pushdown: bool = True
+    *,
+    dynamic_planning: bool = True,
+    join_filter_pushdown: bool = True,
+    quent_context: QuentConfig | None = None,
 ) -> ConfigOptions:
     executor_options: dict[str, Any] = {
-        "join_filter_pushdown": {"trace": False} if join_filter_pushdown else None
+        "join_filter_pushdown": {} if join_filter_pushdown else None,
+        "quent_context": quent_context,
     }
     if not dynamic_planning:
         executor_options["dynamic_planning"] = None
@@ -184,16 +191,28 @@ def test_filter_pushdown_is_independent_of_dynamic_planning(
     engine: SPMDEngine,
 ) -> None:
     root = translate_query(simple_query, engine)
-    config = make_config(dynamic_planning=False)
+    config = make_config(dynamic_planning=False, quent_context=QuentConfig())
+    plan_metadata = PlanMetadata()
 
     optimized = optimize_join_filter_pushdown(
         root,
         StatsCollector(),
         config,
+        plan_metadata=plan_metadata,
     )
 
     assert find_hints(optimized)
+    (details,) = plan_metadata.operator_details(optimized)
+    assert isinstance(details, JoinFilterPushdownDecision)
+    assert details.threshold == 0.5
+    assert details.decision.reason == "applied"
+    plan_metadata.add_operator_detail(optimized, details)
+    assert plan_metadata.operator_details(optimized) == (details,)
     lowering = lower_ir_graph(root, config, StatsCollector())
+    assert lowering.plan_metadata is not None
+    (details,) = lowering.plan_metadata.operator_details(lowering.optimized)
+    assert isinstance(details, JoinFilterPushdownDecision)
+    assert details.decision.reason == "applied"
     assert not any(
         isinstance(node, JoinWithPrefilter) for node in traversal([lowering.lowered])
     )
@@ -594,11 +613,13 @@ def test_derived_selectivity_propagates_through_rewritten_children(
         .join(orders, left_on="c_custkey", right_on="o_custkey")
     )
     root = translate_query(query, engine)
+    plan_metadata = PlanMetadata()
 
     optimized = optimize_join_filter_pushdown(
         root,
         StatsCollector(),
         ConfigOptions.from_polars_engine(engine),
+        plan_metadata=plan_metadata,
     )
 
     hints = find_hints(optimized)
@@ -608,6 +629,9 @@ def test_derived_selectivity_propagates_through_rewritten_children(
         dataframe_scan(root, "o_orderkey"),
     }
     assert expected_targets <= {hint.children[0] for hint in hints}
+    assert all(
+        len(plan_metadata.operator_details(join)) == 1 for join in find_joins(optimized)
+    )
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 

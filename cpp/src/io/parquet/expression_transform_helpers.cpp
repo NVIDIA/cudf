@@ -15,6 +15,7 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
 
@@ -120,6 +121,20 @@ bool is_boolean_valued(ast::expression const& expr)
     case ast_operator::NOT: return true;
     default: return false;
   }
+}
+
+bool is_membership_queryable(cudf::data_type column_type, ast::literal const& literal)
+{
+  CUDF_EXPECTS(column_type.id() == literal.get_data_type().id(),
+               "Mismatched predicate column and literal types");
+  // Booleans and non-comparable compound types cannot be queried
+  if (column_type.id() == cudf::type_id::BOOL8 or
+      (cudf::is_compound(column_type) and column_type.id() != cudf::type_id::STRING)) {
+    return false;
+  }
+  // A decimal literal with a different scale cannot be queried
+  return not cudf::is_fixed_point(column_type) or
+         column_type.scale() == literal.get_data_type().scale();
 }
 
 unary_operand extract_unary_operand(ast::operation const& expr)
@@ -283,7 +298,11 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   if (operator_arity == 2) {
     _operators.emplace_back(op, new_operands.front(), new_operands.back());
   } else if (operator_arity == 1) {
-    _operators.emplace_back(op, new_operands.front());
+    if (expr.get_target_scale().has_value()) {
+      _operators.emplace_back(op, new_operands.front(), expr.get_target_scale().value());
+    } else {
+      _operators.emplace_back(op, new_operands.front());
+    }
   }
   _converted_expr = std::reference_wrapper<ast::expression const>(_operators.back());
   return std::reference_wrapper<ast::expression const>(_operators.back());
@@ -395,7 +414,12 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
 {
   auto const new_operands = visit_operands(expr.get_operands());
   auto const arity        = cudf::ast::detail::ast_operator_arity(expr.get_operator());
-  if (arity == 1) { return _tree.push(ast::operation{expr.get_operator(), new_operands.front()}); }
+  if (arity == 1) {
+    return expr.get_target_scale().has_value()
+             ? _tree.push(ast::operation{
+                 expr.get_operator(), new_operands.front(), expr.get_target_scale().value()})
+             : _tree.push(ast::operation{expr.get_operator(), new_operands.front()});
+  }
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 
@@ -521,11 +545,6 @@ void parquet_expression_simplifier::validate_column_reference(
                            col_index,
                            _output_dtypes.size()),
                std::out_of_range);
-}
-
-ast::expression const& parquet_expression_simplifier::placeholder_expr()
-{
-  return _tree.push(ast::column_reference{0});
 }
 
 void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
@@ -664,12 +683,13 @@ simplified_expression_opt parquet_expression_simplifier::simplify_expr_impl(
 std::optional<std::vector<std::vector<size_type>>> collect_filtered_row_group_indices(
   cudf::table_view table,
   std::reference_wrapper<ast::expression const> ast_expr,
-  host_span<std::vector<size_type> const> input_row_group_indices,
-  cuda::stream_ref stream)
+  std::span<std::vector<size_type> const> input_row_group_indices,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Filter the input table using AST expression
-  auto predicate_col = cudf::detail::compute_column(
-    table, ast_expr.get(), stream, cudf::get_current_device_resource_ref());
+  auto predicate_col =
+    cudf::detail::compute_column(table, ast_expr.get(), stream, mr.as_temporary());
   auto predicate = predicate_col->view();
   CUDF_EXPECTS(predicate.type().id() == cudf::type_id::BOOL8,
                "Filter expression must return a boolean column");

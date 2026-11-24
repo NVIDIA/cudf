@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pylibcudf.libcudf.types cimport bitmask_type
 from cython.operator import dereference
 
 from libcpp.memory cimport unique_ptr, make_unique
@@ -16,7 +17,7 @@ from pylibcudf.libcudf.nvtext.deduplicate cimport (
     resolve_duplicates_pair as cpp_resolve_duplicates_pair,
 )
 from pylibcudf.libcudf.types cimport mask_state, size_type
-from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,7 @@ cdef Column _column_from_suffix_array(
     cpp_suffix_array_type suffix_array, Stream stream, DeviceMemoryResource mr
 ):
     # helper to convert a suffix array to a Column
-    cdef unique_ptr[device_buffer[byte]] mask = (
+    cdef unique_ptr[device_buffer[bitmask_type]] mask = (
         cpp_null_mask.create_null_mask_unique_ptr(
             0,
             mask_state.UNALLOCATED,

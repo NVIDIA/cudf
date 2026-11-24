@@ -21,19 +21,9 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.typing import Duration
-from cudf_polars.utils.versions import POLARS_VERSION_LT_136, POLARS_VERSION_LT_139
 
 if TYPE_CHECKING:
     from cudf_polars.typing import RankMethod
-
-
-# In polars 1.36-1.38, rolling window expressions (pl.col(...).rolling(...))
-# are represented as an opaque Rust node that is not accessible via view_expression().
-# Support requires polars <1.36 (via Window+RollingGroupOptions) or >=1.39 (via Rolling).
-skip_rolling_expr_136_to_138 = pytest.mark.skipif(
-    not POLARS_VERSION_LT_136 and POLARS_VERSION_LT_139,
-    reason="Rolling window expressions are not accessible in polars 1.36-1.38, see https://github.com/pola-rs/polars/pull/25117",
-)
 
 
 @pytest.fixture
@@ -65,7 +55,6 @@ def _range_rolling_sum(
     )
 
 
-@skip_rolling_expr_136_to_138
 @pytest.mark.parametrize("time_unit", ["ns", "us", "ms"])
 def test_rolling_datetime(engine: pl.GPUEngine, time_unit):
     dates = [
@@ -90,7 +79,6 @@ def test_rolling_datetime(engine: pl.GPUEngine, time_unit):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_date(engine: pl.GPUEngine):
     dates = [
         "2020-01-01",
@@ -112,7 +100,6 @@ def test_rolling_date(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@skip_rolling_expr_136_to_138
 @pytest.mark.parametrize("dtype", [pl.Int32, pl.UInt32, pl.Int64, pl.UInt64])
 def test_rolling_integral_orderby(engine: pl.GPUEngine, dtype):
     df = pl.LazyFrame(
@@ -128,14 +115,13 @@ def test_rolling_integral_orderby(engine: pl.GPUEngine, dtype):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_agg_before_rolling(engine: pl.GPUEngine):
     df = pl.LazyFrame({"a": [1, 2, 3], "b": [1, 2, 3]})
     q = df.with_columns(pl.col("a").sum().rolling("b", period="2i"))
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_rolling_collect_list_raises(engine: pl.GPUEngine):
+def test_rolling_collect_list_raises(in_memory_engine):
     df = pl.LazyFrame(
         {
             "orderby": [1, 4, 8, 10, 12, 13, 14, 22],
@@ -144,12 +130,11 @@ def test_rolling_collect_list_raises(engine: pl.GPUEngine):
     )
     assert_ir_translation_raises(
         df.with_columns(pl.col("values").rolling("orderby", period="4i")),
-        engine,
+        in_memory_engine,
         NotImplementedError,
     )
 
 
-@skip_rolling_expr_136_to_138
 def test_unsorted_raises(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
@@ -164,7 +149,6 @@ def test_unsorted_raises(engine: pl.GPUEngine):
             q.collect(engine=engine)
 
 
-@skip_rolling_expr_136_to_138
 def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, None], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="2i"))
@@ -179,15 +163,16 @@ def test_orderby_nulls_raises_computeerror(engine: pl.GPUEngine):
             q.collect(engine=engine)
 
 
-@skip_rolling_expr_136_to_138
-def test_invalid_duration_spec_raises_in_translation(engine: pl.GPUEngine):
+def test_invalid_duration_spec_raises_in_translation(in_memory_engine):
     df = pl.LazyFrame({"orderby": [1, 2, 4, 5], "values": [1, 2, 3, 4]})
     q = df.select(pl.col("values").sum().rolling("orderby", period="3d"))
-    assert_ir_translation_raises(q, engine, pl.exceptions.InvalidOperationError)
+    assert_ir_translation_raises(
+        q, in_memory_engine, pl.exceptions.InvalidOperationError
+    )
 
 
-@pytest.mark.xfail(condition=not POLARS_VERSION_LT_136, reason="not supported")
-def test_rolling_inside_groupby_raises(engine: pl.GPUEngine):
+@pytest.mark.xfail(reason="not supported")
+def test_rolling_inside_groupby_raises(in_memory_engine):
     df = pl.LazyFrame(
         {"keys": [1, 1, 1, 2], "orderby": [1, 2, 4, 2], "values": [1, 2, 3, 4]}
     )
@@ -196,10 +181,9 @@ def test_rolling_inside_groupby_raises(engine: pl.GPUEngine):
     with pytest.raises(pl.exceptions.InvalidOperationError):
         q.collect(engine="in-memory")
 
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {
@@ -214,7 +198,6 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
     df = (
         pl.LazyFrame(
@@ -271,13 +254,11 @@ def test_rolling_sum_over(engine: pl.GPUEngine) -> None:
             "volume_after": [100, 300, 300, 400, 500, 1100],
         }
     )
-    # Polars <1.36 cannot collect this expression on CPU. Switch to
-    # assert_gpu_result_equal after we drop Polars 1.35.
+    assert_gpu_result_equal(q, engine=engine)
     assert_frame_equal(q.collect(engine=engine), expected)
 
 
-@skip_rolling_expr_136_to_138
-def test_rolling_over_with_order_by_raises(engine: pl.GPUEngine) -> None:
+def test_rolling_over_with_order_by_raises(in_memory_engine) -> None:
     df = pl.LazyFrame(
         {
             "g": ["A", "A", "A"],
@@ -289,10 +270,9 @@ def test_rolling_over_with_order_by_raises(engine: pl.GPUEngine) -> None:
     q = df.select(
         pl.col("x").sum().rolling("ts", period="2i").over("g", order_by="seq")
     )
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame(
         {
@@ -322,7 +302,6 @@ def test_rolling_common_aggs_over(engine: pl.GPUEngine) -> None:
     assert_frame_equal(q.collect(engine=engine), expected)
 
 
-@skip_rolling_expr_136_to_138
 @pytest.mark.parametrize(
     "idx,period",
     [
@@ -361,7 +340,6 @@ def test_rolling_sum_over_index_types_and_group_sizes(
     assert_frame_equal(q.collect(engine=engine), expected)
 
 
-@skip_rolling_expr_136_to_138
 def test_rolling_sum_over_null_index_raises(
     engine: pl.GPUEngine,
 ) -> None:
@@ -396,7 +374,6 @@ def test_rolling_orderby_name_multiple_index_columns_raises() -> None:
         expr.GroupedWindow._rolling_orderby_name(named_exprs)
 
 
-@skip_rolling_expr_136_to_138
 @pytest.mark.parametrize(
     "lf,expected",
     [
@@ -519,9 +496,8 @@ def test_rolling_common_aggs_over_edge_cases(
     assert_frame_equal(q.collect(engine=engine), expected)
 
 
-@skip_rolling_expr_136_to_138
 def test_range_rolling_nested_under_range_rolling_over_raises(
-    engine: pl.GPUEngine,
+    in_memory_engine,
 ) -> None:
     df = pl.LazyFrame(
         {
@@ -538,7 +514,7 @@ def test_range_rolling_nested_under_range_rolling_over_raises(
         .rolling("ts", period="2i")
         .over("g")
     )
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_range_rolling_nested_window_decomposition_raises() -> None:
@@ -605,9 +581,6 @@ def test_window_over_group_sum_all_null_group_is_zero(engine: pl.GPUEngine, df):
         "x",
         pl.col("x") * 2,
         pl.when((pl.col("x") % 2) == 0).then(pl.col("x")).otherwise(-pl.col("x")),
-        ["x", "x2"],
-        ["g_null", "g2", "x2"],
-        [pl.col("g") + 7, (pl.col("x") * 3) - 2],
     ],
 )
 @pytest.mark.parametrize("order_by_descending", [False, True])
@@ -628,15 +601,30 @@ def test_over_with_order_by(
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize(
+    "order_by",
+    [
+        ["x", "x2"],
+        ["g_null", "g2", "x2"],
+        [pl.col("g") + 7, (pl.col("x") * 3) - 2],
+    ],
+)
+def test_over_with_multiple_order_by_keys_unsupported(
+    engine: pl.GPUEngine, df, order_by
+) -> None:
+    q = df.select(pl.col("x").sum().over("g", order_by=order_by))
+    assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
 @pytest.mark.parametrize("strategy", ["explode", "join"], ids=["explode", "join"])
-def test_over_with_mapping_strategy_unsupported(engine: pl.GPUEngine, df, strategy):
+def test_over_with_mapping_strategy_unsupported(in_memory_engine, df, strategy):
     q = df.select(pl.col("x").sum().over("g", mapping_strategy=strategy))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
-def test_over_boolean_function_unsupported(engine: pl.GPUEngine, df):
+def test_over_boolean_function_unsupported(in_memory_engine, df):
     q = df.select(pl.col("x").not_().over("g"))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_over_ternary(engine: pl.GPUEngine, df):
@@ -670,14 +658,14 @@ def test_over_broadcast_input_row_group_indices_aligned(engine: pl.GPUEngine):
 
 @pytest.mark.parametrize("method", ["ordinal", "dense", "min", "max", "average"])
 @pytest.mark.parametrize("descending", [False, True])
-@pytest.mark.parametrize("order_by", [None, ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", [None, pl.col("x2") * 2])
 def test_rank_over(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     method: RankMethod,
     *,
     descending: bool,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
 ) -> None:
     q = df.select(
         pl.col("x")
@@ -689,14 +677,14 @@ def test_rank_over(
 
 @pytest.mark.parametrize("method", ["ordinal", "dense", "min", "max", "average"])
 @pytest.mark.parametrize("descending", [False, True])
-@pytest.mark.parametrize("order_by", [None, ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", [None, pl.col("x2") * 2])
 def test_rank_over_with_ties(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     method: RankMethod,
     *,
     descending: bool,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
 ) -> None:
     q = df.select(
         pl.when(pl.col("g") == 2)
@@ -710,14 +698,14 @@ def test_rank_over_with_ties(
 
 @pytest.mark.parametrize("method", ["ordinal", "dense", "min", "max", "average"])
 @pytest.mark.parametrize("descending", [False, True])
-@pytest.mark.parametrize("order_by", [None, ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", [None, pl.col("x2") * 2])
 def test_rank_over_with_null_values(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     method: RankMethod,
     *,
     descending: bool,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
 ) -> None:
     q = df.select(
         pl.when((pl.col("x") % 2) == 0)
@@ -731,14 +719,14 @@ def test_rank_over_with_null_values(
 
 @pytest.mark.parametrize("method", ["ordinal", "dense", "min", "max", "average"])
 @pytest.mark.parametrize("descending", [False, True])
-@pytest.mark.parametrize("order_by", [None, ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", [None, pl.col("x2") * 2])
 def test_rank_over_with_null_group_keys(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     method: RankMethod,
     *,
     descending: bool,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
 ) -> None:
     q = df.select(
         pl.col("x")
@@ -749,7 +737,7 @@ def test_rank_over_with_null_group_keys(
 
 
 @pytest.mark.parametrize("strategy", ["forward", "backward"])
-@pytest.mark.parametrize("order_by", [None, ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", [None, pl.col("x2") * 2])
 @pytest.mark.parametrize(
     "group_key,expr",
     [
@@ -769,7 +757,7 @@ def test_fill_over(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     strategy: str,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
     group_key: str,
     expr: pl.Expr,
 ) -> None:
@@ -782,10 +770,10 @@ def test_fill_over(
 
 
 def test_fill_null_with_mean_over_unsupported(
-    engine: pl.GPUEngine, df: pl.LazyFrame
+    in_memory_engine, df: pl.LazyFrame
 ) -> None:
     q = df.select(pl.col("x").fill_null(strategy="mean").over("g"))
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
@@ -800,7 +788,7 @@ def test_fill_null_with_mean_over_unsupported(
     "order_by",
     [
         None,
-        ["g2", pl.col("x2") * 2],
+        pl.col("x2") * 2,
     ],
 )
 def test_cum_sum_over(
@@ -809,7 +797,7 @@ def test_cum_sum_over(
     *,
     expr: pl.Expr,
     group_key: str,
-    order_by: list[str | pl.Expr] | None,
+    order_by: pl.Expr | None,
 ) -> None:
     q = df.select(expr.cum_sum().over(group_key, order_by=order_by))
     assert_gpu_result_equal(q, engine=engine)
@@ -824,14 +812,14 @@ def test_cum_sum_over(
         (pl.col("x"), "g_null"),
     ],
 )
-@pytest.mark.parametrize("order_by", ["x2", ["g2", pl.col("x2") * 2]])
+@pytest.mark.parametrize("order_by", ["x2", pl.col("x2") * 2])
 def test_shift_over(
     engine: pl.GPUEngine,
     df: pl.LazyFrame,
     n: int,
     expr: pl.Expr,
     group_key: str,
-    order_by: str | list[str | pl.Expr],
+    order_by: str | pl.Expr,
 ) -> None:
     q = df.select(expr.shift(n).over(group_key, order_by=order_by))
     assert_gpu_result_equal(q, engine=engine)
@@ -872,12 +860,12 @@ def test_diff_over(
     ids=["nonliteral_offset", "nonliteral_fill_value"],
 )
 def test_shift_over_nonliteral_args_raises(
-    engine: pl.GPUEngine,
+    in_memory_engine,
     df: pl.LazyFrame,
     expr: pl.Expr,
 ) -> None:
     q = df.select(expr)
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize(
@@ -889,12 +877,12 @@ def test_shift_over_nonliteral_args_raises(
     ids=["nonliteral_offset", "drop_null_behavior"],
 )
 def test_diff_over_unsupported_args_raises(
-    engine: pl.GPUEngine,
+    in_memory_engine,
     df: pl.LazyFrame,
     expr: pl.Expr,
 ) -> None:
     q = df.select(expr)
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 @pytest.mark.parametrize("n", [1, -1])

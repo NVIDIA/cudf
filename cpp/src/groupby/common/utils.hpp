@@ -13,8 +13,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -24,11 +23,17 @@
 
 namespace cudf::groupby::detail {
 
+// Non-template bridges share mask-kernel instantiations across groupby reductions.
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_validity(
+  bool* begin, bool* end, cuda::stream_ref stream, cudf::memory_resources mr);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> make_mask_from_counts(
+  size_type const* begin, size_type const* end, cuda::stream_ref stream, cudf::memory_resources mr);
+
 template <typename RequestType>
 inline std::vector<aggregation_result> extract_results(std::span<RequestType const> requests,
                                                        cudf::detail::result_cache& cache,
                                                        cuda::stream_ref stream,
-                                                       rmm::device_async_resource_ref mr)
+                                                       cudf::memory_resources mr)
 {
   std::vector<aggregation_result> results(requests.size());
   std::unordered_map<std::pair<column_view, std::reference_wrapper<aggregation const>>,
@@ -59,10 +64,10 @@ inline std::vector<aggregation_result> extract_results(std::span<RequestType con
  *
  * @return Pair of {buffer, raw_pointer} where pointer is null if no nulls exist.
  */
-std::pair<cuda::device_buffer<std::byte>, bitmask_type const*> compute_row_bitmask(
-  table_view const& keys, cuda::stream_ref stream);
+std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> compute_row_bitmask(
+  table_view const& keys, cuda::stream_ref stream, cudf::memory_resources mr);
 
-/// Whether the given aggregation kind is supported by hash-based groupby.
+/// Whether the aggregation decomposes into the shared single-pass reductions.
 constexpr bool is_hash_aggregation(aggregation::Kind k)
 {
   switch (k) {

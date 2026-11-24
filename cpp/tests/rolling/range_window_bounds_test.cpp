@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -8,6 +8,8 @@
 
 #include <cudf/rolling/range_window_bounds.hpp>
 #include <cudf/utilities/default_stream.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <src/rolling/detail/range_window_bounds.hpp>
 
@@ -107,7 +109,7 @@ TYPED_TEST(NumericRangeWindowBoundsTest, BoundsConstruction)
   auto const dtype  = cudf::data_type{cudf::type_to_id<OrderByType>()};
   auto const stream = cudf::get_default_stream();
 
-  static_assert(std::is_integral_v<range_type>);
+  static_assert(cuda::std::is_integral_v<range_type>);
   auto range_3 = cudf::range_window_bounds::get(cudf::numeric_scalar<range_type>{3, true});
   EXPECT_FALSE(range_3.is_unbounded() &&
                "range_window_bounds constructed from scalar cannot be unbounded.");

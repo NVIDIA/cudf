@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "join_match_state.hpp"
+
 #include <cudf/column/column.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table.hpp>
@@ -18,6 +20,7 @@
 #include <cuda/buffer>
 #include <cuda/stream>
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -65,9 +68,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  inner_join(table_view const& left,
-             cuda::stream_ref stream,
-             rmm::device_async_resource_ref mr) const;
+  inner_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns the row indices for a left join.
@@ -79,9 +80,7 @@ class sort_merge_join {
    */
   std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
             std::unique_ptr<rmm::device_uvector<size_type>>>
-  left_join(table_view const& left,
-            cuda::stream_ref stream,
-            rmm::device_async_resource_ref mr) const;
+  left_join(table_view const& left, cuda::stream_ref stream, cudf::memory_resources mr) const;
 
   /**
    * @brief Returns context information about matches between the left and right tables.
@@ -91,8 +90,9 @@ class sort_merge_join {
    * @param mr Device memory resource used to allocate the result device memory
    * @return A unique_ptr to join_match_context
    */
-  std::unique_ptr<join_match_context> inner_join_match_context(
-    table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr) const;
+  std::unique_ptr<join_match_context> inner_join_match_context(table_view const& left,
+                                                               cuda::stream_ref stream,
+                                                               cudf::memory_resources mr) const;
 
   /**
    * @brief Performs an inner join between a partition of the left table and the right table.
@@ -106,7 +106,7 @@ class sort_merge_join {
             std::unique_ptr<rmm::device_uvector<size_type>>>
   partitioned_inner_join(cudf::join_partition_context const& context,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const;
+                         cudf::memory_resources mr) const;
 
  private:
   /**
@@ -120,7 +120,7 @@ class sort_merge_join {
                                    ///< rows of the unprocessed table view if null equality is set
                                    ///< to false, otherwise equal to the unprocessed table view
 
-    std::optional<cuda::device_buffer<std::byte>> _validity_mask =
+    std::optional<cuda::device_buffer<cudf::bitmask_type>> _validity_mask =
       std::nullopt;  ///< Optional validity mask for null_equality::UNEQUAL case
     std::optional<size_type> _num_nulls =
       std::nullopt;  ///< Optional count of nulls for null_equality::UNEQUAL case
@@ -180,42 +180,46 @@ class sort_merge_join {
      * @return A device vector containing the mapping from processed table indices to unprocessed
      * table indices
      */
-    rmm::device_uvector<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
+    cuda::device_buffer<size_type> map_table_to_unprocessed(cuda::stream_ref stream) const;
   };
 
   /**
-   * @brief Extended match context for sort-merge join with preprocessed table state.
-   *
-   * This struct derives from join_match_context and adds the preprocessed left table
-   * state needed for thread-safe partitioned join operations. It is returned by
-   * inner_join_match_context() and used with partitioned_inner_join().
+   * @brief Sort-merge join state cached in a join_match_context: the preprocessed left table
+   * needed for thread-safe partitioned join operations
    */
-  struct sort_merge_join_match_context : public join_match_context {
+  struct sort_merge_join_match_state final : join_match_state {
     preprocessed_table preprocessed_left;  ///< Preprocessed left table state for partitioned joins
 
     /**
-     * @brief Construct a sort_merge_join_match_context
+     * @brief Construct a sort_merge_join_match_state
      *
-     * @param left_table The left table view
-     * @param match_counts Device vector of match counts per row
+     * @param owner Join object that created the context
      * @param preprocessed Preprocessed left table state
      */
-    sort_merge_join_match_context(table_view left_table,
-                                  std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
-                                  preprocessed_table preprocessed)
-      : join_match_context{left_table, std::move(match_counts)},
-        preprocessed_left{std::move(preprocessed)}
+    sort_merge_join_match_state(void const* owner, preprocessed_table preprocessed)
+      : join_match_state{owner, join_kind::INNER_JOIN}, preprocessed_left{std::move(preprocessed)}
     {
     }
   };
 
   preprocessed_table preprocessed_right;  ///< Preprocessed right table
-  std::unique_ptr<rmm::device_uvector<size_type>>
+  std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_rows;  ///< First row of each key run; the first `num_right_runs` entries are valid
-  std::unique_ptr<rmm::device_uvector<size_type>>
+  std::unique_ptr<cuda::device_buffer<size_type>>
     right_run_offsets;  ///< Start of each run in sorted order; the first `num_right_runs + 1`
                         ///< entries are valid, including the row-count sentinel
-  size_type num_right_runs{};   ///< Number of distinct key runs in the processed right table
+  size_type num_right_runs{};  ///< Number of distinct key runs in the processed right table
+
+  /**
+   * @brief Right run keys stored as the integer type that the typed key search reads.
+   */
+  struct typed_run_keys {
+    cuda::device_buffer<std::byte> keys;     ///< Key value of each run
+    cuda::device_buffer<std::byte> samples;  ///< Sampled run keys searched before `keys`
+  };
+  std::optional<typed_run_keys>
+    right_typed_run_keys;  ///< Present when the right keys are a single null-free 32- or 64-bit
+                           ///< integer or chrono column
   null_equality compare_nulls;  ///< Null comparison mode
 
   /**

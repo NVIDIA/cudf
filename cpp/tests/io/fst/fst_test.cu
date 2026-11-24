@@ -159,9 +159,12 @@ TEST_F(FstTest, GroundTruth)
 
   // Prepare input & output buffers
   constexpr std::size_t single_item = 1;
-  cudf::detail::hostdevice_vector<SymbolT> output_gpu(input.size(), stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(single_item, stream_view);
-  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(input.size(), stream_view);
+  cudf::detail::hostdevice_vector<SymbolT> output_gpu(
+    input.size(), stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> output_gpu_size(
+    single_item, stream_view, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<SymbolOffsetT> out_indexes_gpu(
+    input.size(), stream_view, cudf::get_current_device_resource_ref());
 
   // Run algorithm
   auto parser = cudf::io::fst::detail::make_fst(

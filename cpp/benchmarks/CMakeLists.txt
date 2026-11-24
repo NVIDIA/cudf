@@ -103,7 +103,7 @@ endfunction()
 # * copying benchmarks ----------------------------------------------------------------------------
 ConfigureNVBench(
   COPYING_NVBENCH copying/concatenate.cpp copying/copy_if_else.cpp copying/gather.cpp
-  copying/scatter.cpp copying/shift.cpp
+  copying/scatter.cpp copying/shift.cpp copying/pack.cpp
 )
 
 # ##################################################################################################
@@ -153,7 +153,7 @@ ConfigureNVBench(
   join/direct_join.cu
   join/distinct_join.cpp
   join/filter_join_indices.cpp
-  join/filter_join_indices_jit.cu
+  join/filter_join_indices_jit.cpp
   join/generate_input_tables.cu
   join/join.cpp
   join/join_dictionary.cpp
@@ -164,6 +164,8 @@ ConfigureNVBench(
   join/mixed_join.cpp
   join/multiplicity_join.cpp
   join/sort_merge_join.cpp
+  join/streaming_hash_join.cpp
+  join/streaming_join.cpp
 )
 
 # ##################################################################################################
@@ -249,6 +251,7 @@ ConfigureNVBench(
   groupby/group_struct_keys.cpp
   groupby/group_struct_values.cpp
   groupby/group_sum.cpp
+  groupby/streaming_groupby.cpp
 )
 
 # ##################################################################################################
@@ -293,7 +296,9 @@ ConfigureNVBench(
 
 # ##################################################################################################
 # * bitmask benchmark ---------------------------------------------------------------------------
-ConfigureNVBench(BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/set_null_mask.cpp)
+ConfigureNVBench(
+  BITMASK_NVBENCH bitmask/bitmask_and.cpp bitmask/mask_to_bools.cpp bitmask/set_null_mask.cpp
+)
 
 # ##################################################################################################
 # * parquet writer benchmark ----------------------------------------------------------------------
@@ -404,7 +409,7 @@ ConfigureNVBench(CSV_WRITER_NVBENCH io/csv/csv_writer.cpp)
 
 # ##################################################################################################
 # * ast benchmark ---------------------------------------------------------------------------------
-ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp)
+ConfigureNVBench(AST_NVBENCH ast/polynomials.cpp ast/transform.cpp ast/transform_fp64.cpp)
 
 # ##################################################################################################
 # * LTO Fragments ----------------------------------------------------------------------------
@@ -430,6 +435,8 @@ add_dependencies(BINARYOP_NVBENCH cudf_benchmark_fragments)
 ConfigureNVBench(
   TRANSFORM_NVBENCH
   transform/encode.cpp
+  transform/is_null.cpp
+  transform/one_hot_encode.cpp
   transform/polynomials.cpp
   transform/polynomials_concurrent.cpp
   transform/transform.cpp
@@ -453,6 +460,7 @@ ConfigureNVBench(
   text/tokenize.cpp
   text/unicode_normalize.cpp
   text/vocab.cpp
+  text/byte_pair_encoding.cpp
 )
 
 # ##################################################################################################
@@ -477,6 +485,7 @@ ConfigureNVBench(
   string/find.cpp
   string/find_instance.cpp
   string/find_multiple.cpp
+  string/find_skewed.cpp
   string/intcast.cpp
   string/join_strings.cpp
   string/lengths.cpp

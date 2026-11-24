@@ -11,6 +11,7 @@
 #include "nvcomp_adapter.hpp"
 
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
@@ -18,8 +19,10 @@
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/detail/codec.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/bit>
 
 #include <BS_thread_pool.hpp>
@@ -329,6 +332,7 @@ void host_compress(compression_type compression,
   auto h_results = cudf::detail::make_pinned_vector<codec_exec_result>(results, stream);
 
   std::vector<std::future<std::pair<size_t, size_t>>> tasks;
+  cudf::detail::futures_wait_guard tasks_guard{tasks};
   auto const num_streams =
     std::min<std::size_t>(num_chunks, cudf::detail::host_worker_pool().get_thread_count());
   auto const streams = cudf::detail::fork_streams(stream, num_streams);
@@ -410,6 +414,26 @@ std::optional<size_t> compress_max_allowed_chunk_size(compression_type compressi
   CUDF_FAIL("Unsupported compression type: " + compression_type_name(compression));
 }
 
+[[nodiscard]] size_t get_compression_scratch_size(compression_type compression,
+                                                  size_t num_chunks,
+                                                  size_t max_uncomp_chunk_size,
+                                                  size_t total_uncomp_size,
+                                                  cuda::stream_ref stream)
+{
+  if (compression == compression_type::NONE or num_chunks == 0 or
+      get_host_engine_state(compression) == host_engine_state::ON) {
+    return 0;
+  }
+
+  auto const nvcomp_type = to_nvcomp_compression(compression);
+  if (nvcomp_type.has_value() and not nvcomp::is_compression_disabled(*nvcomp_type)) {
+    return nvcomp::batched_compress_temp_size(
+      *nvcomp_type, num_chunks, max_uncomp_chunk_size, total_uncomp_size, stream);
+  }
+  // gpu_snap, the only fallback, requires no scratch memory
+  return 0;
+}
+
 std::vector<std::uint8_t> compress(compression_type compression, host_span<uint8_t const> src)
 {
   CUDF_FUNC_RANGE();
@@ -451,22 +475,31 @@ void compress(compression_type compression,
                                                     default_host_device_compression_cost_ratio),
                             stream);
 
-  auto tmp_results =
-    cudf::detail::make_device_uvector_async<detail::codec_exec_result>(results, stream, temp_mr);
+  auto tmp_results = cuda::device_buffer<codec_exec_result>(stream, temp_mr, results);
   device_span<codec_exec_result> results_view = tmp_results;
 
   auto const streams = cudf::detail::fork_streams(stream, 2);
-  detail::device_compress(compression,
-                          inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
-                          outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
-                          results_view.subspan(split_idx, results_view.size() - split_idx),
-                          streams[0],
-                          mr);
-  detail::host_compress(compression,
-                        inputs_view.subspan(0, split_idx),
-                        outputs_view.subspan(0, split_idx),
-                        results_view.subspan(0, split_idx),
-                        streams[1]);
+  try {
+    detail::device_compress(compression,
+                            inputs_view.subspan(split_idx, inputs_view.size() - split_idx),
+                            outputs_view.subspan(split_idx, outputs_view.size() - split_idx),
+                            results_view.subspan(split_idx, results_view.size() - split_idx),
+                            streams[0],
+                            mr);
+    detail::host_compress(compression,
+                          inputs_view.subspan(0, split_idx),
+                          outputs_view.subspan(0, split_idx),
+                          results_view.subspan(0, split_idx),
+                          streams[1]);
+  } catch (...) {
+    // Buffers are freed in `stream` order, so it must wait for work already queued on the forks
+    try {
+      cudf::detail::join_streams(streams, stream);
+    } catch (...) {
+      // A join failure means the context is already faulted; it must not replace the original
+    }
+    throw;
+  }
   cudf::detail::join_streams(streams, stream);
 
   copy_results_to_original_order(results_view, results, order, stream, mr);

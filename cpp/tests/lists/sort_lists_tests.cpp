@@ -129,14 +129,14 @@ TEST_F(SortListsInt, Empty)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), l);
   }
   {
-    LCW<T> l{LCW<T>{}};
+    LCW<T> l{{}};
     auto const [sorted_lists, stable_sorted_lists] =
       generate_sorted_lists(cudf::lists_column_view{l}, {}, {});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), l);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(stable_sorted_lists->view(), l);
   }
   {
-    LCW<T> l{LCW<T>{}, LCW<T>{}};
+    LCW<T> l{{}, {}};
     auto const [sorted_lists, stable_sorted_lists] =
       generate_sorted_lists(cudf::lists_column_view{l}, {}, {});
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), l);
@@ -181,10 +181,10 @@ TEST_F(SortListsInt, NestedListElement)
   using T = int;
   // Column of LIST<LIST<int>>: each row's inner lists are reordered as whole elements. The third
   // row's inner lists tie on their first element, so ordering falls through to the second.
-  LCW<T> input{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+  LCW<T> input{{{3, 1}, {2, 0}}, {{5, 5}, {4, 9}}, {{1, 3}, {1, 2}}};
   {
     // Ascending.
-    LCW<T> expected{LCW<T>{{2, 0}, {3, 1}}, LCW<T>{{4, 9}, {5, 5}}, LCW<T>{{1, 2}, {1, 3}}};
+    LCW<T> expected{{{2, 0}, {3, 1}}, {{4, 9}, {5, 5}}, {{1, 2}, {1, 3}}};
     auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
       cudf::lists_column_view{input}, cudf::order::ASCENDING, cudf::null_order::AFTER);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);
@@ -192,7 +192,7 @@ TEST_F(SortListsInt, NestedListElement)
   }
   {
     // Descending reverses each row's ascending order.
-    LCW<T> expected{LCW<T>{{3, 1}, {2, 0}}, LCW<T>{{5, 5}, {4, 9}}, LCW<T>{{1, 3}, {1, 2}}};
+    LCW<T> expected{{{3, 1}, {2, 0}}, {{5, 5}, {4, 9}}, {{1, 3}, {1, 2}}};
     auto const [sorted_lists, stable_sorted_lists] = generate_sorted_lists(
       cudf::lists_column_view{input}, cudf::order::DESCENDING, cudf::null_order::AFTER);
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(sorted_lists->view(), expected);

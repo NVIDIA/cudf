@@ -19,21 +19,6 @@ from cudf_polars.testing.engine_utils import (
     create_streaming_options,
     merge_streaming_options,
 )
-from cudf_polars.utils.versions import POLARS_VERSION_LT_140, POLARS_VERSION_LT_141
-
-
-@pytest.fixture
-def xfail_decimal_sum_precision_polars_140(request: pytest.FixtureRequest) -> None:
-    """xfail decimal ``sum`` tests on polars 1.40."""
-    request.applymarker(
-        pytest.mark.xfail(
-            condition=(not POLARS_VERSION_LT_140) and POLARS_VERSION_LT_141,
-            reason="polars 1.40 reports narrow precision for decimal sum "
-            "(Decimal(9,2) vs (38,2)), fixed in 1.41. "
-            "See https://github.com/pola-rs/polars/issues/27269",
-        )
-    )
-
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -80,6 +65,12 @@ def with_nulls(request: pytest.FixtureRequest):
     return request.param
 
 
+@pytest.fixture(params=["ms", "us", "ns"], scope="session")
+def time_unit(request: pytest.FixtureRequest) -> str:
+    """Time units of polars ``Datetime`` and ``Duration`` types."""
+    return request.param
+
+
 @pytest.fixture(autouse=True)
 def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
     """Skip tests in SPMD multi-rank mode unless marked with ``pytest.mark.spmd``."""
@@ -89,6 +80,20 @@ def _skip_unless_spmd(request: pytest.FixtureRequest) -> None:
         and not request.node.get_closest_marker("spmd")
     ):
         pytest.skip("skip: SPMD nranks > 1 (mark with pytest.mark.spmd to run)")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _configure_dask() -> Generator[None, None, None]:
+    """Apply test-suite-wide Dask configuration."""
+    # workaround https://github.com/dask/distributed/issues/9374
+    try:
+        import dask
+    except ImportError:
+        yield
+        return
+
+    with dask.config.set({"distributed.client.scheduler-info-interval": "60s"}):
+        yield
 
 
 @pytest.fixture(scope="session")
@@ -336,6 +341,23 @@ def timeout_seconds() -> int:
     return 30
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of times to collect each TPC query result and validate it.",
+    )
+
+
+@pytest.fixture(scope="session")
+def tpc_iterations(request: pytest.FixtureRequest) -> int:
+    iterations = request.config.getoption("--iterations")
+    if iterations < 1:
+        raise pytest.UsageError("--iterations must be >= 1")
+    return iterations
+
+
 def pytest_configure(config: pytest.Config):
     config.addinivalue_line(
         "markers",
@@ -383,7 +405,19 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
 
     marker = metafunc.definition.get_closest_marker("engine_params")
     if marker is not None:
-        engines = list(marker.args[0])
+        # Selectors must not opt unavailable backends back into the fixture.
+        engines = [engine for engine in engines if engine in marker.args[0]]
+
+    if not engines:
+        # Empty parameter sets are collection errors in this suite.
+        metafunc.parametrize(
+            "_engine_param",
+            [pytest.param(None, marks=pytest.mark.skip(reason="No available engines"))],
+            indirect=True,
+            ids=["unavailable"],
+            scope="session",
+        )
+        return
 
     metafunc.parametrize(
         "_engine_param",
@@ -394,10 +428,35 @@ def pytest_generate_tests(metafunc: pytest.Metafunc):
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(
     session: pytest.Session, config: pytest.Config, items: list[pytest.Item]
 ):
-    """Apply ``skip_on_streaming_engine`` markers to streaming engine items."""
+    """
+    Apply ``skip_on_streaming_engine`` markers and group tests by engine.
+
+    Notes
+    -----
+    ``_engine_param`` is parametrized with a different list of engines
+    depending on the public engine fixture a test requests (see
+    :func:`pytest_generate_tests`), so the same engine (e.g. ``"ray"``) has a
+    different param index in different tests. Pytest's own reordering keys on
+    that index and therefore does not group them, which makes the
+    session-scoped ``_unconfigured_engine`` be torn down and rebuilt (very
+    expensive for Ray and Dask) every time the engine changes. Sorting by the
+    engine id (stable, and running last to override pytest's reordering)
+    builds each engine once.
+    """
+    engine_order = {name: i for i, name in enumerate(ALL_ENGINE_FIXTURE_PARAMS)}
+
+    def engine_key(item: pytest.Item) -> int:
+        callspec = getattr(item, "callspec", None)
+        if callspec is None:
+            return -1
+        return engine_order.get(callspec.params.get("_engine_param"), -1)
+
+    items.sort(key=engine_key)
+
     for item in items:
         marker = item.get_closest_marker("skip_on_streaming_engine")
         if marker is None:

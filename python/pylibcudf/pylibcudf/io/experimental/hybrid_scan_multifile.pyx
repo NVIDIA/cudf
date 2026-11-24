@@ -43,8 +43,7 @@ from pylibcudf.utils cimport _get_memory_resource, _get_stream
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from typing_extensions import Buffer
+    from collections.abc import Buffer, Sequence
     from pylibcudf.typing import CudaStreamLike
 
 from pylibcudf.io.parquet_metadata import FileMetaData
@@ -609,7 +608,7 @@ cdef class HybridScanMultiFile:
             list(c_result.second),
         )
 
-    def setup_chunking_for_payload_columns(
+    def setup_chunking_for_payload_pages(
         self,
         size_t chunk_read_limit,
         size_t pass_read_limit,
@@ -662,7 +661,7 @@ cdef class HybridScanMultiFile:
 
         cdef column_view mask_view = row_mask.view()
         with nogil:
-            self.c_obj.get()[0].setup_chunking_for_payload_columns(
+            self.c_obj.get()[0].setup_chunking_for_payload_pages(
                 chunk_read_limit,
                 pass_read_limit,
                 host_span[const_vector_size_type](

@@ -13,6 +13,7 @@
 
 #include <cooperative_groups.h>
 #include <cuda/atomic>
+#include <cuda/std/algorithm.min.h>
 #include <cuda/std/tuple>
 
 namespace cudf::io::parquet::detail {
@@ -657,6 +658,29 @@ inline __device__ void store_validity(int valid_map_offset,
 }
 
 /**
+ * @brief Returns the number of values of a page whose levels can be read from its decoded levels
+ *
+ * With skip_rows/num_rows, the levels of a page without lists are only decoded up to the end of
+ * the rows being read, and not at all for a page outside them. Pruned pages are not decoded
+ * either. In both cases the page has no decoded level buffers. Pages of columns without levels
+ * have all of their values. Whether a column has levels must match
+ * compute_page_level_decode_sizes().
+ *
+ * @param page The page
+ * @param chunk The column chunk of the page
+ *
+ * @return The number of values of the page with decoded levels
+ */
+inline __device__ int num_values_with_decoded_levels(PageInfo const& page,
+                                                     ColumnChunkDesc const& chunk)
+{
+  bool const has_levels =
+    chunk.max_level[level_type::DEFINITION] > 0 or chunk.max_level[level_type::REPETITION] > 0;
+  return has_levels ? cuda::std::min(page.num_input_values, page.num_decoded_level_values)
+                    : page.num_input_values;
+}
+
+/**
  * @brief Compute the nesting bounds within the hierarchy to add values to, and the definition level
  * D to which we should considered them null or not.
  *
@@ -683,16 +707,11 @@ inline __device__ void get_nesting_bounds(int& start_depth,
                                           int32_t target_input_value_count,
                                           int t)
 {
-  start_depth = -1;
-  end_depth   = -1;
-  d           = -1;
-  // Clamp to decoded level count; for chunked reads the level buffers may be
-  // smaller than num_input_values when skip_rows/num_rows reduces the range.
-  auto const actual_num_values =
-    (s->setup.page.num_decoded_level_values > 0)
-      ? cuda::std::min(s->setup.page.num_input_values, s->setup.page.num_decoded_level_values)
-      : s->setup.page.num_input_values;
-  auto const max_idx = cuda::std::min(target_input_value_count, actual_num_values);
+  start_depth                  = -1;
+  end_depth                    = -1;
+  d                            = -1;
+  auto const actual_num_values = num_values_with_decoded_levels(s->setup.page, s->setup.col);
+  auto const max_idx           = cuda::std::min(target_input_value_count, actual_num_values);
   if (input_value_count + t < max_idx) {
     int const index = input_value_count + t;
     d = (def != nullptr) ? def[index] : s->setup.col.max_level[level_type::DEFINITION];
@@ -1202,22 +1221,7 @@ inline __device__ bool setup_local_page_info(auto* const s,
             [[fallthrough]];
           case Type::DOUBLE: s->output_cvt.dtype_len = 8; break;
           case Type::INT96: s->output_cvt.dtype_len = 12; break;
-          case Type::BYTE_ARRAY:
-            if (is_decimal) {
-              auto const decimal_precision = s->setup.col.logical_type->precision();
-              s->output_cvt.dtype_len      = [decimal_precision]() {
-                if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-                  return sizeof(int32_t);
-                } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-                  return sizeof(int64_t);
-                } else {
-                  return sizeof(__int128_t);
-                }
-              }();
-            } else {
-              s->output_cvt.dtype_len = sizeof(string_index_pair);
-            }
-            break;
+          case Type::BYTE_ARRAY: s->output_cvt.dtype_len = sizeof(string_index_pair); break;
           default:  // FIXED_LEN_BYTE_ARRAY:
             s->output_cvt.dtype_len = s->setup.col.type_length;
             if (s->output_cvt.dtype_len <= 0) {
@@ -1227,20 +1231,16 @@ inline __device__ bool setup_local_page_info(auto* const s,
         }
         // Special check for downconversions
         s->output_cvt.dtype_len_in = s->output_cvt.dtype_len;
-        if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          if (is_decimal) {
-            s->output_cvt.dtype_len = [dtype_len = s->output_cvt.dtype_len]() {
-              if (dtype_len <= sizeof(int32_t)) {
-                return sizeof(int32_t);
-              } else if (dtype_len <= sizeof(int64_t)) {
-                return sizeof(int64_t);
-              } else {
-                return sizeof(__int128_t);
-              }
-            }();
-          } else {
-            s->output_cvt.dtype_len = sizeof(string_index_pair);
+        if (is_decimal) {
+          // Decimals are decoded directly into the cudf output type of the leaf column
+          switch (s->setup.page.nesting[s->setup.col.max_nesting_depth - 1].type) {
+            case type_id::DECIMAL32: s->output_cvt.dtype_len = sizeof(int32_t); break;
+            case type_id::DECIMAL64: s->output_cvt.dtype_len = sizeof(int64_t); break;
+            case type_id::DECIMAL128: s->output_cvt.dtype_len = sizeof(__int128_t); break;
+            default: s->set_error_code(decode_error::INVALID_DATA_TYPE); break;
           }
+        } else if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
+          s->output_cvt.dtype_len = sizeof(string_index_pair);
         } else if (data_type == Type::INT32) {
           // check for smaller bitwidths
           if (s->setup.col.logical_type.has_value()) {
@@ -1333,12 +1333,8 @@ inline __device__ bool setup_local_page_info(auto* const s,
           case Encoding::PLAIN_DICTIONARY:
           case Encoding::RLE_DICTIONARY: {
             // RLE-packed dictionary indices, first byte indicates index length in bits
-            auto const is_decimal = s->setup.col.logical_type.has_value() and
-                                    s->setup.col.logical_type->type == LogicalType::DECIMAL;
-            if ((s->setup.col.physical_type == Type::BYTE_ARRAY or
-                 s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) and
-                not is_decimal and s->setup.col.str_dict_index != nullptr) {
-              // String dictionary: use index
+            if (s->setup.col.str_dict_index != nullptr) {
+              // String dictionary (incl. BYTE_ARRAY decimals): use index
               s->stream.dict_base = reinterpret_cast<uint8_t const*>(s->setup.col.str_dict_index);
               s->stream.dict_size =
                 s->setup.col.dict_page->num_input_values * sizeof(string_index_pair);
@@ -1497,7 +1493,7 @@ __device__ void zero_fill_null_positions_shared(
   auto const start_bit_idx = valid_map_offset;
   auto const end_bit_idx   = valid_map_offset + num_values;
   auto const start_block   = start_bit_idx / bits_per_mask;
-  auto const end_block     = cudf::util::div_rounding_up_safe(end_bit_idx, bits_per_mask);
+  auto const end_block     = cudf::detail::div_rounding_up_safe(end_bit_idx, bits_per_mask);
 
   // When nulls are dense, assigning one thread per value allows coalesced writes. When nulls are
   // sparse, coalescence is no longer critical since writes are few, and assigning each thread a

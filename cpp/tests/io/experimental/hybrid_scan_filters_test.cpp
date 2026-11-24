@@ -939,6 +939,77 @@ TEST_F(HybridScanFiltersTest, RowMaskNullsAreRetained)
   CUDF_TEST_EXPECT_TABLES_EQUAL(cudf::table_view{{expected}}, result.tbl->view());
 }
 
+TEST_F(HybridScanFiltersTest, FilteringWithTruncatedStats)
+{
+  // Long strings with two rows per page and four per row group. The second row group's last page
+  // max ("\x7f"s) cannot be truncated to a valid upper bound, so the column index keeps it in full
+  // if it fits `statistics_truncate_length`, else is omitted for the chunk.
+  auto strings = std::vector<std::string>{};
+  for (auto const c : {'a', 'b', 'c', 'd', 'e', 'f', '\x7f', '\x7f'}) {
+    strings.emplace_back(100, c);
+  }
+  auto const input = cudf::test::strings_column_wrapper(strings.begin(), strings.end());
+  auto const table = cudf::table_view{{input}};
+
+  auto literal_value = cudf::string_scalar(strings[2]);
+  auto literal       = cudf::ast::literal(literal_value);
+  auto column_ref    = cudf::ast::column_name_reference{"col"};
+  auto filter        = cudf::ast::operation{cudf::ast::ast_operator::EQUAL, column_ref, literal};
+  auto options       = cudf::io::parquet_reader_options::builder().filter(filter).build();
+  auto const stream  = cudf::get_default_stream();
+
+  for (auto const stats_length : {64, 0}) {
+    SCOPED_TRACE("stats_length=" + std::to_string(stats_length));
+    auto buffer   = std::vector<char>{};
+    auto metadata = cudf::io::table_input_metadata{table};
+    metadata.column_metadata[0].set_name("col");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+        .metadata(std::move(metadata))
+        .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+        .statistics_truncate_length(stats_length)
+        .row_group_size_rows(4)
+        .max_page_size_rows(2)
+        .max_page_fragment_size(2)
+        .build());
+
+    auto datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>{
+      reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()});
+    auto footer     = cudf::io::parquet::fetch_footer_to_host(*datasource);
+    auto reader     = cudf::io::parquet::experimental::hybrid_scan_reader{*footer, options};
+    auto page_index =
+      cudf::io::parquet::fetch_page_index_to_host(*datasource, reader.page_index_byte_range());
+    reader.setup_page_index(*page_index);
+    auto const all_row_groups = reader.all_row_groups(options);
+
+    // Only the first row group survives filtering with the chunk statistics
+    auto const stats_filtered_row_groups =
+      reader.filter_row_groups_with_stats(all_row_groups, options, stream);
+    EXPECT_EQ(stats_filtered_row_groups, std::vector<cudf::size_type>{0});
+
+    // Pages can only be pruned in row groups with a column index, so start from all row groups if
+    // the second row group has one, else from the stats-filtered ones. Either way the first page
+    // ("a", "b") is pruned, and so are the second row group's pages if it has a column index
+    auto const has_column_index = stats_length == 0;
+    auto const row_mask         = reader.build_row_mask_with_page_index_stats(
+      has_column_index ? all_row_groups : stats_filtered_row_groups,
+      options,
+      stream,
+      cudf::get_current_device_resource_ref());
+    auto const expected =
+      has_column_index ? cudf::test::fixed_width_column_wrapper<bool>{false,
+                                                                      false,
+                                                                      true,
+                                                                      true,
+                                                                      false,
+                                                                      false,
+                                                                      false,
+                                                                      false}
+                       : cudf::test::fixed_width_column_wrapper<bool>{false, false, true, true};
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, row_mask->view());
+  }
+}
+
 TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
 {
   using T                           = uint32_t;

@@ -166,7 +166,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ParquetChunkedReader_readChunk(
     cudf::jni::auto_set_device(env);
     auto const reader_ptr = reinterpret_cast<cudf::io::chunked_parquet_reader* const>(handle);
     auto chunk            = reader_ptr->read_chunk();
-    return chunk.tbl ? cudf::jni::convert_table_for_return(env, chunk.tbl) : nullptr;
+    return chunk.tbl ? cudf::jni::convert_table_with_row_count_for_return(env, chunk.tbl) : nullptr;
   }
   JNI_CATCH(env, nullptr);
 }
@@ -334,7 +334,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ORCChunkedReader_readChunk(JNIE
     cudf::jni::auto_set_device(env);
     auto const reader_ptr = reinterpret_cast<cudf::io::chunked_orc_reader* const>(handle);
     auto chunk            = reader_ptr->read_chunk();
-    return chunk.tbl ? cudf::jni::convert_table_for_return(env, chunk.tbl) : nullptr;
+    return chunk.tbl ? cudf::jni::convert_table_with_row_count_for_return(env, chunk.tbl) : nullptr;
   }
   JNI_CATCH(env, nullptr);
 }

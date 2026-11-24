@@ -41,6 +41,7 @@
 #include <optional>
 #include <random>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -1027,123 +1028,154 @@ TEST_F(ParquetWriterTest, FloatingPointWithNaNStatsOmittedNested)
 
 TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
 {
-  std::array coldata{// in-range 7 bit.  should truncate to "yyyyyyyz"
-                     "yyyyyyyyy",
-                     // max 7 bit. no valid max, since a byte past 0x7f would not be UTF-8
-                     "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
-                     // max binary. no valid max
-                     "\xff\xff\xff\xff\xff\xff\xff\xff\xff",
-                     // in-range 2-byte UTF8 (U+00E9). should truncate to "éééê"
-                     "ééééé",
-                     // max 2-byte UTF8 (U+07FF). no valid max
-                     "߿߿߿߿߿",
-                     // in-range 3-byte UTF8 (U+0800). should truncate to "ࠀࠁ"
-                     "ࠀࠀࠀ",
-                     // max 3-byte UTF8 (U+FFFF). no valid max
-                     "\xef\xbf\xbf\xef\xbf\xbf\xef\xbf\xbf",
-                     // in-range 4-byte UTF8 (U+10000). should truncate to "𐀀𐀁"
-                     "𐀀𐀀𐀀",
-                     // max unicode (U+10FFFF). no valid max, since incrementing goes past U+10FFFF
-                     "\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
-                     // max 4-byte UTF8 (U+1FFFFF). no valid max
-                     "\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf",
-                     // max 2-byte UTF8 (U+07FF) after ASCII. the overflowed character is dropped
-                     // rather than left as overlong "\xc0\x80", so should truncate to "aaaaab"
-                     "aaaaaa\xdf\xbf\xdf\xbf",
-                     // U+D7FF after ASCII. incrementing yields the surrogate U+D800, so should
-                     // truncate to "aaaab" instead
-                     "aaaaa\xed\x9f\xbf\xed\x9f\xbf"};
+  struct truncation_case {
+    char const* value;
+    char const* min;
+    char const* max;  // nullptr: the max is dropped and the chunk has no column index
+    bool is_exact;    // whether the min (and max if any) are not truncated
+  };
 
   // NOTE: UTF8 min is initialized with 0xf7bfbfbf. Binary values larger
   // than that will not become minimum value (when written as UTF-8).
-  std::array truncated_min{"yyyyyyyy",
-                           "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f",
-                           "\xf7\xbf\xbf\xbf",
-                           "éééé",
-                           "߿߿߿߿",
-                           "ࠀࠀ",
-                           "\xef\xbf\xbf\xef\xbf\xbf",
-                           "𐀀𐀀",
-                           "\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
-                           "\xf7\xbf\xbf\xbf",
-                           "aaaaaa\xdf\xbf",
-                           "aaaaa\xed\x9f\xbf"};
+  constexpr auto cases = std::to_array<truncation_case>(
+    {// in-range 7 bit
+     {"yyyyyyyyy", "yyyyyyyy", "yyyyyyyz", false},
+     // max 7 bit. no valid max, since a byte past 0x7f would not be UTF-8
+     {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", nullptr, false},
+     // 0x7e is the largest 7 bit byte that can be incremented
+     {"~~~~~~~~~", "~~~~~~~~", "~~~~~~~\x7f", false},
+     // max binary. no valid max, and the min is the sentinel so is not exact
+     {"\xff\xff\xff\xff\xff\xff\xff\xff\xff", "\xf7\xbf\xbf\xbf", nullptr, false},
+     // in-range 2-byte UTF8 (U+00E9)
+     {"ééééé", "éééé", "éééê", false},
+     // exactly the truncate length, so not truncated
+     {"éééé", "éééé", "éééé", true},
+     // max 2-byte UTF8 (U+07FF). no valid max
+     {"߿߿߿߿߿", "߿߿߿߿", nullptr, false},
+     // U+00BF carries into its 2-byte lead, keeping the reset continuation byte
+     {"aaaaa\xc2\xbf\xc2\xbf", "aaaaa\xc2\xbf", "aaaaa\xc3\x80", false},
+     // in-range 3-byte UTF8 (U+0800)
+     {"ࠀࠀࠀ", "ࠀࠀ", "ࠀࠁ", false},
+     // U+0FFF carries into its 3-byte lead
+     {"aa\xe0\xbf\xbf\xe0\xbf\xbfx",
+      "aa\xe0\xbf\xbf\xe0\xbf\xbf",
+      "aa\xe0\xbf\xbf\xe1\x80\x80",
+      false},
+     // U+CFFF carries into its 3-byte lead, giving the valid U+D000
+     {"aa\xec\xbf\xbf\xec\xbf\xbfx",
+      "aa\xec\xbf\xbf\xec\xbf\xbf",
+      "aa\xec\xbf\xbf\xed\x80\x80",
+      false},
+     // max 3-byte UTF8 (U+FFFF). no valid max
+     {"\xef\xbf\xbf\xef\xbf\xbf\xef\xbf\xbf", "\xef\xbf\xbf\xef\xbf\xbf", nullptr, false},
+     // in-range 4-byte UTF8 (U+10000)
+     {"𐀀𐀀𐀀", "𐀀𐀀", "𐀀𐀁", false},
+     // U+FFFFF carries into its 4-byte lead, giving the valid U+100000
+     {"\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbfx",
+      "\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbf",
+      "\xf3\xbf\xbf\xbf\xf4\x80\x80\x80",
+      false},
+     // max unicode (U+10FFFF). no valid max, since incrementing goes past U+10FFFF
+     {"\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
+      "\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
+      nullptr,
+      false},
+     // U+10FFFF after ASCII. the character that goes past U+10FFFF is dropped
+     {"ab\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf", "ab\xf4\x8f\xbf\xbf", "ac", false},
+     // max 4-byte UTF8 (U+1FFFFF). no valid max, and the min is the sentinel so is not exact
+     {"\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf", "\xf7\xbf\xbf\xbf", nullptr, false},
+     // max 2-byte UTF8 (U+07FF) after ASCII. the overflowed character is dropped rather than left
+     // as overlong "\xc0\x80"
+     {"aaaaaa\xdf\xbf\xdf\xbf", "aaaaaa\xdf\xbf", "aaaaab", false},
+     // several overflowed characters dropped, then a carry into a 2-byte character
+     {"a\xc3\xa9\xdf\xbf\xdf\xbf\xdf\xbf", "a\xc3\xa9\xdf\xbf\xdf\xbf", "a\xc3\xaa", false},
+     // U+D7FF after ASCII. incrementing skips the surrogates U+D800-U+DFFF to U+E000
+     {"aaaaa\xed\x9f\xbf\xed\x9f\xbf", "aaaaa\xed\x9f\xbf", "aaaaa\xee\x80\x80", false},
+     // U+D7FF with no ASCII byte to fall back on
+     {"\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf\xed\x9f\xbf",
+      "\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf",
+      "\xc3\xa9\xed\x9f\xbf\xee\x80\x80",
+      false},
+     // a surrogate already in the input falls back to incrementing the last ASCII byte
+     {"a\xed\xa0\x80x\xc3\xa9\xc3\xa9", "a\xed\xa0\x80x\xc3\xa9", "a\xed\xa0\x80y", false}});
 
-  // nullptr: the max is dropped from the chunk statistics and the chunk has no column index
-  std::array<char const*, 12> truncated_max{"yyyyyyyz",
-                                            nullptr,
-                                            nullptr,
-                                            "éééê",
-                                            nullptr,
-                                            "ࠀࠁ",
-                                            nullptr,
-                                            "𐀀𐀁",
-                                            nullptr,
-                                            nullptr,
-                                            "aaaaab",
-                                            "aaaab"};
-
-  auto cols = [&]() {
-    using string_wrapper = column_wrapper<cudf::string_view>;
-    std::vector<std::unique_ptr<column>> cols;
-    for (auto const str : coldata) {
-      cols.push_back(string_wrapper{str}.release());
-    }
-    return cols;
-  }();
-  auto expected = std::make_unique<table>(std::move(cols));
-
-  auto const filepath = temp_env->get_temp_filepath("CheckColumnIndexTruncation.parquet");
-  cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected->view())
-      .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
-      .column_index_truncate_length(8)
-      .statistics_truncate_length(8);
-  cudf::io::write_parquet(out_opts);
-
-  auto const source = cudf::io::datasource::create(filepath);
-  cudf::io::parquet::FileMetaData fmd;
-
-  read_footer(source, &fmd);
+  // truncate length shorter than the first character. the min is empty and there is no valid max
+  constexpr auto short_cases = std::to_array<truncation_case>({{"𐀀𐀀", "", nullptr, false}});
 
   auto const as_string = [](auto const& bytes) { return std::string(bytes.begin(), bytes.end()); };
-  for (size_t r = 0; r < fmd.row_groups.size(); r++) {
-    auto const& rg = fmd.row_groups[r];
+  auto const check     = [&](std::span<truncation_case const> test_cases,
+                         int32_t truncate_length,
+                         cudf::io::statistics_freq stats_level) {
+    SCOPED_TRACE("truncate_length=" + std::to_string(truncate_length) +
+                 ", stats_level=" + std::to_string(static_cast<int>(stats_level)));
+    std::vector<std::unique_ptr<column>> cols;
+    for (auto const& tc : test_cases) {
+      cols.push_back(column_wrapper<cudf::string_view>{tc.value}.release());
+    }
+    auto const expected = std::make_unique<table>(std::move(cols));
+
+    auto const filepath = temp_env->get_temp_filepath("CheckColumnIndexTruncation.parquet");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected->view())
+        .stats_level(stats_level)
+        .column_index_truncate_length(truncate_length)
+        .statistics_truncate_length(truncate_length));
+
+    // A round trip read checks that no chunk or page statistics overflowed their reserved space
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath}));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
+    ASSERT_EQ(fmd.row_groups.size(), 1);
+
+    auto const& rg = fmd.row_groups[0];
     for (size_t c = 0; c < rg.columns.size(); c++) {
+      SCOPED_TRACE("column=" + std::to_string(c));
+      auto const& tc    = test_cases[c];
       auto const& chunk = rg.columns[c];
       auto const stats  = get_statistics(chunk);
 
-      // the chunk statistics are truncated the same way as the column index. Only the 4-byte UTF-8
-      // min sentinel (columns 2 and 9) fits in 8 bytes, so all other values are inexact
+      // the chunk statistics are truncated the same way as the column index
       ASSERT_TRUE(stats.min_value.has_value());
-      EXPECT_EQ(as_string(stats.min_value.value()), truncated_min[c]);
+      EXPECT_EQ(as_string(stats.min_value.value()), tc.min);
       ASSERT_TRUE(stats.is_min_value_exact.has_value());
-      EXPECT_EQ(stats.is_min_value_exact.value(), c == 2 or c == 9);
+      EXPECT_EQ(stats.is_min_value_exact.value(), tc.is_exact);
 
-      if (truncated_max[c] == nullptr) {
+      if (tc.max == nullptr) {
         EXPECT_FALSE(stats.max_value.has_value());
         EXPECT_FALSE(stats.is_max_value_exact.has_value());
         EXPECT_EQ(chunk.column_index_length, 0);
         continue;
       }
       ASSERT_TRUE(stats.max_value.has_value());
-      EXPECT_EQ(as_string(stats.max_value.value()), truncated_max[c]);
+      EXPECT_EQ(as_string(stats.max_value.value()), tc.max);
       ASSERT_TRUE(stats.is_max_value_exact.has_value());
-      EXPECT_FALSE(stats.is_max_value_exact.value());
+      EXPECT_EQ(stats.is_max_value_exact.value(), tc.is_exact);
 
       // check that truncated values == expected
-      auto const ci = read_column_index(source, chunk);
-      EXPECT_EQ(as_string(ci.min_values[0]), truncated_min[c]);
-      EXPECT_EQ(as_string(ci.max_values[0]), truncated_max[c]);
+      if (stats_level == cudf::io::statistics_freq::STATISTICS_COLUMN) {
+        auto const ci = read_column_index(source, chunk);
+        EXPECT_EQ(as_string(ci.min_values[0]), tc.min);
+        EXPECT_EQ(as_string(ci.max_values[0]), tc.max);
+      }
     }
+  };
+
+  for (auto const stats_level :
+       {cudf::io::statistics_freq::STATISTICS_COLUMN, cudf::io::statistics_freq::STATISTICS_PAGE}) {
+    check(cases, 8, stats_level);
+    check(short_cases, 2, stats_level);
   }
 }
 
 TEST_F(ParquetWriterTest, TruncatedColumnIndexBoundaryOrder)
 {
-  // Page maxes "a\uD7FFx" and "a\uE000x" ascend but are truncated to "b" and "a\uE001", which do
-  // not, so the column index must not be marked ascending
-  column_wrapper<cudf::string_view> col{"a\xed\x9f\xbfx", "a\xee\x80\x80x"};
+  // Page maxes "a\u07FF\u07FF" and "a\u0800x" ascend but are truncated to "b" and "a\u0801", which
+  // do not, so the column index must not be marked ascending
+  column_wrapper<cudf::string_view> col{"a\xdf\xbf\xdf\xbf", "a\xe0\xa0\x80x"};
   auto const expected = table_view{{col}};
 
   auto const filepath = temp_env->get_temp_filepath("TruncatedColumnIndexBoundaryOrder.parquet");

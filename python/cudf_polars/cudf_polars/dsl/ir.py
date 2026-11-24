@@ -3494,9 +3494,8 @@ class AsofJoin(IR):
             )
         return joiner, right.discard_columns(discarded)
 
-    @classmethod
+    @staticmethod
     def _probe_prepared(
-        cls,
         left: DataFrame,
         right_payload: DataFrame,
         joiner: plc.join.AsofJoin,

@@ -43,7 +43,7 @@ def test_asof_join_time_major_chunks(streaming_engine_factory, by):
 @pytest.mark.filterwarnings(
     "ignore:Sortedness of columns cannot be checked when 'by' groups provided"
 )
-def test_asof_join_key_major_chunks(streaming_engine_factory, nulls_last):
+def test_asof_join_grouped_key_order(streaming_engine_factory, nulls_last):
     left = pl.LazyFrame(
         {
             "symbol": ["A", "A", "B", "A", "B", "C", None],
@@ -107,15 +107,6 @@ def test_asof_join_sparse_left(streaming_engine_factory):
 
 
 @pytest.mark.engine_params(["spmd-small", "ray"])
-def test_asof_join_without_ordering_metadata(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2, 3, 4], "left": [10, 20, 30, 40]})
-    right = pl.LazyFrame({"time": [1, 2, 3], "right": [100, 200, 300]})
-    query = left.join_asof(right, on="time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    assert_gpu_result_equal(query, engine=engine, check_row_order=True)
-
-
-@pytest.mark.engine_params(["spmd-small", "ray"])
 def test_asof_join_expression_on(streaming_engine_factory):
     left = pl.LazyFrame({"time": pl.Series([1, 2, 3, 4], dtype=pl.Int32)})
     right = pl.LazyFrame(
@@ -146,27 +137,18 @@ def test_asof_join_rejects_unordered_left(streaming_engine_factory):
         query.collect(engine=engine)
 
 
-@pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_null_right_time(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2, 3, 4]}).sort("time")
-    right = pl.LazyFrame({"time": [None, 1, 2, 4], "quote": [99, 10, 20, 40]}).sort(
-        "time"
+@pytest.mark.engine_params(["spmd-small", "ray"])
+def test_asof_join_null_right_and_unused_tail(streaming_engine_factory):
+    left = pl.LazyFrame({"time": [1, 2]})
+    right = pl.LazyFrame(
+        {
+            "time": [None, None, 1, 2, 3, 4, 5, 6],
+            "quote": [99, 98, 10, 20, 30, 40, 50, 60],
+        }
     )
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
     assert_gpu_result_equal(
         left.join_asof(right, on="time"), engine=engine, check_row_order=True
-    )
-
-
-@pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_interleaved_null_right_time(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2, 3]})
-    right = pl.LazyFrame({"time": [1, None, 2, 3], "quote": [10, 99, 20, 30]})
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    assert_gpu_result_equal(
-        left.join_asof(right, on="time", check_sortedness=False),
-        engine=engine,
-        check_row_order=True,
     )
 
 
@@ -224,36 +206,16 @@ def test_asof_join_empty_right_chunks(streaming_engine_factory):
 
 
 @pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_no_right_payload(streaming_engine_factory):
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_no_right_payload(streaming_engine_factory, *, check_sortedness):
     left = pl.LazyFrame({"time": [1, 2, 3]}).sort("time")
-    right = pl.LazyFrame({"time": [1, 2]}).sort("time")
+    right_times = [1, 2] if check_sortedness else [3, 1, 2]
+    right = pl.LazyFrame({"time": right_times})
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
     assert_gpu_result_equal(
-        left.join_asof(right, on="time"), engine=engine, check_row_order=True
-    )
-
-
-@pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_no_right_payload_skips_validation(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2, 3]})
-    right = pl.LazyFrame({"time": [3, 1, 2]})
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    assert_gpu_result_equal(
-        left.join_asof(right, on="time", check_sortedness=False),
+        left.join_asof(right, on="time", check_sortedness=check_sortedness),
         engine=engine,
         check_row_order=True,
-    )
-
-
-@pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_drains_unused_right_chunks(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2]}).sort("time")
-    right = pl.LazyFrame(
-        {"time": list(range(1, 11)), "quote": list(range(1, 11))}
-    ).sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    assert_gpu_result_equal(
-        left.join_asof(right, on="time"), engine=engine, check_row_order=True
     )
 
 

@@ -3,11 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <cudf/strings/mutable_string_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 
 #include <cuda/std/cstdint>
-#include <cuda/std/span>
 
 struct range32 {
   int32_t begin{};
@@ -178,19 +178,33 @@ __device__ int compute_url_component_sizes(int32_t* protocol_size,
   return 0;
 }
 
-// Copies the six parsed URL components into their preallocated string buffers.
-__device__ int write_url_components(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+/**
+ * @brief Copies the six parsed URL components into their preallocated string buffers.
+ *
+ * Each output buffer must have the byte length computed by `compute_url_component_sizes`
+ * for the same input. If no valid URL is found, the output buffers are left untouched.
+ *
+ * @param protocol Preallocated output buffer for the protocol
+ * @param host Preallocated output buffer for the host
+ * @param port Preallocated output buffer for the port
+ * @param path Preallocated output buffer for the path
+ * @param query Preallocated output buffer for the query
+ * @param fragment Preallocated output buffer for the fragment
+ * @param input String containing the URL to parse
+ * @return 0, including when no valid URL is found
+ */
+__device__ int write_url_components(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input)
 {
   url_ranges ranges;
   if (!parse_url(input, &ranges)) { return 0; }
-  cuda::std::span<char>* outputs[] = {protocol, host, port, path, query, fragment};
-  range32 components[]             = {
+  cudf::mutable_string_view* outputs[] = {protocol, host, port, path, query, fragment};
+  range32 components[]                 = {
     ranges.protocol, ranges.host, ranges.port, ranges.path, ranges.query, ranges.fragment};
   for (auto component = 0; component < 6; ++component) {
     auto range = components[component];
@@ -216,12 +230,12 @@ extern "C" __device__ int transform(int32_t* protocol_size,
 #else
 #ifdef UDF_WRITE_OUTPUT
 // Exposes the component-writing pass through the transform LTO ABI.
-extern "C" __device__ int transform(cuda::std::span<char>* protocol,
-                                    cuda::std::span<char>* host,
-                                    cuda::std::span<char>* port,
-                                    cuda::std::span<char>* path,
-                                    cuda::std::span<char>* query,
-                                    cuda::std::span<char>* fragment,
+extern "C" __device__ int transform(cudf::mutable_string_view* protocol,
+                                    cudf::mutable_string_view* host,
+                                    cudf::mutable_string_view* port,
+                                    cudf::mutable_string_view* path,
+                                    cudf::mutable_string_view* query,
+                                    cudf::mutable_string_view* fragment,
                                     cudf::string_view input)
 {
   return write_url_components(protocol, host, port, path, query, fragment, input);

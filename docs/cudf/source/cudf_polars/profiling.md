@@ -57,6 +57,15 @@ with RayEngine.from_options(opts) as engine:
 print(total)
 ```
 
+Besides the [statistics of the streaming runtime][rapidsmpf-stats], cudf-polars records these:
+
+| Name | Description |
+| --- | --- |
+| `rank-local-cpu-compute-time` | Time spent evaluating operations on the CPU with Polars (see `rank_local_cpu_compute`), including the copies between device and host. The count is the number of operations evaluated on the CPU. |
+| `rank-local-cpu-compute-bytes` | Bytes copied between device and host by the operations evaluated on the CPU with Polars, that is, the size of their inputs and results. |
+| `unbounded_file_read_cache hits` | Lookups in the file read cache (see `experimental_unbounded_file_read_cache`) that found the file slice, over all lookups. |
+| `unbounded_file_read_cache saved` | Bytes of the file slices found in the file read cache, which were not read again. |
+
 
 ## I/O Statistics
 

@@ -28,6 +28,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     empty_table_chunk,
     recv_metadata,
     send_metadata,
+    shutdown_channels_on_error,
 )
 from cudf_polars.streaming.repartition import Repartition
 from cudf_polars.streaming.utils import _concat
@@ -154,18 +155,21 @@ async def concatenate_node(
 
             stream = ir_context.get_cuda_stream()
             seq_num = 0
-            allgather = AllGatherManager(context, comm, collective_id)
-            with allgather.inserting() as inserter:
-                while (msg := await ch_in.recv(context)) is not None:
-                    await inserter.insert(
-                        seq_num, TableChunk.from_message(msg, br=context.br())
-                    )
-                    seq_num += 1
+            async with (
+                AllGatherManager(context, comm, collective_id) as allgather,
+                shutdown_channels_on_error(context, ch_in, ch_out),
+            ):
+                with allgather.inserting() as inserter:
+                    while (msg := await ch_in.recv(context)) is not None:
+                        await inserter.insert(
+                            seq_num, TableChunk.from_message(msg, br=context.br())
+                        )
+                        seq_num += 1
 
-            # Extract concatenated result
-            result_table = await allgather.extract_concatenated(
-                stream, ir_context=ir_context
-            )
+                # Extract concatenated result
+                result_table = await allgather.extract_concatenated(
+                    stream, ir_context=ir_context
+                )
 
             # If no chunks were gathered, result_table has 0 columns.
             # We need to create an empty table with the correct schema.
@@ -218,7 +222,8 @@ async def concatenate_node(
                             net_memory_delta=0,
                         )
                         with opaque_memory_usage(extra):
-                            df = _concat(
+                            df = await ir_context.to_thread(
+                                _concat,
                                 *(
                                     DataFrame.from_table(
                                         chunk.table_view(),

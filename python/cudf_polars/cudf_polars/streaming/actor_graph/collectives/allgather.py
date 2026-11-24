@@ -12,6 +12,8 @@ from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 if TYPE_CHECKING:
+    from types import TracebackType
+
     import pylibcudf as plc
     from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.communicator.communicator import Communicator
@@ -24,6 +26,8 @@ if TYPE_CHECKING:
 class AllGatherManager:
     """
     AllGather manager.
+
+    Use as an async context manager, which releases the AllGather on exit.
 
     Parameters
     ----------
@@ -88,6 +92,23 @@ class AllGatherManager:
         self.context = context
         self.allgather = AllGather(self.context, comm, op_id)
 
+    async def __aenter__(self) -> AllGatherManager:
+        """Enter the context manager."""
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        """Exit the context manager, releasing the AllGather."""
+        try:
+            await self.allgather.aclose()
+        except RuntimeError:
+            if exc_type is None:
+                raise
+
     def inserting(self) -> AllGatherManager.Inserter:
         """Return a context manager for the insert phase."""
         return AllGatherManager.Inserter(self)
@@ -111,7 +132,7 @@ class AllGatherManager:
         -------
         The concatenated AllGather result.
         """
-        partitions = await self.allgather.extract_all(self.context, ordered=ordered)
+        partitions = await self.allgather.extract_all(ordered=ordered)
         # The cost covers the concatenated output plus moving any
         # host-resident partitions to device. The packed inputs stay live
         # until the concat finishes and are released after, so the net

@@ -587,6 +587,9 @@ public final class Table implements AutoCloseable {
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] directInnerJoinGatherMaps(long leftKeysColumn, long rightKeysColumn,
+                                                         long capacity) throws CudfException;
+
   private static native long[] innerDistinctHashJoinGatherMaps(long table,
                                                                long distinctHashJoin) throws CudfException;
 
@@ -2776,7 +2779,7 @@ public final class Table implements AutoCloseable {
         target.getNativeView()));
   }
 
-  private static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
+  static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
     long bufferSize = gatherMapData[0];
     long leftAddr = gatherMapData[1];
     long leftHandle = gatherMapData[2];
@@ -2986,6 +2989,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = leftHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a left equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext leftJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.LEFT);
   }
 
   /**
@@ -3215,6 +3229,38 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two key columns whose values directly determine the matched row index. The right keys are
+   * treated as a perfect hash of the right rows: a lookup table of {@code capacity} entries maps
+   * each key value to its row index, and each left key probes that table directly. No hashing or
+   * key comparison is performed. Left keys that do not occur in the right keys produce no output
+   * pair. Two {@link GatherMap} instances will be returned that can be used to gather the left and
+   * right tables, respectively, to produce the result of the inner join.
+   *
+   * Behavior is undefined if any key value, interpreted as unsigned, is not less than
+   * {@code capacity}, or if the right keys contain duplicates.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftKeys left join key column of type {@link DType#UINT32}, without nulls,
+   *                 containing pre-hashed keys in {@code [0, capacity)}
+   * @param rightKeys right join key column of type {@link DType#UINT32}, without nulls,
+   *                  containing distinct pre-hashed keys in {@code [0, capacity)}
+   * @param capacity number of entries in the lookup table; must be greater than every left and
+   *                 right key value, and not less than the number of right keys
+   * @return left and right table gather maps
+   */
+  public static GatherMap[] directInnerJoinGatherMaps(ColumnView leftKeys, ColumnView rightKeys,
+                                                      long capacity) {
+    if (capacity < 0) {
+      throw new IllegalArgumentException("capacity must not be negative: " + capacity);
+    }
+    long[] gatherMapData =
+        directInnerJoinGatherMaps(leftKeys.getNativeView(), rightKeys.getNativeView(), capacity);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from an inner equi-join between two tables.
    * @param otherHash hash table built from join key columns from the other table
    * @return row count of the join result
@@ -3276,6 +3322,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = innerHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for an inner equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext innerJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.INNER);
   }
 
   /**
@@ -3524,6 +3581,19 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = fullHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a full equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval. Collect the partition results and call
+   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[]...)}
+   * to append the unmatched right rows.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext fullJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.FULL);
   }
 
   /**

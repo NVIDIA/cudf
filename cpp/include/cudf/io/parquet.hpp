@@ -10,11 +10,13 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -619,17 +621,29 @@ class parquet_reader_options {
   /**
    * @brief Sets timestamp_type used to cast timestamp columns.
    *
+   * TIMESTAMP_DAYS resolution is not supported; cast the output column to get it.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
+   *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type);
 
   /**
    * @brief Sets decimal width used to cast decimal columns.
    *
    * @param width The decimal type_id (DECIMAL32, DECIMAL64, or DECIMAL128) to which all decimal
    * columns need to be cast. The scale of each column is preserved from the file.
+   * @throws std::invalid_argument if `width` is not EMPTY or a decimal type
    */
-  void set_decimal_width(type_id width) { _decimal_width = width; }
+  void set_decimal_width(type_id width)
+  {
+    CUDF_EXPECTS(width == type_id::EMPTY or width == type_id::DECIMAL32 or
+                   width == type_id::DECIMAL64 or width == type_id::DECIMAL128,
+                 "decimal_width must be a decimal type",
+                 std::invalid_argument);
+    _decimal_width = width;
+  }
 
   /**
    * @brief Sets whether to use JIT for filtering.
@@ -899,6 +913,8 @@ class parquet_reader_options_builder {
 
   /**
    * @brief timestamp_type used to cast timestamp columns.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
    *
    * @param type The timestamp data_type to which all timestamp columns need to be cast
    * @return this for chaining

@@ -980,20 +980,18 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     ) -> tuple[tuple[int, ...], ...]:
         """All-gather fixed-width signed integer metadata in rank order."""
         fmt = f"<{len(payload)}q"
-        gather = AllGather(self.context, self.comm, self.collective_id)
-        try:
-            gather.insert(
-                0,
-                PackedData.from_host_bytes(
-                    struct.pack(fmt, *payload), self.context.br()
-                ),
-            )
-        finally:
-            gather.insert_finished()
-        return tuple(
-            struct.unpack(fmt, item.to_host_bytes())
-            for item in await gather.extract_all(self.context, ordered=True)
-        )
+        async with aclosing(
+            AllGather(self.context, self.comm, self.collective_id)
+        ) as gather:
+            with gather:
+                gather.insert(
+                    0,
+                    PackedData.from_host_bytes(
+                        struct.pack(fmt, *payload), self.context.br()
+                    ),
+                )
+            gathered = await gather.extract_all(ordered=True)
+        return tuple(struct.unpack(fmt, item.to_host_bytes()) for item in gathered)
 
     async def _gather_counts(self, summary: _CountSummary) -> tuple[_CountSummary, ...]:
         """Gather the row count owned by every rank."""

@@ -40,7 +40,6 @@ using parquet::detail::simplified_expression_opt;
  */
 struct metadata : public metadata_base {
   explicit metadata(std::span<uint8_t const> footer_bytes);
-  explicit metadata(FileMetaData const& other) { static_cast<FileMetaData&>(*this) = other; }
   metadata(metadata const& other)            = delete;
   metadata(metadata&& other)                 = default;
   metadata& operator=(metadata const& other) = delete;
@@ -66,6 +65,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param dictionary_col_schemas Schema indices of columns with (in)equality predicate
    * @param filter AST expression to filter row groups based on dictionary pages
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return A pair of filtered row group indices if any is filtered.
    */
@@ -79,7 +79,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<int const> dictionary_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
  public:
   /**
@@ -236,6 +237,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on Column chunk statistics
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Filtered row group indices, if any are filtered
    */
@@ -244,7 +246,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Get the bloom filter byte ranges, one per column chunk with equality predicate
@@ -296,6 +299,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param dictionary_col_schemas Schema indices of output columns with (in)equality predicate
    * @param filter AST expression to filter row groups based on dictionary pages
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Filtered row group indices, if any are filtered
    */
@@ -308,7 +312,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> dictionary_col_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Filter the row groups using bloom filters based on predicate filter
@@ -319,6 +324,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param output_column_schemas schema indices of output columns
    * @param filter AST expression to filter row groups based on bloom filters
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Filtered row group indices, if any are filtered
    */
@@ -328,7 +334,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     std::span<data_type const> output_dtypes,
     std::span<cudf::size_type const> output_column_schemas,
     std::reference_wrapper<ast::expression const> filter,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 
   /**
    * @brief Builds a row mask with all rows set to true
@@ -376,6 +383,7 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
    * @param row_group_indices Input row groups indices
    * @param input_columns Input column information
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return Boolean vector indicating which data pages need to be decoded to produce
    *         the output table based on the input row mask across all input columns
@@ -384,7 +392,8 @@ class aggregate_reader_metadata : public aggregate_reader_metadata_base {
     cudf::column_view const& row_mask,
     std::span<std::vector<size_type> const> row_group_indices,
     std::span<input_column_info const> input_columns,
-    cuda::stream_ref stream) const;
+    cuda::stream_ref stream,
+    cudf::memory_resources mr) const;
 };
 
 /**

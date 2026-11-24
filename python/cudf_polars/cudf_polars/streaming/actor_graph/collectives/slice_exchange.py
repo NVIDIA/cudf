@@ -162,9 +162,7 @@ class SparseExchange:
         if self._closed:
             raise RuntimeError("Sparse exchange is closed")
         if self._finish_task is None and self._exchange is not None:
-            self._finish_task = asyncio.create_task(
-                self._exchange.insert_finished(self.context)
-            )
+            self._finish_task = asyncio.create_task(self._exchange.insert_finished())
 
     async def finish(self) -> None:
         """Finish insertion before extraction, even under cancellation."""
@@ -174,8 +172,6 @@ class SparseExchange:
         cancelled = False
         if self._exchange is not None:
             assert self._finish_task is not None
-            # The detached C++ task borrows the exchange pointer. Keep it alive
-            # through cancellation until the task has actually completed.
             while not self._finish_task.done():
                 try:
                     await asyncio.shield(self._finish_task)
@@ -216,7 +212,16 @@ class SparseExchange:
             return
         try:
             await self.finish()
+        except BaseException:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                with suppress(BaseException):
+                    await exchange.aclose()
+            raise
+        else:
+            exchange, self._exchange = self._exchange, None
+            if exchange is not None:
+                await exchange.aclose()
         finally:
             self._closed = True
-            self._exchange = None
             self._pending_sources.clear()

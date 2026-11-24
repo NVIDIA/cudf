@@ -187,6 +187,15 @@ template <typename T>
 concept string_view = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::string_view>;
 
 /**
+ * @brief Satisfied if `T` is the cudf mutable string type, `cudf::mutable_string_view`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept mutable_string_view =
+  cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::mutable_string_view>;
+
+/**
  * @brief Satisfied if `T` is the cudf list type, `cudf::list_view`.
  *
  * @tparam T The type to verify

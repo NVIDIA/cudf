@@ -43,43 +43,83 @@ public final class Table implements AutoCloseable {
    * @param columns - Array of ColumnVectors
    */
   public Table(ColumnVector... columns) {
-    assert columns != null && columns.length > 0 : "ColumnVectors can't be null or empty";
-    rows = columns[0].getRowCount();
+    this(rowCountOf(columns), columns);
+  }
 
+  /**
+   * Create a table with an explicit row count. Unlike {@link #Table(ColumnVector...)}, this
+   * accepts no columns at all, which makes a table of {@code rowCount} rows and zero columns.
+   * Table class makes a copy of the array of {@link ColumnVector}s passed to it. The class
+   * will decrease the refcount on itself and all its contents when closed and free resources if
+   * refcount is zero
+   * @param rowCount number of rows in the table; must match the row count of every column
+   * @param columns - Array of ColumnVectors, possibly empty
+   */
+  public Table(long rowCount, ColumnVector... columns) {
+    assert columns != null : "ColumnVectors can't be null";
+    // Since Arrays are mutable objects make a copy. Take the references first, so that a closed
+    // column fails here with an IllegalStateException.
+    this.columns = new ColumnVector[columns.length];
+    long[] viewPointers = new long[columns.length];
+    int referenced = 0;
+    try {
+      for (; referenced < columns.length; referenced++) {
+        assert (null != columns[referenced]) : "ColumnVectors can't be null";
+        columns[referenced].incRefCount();
+        this.columns[referenced] = columns[referenced];
+        viewPointers[referenced] = columns[referenced].getNativeView();
+      }
+      // This validates the row count against the columns
+      nativeHandle = createCudfTableView(viewPointers, rowCount);
+    } catch (Throwable t) {
+      for (int i = 0; i < referenced; i++) {
+        try {
+          this.columns[i].close();
+        } catch (Throwable s) {
+          t.addSuppressed(s);
+        }
+      }
+      throw t;
+    }
+    rows = rowCount;
+  }
+
+  private static long rowCountOf(ColumnVector[] columns) {
+    assert columns != null && columns.length > 0 : "ColumnVectors can't be null or empty";
+    long rows = columns[0].getRowCount();
     for (ColumnVector columnVector : columns) {
       assert (null != columnVector) : "ColumnVectors can't be null";
       assert (rows == columnVector.getRowCount()) : "All columns should have the same number of " +
           "rows " + columnVector.getType();
     }
-
-    // Since Arrays are mutable objects make a copy
-    this.columns = new ColumnVector[columns.length];
-    long[] viewPointers = new long[columns.length];
-    for (int i = 0; i < columns.length; i++) {
-      this.columns[i] = columns[i];
-      columns[i].incRefCount();
-      viewPointers[i] = columns[i].getNativeView();
-    }
-
-    nativeHandle = createCudfTableView(viewPointers);
+    return rows;
   }
 
   /**
    * Create a Table from an array of existing on device cudf::column pointers. Ownership of the
    * columns is transferred to the ColumnVectors held by the new Table. In the case of an exception
    * the columns will be deleted.
+   * <p>
+   * The row count is taken from the first column, so this cannot describe a table with no
+   * columns. Native methods that return a table should return its row count followed by the
+   * columns, decoded with {@link #fromRowCountAndColumns(long[])}.
    * @param cudfColumns - Array of nativeHandles
    */
   public Table(long[] cudfColumns) {
-    assert cudfColumns != null && cudfColumns.length > 0 : "CudfColumns can't be null or empty";
+    this(cudfColumns, OptionalLong.empty());
+  }
+
+  private Table(long[] cudfColumns, OptionalLong rowCount) {
+    assert cudfColumns != null && (rowCount.isPresent() || cudfColumns.length > 0) :
+        "CudfColumns can't be null or empty";
     this.columns = ColumnVector.getColumnVectorsFromPointers(cudfColumns);
     try {
       long[] views = new long[columns.length];
       for (int i = 0; i < columns.length; i++) {
         views[i] = columns[i].getNativeView();
       }
-      nativeHandle = createCudfTableView(views);
-      this.rows = columns[0].getRowCount();
+      this.rows = rowCount.isPresent() ? rowCount.getAsLong() : columns[0].getRowCount();
+      nativeHandle = createCudfTableView(views, rows);
     } catch (Throwable t) {
       for (ColumnVector column : columns) {
         try {
@@ -90,6 +130,20 @@ public final class Table implements AutoCloseable {
       }
       throw t;
     }
+  }
+
+  /**
+   * Create a Table from the result of a native method that returns the row count followed by
+   * cudf::column pointers, see convert_table_with_row_count_for_return in TableJni.cpp. Ownership
+   * of the columns is transferred to the ColumnVectors held by the new Table. In the case of an
+   * exception the columns will be deleted.
+   * @param rowCountAndColumns the row count followed by the nativeHandles of the columns
+   */
+  static Table fromRowCountAndColumns(long[] rowCountAndColumns) {
+    assert rowCountAndColumns != null && rowCountAndColumns.length > 0 :
+        "rowCountAndColumns can't be null or empty";
+    long[] cudfColumns = Arrays.copyOfRange(rowCountAndColumns, 1, rowCountAndColumns.length);
+    return new Table(cudfColumns, OptionalLong.of(rowCountAndColumns[0]));
   }
 
   /**
@@ -587,6 +641,9 @@ public final class Table implements AutoCloseable {
   private static native long[] innerDistinctJoinGatherMaps(long leftKeys, long rightKeys,
                                                            boolean compareNullsEqual) throws CudfException;
 
+  private static native long[] directInnerJoinGatherMaps(long leftKeysColumn, long rightKeysColumn,
+                                                         long capacity) throws CudfException;
+
   private static native long[] innerDistinctHashJoinGatherMaps(long table,
                                                                long distinctHashJoin) throws CudfException;
 
@@ -744,7 +801,7 @@ public final class Table implements AutoCloseable {
 
   private static native long[] explodeOuterPosition(long tableHandle, int index);
 
-  private static native long createCudfTableView(long[] nativeColumnViewHandles);
+  private static native long createCudfTableView(long[] nativeColumnViewHandles, long rowCount);
 
   private static native long[] columnViewsFromPacked(ByteBuffer metadata, long dataAddress);
 
@@ -786,7 +843,7 @@ public final class Table implements AutoCloseable {
     if (schema.hasNestedChildren()) {
       throw new IllegalArgumentException("CSV does not support nested types");
     }
-    return new Table(
+    return fromRowCountAndColumns(
         readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
             opts.getIncludeColumnNames(), path.getAbsolutePath(),
             0, 0,
@@ -871,7 +928,7 @@ public final class Table implements AutoCloseable {
     if (schema.hasNestedChildren()) {
       throw new IllegalArgumentException("CSV does not support nested types");
     }
-    return new Table(readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
+    return fromRowCountAndColumns(readCSV(schema.getFlattenedColumnNames(), schema.getFlattenedTypeIds(), schema.getFlattenedTypeScales(),
         opts.getIncludeColumnNames(), null,
         buffer.getAddress() + offset, len,
         opts.getHeaderRow(),
@@ -890,7 +947,7 @@ public final class Table implements AutoCloseable {
       if (schema.hasNestedChildren()) {
         throw new IllegalArgumentException("CSV does not support nested types");
       }
-      return new Table(readCSVFromDataSource(schema.getFlattenedColumnNames(),
+      return fromRowCountAndColumns(readCSVFromDataSource(schema.getFlattenedColumnNames(),
               schema.getFlattenedTypeIds(),
               schema.getFlattenedTypeScales(),
               opts.getIncludeColumnNames(),
@@ -1293,7 +1350,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readParquet(ParquetOptions opts, File path) {
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         path.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1368,7 +1425,7 @@ public final class Table implements AutoCloseable {
     assert len <= buffer.getLength() - offset;
     assert offset >= 0 && offset < buffer.length;
     long[] addrsSizes = new long[]{ buffer.getAddress() + offset, len };
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1386,7 +1443,7 @@ public final class Table implements AutoCloseable {
       addrsSizes[i * 2] = buffers[i].getAddress();
       addrsSizes[(i * 2) + 1] = buffers[i].getLength();
     }
-    return new Table(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
+    return fromRowCountAndColumns(readParquet(opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
         null, addrsSizes, opts.timeUnit().typeId.getNativeId()));
   }
 
@@ -1399,7 +1456,7 @@ public final class Table implements AutoCloseable {
   public static Table readParquet(ParquetOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readParquetFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readParquetFromDataSource(opts.getIncludeColumnNames(),
               opts.getReadBinaryAsString(), opts.timeUnit().typeId.getNativeId(),
               dataSourceHandle));
     } finally {
@@ -1423,7 +1480,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readAvro(AvroOptions opts, File path) {
-    return new Table(readAvro(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readAvro(opts.getIncludeColumnNames(),
         path.getAbsolutePath(), 0, 0));
   }
 
@@ -1486,14 +1543,14 @@ public final class Table implements AutoCloseable {
     assert len <= buffer.length - offset;
     len = len > 0 ? len : buffer.length - offset;
 
-    return new Table(readAvro(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readAvro(opts.getIncludeColumnNames(),
         null, buffer.getAddress() + offset, len));
   }
 
   public static Table readAvro(AvroOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readAvroFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readAvroFromDataSource(opts.getIncludeColumnNames(),
               dataSourceHandle));
     } finally {
       DataSourceHelper.destroyWrapperDataSource(dataSourceHandle);
@@ -1516,7 +1573,7 @@ public final class Table implements AutoCloseable {
    * @return the file parsed as a table on the GPU.
    */
   public static Table readORC(ORCOptions opts, File path) {
-    return new Table(readORC(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         path.getAbsolutePath(), 0, 0,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
         opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
@@ -1585,7 +1642,7 @@ public final class Table implements AutoCloseable {
     assert len > 0;
     assert len <= buffer.getLength() - offset;
     assert offset >= 0 && offset < buffer.length;
-    return new Table(readORC(opts.getIncludeColumnNames(),
+    return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         null, buffer.getAddress() + offset, len,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
         opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
@@ -1594,7 +1651,7 @@ public final class Table implements AutoCloseable {
   public static Table readORC(ORCOptions opts, DataSource ds) {
     long dataSourceHandle = DataSourceHelper.createWrapperDataSource(ds);
     try {
-      return new Table(readORCFromDataSource(opts.getIncludeColumnNames(),
+      return fromRowCountAndColumns(readORCFromDataSource(opts.getIncludeColumnNames(),
               opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
               opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
               dataSourceHandle));
@@ -1661,7 +1718,7 @@ public final class Table implements AutoCloseable {
       viewPointers[i] = columnViews[i].getNativeView();
     }
 
-    long nativeHandle = createCudfTableView(viewPointers);
+    long nativeHandle = createCudfTableView(viewPointers, rows);
     try {
       try (
         ParquetTableWriter writer = new ParquetTableWriter(options, consumer, hostMemoryAllocator)
@@ -1920,7 +1977,7 @@ public final class Table implements AutoCloseable {
           return null;
         }
         callback.needTheGpu();
-        return new Table(convertArrowTableToCudf(arrowTableHandle));
+        return fromRowCountAndColumns(convertArrowTableToCudf(arrowTableHandle));
       } finally {
         closeArrowTable(arrowTableHandle);
       }
@@ -2000,7 +2057,7 @@ public final class Table implements AutoCloseable {
       tableHandles[i] = tables[i].nativeHandle;
       assert tables[i].getNumberOfColumns() == numColumns : "all tables must have the same schema";
     }
-    return new Table(concatenate(tableHandles));
+    return fromRowCountAndColumns(concatenate(tableHandles));
   }
 
   /**
@@ -2025,7 +2082,7 @@ public final class Table implements AutoCloseable {
    * @return the new Table.
    */
   public Table repeat(int count) {
-    return new Table(repeatStaticCount(this.nativeHandle, count));
+    return fromRowCountAndColumns(repeatStaticCount(this.nativeHandle, count));
   }
 
   /**
@@ -2037,7 +2094,7 @@ public final class Table implements AutoCloseable {
    * @throws CudfException on any error.
    */
   public Table repeat(ColumnView counts) {
-    return new Table(repeatColumnCount(this.nativeHandle, counts.getNativeView()));
+    return fromRowCountAndColumns(repeatColumnCount(this.nativeHandle, counts.getNativeView()));
   }
 
   /**
@@ -2051,7 +2108,7 @@ public final class Table implements AutoCloseable {
    */
   public PartitionedTable partition(ColumnView partitionMap, int numberOfPartitions) {
     int[] partitionOffsets = new int[numberOfPartitions + 1];
-    return new PartitionedTable(new Table(partition(
+    return new PartitionedTable(fromRowCountAndColumns(partition(
         getNativeView(),
         partitionMap.getNativeView(),
         numberOfPartitions,
@@ -2194,7 +2251,7 @@ public final class Table implements AutoCloseable {
    * right columns.
    */
   public Table crossJoin(Table right) {
-    return new Table(Table.crossJoin(this.nativeHandle, right.nativeHandle));
+    return fromRowCountAndColumns(Table.crossJoin(this.nativeHandle, right.nativeHandle));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -2246,7 +2303,7 @@ public final class Table implements AutoCloseable {
       sortKeys[i] = columns[index].getNativeView();
     }
 
-    return new Table(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest));
+    return fromRowCountAndColumns(orderBy(nativeHandle, sortKeys, isDescending, areNullsSmallest));
   }
 
   /**
@@ -2281,7 +2338,7 @@ public final class Table implements AutoCloseable {
       sortKeyIndexes[i] = index;
     }
 
-    return new Table(merge(tableHandles, sortKeyIndexes, isDescending, areNullsSmallest));
+    return fromRowCountAndColumns(merge(tableHandles, sortKeyIndexes, isDescending, areNullsSmallest));
   }
 
   /**
@@ -2338,7 +2395,7 @@ public final class Table implements AutoCloseable {
    */
   public PartitionedTable roundRobinPartition(int numberOfPartitions, int startPartition) {
     int[] partitionOffsets = new int[numberOfPartitions + 1];
-    return new PartitionedTable(new Table(Table.roundRobinPartition(nativeHandle,
+    return new PartitionedTable(fromRowCountAndColumns(Table.roundRobinPartition(nativeHandle,
         numberOfPartitions, startPartition,
         partitionOffsets)), partitionOffsets);
   }
@@ -2379,7 +2436,7 @@ public final class Table implements AutoCloseable {
   public Table filter(ColumnView mask) {
     assert mask.getType().equals(DType.BOOL8) : "Mask column must be of type BOOL8";
     assert getRowCount() == 0 || getRowCount() == mask.getRowCount() : "Mask column has incorrect size";
-    return new Table(filter(nativeHandle, mask.getNativeView()));
+    return fromRowCountAndColumns(filter(nativeHandle, mask.getNativeView()));
   }
 
   /**
@@ -2414,7 +2471,7 @@ public final class Table implements AutoCloseable {
    */
   public Table dropDuplicates(int[] keyColumns, DuplicateKeepOption keep, boolean nullsEqual) {
     assert keyColumns.length >= 1 : "Input keyColumns must contain indices of at least one column";
-    return new Table(dropDuplicates(nativeHandle, keyColumns, keep.keepValue, nullsEqual));
+    return fromRowCountAndColumns(dropDuplicates(nativeHandle, keyColumns, keep.keepValue, nullsEqual));
   }
 
   /**
@@ -2532,7 +2589,7 @@ public final class Table implements AutoCloseable {
   public Table explode(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explode(nativeHandle, index));
+    return fromRowCountAndColumns(explode(nativeHandle, index));
   }
 
   /**
@@ -2574,7 +2631,7 @@ public final class Table implements AutoCloseable {
   public Table explodePosition(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodePosition(nativeHandle, index));
+    return fromRowCountAndColumns(explodePosition(nativeHandle, index));
   }
 
   /**
@@ -2617,7 +2674,7 @@ public final class Table implements AutoCloseable {
   public Table explodeOuter(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodeOuter(nativeHandle, index));
+    return fromRowCountAndColumns(explodeOuter(nativeHandle, index));
   }
 
   /**
@@ -2664,7 +2721,7 @@ public final class Table implements AutoCloseable {
   public Table explodeOuterPosition(int index) {
     assert 0 <= index && index < columns.length : "Column index is out of range";
     assert columns[index].getType().equals(DType.LIST) : "Column to explode must be of type LIST";
-    return new Table(explodeOuterPosition(nativeHandle, index));
+    return fromRowCountAndColumns(explodeOuterPosition(nativeHandle, index));
   }
 
   /**
@@ -2720,7 +2777,7 @@ public final class Table implements AutoCloseable {
    */
   public Table gather(ColumnView gatherMap, OutOfBoundsPolicy outOfBoundsPolicy) {
     boolean checkBounds = outOfBoundsPolicy == OutOfBoundsPolicy.NULLIFY;
-    return new Table(gather(nativeHandle, gatherMap.getNativeView(), checkBounds));
+    return fromRowCountAndColumns(gather(nativeHandle, gatherMap.getNativeView(), checkBounds));
   }
 
   /**
@@ -2743,7 +2800,7 @@ public final class Table implements AutoCloseable {
    *         target table.
    */
   public Table scatter(ColumnView scatterMap, Table target) {
-    return new Table(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView()));
+    return fromRowCountAndColumns(scatterTable(nativeHandle, scatterMap.getNativeView(), target.getNativeView()));
   }
 
   /**
@@ -2772,11 +2829,11 @@ public final class Table implements AutoCloseable {
       assert source[i] != null : "Scalar vectors passed in should not contain null";
       srcScalarHandles[i] = source[i].getScalarHandle();
     }
-    return new Table(scatterScalars(srcScalarHandles, scatterMap.getNativeView(),
+    return fromRowCountAndColumns(scatterScalars(srcScalarHandles, scatterMap.getNativeView(),
         target.getNativeView()));
   }
 
-  private static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
+  static GatherMap[] buildJoinGatherMaps(long[] gatherMapData) {
     long bufferSize = gatherMapData[0];
     long leftAddr = gatherMapData[1];
     long leftHandle = gatherMapData[2];
@@ -2986,6 +3043,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = leftHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a left equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext leftJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.LEFT);
   }
 
   /**
@@ -3215,6 +3283,38 @@ public final class Table implements AutoCloseable {
   }
 
   /**
+   * Computes the gather maps that can be used to manifest the result of an inner equi-join between
+   * two key columns whose values directly determine the matched row index. The right keys are
+   * treated as a perfect hash of the right rows: a lookup table of {@code capacity} entries maps
+   * each key value to its row index, and each left key probes that table directly. No hashing or
+   * key comparison is performed. Left keys that do not occur in the right keys produce no output
+   * pair. Two {@link GatherMap} instances will be returned that can be used to gather the left and
+   * right tables, respectively, to produce the result of the inner join.
+   *
+   * Behavior is undefined if any key value, interpreted as unsigned, is not less than
+   * {@code capacity}, or if the right keys contain duplicates.
+   *
+   * It is the responsibility of the caller to close the resulting gather map instances.
+   *
+   * @param leftKeys left join key column of type {@link DType#UINT32}, without nulls,
+   *                 containing pre-hashed keys in {@code [0, capacity)}
+   * @param rightKeys right join key column of type {@link DType#UINT32}, without nulls,
+   *                  containing distinct pre-hashed keys in {@code [0, capacity)}
+   * @param capacity number of entries in the lookup table; must be greater than every left and
+   *                 right key value, and not less than the number of right keys
+   * @return left and right table gather maps
+   */
+  public static GatherMap[] directInnerJoinGatherMaps(ColumnView leftKeys, ColumnView rightKeys,
+                                                      long capacity) {
+    if (capacity < 0) {
+      throw new IllegalArgumentException("capacity must not be negative: " + capacity);
+    }
+    long[] gatherMapData =
+        directInnerJoinGatherMaps(leftKeys.getNativeView(), rightKeys.getNativeView(), capacity);
+    return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
    * Computes the number of rows resulting from an inner equi-join between two tables.
    * @param otherHash hash table built from join key columns from the other table
    * @return row count of the join result
@@ -3276,6 +3376,17 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = innerHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for an inner equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext innerJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.INNER);
   }
 
   /**
@@ -3524,6 +3635,19 @@ public final class Table implements AutoCloseable {
     long[] gatherMapData = fullHashJoinGatherMapsWithCount(getNativeView(),
         rightHash.getNativeView(), outputRowCount);
     return buildJoinGatherMaps(gatherMapData);
+  }
+
+  /**
+   * Probes this table once for a full equi-join and keeps the matches in a
+   * {@link JoinMatchContext} for partitioned retrieval. Collect the partition results and call
+   * {@link JoinMatchContext#finalizePartitionedFullJoin(GatherMap[]...)}
+   * to append the unmatched right rows.
+   *
+   * @param rightHash hash table built from join key columns from the right table
+   * @return a match context that the caller must close
+   */
+  public JoinMatchContext fullJoinMatchContext(HashJoin rightHash) {
+    return new JoinMatchContext(this, rightHash, JoinKind.FULL);
   }
 
   /**
@@ -3846,15 +3970,18 @@ public final class Table implements AutoCloseable {
    * @return table which is zero-copy reconstructed from the packed-form
    */
   public static Table fromPackedTable(ByteBuffer metadata, DeviceMemoryBuffer data) {
-    // Ensure the metadata buffer is direct so it can be passed to JNI
-    ByteBuffer directBuffer = metadata;
+    // Ensure the metadata buffer is direct so it can be passed to JNI. Slice it so that JNI sees
+    // only the bytes between position and limit.
+    ByteBuffer directBuffer = metadata.slice();
     if (!directBuffer.isDirect()) {
       directBuffer = ByteBuffer.allocateDirect(metadata.remaining());
       directBuffer.put(metadata);
       directBuffer.flip();
     }
 
-    long[] columnViewAddresses = columnViewsFromPacked(directBuffer, data.getAddress());
+    long[] rowCountAndViews = columnViewsFromPacked(directBuffer, data.getAddress());
+    long rowCount = rowCountAndViews[0];
+    long[] columnViewAddresses = Arrays.copyOfRange(rowCountAndViews, 1, rowCountAndViews.length);
     ColumnVector[] columns = new ColumnVector[columnViewAddresses.length];
     Table result = null;
     try {
@@ -3865,7 +3992,7 @@ public final class Table implements AutoCloseable {
         columnViewAddresses[i] = 0;
         columns[i] = ColumnVector.fromViewWithContiguousAllocation(columnViewAddress, data);
       }
-      result = new Table(columns);
+      result = new Table(rowCount, columns);
     } catch (Throwable t) {
       try {
         ColumnView.cleanupColumnViews(columnViewAddresses, columns, t);
@@ -3909,7 +4036,7 @@ public final class Table implements AutoCloseable {
    * @return Table containing samples
    */
   public Table sample(long n, boolean replacement, long seed) {
-    return new Table(sample(nativeHandle, n, replacement, seed));
+    return fromRowCountAndColumns(sample(nativeHandle, n, replacement, seed));
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -4051,7 +4178,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(groupByAggregate(
+        try (Table aggregate = fromRowCountAndColumns(groupByAggregate(
             operation.table.nativeHandle,
             operation.indices,
             aggColumnIndexes,
@@ -4193,7 +4320,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(rollingWindowAggregate(
+        try (Table aggregate = fromRowCountAndColumns(rollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             defaultOutputs,
@@ -4415,7 +4542,7 @@ public final class Table implements AutoCloseable {
           isOrderByNullsFirst[j] = isOrderByNullsFirstList.get(j);
         }
 
-        try (Table aggregate = new Table(rangeRollingWindowAggregate(
+        try (Table aggregate = fromRowCountAndColumns(rangeRollingWindowAggregate(
             operation.table.nativeHandle,
             operation.indices,
             orderByColumnIndexes,
@@ -4477,7 +4604,7 @@ public final class Table implements AutoCloseable {
         }
         assert opIndex == totalOps : opIndex + " == " + totalOps;
 
-        try (Table aggregate = new Table(groupByScan(
+        try (Table aggregate = fromRowCountAndColumns(groupByScan(
             operation.table.nativeHandle,
             operation.indices,
             aggColumnIndexes,
@@ -4525,7 +4652,7 @@ public final class Table implements AutoCloseable {
         columnIndexes[index] = replacements[index].column;
       }
 
-      return new Table(groupByReplaceNulls(
+      return fromRowCountAndColumns(groupByReplaceNulls(
           operation.table.nativeHandle,
           operation.indices,
           columnIndexes,
@@ -4691,7 +4818,7 @@ public final class Table implements AutoCloseable {
      */
     public PartitionedTable hashPartition(HashType type, int numberOfPartitions, int seed) {
       int[] partitionOffsets = new int[numberOfPartitions + 1];
-      return new PartitionedTable(new Table(Table.hashPartition(
+      return new PartitionedTable(fromRowCountAndColumns(Table.hashPartition(
           operation.table.nativeHandle,
           operation.indices,
           type.nativeId,

@@ -5,12 +5,14 @@
 #pragma once
 
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
 #include <cuda/std/span>
 
 #include <limits>
@@ -59,8 +61,8 @@ class column_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
-  template <typename T = void,
-            CUDF_ENABLE_IF(std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
+  template <typename T = void>
+    requires(cuda::std::same_as<T, void> or cudf::concepts::rep_layout_compatible<T>)
   T const* head() const noexcept
   {
     return static_cast<T const*>(get_data());
@@ -78,7 +80,7 @@ class column_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data, including the offset
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T const* data() const noexcept
   {
     return head<T>() + _offset;
@@ -94,7 +96,7 @@ class column_view_base {
    * @tparam T The desired type
    * @return Pointer to the first element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T const* begin() const noexcept
   {
     return data<T>();
@@ -110,7 +112,7 @@ class column_view_base {
    * @tparam T The desired type
    * @return Pointer to one past the last element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T const* end() const noexcept
   {
     return begin<T>() + size();
@@ -420,7 +422,8 @@ class column_view : public detail::column_view_base {
    * @tparam T The device span type. Must be const and match the column view's type.
    * @param data A typed device span containing the column view's data.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
   column_view(device_span<T const> data)
     : column_view(
         cudf::data_type{cudf::type_to_id<T>()}, data.size(), data.data(), nullptr, 0, 0, {})
@@ -442,7 +445,8 @@ class column_view : public detail::column_view_base {
    * @throws cudf::logic_error if the column view is nullable.
    * @return A typed device span of the column view's data.
    */
-  template <typename T, CUDF_ENABLE_IF(cudf::is_numeric<T>() or cudf::is_chrono<T>())>
+  template <typename T>
+    requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
   [[nodiscard]] operator device_span<T const>() const
   {
     CUDF_EXPECTS(type() == cudf::data_type{cudf::type_to_id<T>()},
@@ -563,8 +567,8 @@ class mutable_column_view : public detail::column_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data
    */
-  template <typename T = void,
-            CUDF_ENABLE_IF(std::is_same_v<T, void> or is_rep_layout_compatible<T>())>
+  template <typename T = void>
+    requires(cuda::std::same_as<T, void> or cudf::concepts::rep_layout_compatible<T>)
   T* head() const noexcept
   {
     return const_cast<T*>(detail::column_view_base::head<T>());
@@ -582,7 +586,7 @@ class mutable_column_view : public detail::column_view_base {
    * @tparam T The type to cast to
    * @return Typed pointer to underlying data, including the offset
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T* data() const noexcept
   {
     return const_cast<T*>(detail::column_view_base::data<T>());
@@ -598,7 +602,7 @@ class mutable_column_view : public detail::column_view_base {
    * @tparam T The desired type
    * @return Pointer to the first element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T* begin() const noexcept
   {
     return const_cast<T*>(detail::column_view_base::begin<T>());
@@ -614,7 +618,7 @@ class mutable_column_view : public detail::column_view_base {
    * @tparam T The desired type
    * @return Pointer to one past the last element after casting
    */
-  template <typename T, CUDF_ENABLE_IF(is_rep_layout_compatible<T>())>
+  template <cudf::concepts::rep_layout_compatible T>
   T* end() const noexcept
   {
     return const_cast<T*>(detail::column_view_base::end<T>());

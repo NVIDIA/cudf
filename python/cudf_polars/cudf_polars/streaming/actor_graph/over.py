@@ -355,12 +355,14 @@ def _split_off_origin_rank(
 
     stream = result.stream
     columns = result.table.columns()
+    # Pass-through and stamp columns can be views of the evaluated partition,
+    # so the chunks do not own their data exclusively.
     return (
         TableChunk.from_pylibcudf_table(
-            plc.Table(columns[:-1]), stream, exclusive_view=True, br=br
+            plc.Table(columns[:-1]), stream, exclusive_view=False, br=br
         ),
         TableChunk.from_pylibcudf_table(
-            plc.Table([columns[-1]]), stream, exclusive_view=True, br=br
+            plc.Table([columns[-1]]), stream, exclusive_view=False, br=br
         ),
     )
 
@@ -462,7 +464,7 @@ async def _choose_modulus(
     metadata_in: ChannelMetadata,
     collective_id: int,
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
 ) -> tuple[TableSizeStats, int]:
     """
     Sample input, AllGather size estimates, and derive the forward-shuffle modulus.
@@ -473,8 +475,7 @@ async def _choose_modulus(
     sample = await _sample_chunks(
         context,
         ch_in,
-        sample_chunk_count,
-        target_partition_size,
+        sample_byte_count,
         metadata_in.local_count,
     )
     if comm.nranks > 1 and not metadata_in.duplicated:
@@ -505,13 +506,18 @@ async def _distribute_by_group(
     await ch_in.shutdown_metadata(context)
 
     sequence_numbers: list[int] = []
-    chunk_index = 0
     async with forward_shuffle.inserting() as inserter:
         while (msg := await ch_in.recv(context)) is not None:
+            chunk_index = len(sequence_numbers)
+            sequence_numbers.append(msg.sequence_number)
+            if skip_insert:
+                # Insert duplicated input only once so each logical row
+                # participates once in its window group. The return shuffle
+                # restores the result to all ranks owning the input rows.
+                del msg
+                continue
             chunk = TableChunk.from_message(msg, br=context.br())
-            stamp_bytes = (
-                0 if skip_insert else _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
-            )
+            stamp_bytes = _ORIGIN_STAMP_BYTES_PER_ROW * chunk.shape[0]
             # The chunk's data moves into shuffler-owned packed buffers, so the
             # stamp columns _append_origin_stamps allocates below are both the
             # extra we need and the only lasting addition.
@@ -521,24 +527,17 @@ async def _distribute_by_group(
                 reserve_extra=stamp_bytes,
                 net_memory_delta=stamp_bytes,
             )
-            sequence_numbers.append(msg.sequence_number)
-            if not skip_insert:
-                # Insert duplicated input only once so each logical row
-                # participates once in its window group. The return shuffle
-                # restores the result to all ranks owning the input rows.
-                with opaque_memory_usage(extra):
-                    stamped = await ir_context.to_thread(
-                        _append_origin_stamps,
-                        chunk,
-                        chunk_index,
-                        comm.rank,
-                        chunk.stream,
-                        context.br(),
-                    )
-                await inserter.insert_hash(stamped, key_indices)
-                del stamped
-            del chunk
-            chunk_index += 1
+            with opaque_memory_usage(extra):
+                stamped = await ir_context.to_thread(
+                    _append_origin_stamps,
+                    chunk,
+                    chunk_index,
+                    comm.rank,
+                    chunk.stream,
+                    context.br(),
+                )
+            await inserter.insert_hash(stamped, key_indices)
+            del stamped, chunk
     return sequence_numbers
 
 
@@ -601,7 +600,7 @@ async def _evaluate_and_route_to_origin(
                         )
                     del payload
                 else:
-                    await inserter.insert_index(*routed)
+                    await inserter.insert_index(*routed, ir_context=ir_context)
             del routed
 
 
@@ -622,50 +621,53 @@ async def _reassemble_input_chunks(
     n_exprs = len(ir.exprs)
     chunk_index_column = n_exprs
 
-    # TODO: thread ir_context through repartition_by_index so each
-    # PackedData piece moves on its own pool stream rather than sharing one.
-    local = LocalRepartitioner(return_shuffle, local_count=n_chunks)
-    await local.repartition_by_index(
-        partition_col=chunk_index_column, stream=ir_context.get_cuda_stream()
-    )
+    # TODO: unpack each PackedData piece in repartition_by_index on its own
+    # pool stream rather than sharing one.
+    async with LocalRepartitioner(return_shuffle, local_count=n_chunks) as local:
+        await local.repartition_by_index(
+            partition_col=chunk_index_column,
+            stream=ir_context.get_cuda_stream(),
+            ir_context=ir_context,
+        )
 
-    for chunk_index, sequence_number in zip(
-        local.local_partitions(), sequence_numbers, strict=True
-    ):
-        # Distinct stream per chunk so downstream work on different
-        # chunks can overlap on the GPU.
-        stream = ir_context.get_cuda_stream()
-        tbl = await local.extract_chunk(chunk_index, stream)
-        if tbl.num_rows() == 0:
-            chunk = empty_table_chunk(ir, context, stream)
-        else:
-            # The sorted copy replaces the unsorted input. The sort also
-            # builds a row index column of int32 (cudf::size_type), which
-            # is 4 bytes per row.
-            with opaque_memory_usage(
-                await reserve_memory(
-                    context,
-                    size=sum(col.device_buffer_size() for col in tbl.columns())
-                    + tbl.num_rows() * 4,
-                    net_memory_delta=0,
+        for chunk_index, sequence_number in zip(
+            local.local_partitions(), sequence_numbers, strict=True
+        ):
+            # Distinct stream per chunk so downstream work on different
+            # chunks can overlap on the GPU.
+            stream = ir_context.get_cuda_stream()
+            tbl = await local.extract_chunk(chunk_index, stream)
+            if tbl.num_rows() == 0:
+                chunk = empty_table_chunk(ir, context, stream)
+            else:
+                # The sorted copy replaces the unsorted input. The sort also
+                # builds a row index column of int32 (cudf::size_type), which
+                # is 4 bytes per row.
+                with opaque_memory_usage(
+                    await reserve_memory(
+                        context,
+                        size=sum(col.device_buffer_size() for col in tbl.columns())
+                        + tbl.num_rows() * 4,
+                        net_memory_delta=0,
+                    )
+                ):
+                    sorted_tbl = await ir_context.to_thread(
+                        plc.sorting.stable_sort_by_key,
+                        tbl,
+                        plc.Table([tbl.columns()[n_exprs]]),
+                        [plc.types.Order.ASCENDING],
+                        [plc.types.NullOrder.AFTER],
+                        stream=stream,
+                    )
+                chunk = TableChunk.from_pylibcudf_table(
+                    plc.Table(sorted_tbl.columns()[:n_exprs]),
+                    stream,
+                    exclusive_view=True,
+                    br=context.br(),
                 )
-            ):
-                sorted_tbl = plc.sorting.stable_sort_by_key(
-                    tbl,
-                    plc.Table([tbl.columns()[n_exprs]]),
-                    [plc.types.Order.ASCENDING],
-                    [plc.types.NullOrder.AFTER],
-                    stream=stream,
-                )
-            chunk = TableChunk.from_pylibcudf_table(
-                plc.Table(sorted_tbl.columns()[:n_exprs]),
-                stream,
-                exclusive_view=True,
-                br=context.br(),
-            )
-            del sorted_tbl
-        del tbl
-        await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
+                del sorted_tbl
+            del tbl
+            await send_chunk(context, ch_out, chunk, sequence_number, tracer=tracer)
 
 
 async def _shuffle_and_reassemble(
@@ -681,7 +683,7 @@ async def _shuffle_and_reassemble(
     forward_shuffle_collective_id: int,
     return_shuffle_collective_id: int,
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
 ) -> None:
     """Hash-shuffle by partition keys, evaluate, then route rows back to their origin rank."""
     stamps = _origin_stamps_for(ir)
@@ -704,61 +706,60 @@ async def _shuffle_and_reassemble(
         metadata_in,
         size_collective_id,
         target_partition_size,
-        sample_chunk_count,
-    )
-
-    forward_shuffle = ShuffleManager(
-        context,
-        comm,
-        forward_modulus,
-        forward_shuffle_collective_id,
-    )
-    return_shuffle = ShuffleManager(
-        context,
-        comm,
-        comm.nranks,
-        return_shuffle_collective_id,
-        partition_assignment=PartitionAssignment.CONTIGUOUS,
+        sample_byte_count,
     )
 
     ch_replay = context.create_channel()
     sort_by_input_order = _contains_input_order_window_without_order_by(
         [ne.value for ne in ir.exprs]
     )
-    sequence_numbers, _ = await gather_in_task_group(
-        _distribute_by_group(
-            context,
-            comm,
-            forward_shuffle,
-            ch_replay,
-            ir.key_indices,
-            ir_context,
-            skip_insert,
-        ),
-        replay_buffered_channel(
-            context,
-            ch_replay,
-            ch_in,
-            sample.local_sample.chunks,
-            metadata_in,
-            trace_ir=ir,
-        ),
-    )
-
-    await _evaluate_and_route_to_origin(
+    async with ShuffleManager(
         context,
         comm,
-        ir,
-        ir_context,
-        forward_shuffle,
-        return_shuffle,
-        stamps,
-        sort_by_input_order=sort_by_input_order,
-        duplicated_origin=metadata_in.duplicated,
-    )
-    await _reassemble_input_chunks(
-        context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
-    )
+        comm.nranks,
+        return_shuffle_collective_id,
+        partition_assignment=PartitionAssignment.CONTIGUOUS,
+    ) as return_shuffle:
+        async with ShuffleManager(
+            context,
+            comm,
+            forward_modulus,
+            forward_shuffle_collective_id,
+        ) as forward_shuffle:
+            sequence_numbers, _ = await gather_in_task_group(
+                _distribute_by_group(
+                    context,
+                    comm,
+                    forward_shuffle,
+                    ch_replay,
+                    ir.key_indices,
+                    ir_context,
+                    skip_insert,
+                ),
+                replay_buffered_channel(
+                    context,
+                    ch_replay,
+                    ch_in,
+                    sample.local_sample.chunks,
+                    metadata_in,
+                    trace_ir=ir,
+                ),
+            )
+
+            await _evaluate_and_route_to_origin(
+                context,
+                comm,
+                ir,
+                ir_context,
+                forward_shuffle,
+                return_shuffle,
+                stamps,
+                sort_by_input_order=sort_by_input_order,
+                duplicated_origin=metadata_in.duplicated,
+            )
+        await _reassemble_input_chunks(
+            context, ch_out, ir_context, return_shuffle, sequence_numbers, ir, tracer
+        )
 
     await ch_out.drain(context)
 
@@ -773,7 +774,7 @@ async def over_actor(
     ch_in: Channel[TableChunk],
     collective_ids: list[int],
     target_partition_size: int,
-    sample_chunk_count: int,
+    sample_byte_count: int,
     scalar_plan: _ScalarOverPlan | None,
 ) -> None:
     """
@@ -801,8 +802,8 @@ async def over_actor(
     target_partition_size
         Target output partition size in bytes, used to compute the shuffle
         modulus for the non-scalar path.
-    sample_chunk_count
-        Maximum number of input chunks to sample when estimating the shuffle
+    sample_byte_count
+        Maximum number of input bytes to sample when estimating the shuffle
         modulus on the non-scalar path.
     scalar_plan
         Pre-computed IR rewrites for the scalar Over path, built at planning
@@ -878,7 +879,7 @@ async def over_actor(
                 forward_shuffle_collective_id=collective_ids[0],
                 return_shuffle_collective_id=collective_ids[1],
                 target_partition_size=target_partition_size,
-                sample_chunk_count=sample_chunk_count,
+                sample_byte_count=sample_byte_count,
             )
 
 
@@ -896,8 +897,8 @@ def _(
             "shuffle. Enable it via StreamingExecutor(dynamic_planning=...) "
             "or the --dynamic-planning CLI flag."
         )
-    sample_chunk_count = (
-        executor.dynamic_planning.sample_chunk_count
+    sample_byte_count = (
+        executor.dynamic_planning.sample_byte_count
         if executor.dynamic_planning is not None
         else 0
     )
@@ -913,7 +914,7 @@ def _(
             channels[ir.children[0]].reserve_output_slot(),
             collective_ids,
             executor.target_partition_size,
-            sample_chunk_count,
+            sample_byte_count,
             scalar_plan,
         )
     ]

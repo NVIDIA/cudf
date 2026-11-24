@@ -909,11 +909,9 @@ def test_orc_bool_encode(null_row):
     assert_eq(expected.to_pandas(nullable=True), got)
 
 
-@pytest.mark.parametrize("offset", [0, 3])
-def test_orc_nested_boolean_present_index(offset):
-    # cuDF's nested null decoder reads by stripe, even with use_index=True.
-    # Check the emitted positions against PRESENT itself instead. This fixture
-    # uses NONE compression, following https://orc.apache.org/specification/ORCv1/.
+def _check_orc_present_index(data, stride, child_id, groups):
+    # Seek to each rowgroup using the bit-packed PRESENT stream's own index.
+    # PyArrow's full read checks values but does not exercise those positions.
     def read_varint(stream):
         value = 0
         for shift in range(0, 70, 7):
@@ -964,23 +962,6 @@ def test_orc_nested_boolean_present_index(offset):
                 decoded.extend(literal)
         return np.unpackbits(np.frombuffer(decoded, dtype=np.uint8))
 
-    stride = 512
-    rows = 3 * stride + 1
-    child_offsets = [i + i // 7 for i in range(rows + offset + 1)]
-    children = [
-        None if (i * 13 + i // 11) % 17 < 3 else (i // 3) % 5 == 1
-        for i in range(child_offsets[-1])
-    ]
-    nested = [children[begin:end] for begin, end in pairwise(child_offsets)]
-    source = pa.table({"col": pa.array(nested, type=pa.list_(pa.bool_()))})
-    frame = cudf.DataFrame.from_arrow(source).iloc[offset:]
-    buffer = BytesIO()
-    frame.to_orc(
-        buffer, index=False, compression=None, row_index_stride=stride
-    )
-    data = buffer.getvalue()
-    assert orc.ORCFile(BytesIO(data)).read().equals(source.slice(offset))
-
     postscript_start = len(data) - 1 - data[-1]
     postscript = read_fields(data[postscript_start:-1], {1, 2})
     assert postscript[2] == [0]  # CompressionKind.NONE
@@ -1003,17 +984,14 @@ def test_orc_nested_boolean_present_index(offset):
         stream_start = stream_end
     assert stream_start == stripe_footer_start
 
-    # Preorder type IDs: root=0, LIST=1, BOOLEAN child=2.
     # Stream kinds: PRESENT=0, ROW_INDEX=6.
-    present = streams[2, 0]
-    entries = read_fields(streams[2, 6], {1})[1]
-    assert len(entries) == (rows + stride - 1) // stride
-    nested = nested[offset:]
-    expected = np.array([value is not None for row in nested for value in row])
+    present = streams[child_id, 0]
+    entries = read_fields(streams[child_id, 6], {1})[1]
+    assert len(entries) == len(groups)
+    expected = np.concatenate(groups)
     np.testing.assert_array_equal(
         decode_byte_rle(present)[: len(expected)], expected
     )
-    bit_offsets = []
     for rowgroup, entry in enumerate(entries):
         packed = read_fields(entry, {1})[1][0]
         positions = BytesIO(packed)
@@ -1022,15 +1000,89 @@ def test_orc_nested_boolean_present_index(offset):
         )
         assert 0 <= byte_offset < len(present)
         assert 0 <= bit_offset < 8
-        bit_offsets.append(bit_offset)
-        begin = sum(map(len, nested[: rowgroup * stride]))
-        end = sum(map(len, nested[: (rowgroup + 1) * stride]))
+        expected_group = groups[rowgroup]
         decoded = decode_byte_rle(present[byte_offset:])
         start_bit = run_offset * 8 + bit_offset
         np.testing.assert_array_equal(
-            decoded[start_bit : start_bit + end - begin], expected[begin:end]
+            decoded[start_bit : start_bit + len(expected_group)],
+            expected_group,
         )
-    assert any(bit_offsets), "The fixture must exercise a partial PRESENT byte"
+
+
+def _write_orc_and_check_rows(source, offset, stride):
+    buffer = BytesIO()
+    cudf.DataFrame.from_arrow(source).iloc[offset:].to_orc(
+        buffer, index=False, compression=None, row_index_stride=stride
+    )
+    data = buffer.getvalue()
+    assert orc.ORCFile(BytesIO(data)).read().equals(source.slice(offset))
+    return data
+
+
+@pytest.mark.parametrize("offset", [0, 3])
+def test_orc_nested_boolean_present_index(offset):
+    stride = 512
+    rows = 3 * stride + 1
+    child_offsets = [i + i // 7 for i in range(rows + offset + 1)]
+    children = [
+        None if (i * 13 + i // 11) % 17 < 3 else (i // 3) % 5 == 1
+        for i in range(child_offsets[-1])
+    ]
+    nested = [children[begin:end] for begin, end in pairwise(child_offsets)]
+    source = pa.table({"col": pa.array(nested, type=pa.list_(pa.bool_()))})
+    data = _write_orc_and_check_rows(source, offset, stride)
+    nested = nested[offset:]
+    groups = [
+        [v is not None for row in nested[i : i + stride] for v in row]
+        for i in range(0, rows, stride)
+    ]
+    assert len(groups[0]) % 8  # Exercise a rowgroup starting inside a byte.
+    _check_orc_present_index(data, stride, 2, groups)
+
+
+def test_orc_short_rowgroups_share_present_byte():
+    stride = 10000
+    lists = [
+        [0, None, 2, 3, 4],
+        [5, None],
+        [7, 8, 9, 10, None, 12, 13, 14, 15, None],
+    ]
+    rows = [[] for _ in range(len(lists) * stride)]
+    rows[::stride] = lists
+    source = pa.table({"col": pa.array(rows, type=pa.list_(pa.int32()))})
+    data = _write_orc_and_check_rows(source, 0, stride)
+    _check_orc_present_index(
+        data, stride, 2, [[v is not None for v in row] for row in lists]
+    )
+
+
+def test_orc_sliced_nullable_struct_present_indexes():
+    stride = 10000
+    count = 2 * stride + 1
+    children = [None if i % 5 == 1 else i for i in range(count)]
+    parents = [i not in (0, 17000) for i in range(count)]
+    structs = pa.StructArray.from_arrays(
+        [
+            pa.array(children, type=pa.int32()),
+            pa.array([None if v is None else bool(v % 2) for v in children]),
+        ],
+        names=["number", "flag"],
+        mask=pa.array([not valid for valid in parents]),
+    )
+    source = pa.table({"col": structs})
+    # The child's coordinates differ from the sliced parent's. Parent row zero
+    # is null and outside the slice, so the first group emits all 10,000 bits.
+    data = _write_orc_and_check_rows(source, 1, stride)
+    groups = [
+        [
+            children[i] is not None
+            for i in range(start, start + stride)
+            if parents[i]
+        ]
+        for start in (1, 1 + stride)
+    ]
+    for child_id in (2, 3):
+        _check_orc_present_index(data, stride, child_id, groups)
 
 
 def test_nanoseconds_overflow():

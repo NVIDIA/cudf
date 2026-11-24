@@ -725,29 +725,18 @@ struct aligned_rowgroup {
 };
 
 std::vector<std::vector<aligned_rowgroup>> calculate_aligned_rowgroup_bounds(
-  orc_table_view const& orc_table,
-  file_segmentation const& segmentation,
-  bool has_boolean,
-  cuda::stream_ref stream)
+  orc_table_view const& orc_table, file_segmentation const& segmentation, cuda::stream_ref stream)
 {
   if (segmentation.num_rowgroups() == 0) return {};
 
-  auto d_pd_set_counts_data =
-    cuda::device_buffer<cudf::size_type>(stream,
-                                         cudf::get_current_device_resource_ref(),
-                                         orc_table.num_columns() * segmentation.num_rowgroups(),
-                                         cuda::no_init);
-  auto const d_pd_set_counts =
-    device_2dspan<cudf::size_type>{d_pd_set_counts_data, orc_table.num_columns()};
-  auto d_boolean_present_counts_data = cuda::device_buffer<cudf::size_type>(
-    stream,
-    cudf::get_current_device_resource_ref(),
-    has_boolean ? orc_table.num_columns() * segmentation.num_rowgroups() : 0,
-    cuda::no_init);
-  auto const d_boolean_present_counts =
-    device_2dspan<cudf::size_type>{d_boolean_present_counts_data, orc_table.num_columns()};
-  reduce_pushdown_masks(
-    orc_table.d_columns, segmentation.rowgroups, d_pd_set_counts, d_boolean_present_counts, stream);
+  auto bit_counts_data =
+    cuda::device_buffer<rowgroup_bit_counts>(stream,
+                                             cudf::get_current_device_resource_ref(),
+                                             orc_table.num_columns() * segmentation.num_rowgroups(),
+                                             cuda::no_init);
+  auto const bit_counts =
+    device_2dspan<rowgroup_bit_counts>{bit_counts_data, orc_table.num_columns()};
+  count_rowgroup_bits(orc_table.d_columns, segmentation.rowgroups, bit_counts, stream);
 
   auto aligned_rgs = hostdevice_2dvector<aligned_rowgroup>(segmentation.num_rowgroups(),
                                                            orc_table.num_columns(),
@@ -769,24 +758,24 @@ std::vector<std::vector<aligned_rowgroup>> calculate_aligned_rowgroup_bounds(
     orc_table.num_columns() * segmentation.num_stripes(),
     [columns = device_span<orc_column_device_view const>{orc_table.d_columns},
      stripes = device_span<stripe_rowgroups const>{d_stripes},
-     d_pd_set_counts,
-     d_boolean_present_counts,
+     bit_counts,
      out_rowgroups = aligned_rgs.device_view()] __device__(auto& idx) -> void {
       uint32_t const col_idx = idx / stripes.size();
       auto const stripe_idx  = idx % stripes.size();
       auto const stripe      = stripes[stripe_idx];
       auto const column      = columns[col_idx];
-      if (column.type().id() == type_id::BOOL8) {
-        auto const parent_mask = column.parent_index.has_value()
-                                   ? columns[column.parent_index.value()].pushdown_mask
-                                   : nullptr;
-        auto data_begin        = out_rowgroups[stripe.first][col_idx].data.begin;
-        size_type remainder    = 0;
+      auto const is_boolean  = column.type().id() == type_id::BOOL8;
+      auto const parent_mask = column.parent_index.has_value()
+                                 ? columns[column.parent_index.value()].pushdown_mask
+                                 : nullptr;
+      if (is_boolean) {
+        auto data_begin     = out_rowgroups[stripe.first][col_idx].data.begin;
+        size_type remainder = 0;
         for (auto rg_idx = stripe.first; rg_idx < stripe.first + stripe.size; ++rg_idx) {
           auto& rg               = out_rowgroups[rg_idx][col_idx];
-          auto const valid_count = d_pd_set_counts[rg_idx][col_idx];
+          auto const valid_count = bit_counts[rg_idx][col_idx].data;
           rg.data_bit_offset     = remainder;
-          remainder              = (remainder + valid_count) % 8;
+          remainder              = (remainder + valid_count % 8) % 8;
           auto data_end          = rg.data.end;
           if (rg_idx + 1 < stripe.first + stripe.size and remainder != 0) {
             // DATA chunks contain complete bytes. Leave the trailing valid values to the next
@@ -809,139 +798,36 @@ std::vector<std::vector<aligned_rowgroup>> calculate_aligned_rowgroup_bounds(
           rg.data    = {data_begin, data_end};
           data_begin = data_end;
         }
-
-        // PRESENT has one bit per row selected by the parent, including this column's nulls.
-        // Its byte boundaries can therefore differ from BOOLEAN DATA boundaries. Keep both
-        // indexes at the containing byte instead of borrowing bits from the next rowgroup.
-        auto present_begin = out_rowgroups[stripe.first][col_idx].present.begin;
-        remainder          = 0;
-        for (auto rg_idx = stripe.first; rg_idx < stripe.first + stripe.size; ++rg_idx) {
-          auto& rg              = out_rowgroups[rg_idx][col_idx];
-          auto const count      = d_boolean_present_counts[rg_idx][col_idx];
-          rg.present_bit_offset = remainder;
-          remainder             = (remainder + count) % 8;
-          auto present_end      = rg.present.end;
-          if (rg_idx + 1 < stripe.first + stripe.size and remainder != 0) {
-            if (count < remainder) {
-              present_end = present_begin;
-            } else {
-              auto to_leave = remainder;
-              while (to_leave != 0) {
-                --present_end;
-                // Match the PRESENT encoder: the parent mask uses child row coordinates,
-                // without the offset applied when reading the column's own null mask.
-                if (bit_value_or(parent_mask, present_end, true)) { --to_leave; }
-              }
-            }
-          }
-          rg.present    = {present_begin, present_end};
-          present_begin = present_end;
-        }
-        return;
       }
-      // PRESENT masks of root columns are already byte aligned.
-      if (not column.parent_index.has_value()) return;
+      // Root PRESENT streams already start each rowgroup on a byte boundary.
+      if (not column.parent_index.has_value()) { return; }
 
-      auto const parent_col_idx = column.parent_index.value();
-      auto const parent_column  = columns[parent_col_idx];
-      auto const stripe_end     = stripe.first + stripe.size;
-
-      auto seek_last_borrow_rg = [&](auto rg_idx, size_type& bits_to_borrow) {
-        auto curr         = rg_idx + 1;
-        auto curr_rg_size = [&]() {
-          return parent_column.pushdown_mask != nullptr
-                   ? d_pd_set_counts[curr][parent_col_idx]
-                   : out_rowgroups[curr][col_idx].present.size();
-        };
-        while (curr < stripe_end and curr_rg_size() <= bits_to_borrow) {
-          auto const curr_size = curr_rg_size();
-          // All bits from rowgroup borrowed, make the rowgroup empty
-          out_rowgroups[curr][col_idx].present.begin = out_rowgroups[curr][col_idx].present.end;
-          bits_to_borrow -= curr_size;
-          ++curr;
-        }
-        return curr;
-      };
-
-      int previously_borrowed = 0;
-      for (auto rg_idx = stripe.first; rg_idx + 1 < stripe_end; ++rg_idx) {
-        auto& rg = out_rowgroups[rg_idx][col_idx].present;
-
-        if (parent_column.pushdown_mask == nullptr) {
-          // No pushdown mask, all null mask bits will be encoded
-          // Align on rowgroup size (can be misaligned for list children)
-          if (rg.size() % 8) {
-            auto bits_to_borrow           = 8 - rg.size() % 8;
-            auto const last_borrow_rg_idx = seek_last_borrow_rg(rg_idx, bits_to_borrow);
-            if (last_borrow_rg_idx == stripe_end) {
-              // Didn't find enough bits to borrow, move the rowgroup end to the stripe end
-              rg.end = out_rowgroups[stripe_end - 1][col_idx].present.end;
-              // Done with this stripe
-              break;
+      // Leave a partial PRESENT byte in the next chunk. The row index can then point to
+      // that chunk's first byte, even when several short rowgroups share the same byte.
+      auto present_begin  = out_rowgroups[stripe.first][col_idx].present.begin;
+      size_type remainder = 0;
+      for (auto rg_idx = stripe.first; rg_idx < stripe.first + stripe.size; ++rg_idx) {
+        auto& rg = out_rowgroups[rg_idx][col_idx];
+        // The parent pushdown mask determines which child rows have PRESENT bits.
+        auto const count      = bit_counts[rg_idx][col_idx].present;
+        rg.present_bit_offset = remainder;
+        remainder             = (remainder + count % 8) % 8;
+        auto present_end      = rg.present.end;
+        if (rg_idx + 1 < stripe.first + stripe.size and remainder != 0) {
+          if (count < remainder) {
+            present_end = present_begin;
+          } else if (parent_mask == nullptr) {
+            present_end -= remainder;
+          } else {
+            auto to_leave = remainder;
+            while (to_leave != 0) {
+              --present_end;
+              if (bit_value_or(parent_mask, present_end, true)) { --to_leave; }
             }
-            auto& last_borrow_rg = out_rowgroups[last_borrow_rg_idx][col_idx].present;
-            last_borrow_rg.begin += bits_to_borrow;
-            rg.end = last_borrow_rg.begin;
-            // Skip the rowgroups we emptied in the loop
-            rg_idx = last_borrow_rg_idx - 1;
           }
-        } else {
-          // pushdown mask present; null mask bits w/ set pushdown mask bits will be encoded
-          // Use the number of set bits in pushdown mask as size
-          auto bits_to_borrow = [&]() {
-            auto const parent_valid_count = d_pd_set_counts[rg_idx][parent_col_idx];
-            if (parent_valid_count < previously_borrowed) {
-              // Borrow to make an empty rowgroup
-              return previously_borrowed - parent_valid_count;
-            }
-            auto const misalignment = (parent_valid_count - previously_borrowed) % 8;
-            return (8 - misalignment) % 8;
-          }();
-
-          if (bits_to_borrow == 0) {
-            // Didn't borrow any bits for this rowgroup
-            previously_borrowed = 0;
-            continue;
-          }
-
-          // Find rowgroup in which we finish the search for missing bits
-          auto const last_borrow_rg_idx = seek_last_borrow_rg(rg_idx, bits_to_borrow);
-          if (last_borrow_rg_idx == stripe_end) {
-            // Didn't find enough bits to borrow, move the rowgroup end to the stripe end
-            rg.end = out_rowgroups[stripe_end - 1][col_idx].present.end;
-            // Done with this stripe
-            break;
-          }
-
-          auto& last_borrow_rg = out_rowgroups[last_borrow_rg_idx][col_idx].present;
-          // First row that does not need to be borrowed
-          auto borrow_end = last_borrow_rg.begin;
-
-          // Adjust the number of bits to borrow in the next iteration
-          previously_borrowed = bits_to_borrow;
-
-          // Find word in which we finish the search for missing bits (guaranteed to be available)
-          while (bits_to_borrow != 0) {
-            auto const mask = cudf::detail::get_mask_offset_word(
-              parent_column.pushdown_mask, 0, borrow_end, borrow_end + 32);
-            auto const valid_in_word = __popc(mask);
-
-            if (valid_in_word > bits_to_borrow) break;
-            bits_to_borrow -= valid_in_word;
-            borrow_end += 32;
-          }
-
-          // Find the last of the missing bits (guaranteed to be available)
-          while (bits_to_borrow != 0) {
-            if (bit_is_set(parent_column.pushdown_mask, borrow_end)) { --bits_to_borrow; };
-            ++borrow_end;
-          }
-
-          last_borrow_rg.begin = borrow_end;
-          rg.end               = borrow_end;
-          // Skip the rowgroups we emptied in the loop
-          rg_idx = last_borrow_rg_idx - 1;
         }
+        rg.present    = {present_begin, present_end};
+        present_begin = present_end;
       }
     });
 
@@ -999,29 +885,23 @@ std::pair<encoded_data, std::vector<extent_info>> encode_columns(
   hostdevice_2dvector<encoder_chunk> chunks(
     num_columns, segmentation.num_rowgroups(), stream, cudf::get_current_device_resource_ref());
 
-  auto const has_boolean =
-    std::any_of(orc_table.columns.begin(), orc_table.columns.end(), [](auto const& column) {
-      return column.orc_kind() == TypeKind::BOOLEAN;
-    });
-  auto const aligned_rowgroups =
-    calculate_aligned_rowgroup_bounds(orc_table, segmentation, has_boolean, stream);
+  auto const aligned_rowgroups = calculate_aligned_rowgroup_bounds(orc_table, segmentation, stream);
 
-  std::vector<std::vector<rowgroup_bit_offsets>> index_offsets;
-  if (has_boolean) {
-    index_offsets.resize(num_columns);
-    for (auto const& column : orc_table.columns) {
-      if (column.orc_kind() != TypeKind::BOOLEAN) { continue; }
-      auto& offsets = index_offsets[column.index()];
-      offsets.reserve(segmentation.num_rowgroups());
-      std::transform(cuda::counting_iterator<size_t>{0},
-                     cuda::counting_iterator{segmentation.num_rowgroups()},
-                     std::back_inserter(offsets),
-                     [&](auto rg_idx) {
-                       auto const& aligned = aligned_rowgroups[rg_idx][column.index()];
-                       return rowgroup_bit_offsets{aligned.present_bit_offset,
-                                                   aligned.data_bit_offset};
-                     });
-    }
+  std::vector<std::vector<rowgroup_bit_offsets>> index_offsets(num_columns);
+  for (auto const& column : orc_table.columns) {
+    auto const nested_present =
+      column.is_child() and streams.id(column.index() * CI_NUM_STREAMS + CI_PRESENT) >= 0;
+    if (column.orc_kind() != TypeKind::BOOLEAN and not nested_present) { continue; }
+    auto& offsets = index_offsets[column.index()];
+    offsets.reserve(segmentation.num_rowgroups());
+    std::transform(cuda::counting_iterator<size_t>{0},
+                   cuda::counting_iterator{segmentation.num_rowgroups()},
+                   std::back_inserter(offsets),
+                   [&](auto rg_idx) {
+                     auto const& aligned = aligned_rowgroups[rg_idx][column.index()];
+                     return rowgroup_bit_offsets{aligned.present_bit_offset,
+                                                 aligned.data_bit_offset};
+                   });
   }
 
   // Initialize column chunks' descriptions
@@ -1749,8 +1629,8 @@ encoded_footer_statistics finish_statistic_blobs(Footer const& footer,
  * @param[in] columns List of columns
  * @param[in] segmentation stripe and rowgroup ranges
  * @param[in] enc_streams List of encoder chunk streams [column][rowgroup]
- * @param[in] index_offsets BOOLEAN positions within the first stream bytes, or empty for other
- * columns
+ * @param[in] index_offsets Bit positions within the first PRESENT and BOOLEAN DATA bytes, or empty
+ * for byte-aligned columns
  * @param[in] strm_desc List of stream descriptors
  * @param[in] comp_res Output status for compressed streams
  * @param[in] rg_stats row group level statistics
@@ -3022,7 +2902,7 @@ void writer::impl::write_orc_data_to_sink(encoded_data const& enc_data,
     size_type const num_index_streams = (orc_table.num_columns() + 1);
     for (size_type stream_id = 0; stream_id < num_index_streams; ++stream_id) {
       auto const offsets =
-        stream_id == 0 or enc_data.index_offsets.empty()
+        stream_id == 0
           ? std::span<rowgroup_bit_offsets const>{}
           : std::span<rowgroup_bit_offsets const>{enc_data.index_offsets[stream_id - 1]};
       write_index_stream(stripe_id,

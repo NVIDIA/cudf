@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2022-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -52,7 +52,8 @@ public class ParquetChunkedReader implements AutoCloseable {
    */
   public ParquetChunkedReader(long chunkSizeByteLimit, long passReadLimit, ParquetOptions opts, File filePath) {
     long[] handles = create(chunkSizeByteLimit, passReadLimit, opts.getIncludeColumnNames(), opts.getReadBinaryAsString(),
-        filePath.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId());
+        filePath.getAbsolutePath(), null, opts.timeUnit().typeId.getNativeId(),
+        opts.isOutputDictColumns());
     handle = handles[0];
     if (handle == 0) {
       throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -92,7 +93,7 @@ public class ParquetChunkedReader implements AutoCloseable {
                               long offset, long len) {
     long[] addrsSizes = new long[]{ buffer.getAddress() + offset, len };
     long[] handles = create(chunkSizeByteLimit,passReadLimit,  opts.getIncludeColumnNames(), opts.getReadBinaryAsString(), null,
-        addrsSizes, opts.timeUnit().typeId.getNativeId());
+        addrsSizes, opts.timeUnit().typeId.getNativeId(), opts.isOutputDictColumns());
     handle = handles[0];
     if (handle == 0) {
       throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -119,7 +120,7 @@ public class ParquetChunkedReader implements AutoCloseable {
       addrsSizes[(i * 2) + 1] = buffers[i].getLength();
     }
     long[] handles = create(chunkSizeByteLimit,passReadLimit,  opts.getIncludeColumnNames(), opts.getReadBinaryAsString(), null,
-        addrsSizes, opts.timeUnit().typeId.getNativeId());
+        addrsSizes, opts.timeUnit().typeId.getNativeId(), opts.isOutputDictColumns());
     handle = handles[0];
     if (handle == 0) {
       throw new IllegalStateException("Cannot create native chunked Parquet reader object.");
@@ -144,7 +145,7 @@ public class ParquetChunkedReader implements AutoCloseable {
     try {
       handle = createWithDataSource(chunkSizeByteLimit, opts.getIncludeColumnNames(),
               opts.getReadBinaryAsString(), opts.timeUnit().typeId.getNativeId(),
-              dataSourceHandle);
+              dataSourceHandle, opts.isOutputDictColumns());
       passed = true;
     } finally {
       if (!passed) {
@@ -233,13 +234,16 @@ public class ParquetChunkedReader implements AutoCloseable {
    * @param filePath Full path of the file to read, or given as null if reading from a buffer.
    * @param bufferAddrsSizes The address and size pairs of buffers to read from, or null if we are not using buffers.
    * @param timeUnit Return type of time unit for timestamps.
+   * @param outputDictColumns Whether to return flat STRING columns as DICTIONARY32.
    */
   private static native long[] create(long chunkSizeByteLimit, long passReadLimit,
                                       String[] filterColumnNames, boolean[] binaryToString,
-                                      String filePath, long[] bufferAddrsSizes, int timeUnit);
+                                      String filePath, long[] bufferAddrsSizes, int timeUnit,
+                                      boolean outputDictColumns);
 
   private static native long createWithDataSource(long chunkedSizeByteLimit,
-      String[] filterColumnNames, boolean[] binaryToString, int timeUnit, long dataSourceHandle);
+      String[] filterColumnNames, boolean[] binaryToString, int timeUnit, long dataSourceHandle,
+      boolean outputDictColumns);
 
   private static native boolean hasNext(long handle);
 

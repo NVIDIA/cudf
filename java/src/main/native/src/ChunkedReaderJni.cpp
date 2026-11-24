@@ -33,7 +33,8 @@ Java_ai_rapids_cudf_ParquetChunkedReader_create(JNIEnv* env,
                                                 jbooleanArray j_col_binary_read,
                                                 jstring inp_file_path,
                                                 jlongArray addrs_sizes,
-                                                jint unit)
+                                                jint unit,
+                                                jboolean output_dict_columns)
 {
   JNI_NULL_CHECK(env, j_col_binary_read, "Null col_binary_read", nullptr);
   bool read_buffer = true;
@@ -82,6 +83,7 @@ Java_ai_rapids_cudf_ParquetChunkedReader_create(JNIEnv* env,
                              .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
                              // Ignore any missing projected column(s) by default
                              .ignore_missing_columns(true)
+                             .output_dict_columns(output_dict_columns)
                              .build();
     n_addrs_sizes.cancel();
     n_col_binary_read.cancel();
@@ -104,7 +106,8 @@ Java_ai_rapids_cudf_ParquetChunkedReader_createWithDataSource(JNIEnv* env,
                                                               jobjectArray filter_col_names,
                                                               jbooleanArray j_col_binary_read,
                                                               jint unit,
-                                                              jlong ds_handle)
+                                                              jlong ds_handle,
+                                                              jboolean output_dict_columns)
 {
   JNI_NULL_CHECK(env, j_col_binary_read, "Null col_binary_read", 0);
   JNI_NULL_CHECK(env, ds_handle, "Null DataSouurce", 0);
@@ -132,6 +135,7 @@ Java_ai_rapids_cudf_ParquetChunkedReader_createWithDataSource(JNIEnv* env,
                              .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
                              // Ignore any missing projected column(s) by default
                              .ignore_missing_columns(true)
+                             .output_dict_columns(output_dict_columns)
                              .build();
 
     return reinterpret_cast<jlong>(

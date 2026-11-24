@@ -14,6 +14,21 @@ include(rapids-test)
 rapids_test_init()
 rapids_cmake_install_lib_dir(lib_dir)
 
+if(CUDF_PRIVATE_TEST_LIBRARIES)
+  add_library(cudf_test_startup SHARED utilities/testing_main.cpp)
+  target_compile_features(cudf_test_startup PRIVATE cxx_std_20)
+  target_compile_definitions(cudf_test_startup PUBLIC CUDF_USE_PRIVATE_TEST_STARTUP)
+  target_link_libraries(cudf_test_startup PRIVATE cudftestutil_internal)
+  target_link_options(cudf_test_startup PRIVATE "LINKER:-z,defs")
+  set_target_properties(cudf_test_startup PROPERTIES INSTALL_RPATH "\$ORIGIN")
+  install(
+    TARGETS cudf_test_startup
+    LIBRARY DESTINATION ${lib_dir}
+            COMPONENT testing
+            EXCLUDE_FROM_ALL
+  )
+endif()
+
 # ##################################################################################################
 # **Note about test memory usage:**
 #
@@ -81,8 +96,9 @@ function(ConfigureTest CMAKE_TEST_NAME)
   )
 
   target_link_libraries(
-    ${CMAKE_TEST_NAME} PRIVATE cudftestutil_internal nvtx3::nvtx3-cpp
-                               $<TARGET_NAME_IF_EXISTS:conda_env> "${_CUDF_TEST_EXTRA_LIBS}"
+    ${CMAKE_TEST_NAME}
+    PRIVATE cudftestutil_internal nvtx3::nvtx3-cpp $<TARGET_NAME_IF_EXISTS:conda_env>
+            "${_CUDF_TEST_EXTRA_LIBS}" $<TARGET_NAME_IF_EXISTS:cudf_test_startup>
   )
   rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)
   rapids_test_add(

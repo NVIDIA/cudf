@@ -633,9 +633,8 @@ precompile_string_kernel_fragments()
 
 # Function-dispatch fragments retain device functions as LTO IR so nvJitLink can optimize the schema
 # wrapper and type-specific leaves together at runtime.
-foreach(
-  category IN ITEMS murmurhash3_x86_32 spark_murmurhash3_x86_32 murmurhash3_x64_128 xxhash_32
-                    xxhash_64 hash_combine
+foreach(category IN ITEMS murmurhash3_x86_32 spark_murmurhash3_x86_32 murmurhash3_x64_128 xxhash_32
+                          xxhash_64 hash_combine
 )
   add_fragment(
     cudf_fragments FRAGMENT row_operator_${category}_lto_ir SOURCE

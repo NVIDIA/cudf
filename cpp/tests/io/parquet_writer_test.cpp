@@ -1044,8 +1044,8 @@ TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
      {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", nullptr, false},
      // 0x7e is the largest 7 bit byte that can be incremented
      {"~~~~~~~~~", "~~~~~~~~", "~~~~~~~\x7f", false},
-     // max binary. no valid max
-     {"\xff\xff\xff\xff\xff\xff\xff\xff\xff", "\xf7\xbf\xbf\xbf", nullptr, true},
+     // max binary. no valid max, and the min is the sentinel so is not exact
+     {"\xff\xff\xff\xff\xff\xff\xff\xff\xff", "\xf7\xbf\xbf\xbf", nullptr, false},
      // in-range 2-byte UTF8 (U+00E9)
      {"ééééé", "éééé", "éééê", false},
      // exactly the truncate length, so not truncated
@@ -1082,8 +1082,8 @@ TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
       false},
      // U+10FFFF after ASCII. the character that goes past U+10FFFF is dropped
      {"ab\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf", "ab\xf4\x8f\xbf\xbf", "ac", false},
-     // max 4-byte UTF8 (U+1FFFFF). no valid max
-     {"\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf", "\xf7\xbf\xbf\xbf", nullptr, true},
+     // max 4-byte UTF8 (U+1FFFFF). no valid max, and the min is the sentinel so is not exact
+     {"\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf", "\xf7\xbf\xbf\xbf", nullptr, false},
      // max 2-byte UTF8 (U+07FF) after ASCII. the overflowed character is dropped rather than left
      // as overlong "\xc0\x80"
      {"aaaaaa\xdf\xbf\xdf\xbf", "aaaaaa\xdf\xbf", "aaaaab", false},

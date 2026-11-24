@@ -2801,15 +2801,19 @@ using extremum = cuda::std::pair<void const*, uint32_t>;
 
 /**
  * @brief Returns false if any UTF-8 character in the buffer encodes a surrogate (U+D800-U+DFFF)
- * or a code point above U+10FFFF.
+ * or a code point above U+10FFFF, neither of which is valid UTF-8.
+ *
+ * Both are identified by a character's lead byte and the byte following it.
  */
 __device__ bool is_valid_code_point(unsigned char const* ptr, int32_t len)
 {
   for (int32_t i = 0; i < len; i++) {
     auto const next = (i + 1 < len) ? ptr[i + 1] : 0;
-    if ((ptr[i] == 0xED and next >= 0xA0) or ptr[i] >= 0xF5 or (ptr[i] == 0xF4 and next >= 0x90)) {
-      return false;
-    }
+    // ED A0 to ED BF start the surrogates U+D800-U+DFFF
+    auto const is_surrogate = ptr[i] == 0xED and next >= 0xA0;
+    // F4 90 to F4 BF start U+110000-U+13FFFF, and bytes F5 and above never appear in valid UTF-8
+    auto const is_above_max = (ptr[i] == 0xF4 and next >= 0x90) or ptr[i] >= 0xF5;
+    if (is_surrogate or is_above_max) { return false; }
   }
   return true;
 }
@@ -3020,7 +3024,12 @@ __device__ uint8_t* EncodeStatistics(uint8_t* start,
     if (max.has_value()) {
       encoder.field_bool(7, not is_truncated(s->max_value, dtype, truncate_length));
     }
-    encoder.field_bool(8, not is_truncated(s->min_value, dtype, truncate_length));
+    // A string min that never dropped below the initial max string sentinel is not a column value
+    auto const is_min_sentinel =
+      dtype == dtype_string and
+      static_cast<string_view>(s->min_value.str_val) == string_view::max();
+    encoder.field_bool(
+      8, not is_min_sentinel and not is_truncated(s->min_value, dtype, truncate_length));
   }
   encoder.end(&end);
   return end;

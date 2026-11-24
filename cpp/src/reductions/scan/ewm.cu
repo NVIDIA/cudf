@@ -236,7 +236,7 @@ cuda::device_buffer<T> compute_ewma_noadjust(column_view const& input,
   cuda::device_buffer<pair_type<T>> pairs(
     stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
   cuda::device_buffer<cudf::size_type> nullcnt =
-    [&input, stream]() -> cuda::device_buffer<cudf::size_type> {
+    [&input, stream, &mr]() -> cuda::device_buffer<cudf::size_type> {
     if (input.has_nulls()) {
       return null_roll_up(input, stream, mr.as_temporary());
     } else {

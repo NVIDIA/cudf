@@ -167,23 +167,38 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
-  // This is a regression test for a ptxas codegen bug (not a race) and for the page-header
-  // overflow path that is mostly host logic. It takes hours when racecheck is used.
+  // This is a regression test for a ptxas codegen bug (not a race) and for page-header
+  // address-buffer overflow. It takes hours when racecheck is used.
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
   // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
   // counting page headers without an offset index (1M).
-  constexpr cudf::size_type num_rows    = 300'000;
-  constexpr cudf::size_type num_columns = 4;
+  // More column chunks parallelize page setup and header discovery without reducing page coverage.
+  constexpr cudf::size_type source_rows       = 300'000;
+  constexpr cudf::size_type num_columns       = 64;
+  constexpr cudf::size_type slices_per_source = num_columns / 4;
+  constexpr cudf::size_type num_rows          = source_rows / slices_per_source;
+  static_assert(source_rows % slices_per_source == 0);
 
   std::vector<std::string> values;
-  values.reserve(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
+  values.reserve(source_rows);
+  for (cudf::size_type i = 0; i < source_rows; ++i) {
     values.push_back(std::to_string(i) + std::string(static_cast<std::size_t>(i % 12), 'a'));
   }
   cudf::test::strings_column_wrapper strings(values.begin(), values.end());
-  cudf::table_view const input{std::vector<cudf::column_view>(num_columns, strings)};
+  // Reuse every original string four times, as before, while shortening each column chunk.
+  std::vector<cudf::size_type> boundaries;
+  for (cudf::size_type i = 0; i < slices_per_source; ++i) {
+    boundaries.push_back(i * num_rows);
+    boundaries.push_back((i + 1) * num_rows);
+  }
+  auto const slices = cudf::slice(strings, boundaries);
+  std::vector<cudf::column_view> columns;
+  for (cudf::size_type i = 0; i < num_columns; ++i) {
+    columns.push_back(slices[i % slices_per_source]);
+  }
+  cudf::table_view const input{columns};
 
   auto const filepath = temp_env->get_temp_filepath("ManyTinyStringPages.parquet");
   auto const write_options =
@@ -1244,6 +1259,63 @@ TEST_F(ParquetReaderTest, SelectColumnByMissingFieldIds)
                            .build();
     EXPECT_THROW(cudf::io::read_parquet(options), std::invalid_argument);
   }
+}
+
+TEST_F(ParquetReaderTest, TimestampTypeMustHaveSecondBasedUnit)
+{
+  // The reader rescales timestamps by a clock rate in ticks per second, which TIMESTAMP_DAYS
+  // cannot express: a request for it used to decode seconds as 8-byte values into a column
+  // allocated at 4 bytes per row.
+  auto options = cudf::io::parquet_reader_options{};
+  for (auto const id : {cudf::type_id::EMPTY,
+                        cudf::type_id::TIMESTAMP_SECONDS,
+                        cudf::type_id::TIMESTAMP_MILLISECONDS,
+                        cudf::type_id::TIMESTAMP_MICROSECONDS,
+                        cudf::type_id::TIMESTAMP_NANOSECONDS}) {
+    EXPECT_NO_THROW(options.set_timestamp_type(cudf::data_type{id}));
+    EXPECT_EQ(options.get_timestamp_type().id(), id);
+  }
+  for (auto const id :
+       {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), std::invalid_argument);
+  }
+  // A rejected type leaves the previous one in place.
+  EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
+  EXPECT_THROW(cudf::io::parquet_reader_options_builder{}.timestamp_type(
+                 cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
+               std::invalid_argument);
+}
+
+TEST_F(ParquetReaderTest, ReadTimestampsAsSeconds)
+{
+  // SupportedTimestampTypes (parquet_common.hpp) has no seconds member, so this is the read
+  // coverage for the TIMESTAMP_SECONDS target: each finer unit is floored to whole seconds,
+  // negative values included.
+  auto const check = [&]<typename Timestamp>() {
+    constexpr int64_t per_second = Timestamp::period::den;
+    std::vector<int64_t> const ticks{0,
+                                     per_second - 1,
+                                     per_second,
+                                     1'767'314'700 * per_second + per_second / 2,
+                                     -1,
+                                     -per_second,
+                                     -per_second - 1};
+    auto const input = column_wrapper<Timestamp, int64_t>(ticks.begin(), ticks.end());
+    auto const expected =
+      column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 0, 1, 1'767'314'700, -1, -1, -2};
+    auto const filepath =
+      write_parquet_temp_file(cudf::table_view{{input}},
+                              "ReadTimestampsAsSeconds_" + std::to_string(per_second) + ".parquet");
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_SECONDS})
+        .build());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected);
+  };
+  check.template operator()<cudf::timestamp_ms>();
+  check.template operator()<cudf::timestamp_us>();
+  check.template operator()<cudf::timestamp_ns>();
 }
 
 TEST_F(ParquetReaderTest, ColumnSelectionModesAreExclusive)

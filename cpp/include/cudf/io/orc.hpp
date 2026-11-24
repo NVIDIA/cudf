@@ -9,6 +9,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -277,9 +278,13 @@ class orc_reader_options {
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
    *
+   * TIMESTAMP_DAYS resolution is not supported; cast the output column to get it.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
+   *
    * @param type Type of timestamp
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type);
 
   /**
    * @brief Set columns that should be read as 128-bit Decimal
@@ -402,6 +407,8 @@ class orc_reader_options_builder {
 
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
    *
    * @param type Type of timestamp
    * @return this for chaining

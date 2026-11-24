@@ -210,22 +210,33 @@ with set_memory_resource(mr):
 
 ## rapidsmpf Collectives
 
-### Always finish collective inserts
+### Always finish and release collectives
 
 If a shuffle, allgather, or `SparseAlltoall` is never told that insertion
 is finished, the worker aborts. Finish insertion on every path, including
 errors and cancellation. Clear temporary `ChunkStore`s in `finally`.
 
+Release every collective when it is no longer needed. Otherwise its
+unextracted data stays alive until the Python garbage collector frees it,
+which can be long after the query ends. `ShuffleManager`,
+`LocalRepartitioner`, `AllGatherManager`, `ShufflerAsync`, and
+`SparseAlltoall` are async context managers that release on exit. Use
+`contextlib.aclosing` for a bare `AllGather`.
+
 ```python
-# Bad: an exception in the loop skips insert_finished()
-for msg in messages:
-    shuffler.insert(msg)
-shuffler.insert_finished()
+# Bad: an exception in the loop skips insert_finished(), and the shuffler
+# is never released
+shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
+for chunks in partitioned_chunks:
+    shuffle.shuffler.insert(chunks)
+await shuffle.shuffler.insert_finished()
 
 # Good
-async with manager.inserting() as inserter:
-    for msg in messages:
-        inserter.insert(msg)
+async with ShuffleManager(context, comm, num_partitions, collective_id) as shuffle:
+    async with shuffle.inserting() as inserter:
+        for chunk in chunks:
+            await inserter.insert_hash(chunk, columns_to_hash)
+    ...  # extract
 ```
 
 ### Collective IDs are deterministic and per query
@@ -233,7 +244,8 @@ async with manager.inserting() as inserter:
 Register each new collective-using IR type with `ReserveOpIDs`. The number
 of reserved IDs must not depend on `nranks` or runtime state, because every
 rank must get the same IDs. Do not share an ID between concurrent
-collectives, and do not release an ID before its collective completes.
+collectives, and do not release an ID before its collective is closed
+(`aclose()` has returned).
 
 ### Every rank builds and runs the same graph
 
@@ -651,6 +663,12 @@ assert got["a"].flags["SORTED_ASC"]
 - Do not construct engines or communicators in tests, and do not call
   `shutdown()` on fixture engines. Use
   `streaming_engine_factory(StreamingOptions(...))` instead.
+- A test may construct its own engine when it tests the engine itself,
+  such as its constructor, `_reset` or `shutdown`. A test that needs an
+  option fixed when the engine is built, such as `memory_resource_config`,
+  may construct its own `SPMDEngine` in a `with` block. `SPMDEngine` is
+  cheap to create, unlike `RayEngine` and `DaskEngine`, which start worker
+  processes.
 - Use `warns_on_spmd` instead of `pytest.warns` for fallback warnings.
 - Use `timeout_seconds` instead of hard-coded timeouts.
 - Do not `pytest.skip` on setup errors; use `pytest.importorskip` for

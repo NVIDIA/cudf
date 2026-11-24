@@ -3004,18 +3004,33 @@ __device__ cuda::std::optional<extremum> get_extremum(statistics_val const* stat
   }
 }
 
+/**
+ * @brief Returns true if a column's fixed-length min/max values are too wide for
+ * `truncate_length` and so must be omitted, since fixed-length values are never truncated.
+ *
+ * Fixed-width values are always allowed at least `sizeof(__int128_t)` bytes.
+ */
+__device__ bool is_fixed_len_too_wide(parquet_column_device_view const& col,
+                                      int32_t truncate_length)
+{
+  return col.physical_type == Type::FIXED_LEN_BYTE_ARRAY and truncate_length != NO_TRUNC_STATS and
+         col.type_length >
+           cuda::std::max(truncate_length, static_cast<int32_t>(sizeof(__int128_t)));
+}
+
 }  // namespace
 
 __device__ uint8_t* EncodeStatistics(uint8_t* start,
                                      statistics_chunk const* s,
                                      statistics_dtype dtype,
                                      void* scratch,
-                                     int32_t truncate_length)
+                                     int32_t truncate_length,
+                                     bool omit_minmax)
 {
   uint8_t* end;
   header_encoder encoder(start);
   encoder.field_int64(3, s->null_count);
-  if (s->has_minmax) {
+  if (s->has_minmax and not omit_minmax) {
     // A truncated string/binary max is built in the output buffer past the space its encoding
     // (1 byte field header + up to 5 bytes length + truncate_length bytes) needs, which is within
     // the space reserved for the min and max values by gpuInitPages
@@ -3060,17 +3075,19 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
   auto page             = pages[page_idx];
   auto const chunk      = *page.chunk;
   auto const stats_type = chunk.col_desc->stats_dtype;
-  // Fixed-length min/max values must keep their full width so are never truncated
+  // Fixed-length min/max values must keep their full width so are never truncated, but omitted
+  // if too wide
   auto const truncate_length = chunk.col_desc->physical_type == Type::FIXED_LEN_BYTE_ARRAY
                                  ? NO_TRUNC_STATS
                                  : statistics_truncate_length;
+  auto const omit_minmax     = is_fixed_len_too_wide(*chunk.col_desc, statistics_truncate_length);
 
   uint8_t* hdr_start{};
   uint8_t* hdr_end{};
   if (chunk_stats && &pages[page_idx] == chunk.pages) {  // Is this the first page in a chunk?
     hdr_start = (chunk.is_compressed) ? chunk.compressed_bfr : chunk.uncompressed_bfr;
     hdr_end   = EncodeStatistics(
-      hdr_start, &chunk_stats[page.chunk_id], stats_type, scratch, truncate_length);
+      hdr_start, &chunk_stats[page.chunk_id], stats_type, scratch, truncate_length, omit_minmax);
     page.chunk->ck_stat_size = static_cast<uint32_t>(hdr_end - hdr_start);
   }
   // For V2 pages, compressed_page_size and uncompressed_page_size include level bytes.
@@ -3106,8 +3123,12 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
     // Optionally encode page-level statistics
     if (not page_stats.empty()) {
       encoder.field_struct_begin(5);
-      encoder.set_ptr(EncodeStatistics(
-        encoder.get_ptr(), &page_stats[page_idx], stats_type, scratch, truncate_length));
+      encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
+                                       &page_stats[page_idx],
+                                       stats_type,
+                                       scratch,
+                                       truncate_length,
+                                       omit_minmax));
       encoder.field_struct_end(5);
     }
     encoder.field_struct_end(5);
@@ -3124,8 +3145,12 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
     // Optionally encode page-level statistics
     if (not page_stats.empty()) {
       encoder.field_struct_begin(8);
-      encoder.set_ptr(EncodeStatistics(
-        encoder.get_ptr(), &page_stats[page_idx], stats_type, scratch, truncate_length));
+      encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
+                                       &page_stats[page_idx],
+                                       stats_type,
+                                       scratch,
+                                       truncate_length,
+                                       omit_minmax));
       encoder.field_struct_end(8);
     }
     encoder.field_struct_end(8);
@@ -3363,6 +3388,7 @@ CUDF_KERNEL void __launch_bounds__(1)
   gpuEncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
+                         int32_t statistics_truncate_length,
                          int32_t stats_len_limit)
 {
   __align__(8) unsigned char s_scratch[MIN_STATS_SCRATCH_SIZE];
@@ -3388,10 +3414,12 @@ CUDF_KERNEL void __launch_bounds__(1)
 
   header_encoder encoder(ck_g->column_index_blob);
 
-  // Fixed-length min/max values must keep their full width so are never truncated
+  // Fixed-length min/max values must keep their full width so are never truncated. If too wide
+  // for the chunk statistics, they are omitted there so no column index is written for the chunk
   auto const ci_truncate_length = col_g.physical_type == Type::FIXED_LEN_BYTE_ARRAY
                                     ? NO_TRUNC_STATS
                                     : column_index_truncate_length;
+  auto const is_too_wide        = is_fixed_len_too_wide(col_g, statistics_truncate_length);
 
   // make sure scratch is aligned properly. here column_index_size indicates
   // how much scratch space is available for this chunk, including space for
@@ -3510,7 +3538,7 @@ CUDF_KERNEL void __launch_bounds__(1)
   encoder.end(&col_idx_end, false);
 
   // now reset column_index_size to the actual size of the encoded column index blob
-  ck_g->column_index_size = (has_nan_page or has_unbounded_max)
+  ck_g->column_index_size = (has_nan_page or has_unbounded_max or is_too_wide)
                               ? 0
                               : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
   ck_g->var_bytes_size    = var_bytes;
@@ -3706,11 +3734,15 @@ void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream)
 void EncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
+                         int32_t statistics_truncate_length,
                          int32_t stats_len_limit,
                          cuda::stream_ref stream)
 {
-  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.get()>>>(
-    chunks, column_stats, column_index_truncate_length, stats_len_limit);
+  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.get()>>>(chunks,
+                                                                column_stats,
+                                                                column_index_truncate_length,
+                                                                statistics_truncate_length,
+                                                                stats_len_limit);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

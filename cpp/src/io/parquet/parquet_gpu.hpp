@@ -1441,6 +1441,8 @@ void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream);
  * @param[in,out] chunks Column chunks
  * @param[in] column_stats Page-level statistics to be encoded
  * @param[in] column_index_truncate_length Max length of min/max values
+ * @param[in] statistics_truncate_length Max length of min/max values in chunk and page statistics,
+ * used to omit the column index of fixed-length values too wide for the chunk statistics
  * @param[in] stats_len_limit Max length of the min/max values reserved for in any statistics, used
  * to write a max in full if it cannot be truncated to a valid upper bound
  * @param[in] stream CUDA stream to use
@@ -1448,6 +1450,7 @@ void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream);
 void EncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
+                         int32_t statistics_truncate_length,
                          int32_t stats_len_limit,
                          cuda::stream_ref stream);
 

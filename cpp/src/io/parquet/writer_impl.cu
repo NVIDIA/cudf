@@ -1616,6 +1616,7 @@ void encode_pages(hostdevice_2dvector<EncColumnChunk>& chunks,
     EncodeColumnIndexes(d_chunks.flat_view(),
                         {column_stats, pages.size()},
                         column_index_truncate_length,
+                        statistics_truncate_length,
                         stats_len_limit,
                         stream);
   }

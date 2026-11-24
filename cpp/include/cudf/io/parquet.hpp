@@ -1740,7 +1740,8 @@ class parquet_writer_options_builder_base {
    * @brief Sets the maximum size in bytes of string and binary min/max statistics values.
    *
    * Longer values are truncated to valid bounds and marked inexact. A max with no valid truncation
-   * is omitted.
+   * is omitted. Fixed-length byte array values are never truncated: if wider than this limit and
+   * `sizeof(__int128_t)` bytes, their min/max and the chunk's column index are omitted.
    *
    * @param val length min/max will be truncated to, with 0 indicating no truncation
    * @return this for chaining

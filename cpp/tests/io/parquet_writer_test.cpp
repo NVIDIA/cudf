@@ -2837,29 +2837,35 @@ TEST_F(ParquetWriterTest, WriteFixedLenByteArray)
   srand(31337);
   using cudf::io::parquet::Encoding;
   constexpr int fixed_width          = 64;
+  constexpr int narrow_width         = sizeof(__int128_t);
   constexpr cudf::size_type num_rows = 200;
-  std::vector<uint8_t> data(num_rows * fixed_width);
-  std::vector<cudf::size_type> offsets(num_rows + 1);
 
-  // fill a num_rows X fixed_width array with random numbers and populate offsets array
-  int cur_offset = 0;
-  for (int i = 0; i < num_rows; i++) {
-    offsets[i] = cur_offset;
-    for (int j = 0; j < fixed_width; j++, cur_offset++) {
-      data[cur_offset] = rand() & 0xff;
+  // a num_rows X width list column of random bytes
+  auto const make_fixed_len_column = [&](int width) {
+    std::vector<uint8_t> data(num_rows * width);
+    std::vector<cudf::size_type> offsets(num_rows + 1);
+    int cur_offset = 0;
+    for (int i = 0; i < num_rows; i++) {
+      offsets[i] = cur_offset;
+      for (int j = 0; j < width; j++, cur_offset++) {
+        data[cur_offset] = rand() & 0xff;
+      }
     }
-  }
-  offsets[num_rows] = cur_offset;
+    offsets[num_rows] = cur_offset;
 
-  auto data_child = cudf::test::fixed_width_column_wrapper<uint8_t>(data.begin(), data.end());
-  auto off_child  = cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
-  auto col        = cudf::make_lists_column(num_rows,
-                                     off_child.release(),
-                                     data_child.release(),
-                                     0,
-                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+    auto data_child = cudf::test::fixed_width_column_wrapper<uint8_t>(data.begin(), data.end());
+    auto off_child =
+      cudf::test::fixed_width_column_wrapper<int32_t>(offsets.begin(), offsets.end());
+    return cudf::make_lists_column(num_rows,
+                                   off_child.release(),
+                                   data_child.release(),
+                                   0,
+                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  };
+  auto const col        = make_fixed_len_column(fixed_width);
+  auto const narrow_col = make_fixed_len_column(narrow_width);
 
-  auto expected = table_view{{*col, *col, *col, *col}};
+  auto expected = table_view{{*col, *col, *col, *col, *narrow_col}};
   cudf::io::table_input_metadata expected_metadata(expected);
 
   expected_metadata.column_metadata[0]
@@ -2882,54 +2888,81 @@ TEST_F(ParquetWriterTest, WriteFixedLenByteArray)
     .set_type_length(fixed_width)
     .set_encoding(cudf::io::column_encoding::DICTIONARY)
     .set_output_as_binary(true);
+  expected_metadata.column_metadata[4]
+    .set_name("flba_narrow")
+    .set_type_length(narrow_width)
+    .set_encoding(cudf::io::column_encoding::PLAIN)
+    .set_output_as_binary(true);
 
-  auto filepath = temp_env->get_temp_filepath("WriteFixedLenByteArray.parquet");
-  cudf::io::parquet_writer_options out_opts =
-    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
-      .metadata(expected_metadata)
-      .statistics_truncate_length(fixed_width / 2);
-  cudf::io::write_parquet(out_opts);
+  // Fixed-length min/max values are never truncated. They are omitted, along with the column
+  // index, if wider than both the truncate length and `__int128_t` (0 = no truncation)
+  for (auto const truncate_length : {8, fixed_width / 2, fixed_width, 0}) {
+    SCOPED_TRACE("truncate_length=" + std::to_string(truncate_length));
+    auto filepath = temp_env->get_temp_filepath("WriteFixedLenByteArray.parquet");
+    cudf::io::parquet_writer_options out_opts =
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected)
+        .metadata(expected_metadata)
+        .stats_level(cudf::io::statistics_freq::STATISTICS_COLUMN)
+        .statistics_truncate_length(truncate_length);
+    cudf::io::write_parquet(out_opts);
 
-  cudf::io::parquet_reader_options in_opts =
-    cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
-  auto result = cudf::io::read_parquet(in_opts);
+    cudf::io::parquet_reader_options in_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath});
+    auto result = cudf::io::read_parquet(in_opts);
 
-  CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, result.tbl->view());
 
-  // check page headers to make sure each column is encoded with the appropriate encoder
-  auto const source = cudf::io::datasource::create(filepath);
-  cudf::io::parquet::FileMetaData fmd;
-  read_footer(source, &fmd);
+    // check page headers to make sure each column is encoded with the appropriate encoder
+    auto const source = cudf::io::datasource::create(filepath);
+    cudf::io::parquet::FileMetaData fmd;
+    read_footer(source, &fmd);
 
-  // check that the schema retains the FIXED_LEN_BYTE_ARRAY type
-  for (int i = 1; i <= 4; i++) {
-    EXPECT_EQ(fmd.schema[i].type, cudf::io::parquet::Type::FIXED_LEN_BYTE_ARRAY);
-    EXPECT_EQ(fmd.schema[i].type_length, fixed_width);
+    // check that the schema retains the FIXED_LEN_BYTE_ARRAY type
+    for (int i = 1; i <= 5; i++) {
+      EXPECT_EQ(fmd.schema[i].type, cudf::io::parquet::Type::FIXED_LEN_BYTE_ARRAY);
+      EXPECT_EQ(fmd.schema[i].type_length, i == 5 ? narrow_width : fixed_width);
+    }
+
+    auto const& columns = fmd.row_groups[0].columns;
+    for (size_t c = 0; c < columns.size(); c++) {
+      SCOPED_TRACE("column=" + std::to_string(c));
+      auto const& chunk = columns[c];
+      auto const& stats = get_statistics(chunk);
+      auto const width  = fmd.schema[c + 1].type_length;
+      auto const is_omitted =
+        truncate_length != 0 and width > std::max(truncate_length, narrow_width);
+      if (is_omitted) {
+        EXPECT_FALSE(stats.min_value.has_value());
+        EXPECT_FALSE(stats.max_value.has_value());
+        EXPECT_FALSE(stats.is_min_value_exact.has_value());
+        EXPECT_FALSE(stats.is_max_value_exact.has_value());
+        EXPECT_EQ(chunk.column_index_length, 0);
+        continue;
+      }
+      EXPECT_EQ(stats.min_value->size(), width);
+      EXPECT_EQ(stats.max_value->size(), width);
+      EXPECT_TRUE(stats.is_min_value_exact.value());
+      EXPECT_TRUE(stats.is_max_value_exact.value());
+      auto const ci = read_column_index(source, chunk);
+      EXPECT_EQ(ci.min_values[0].size(), width);
+      EXPECT_EQ(ci.max_values[0].size(), width);
+    }
+
+    // no nulls and no repetition, so the only encoding used should be for the data.
+    auto const expect_enc = [&fmd](int idx, cudf::io::parquet::Encoding enc) {
+      EXPECT_EQ(fmd.row_groups[0].columns[idx].meta_data.encodings[0], enc);
+    };
+
+    // requested plain
+    expect_enc(0, Encoding::PLAIN);
+    // requested byte_stream_split
+    expect_enc(1, Encoding::BYTE_STREAM_SPLIT);
+    // requested delta_byte_array
+    expect_enc(2, Encoding::DELTA_BYTE_ARRAY);
+    // requested dictionary, but should fall back to plain
+    // TODO: update if we get FLBA working with dictionary encoding
+    expect_enc(3, Encoding::PLAIN);
   }
-
-  // fixed-length min/max values are never truncated
-  for (auto const& chunk : fmd.row_groups[0].columns) {
-    auto const& stats = get_statistics(chunk);
-    EXPECT_EQ(stats.min_value->size(), fixed_width);
-    EXPECT_EQ(stats.max_value->size(), fixed_width);
-    EXPECT_TRUE(stats.is_min_value_exact.value());
-    EXPECT_TRUE(stats.is_max_value_exact.value());
-  }
-
-  // no nulls and no repetition, so the only encoding used should be for the data.
-  auto const expect_enc = [&fmd](int idx, cudf::io::parquet::Encoding enc) {
-    EXPECT_EQ(fmd.row_groups[0].columns[idx].meta_data.encodings[0], enc);
-  };
-
-  // requested plain
-  expect_enc(0, Encoding::PLAIN);
-  // requested byte_stream_split
-  expect_enc(1, Encoding::BYTE_STREAM_SPLIT);
-  // requested delta_byte_array
-  expect_enc(2, Encoding::DELTA_BYTE_ARRAY);
-  // requested dictionary, but should fall back to plain
-  // TODO: update if we get FLBA working with dictionary encoding
-  expect_enc(3, Encoding::PLAIN);
 }
 
 /////////////////////////////////////////////////////////////

@@ -708,8 +708,8 @@ def execute_ir_on_rank(
         if (mem_error := _find_memory_error(e)) is not None:
             target_partition_size = config_options.executor.target_partition_size
             cpu_hint = (
-                ' Or set `rank_local_cpu_compute="on_oom"` to evaluate the operations '
-                "that run out of device memory on the CPU."
+                ' Setting `rank_local_cpu_compute="on_oom"` may help if the error '
+                "comes from an operation that supports evaluation on the CPU."
                 if config_options.executor.rank_local_cpu_compute
                 == RankLocalCPUComputeMode.NEVER
                 else ""

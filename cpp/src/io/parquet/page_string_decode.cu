@@ -5,6 +5,7 @@
 
 #include "delta_binary.cuh"
 #include "error.hpp"
+#include "length_prefix_parse.cuh"
 #include "page_decode.cuh"
 #include "page_state_composed.cuh"
 #include "page_string_utils.cuh"
@@ -20,16 +21,11 @@
 #include <cuda/buffer>
 #include <cuda/cmath>
 #include <cuda/functional>
-#include <cuda/pipeline>
-#include <cuda/std/algorithm.max.h>
-#include <cuda/std/algorithm.min.h>
 #include <cuda/std/cstring>
 #include <cuda/std/utility>
-#include <cuda/warp>
 #include <thrust/transform_scan.h>
 
 #include <bitset>
-#include <climits>
 #include <cstdint>
 
 namespace cudf::io::parquet::detail {
@@ -1082,9 +1078,9 @@ void compute_page_string_sizes_pass2(cudf::detail::hostdevice_span<PageInfo> pag
 
 namespace {
 
-constexpr int32_t string_offset_warps        = 4;
-constexpr int32_t string_offset_window_bytes = 1'024;
-constexpr int32_t string_offset_block_size   = string_offset_warps * cudf::detail::warp_size;
+// Each warp uses a 16 KiB window. Two fit in the portable static shared-memory budget.
+constexpr int32_t string_offset_warps      = 2;
+constexpr int32_t string_offset_block_size = string_offset_warps * cudf::detail::warp_size;
 using string_offset_warp = cg::thread_block_tile<cudf::detail::warp_size, cg::thread_block>;
 // Size of the PLAIN BYTE_ARRAY length prefix that precedes each string.
 constexpr uint32_t prefix_bytes = sizeof(int32_t);
@@ -1099,113 +1095,10 @@ struct string_offset_page {
   bool active;               // Whether this page needs string-offset preprocessing
 };
 
-struct alignas(128) string_offset_window {
-  // Load one extra word to be able to safely funnel-shift the last word in the window.
-  uint32_t data[string_offset_window_bytes / sizeof(uint32_t) + 1];
+struct alignas(16) string_offset_window {
+  uint32_t data[(length_prefix_window_size + length_prefix_window_pad) / sizeof(uint32_t)];
+  int32_t slice_starts[cudf::detail::warp_size];
 };
-
-/**
- * @brief Copy the next chunk of encoded strings into a warp's shared-memory window.
- *
- * All lanes must participate and finish reading the previous window before calling.
- *
- * @param page Metadata for the page to prefetch
- * @param warp The warp processing this page
- * @param next Offset of the next length prefix
- * @param window The window to prefetch into
- * @param[out] base Page-relative offset of the aligned window start; may be negative
- * @param[out] end Page-relative end of the copied data.
- */
-__device__ void prefetch_string_data(string_offset_page const& page,
-                                     string_offset_warp const& warp,
-                                     uint32_t next,
-                                     string_offset_window& window,
-                                     int32_t& base,
-                                     int32_t& end)
-{
-  int32_t const lane             = warp.thread_rank();
-  constexpr int32_t alignment    = alignof(string_offset_window);
-  constexpr int32_t word_bytes   = sizeof(uint32_t);
-  constexpr int32_t copy_bytes   = sizeof(uint4);
-  constexpr int32_t stride_bytes = cudf::detail::warp_size * copy_bytes;
-
-  // Each lane owns its copies; the warp synchronizes after all copies complete.
-  auto pipeline = cuda::make_pipeline();
-  pipeline.producer_acquire();
-
-  // NOTE: Changing the window size would require updating the assert and funnel-shift logic.
-  static_assert(string_offset_window_bytes == 2 * stride_bytes);
-
-  int32_t const misalignment = (reinterpret_cast<uintptr_t>(page.data) + next) & (alignment - 1);
-  base                       = static_cast<int32_t>(next) - misalignment;
-
-  // Fast path for a full window.
-  if (base >= 0 && static_cast<uint32_t>(page.bytes) - base >= string_offset_window_bytes) {
-    end             = base + string_offset_window_bytes;
-    auto* dst       = window.data + lane * (copy_bytes / word_bytes);
-    auto const* src = page.data + base + lane * copy_bytes;
-
-    // Each lane copies two 16-byte chunks, 512 bytes apart.
-    // async copy is Max 16 bytes per thread.
-    // Using two separate memcpy_async calls instead of one to ensure all copies in a call from the
-    // warp is one interleaved 512-byte chunk. Avoiding using cg::memcpy_async as it adds additional
-    // unnecessary runtime instructions (i.e overhead)
-    cuda::memcpy_async(
-      static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
-    cuda::memcpy_async(static_cast<void*>(dst + stride_bytes / word_bytes),
-                       src + stride_bytes,
-                       cuda::aligned_size_t<copy_bytes>(copy_bytes),
-                       pipeline);
-    pipeline.producer_commit();
-    // The last word in the window is used for funnel-shift. Initialize it to 0.
-    if (lane == 0) { window.data[string_offset_window_bytes / word_bytes] = 0; }
-  } else {
-    // Slow path for a partial window.
-    int32_t const window_bytes = static_cast<int32_t>(
-      cuda::std::min<int64_t>(string_offset_window_bytes, int64_t{page.bytes} - base));
-    end = static_cast<int32_t>(int64_t{base} + window_bytes);
-
-    // At an unaligned page start, leave the first alignment unit to the byte loads below.
-    int32_t const copy_begin = base < 0 ? alignment : 0;
-    int32_t const copy_end   = window_bytes & ~(copy_bytes - 1);
-
-    for (int32_t offset = copy_begin + lane * copy_bytes; offset < copy_end;
-         offset += stride_bytes) {
-      auto const* src = page.data + base + offset;
-      auto* dst       = window.data + offset / word_bytes;
-      cuda::memcpy_async(
-        static_cast<void*>(dst), src, cuda::aligned_size_t<copy_bytes>(copy_bytes), pipeline);
-    }
-    pipeline.producer_commit();
-
-    auto const copy_word = [&](int32_t word_index) {
-      uint32_t word = 0;
-#pragma unroll
-      for (int32_t byte = 0; byte < word_bytes; ++byte) {
-        int64_t const index = int64_t{base} + word_index * word_bytes + byte;
-        if (index >= 0 && index < page.bytes) {
-          word |= uint32_t{page.data[index]} << (CHAR_BIT * byte);
-        }
-      }
-      window.data[word_index] = word;
-    };
-
-    // Special handling of the head and tail of the window.
-    int32_t const window_words = cudf::detail::div_rounding_up_safe(window_bytes, word_bytes);
-    int32_t const head_words   = cuda::std::min(window_words, copy_begin / word_bytes);
-    if (lane < head_words) { copy_word(lane); }
-
-    // On small pages, the head may already cover the entire window.
-    int32_t const tail_word = cuda::std::max(head_words, copy_end / word_bytes) + lane;
-    if (tail_word < window_words) { copy_word(tail_word); }
-
-    if (lane == 0) { window.data[window_words] = 0; }
-  }
-  // Drain the single committed batch before any lane reads the window.
-  cuda::pipeline_consumer_wait_prior<0>(pipeline);
-  pipeline.consumer_release();
-  warp.sync();
-}
 
 /**
  * @brief Fill unwritten offsets, including the terminal offset used to recover string lengths.
@@ -1242,61 +1135,81 @@ __device__ void read_string_offsets_buffered(string_offset_page const& page,
                                              kernel_error::pointer error_code)
 {
   int32_t const lane = warp.thread_rank();
-  // Prefixes are read from the window's 32-bit words with a two-word funnel shift.
-  constexpr uint32_t word_bytes = sizeof(uint32_t);
-  static_assert(prefix_bytes == word_bytes);
 
-  uint32_t pos = 0, next = 0;
-  if (page.bytes < int32_t{prefix_bytes} || page.num_values == 0) {
-    fill_string_offset_tail(page, warp, pos, next);
-    return;
-  }
-  int32_t base = 0, end = 0;
-  prefetch_string_data(page, warp, next, window, base, end);
+  int32_t cursor  = 0;  // Page-relative offset of the next length prefix
+  uint32_t parsed = 0;  // Entries whose offsets are written
+  bool overrun    = false;
+  // Natural end of the data: no room for another length prefix
+  while (parsed < page.num_values and page.bytes - cursor >= 4) {
+    int32_t const window_start = length_prefix_window_start(page.data, cursor);
+    int32_t const window_bytes =
+      static_cast<int32_t>(min(static_cast<int64_t>(length_prefix_window_size),
+                               static_cast<int64_t>(page.bytes) - window_start));
+    warp.sync();  // Every lane is done with the previous window
+    load_length_prefix_window(warp,
+                              page.data,
+                              page.bytes,
+                              window_start,
+                              window_bytes,
+                              reinterpret_cast<uint8_t*>(window.data));
+    warp.sync();
 
-  bool scanning = true;
-  while (scanning) {
-    // A complete prefix inside this window is also inside the page. Keep page-end
-    // and refill handling outside the common loop, using a window-relative cursor.
+    // All lanes at once; the first prefix is readable, since the window starts at most 15 bytes
+    // before the cursor and the page holds 4 bytes there.
+    window_chain chain;
+    if (speculative_parse_window(warp,
+                                 window.data,
+                                 window_start,
+                                 window_bytes,
+                                 page.bytes,
+                                 cursor - window_start,
+                                 window.slice_starts,
+                                 chain)) {
+      int32_t const emit =
+        static_cast<int32_t>(min(static_cast<uint32_t>(chain.total), page.num_values - parsed));
+      int32_t offset          = chain.start;
+      int32_t next_after_last = -1;  // Window offset of the prefix after the last emitted entry
+      for (int32_t k = 0; k < chain.count and chain.preceding + k < emit; ++k) {
+        int32_t const length                       = read_length_prefix(window.data, offset);
+        page.offsets[parsed + chain.preceding + k] = window_start + offset + 4;
+        offset += 4 + length;
+        if (chain.preceding + k == emit - 1) { next_after_last = offset; }
+      }
+      parsed += emit;
+      if (emit == chain.total) {
+        cursor = window_start + chain.chain_end;
+      } else {  // num_values reached inside the window: one lane holds the position after its entry
+        uint32_t const lanes = warp.ballot(next_after_last >= 0);
+        cursor               = window_start + warp.shfl(next_after_last, __ffs(lanes) - 1);
+      }
+      continue;
+    }
 
-    // Window-relative index of the next prefix to read.
-    uint32_t index = next - static_cast<uint32_t>(base);
-    // Boundary of the current window.
-    uint32_t const limit = static_cast<uint32_t>(end) - static_cast<uint32_t>(base) - prefix_bytes;
-    // Remaining bytes in the page.
-    uint32_t const remaining =
-      static_cast<uint32_t>(page.bytes) - static_cast<uint32_t>(base) - prefix_bytes;
-    // Add to a window-relative prefix index to get the page-relative payload offset.
-    uint32_t const bias = static_cast<uint32_t>(base) + prefix_bytes;
-    while (scanning && index <= limit && pos < page.num_values) {
-      uint32_t const word = index / word_bytes;
-      uint32_t const len =
-        __funnelshift_r(window.data[word], window.data[word + 1], (index % word_bytes) * CHAR_BIT);
-      // Remaining page bytes fit in INT32_MAX, so this also rejects negative lengths.
-      if (len > remaining - index) {
-        scanning = false;
-        if (lane == 0) {
-          set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN),
-                    error_code);
+    // One lane parses the window
+    if (lane == 0) {
+      while (parsed < page.num_values and page.bytes - cursor >= 4) {
+        if (cursor + 4 > window_start + window_bytes) { break; }  // Needs the next window
+        int32_t const length = read_length_prefix(window.data, cursor - window_start);
+        // Negative, or the string runs past the page; widened so a corrupt length cannot overflow
+        if (length < 0 or static_cast<int64_t>(cursor) + 4 + length > page.bytes) {
+          overrun = true;
+          break;
         }
-      } else {
-        uint32_t const offset = bias + index;
-        index += len + prefix_bytes;
-        ++pos;
-        if (lane == 0) { page.offsets[pos - 1] = offset; }
+        page.offsets[parsed] = cursor + 4;
+        cursor += 4 + length;
+        ++parsed;
       }
     }
-
-    next = static_cast<uint32_t>(base) + index;
-
-    scanning =
-      scanning && pos < page.num_values && next + prefix_bytes <= static_cast<uint32_t>(page.bytes);
-    if (scanning) {
-      warp.sync();  // All consumers finish before this warp reuses its window.
-      prefetch_string_data(page, warp, next, window, base, end);
-    }
+    parsed  = warp.shfl(parsed, 0);
+    cursor  = warp.shfl(cursor, 0);
+    overrun = warp.shfl(overrun, 0);
+    if (overrun) { break; }
   }
-  fill_string_offset_tail(page, warp, pos, next);
+
+  fill_string_offset_tail(page, warp, parsed, cursor);
+  if (overrun && lane == 0) {
+    set_error(static_cast<kernel_error::value_type>(decode_error::STRING_DATA_OVERRUN), error_code);
+  }
 }
 
 /**
@@ -1341,8 +1254,7 @@ __device__ void read_string_offsets_sequential(string_offset_page const& page,
 }
 
 /**
- * @brief Precompute PLAIN string offsets, with one page per warp and string_offset_warps(4) warps
- * per CTA.
+ * @brief Precompute PLAIN string offsets, with one page per warp.
  *
  * Page setup uses CTA-wide barriers, so every thread sets up the pages collectively
  * before the independent warp scans start. Inactive pages and a partial final group
@@ -1418,14 +1330,14 @@ CUDF_KERNEL void __launch_bounds__(string_offset_block_size)
   auto const page = pages_to_process[warp.meta_group_rank()];
   if (!page.active) { return; }
 
-  constexpr int32_t max_avg_string_length_for_buffer = string_offset_window_bytes / 16;
-  // Null-heavy pages can average less than one length prefix.
-  auto const avg_string_length =
-    page.bytes / page.num_input_values - static_cast<int32_t>(sizeof(int32_t));
-  if (avg_string_length > max_avg_string_length_for_buffer) {
-    read_string_offsets_sequential(page, warp, error_code);
-  } else {
+  // Count nulls in the page's mean length and widen before multiplying by the threshold.
+  bool const speculate = static_cast<int64_t>(page.bytes) <=
+                         static_cast<int64_t>(page.num_input_values) *
+                           (prefix_bytes + length_prefix_max_mean_length_for_speculation);
+  if (speculate) {
     read_string_offsets_buffered(page, warp, windows[warp.meta_group_rank()], error_code);
+  } else {
+    read_string_offsets_sequential(page, warp, error_code);
   }
 }
 

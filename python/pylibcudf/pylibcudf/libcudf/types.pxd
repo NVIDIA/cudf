@@ -15,6 +15,10 @@ cdef extern from "cudf/types.hpp" namespace "cudf" nogil:
     # https://stackoverflow.com/questions/27582001/how-to-use-128-bit-integers-in-cython/27609033#27609033
     ctypedef int int128 "__int128_t"
 
+    cdef enum class use_jit(bool):
+        NO
+        YES
+
     cpdef enum class mask_state(int32_t):
         UNALLOCATED
         UNINITIALIZED

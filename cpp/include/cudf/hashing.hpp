@@ -6,6 +6,7 @@
 
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -50,6 +51,7 @@ namespace hashing {
  *
  * @param input The table of columns to hash
  * @param seed Optional seed value to use for the hash function
+ * @param jit Whether to use JIT execution
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
@@ -58,28 +60,7 @@ namespace hashing {
 std::unique_ptr<column> murmurhash3_x86_32(
   table_view const& input,
   uint32_t seed                     = DEFAULT_HASH_SEED,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Computes per-row MurmurHash3 hashes using a schema-specialized JIT kernel.
- *
- * Hash and seed semantics match `murmurhash3_x86_32`. The first call for a schema
- * compiles and links a kernel; subsequent calls reuse the specialization cache.
- * Supports non-nested columns, LIST<non-nested>, DICTIONARY<non-nested>, and
- * DICTIONARY<LIST<non-nested>>. STRUCT columns,
- * LIST<DICTIONARY<T>>, and deeper nesting are unsupported.
- *
- * @throws std::invalid_argument If the input schema is unsupported by the JIT path.
- * @param input The table of columns to hash
- * @param seed Optional seed value to use for the hash function
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Device memory resource used to allocate the returned column's device memory
- * @return A UINT32 column containing one hash per input row
- */
-std::unique_ptr<column> murmurhash3_x86_32_jit(
-  table_view const& input,
-  uint32_t seed                     = DEFAULT_HASH_SEED,
+  use_jit jit                       = use_jit::NO,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -107,6 +88,7 @@ std::unique_ptr<column> murmurhash3_x86_32_jit(
  * @param seed Optional initial seed value, interpreted as unsigned. Defaults to `DEFAULT_HASH_SEED`
  *             (`0`), matching other libcudf hash functions and cudf-spark-jni. Pass `42` explicitly
  *             to match Spark's SQL `hash()`. Negative Spark seeds are passed as unsigned.
+ * @param jit Whether to use JIT execution
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column device memory
  *
@@ -118,6 +100,7 @@ std::unique_ptr<column> murmurhash3_x86_32_jit(
 std::unique_ptr<column> spark_murmurhash3_x86_32(
   table_view const& input,
   uint32_t seed                     = DEFAULT_HASH_SEED,
+  use_jit jit                       = use_jit::NO,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -129,6 +112,7 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(
  *
  * @param input The table of columns to hash
  * @param seed Optional seed value to use for the hash function
+ * @param jit Whether to use JIT execution
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
@@ -137,6 +121,7 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(
 std::unique_ptr<table> murmurhash3_x64_128(
   table_view const& input,
   uint64_t seed                     = DEFAULT_HASH_SEED,
+  use_jit jit                       = use_jit::NO,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -233,6 +218,7 @@ std::unique_ptr<column> sha512(
  *
  * @param input The table of columns to hash
  * @param seed Optional seed value to use for the hash function
+ * @param jit Whether to use JIT execution
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
@@ -241,6 +227,7 @@ std::unique_ptr<column> sha512(
 std::unique_ptr<column> xxhash_32(
   table_view const& input,
   uint32_t seed                     = DEFAULT_HASH_SEED,
+  use_jit jit                       = use_jit::NO,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 
@@ -251,6 +238,7 @@ std::unique_ptr<column> xxhash_32(
  *
  * @param input The table of columns to hash
  * @param seed Optional seed value to use for the hash function
+ * @param jit Whether to use JIT execution
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned column's device memory
  *
@@ -259,6 +247,7 @@ std::unique_ptr<column> xxhash_32(
 std::unique_ptr<column> xxhash_64(
   table_view const& input,
   uint64_t seed                     = DEFAULT_HASH_SEED,
+  use_jit jit                       = use_jit::NO,
   cuda::stream_ref stream           = cudf::get_default_stream(),
   rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
 

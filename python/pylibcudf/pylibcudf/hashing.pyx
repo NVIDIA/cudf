@@ -19,6 +19,7 @@ from pylibcudf.libcudf.hash cimport (
 )
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
+from pylibcudf.libcudf.types cimport use_jit
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
@@ -80,6 +81,7 @@ cpdef Column murmurhash3_x86_32(
         c_result = cpp_murmurhash3_x86_32(
             c_input,
             seed,
+            use_jit.NO,
             _cs,
             mr.get_mr()
         )
@@ -120,6 +122,7 @@ cpdef Table murmurhash3_x64_128(
         c_result = cpp_murmurhash3_x64_128(
             c_input,
             seed,
+            use_jit.NO,
             _cs,
             mr.get_mr()
         )
@@ -161,6 +164,7 @@ cpdef Column xxhash_32(
         c_result = cpp_xxhash_32(
             c_input,
             seed,
+            use_jit.NO,
             _cs,
             mr.get_mr()
         )
@@ -202,6 +206,7 @@ cpdef Column xxhash_64(
         c_result = cpp_xxhash_64(
             c_input,
             seed,
+            use_jit.NO,
             _cs,
             mr.get_mr()
         )

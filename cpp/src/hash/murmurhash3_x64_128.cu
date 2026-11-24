@@ -2,12 +2,15 @@
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "runtime/context.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/accumulate.cuh>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/hashing/detail/murmurhash3_x64_128.cuh>
 #include <cudf/table/table_device_view.cuh>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
@@ -133,10 +136,18 @@ std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
 
 std::unique_ptr<table> murmurhash3_x64_128(table_view const& input,
                                            uint64_t seed,
+                                           use_jit jit,
                                            cuda::stream_ref stream,
                                            rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
+  if (jit == use_jit::YES || get_context().use_jit()) {
+    try {
+      return detail::murmurhash3_x64_128_jit(input, seed, stream, mr);
+    } catch (data_type_error const&) {
+      // Unsupported JIT types and layouts use the native implementation.
+    }
+  }
   return detail::murmurhash3_x64_128(input, seed, stream, mr);
 }
 

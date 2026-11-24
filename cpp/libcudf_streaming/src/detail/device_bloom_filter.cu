@@ -109,7 +109,7 @@ void device_bloom_filter::add(cudf::table_view const& values_to_hash,
   RAPIDSMPF_NVTX_FUNC_RANGE();
   auto filter_ref = bloom_filter_ref_type{
     static_cast<storage_type*>(storage_), num_blocks_, cuco::thread_scope_device, {}};
-  auto hashes    = cudf::hashing::xxhash_64(values_to_hash, seed_, stream, mr);
+  auto hashes    = cudf::hashing::xxhash_64(values_to_hash, seed_, cudf::use_jit::NO, stream, mr);
   auto hash_view = hashes->view();
   RAPIDSMPF_EXPECTS(hash_view.type().id() == cudf::type_to_id<key_type>(),
                     "Hash values do not have correct type");
@@ -134,7 +134,7 @@ rmm::device_uvector<bool> device_bloom_filter::contains(cudf::table_view const& 
   RAPIDSMPF_NVTX_FUNC_RANGE();
   auto filter_ref = bloom_filter_ref_type{
     static_cast<storage_type*>(storage_), num_blocks_, cuco::thread_scope_device, {}};
-  auto hashes = cudf::hashing::xxhash_64(values, seed_, stream, mr);
+  auto hashes = cudf::hashing::xxhash_64(values, seed_, cudf::use_jit::NO, stream, mr);
   auto view   = hashes->view();
   rmm::device_uvector<bool> result{static_cast<std::size_t>(view.size()), stream, mr};
   filter_ref.contains_async(view.begin<key_type>(), view.end<key_type>(), result.begin(), stream);

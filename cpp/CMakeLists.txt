@@ -482,11 +482,6 @@ rtcx_embed_includes(
 )
 
 rtcx_embed_includes(
-  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/hash/jit DEST_DIRECTORY
-  cudf/cpp/src/hash/jit INCLUDE_DIRECTORIES cudf/cpp/src
-)
-
-rtcx_embed_includes(
   cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/row_operator/jit DEST_DIRECTORY
   cudf/cpp/src/row_operator/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
@@ -656,12 +651,15 @@ precompile_string_kernel_fragments()
 
 # Function-dispatch fragments retain device functions as LTO IR so nvJitLink can optimize the schema
 # wrapper and type-specific leaves together at runtime.
-add_fragment(
-  cudf_fragments FRAGMENT row_function_hash_lto SOURCE src/hash/jit/murmurhash3_x86_32_kernel.cu
+foreach(
+  category IN ITEMS murmurhash3_x86_32 spark_murmurhash3_x86_32 murmurhash3_x64_128 xxhash_32
+                    xxhash_64 hash_combine
 )
-add_fragment(
-  cudf_fragments FRAGMENT row_function_definitions_lto SOURCE src/row_operator/jit/row_function_definitions.cu
-)
+  add_fragment(
+    cudf_fragments FRAGMENT row_operator_${category}_lto_ir SOURCE
+    src/row_operator/jit/fragments/${category}.cu
+  )
+endforeach()
 
 rtcx_embed(cudf_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
@@ -811,7 +809,6 @@ add_library(
   src/groupby/streaming_groupby/merge.cu
   src/hash/md5_hash.cu
   src/hash/murmurhash3_x86_32.cu
-  src/hash/jit/row_hash_descriptor.cpp
   src/hash/murmurhash3_x64_128.cu
   src/hash/spark_murmurhash3_x86_32.cu
   src/hash/sha1_hash.cu
@@ -1088,6 +1085,8 @@ add_library(
   src/rolling/rolling.cpp
   src/round/round.cu
   src/row_operator/primitive_row_operators.cu
+  src/row_operator/reflection.cpp
+  src/row_operator/row_operator_jit.cu
   src/row_operator/row_operators.cu
   src/runtime/context.cpp
   src/scalar/scalar.cpp

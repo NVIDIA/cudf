@@ -32,11 +32,5 @@ std::unique_ptr<column> murmurhash3_x86_32(
   cuda::stream_ref stream,
   rmm::device_async_resource_ref mr);
 
-std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
-                                               table_device_view device_input,
-                                               uint32_t seed,
-                                               cuda::stream_ref stream,
-                                               rmm::device_async_resource_ref mr);
-
 }  // namespace hashing::detail
 }  // namespace cudf

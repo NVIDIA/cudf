@@ -2,6 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "runtime/context.hpp"
+
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -107,10 +109,18 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
 
 std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
                                                  uint32_t seed,
+                                                 use_jit jit,
                                                  cuda::stream_ref stream,
                                                  rmm::device_async_resource_ref mr)
 {
   CUDF_FUNC_RANGE();
+  if (jit == use_jit::YES || get_context().use_jit()) {
+    try {
+      return detail::spark_murmurhash3_x86_32_jit(input, seed, stream, mr);
+    } catch (data_type_error const&) {
+      // Unsupported JIT types and layouts use the native implementation.
+    }
+  }
   return detail::spark_murmurhash3_x86_32(input, seed, stream, mr);
 }
 

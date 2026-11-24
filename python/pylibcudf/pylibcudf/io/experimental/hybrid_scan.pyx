@@ -379,8 +379,11 @@ cdef class HybridScanReader:
 
         Notes
         -----
-        Device buffers for bloom filter byte ranges must be allocated using a 32 byte
-        aligned memory resource.
+        Each byte range spans a complete bloom filter, including its header.
+        ``filter_row_groups_with_bloom_filters`` expects the header-stripped, 32-byte
+        aligned bitsets that
+        :func:`~pylibcudf.io.parquet_io_utils.fetch_bloom_filters_to_device` returns,
+        not the raw bytes of these ranges.
 
         Parameters
         ----------
@@ -487,7 +490,10 @@ cdef class HybridScanReader:
         Parameters
         ----------
         bloom_filter_data : Sequence
-            Span-like objects containing bloom filter data
+            Span-like objects containing header-stripped bloom filter bitsets, such
+            as those returned by
+            :func:`~pylibcudf.io.parquet_io_utils.fetch_bloom_filters_to_device`. Each
+            must be 32-byte aligned and a multiple of 32 bytes long.
         row_group_indices : list[int]
             Input row group indices
         options : ParquetReaderOptions

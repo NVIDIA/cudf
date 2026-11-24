@@ -17,6 +17,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/interop.hpp>
@@ -5110,7 +5111,7 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
                                                              cudf::get_current_device_resource_ref(),
                                                              vec.data(),
                                                              vec.data() + size};
-      cudf::get_default_stream().sync();
+      cudf::detail::sync_stream(cudf::get_default_stream());
       auto gather_map_col =
         std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                        size,

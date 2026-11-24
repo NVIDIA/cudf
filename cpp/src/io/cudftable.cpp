@@ -67,9 +67,12 @@ static_assert(sizeof(cudftable_header) == 32);
 
 }  // anonymous namespace
 
-void write_cudftable(data_sink* sink, table_view const& input, cuda::stream_ref stream)
+void write_cudftable(data_sink* sink,
+                     table_view const& input,
+                     cuda::stream_ref stream,
+                     cudf::memory_resources mr)
 {
-  auto const packed = cudf::pack(input, stream, cudf::get_current_device_resource_ref());
+  auto const packed = cudf::pack(input, stream, mr.as_temporary());
 
   auto const header = cudftable_header{
     packed.metadata->size(), packed.gpu_data->size(), cudf::detail::packed_metadata_version};

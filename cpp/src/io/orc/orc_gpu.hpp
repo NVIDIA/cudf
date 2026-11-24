@@ -385,10 +385,12 @@ void encode_stripe_dictionaries(stripe_dictionary const* stripes,
  * @param[in,out] strm_desc stripe_stream device array [stripe][stream]
  * @param[in,out] enc_streams chunk streams device array [column][rowgroup]
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
+ * @param[in] mr Memory resources used for temporary allocations
  */
 void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
                               device_2dspan<encoder_chunk_streams> enc_streams,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 /**
  * @brief Launches kernel(s) for compressing data streams
@@ -404,6 +406,7 @@ void compact_orc_data_streams(device_2dspan<stripe_stream> strm_desc,
  * @param[in,out] enc_streams chunk streams device array [column][rowgroup]
  * @param[out] comp_res Per-block compression status
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
+ * @param[in] mr Memory resources used for temporary allocations
  *
  * @return Compression statistics (if requested)
  */
@@ -418,7 +421,8 @@ std::optional<writer_compression_statistics> compress_orc_data_streams(
   device_2dspan<stripe_stream> strm_desc,
   device_2dspan<encoder_chunk_streams> enc_streams,
   device_span<cudf::io::detail::codec_exec_result> comp_res,
-  cuda::stream_ref stream);
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Counts the number of characters in each rowgroup of each string column.
@@ -444,10 +448,12 @@ void rowgroup_char_counts(device_2dspan<size_type> counts,
  * @param rg_bounds Ranges of rows in each rowgroup [rowgroup][column]
  * @param elem_sizes Map between column indexes and decimal element sizes
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
 void decimal_sizes_to_offsets(device_2dspan<rowgroup_rows const> rg_bounds,
                               std::map<uint32_t, cuda::device_buffer<uint32_t>>& elem_sizes,
-                              cuda::stream_ref stream);
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr);
 
 /**
  * @brief Launches kernels to initialize statistics collection

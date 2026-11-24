@@ -1981,12 +1981,15 @@ class parquet_writer_options_builder
  *
  * @param options Settings for controlling writing behavior
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return A parquet-compatible blob that contains the file metadata (parquet FileMetadata thrift
  * message).
  */
 
 std::unique_ptr<std::vector<uint8_t>> write_parquet(
-  parquet_writer_options const& options, cuda::stream_ref stream = cudf::get_default_stream());
+  parquet_writer_options const& options,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Merges multiple raw metadata blobs that were previously created by write_parquet
@@ -2088,9 +2091,13 @@ class chunked_parquet_writer {
    *
    * @param[in] options options used to write table
    * @param[in] stream CUDA stream used for device memory operations and kernel launches
+   * @param[in] mr Memory resources used for temporary allocations by this constructor and by
+   * `write()` and `close()`. The resources, including the current device resource when `mr` is
+   * defaulted, must stay valid and unchanged until the writer is closed or destroyed.
    */
   chunked_parquet_writer(chunked_parquet_writer_options const& options,
-                         cuda::stream_ref stream = cudf::get_default_stream());
+                         cuda::stream_ref stream   = cudf::get_default_stream(),
+                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
   /**
    * @brief Default destructor.
    *        This is added to not leak detail API

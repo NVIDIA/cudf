@@ -186,11 +186,13 @@ class writer {
    * @param options Settings for controlling writing behavior
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    */
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Constructor for writer to handle chunked parquet options.
@@ -199,13 +201,15 @@ class writer {
    * @param options Settings for controlling writing behavior for chunked writer
    * @param mode Option to write at once or in chunks
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return A parquet-compatible blob that contains the data for all rowgroups in the list
    */
   explicit writer(std::vector<std::unique_ptr<data_sink>> sinks,
                   chunked_parquet_writer_options const& options,
                   cudf::io::detail::single_write_mode mode,
-                  cuda::stream_ref stream);
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr);
 
   /**
    * @brief Destructor explicitly-declared to avoid inlined in header

@@ -13,9 +13,7 @@ import polars as pl
 import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata
 from cudf_streaming.table_chunk import TableChunk, make_table_chunks_available_or_wait
-from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
-from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, AsofJoin
@@ -35,6 +33,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     gather_in_task_group,
     process_children,
     recv_metadata,
+    run_with_reservation,
     send_metadata,
     shutdown_on_error,
 )
@@ -92,7 +91,7 @@ class _TimeOrder:
     """Validate ascending chunks and infer null placement as rows arrive."""
 
     def __init__(self, ir_context: IRExecutionContext) -> None:
-        """Set up order tracking for one input stream."""
+        """Initialize order checks across successive chunks."""
         self.ir_context = ir_context
         self.previous: tuple[plc.Table, Any] | None = None
         self.null_orders: tuple[plc.types.NullOrder, ...] = (
@@ -204,14 +203,6 @@ class _AsofCursor:
         self.at_eof = False
         self.left_order = _TimeOrder(ir_context)
 
-    async def _reserved(
-        self, size: int, func: Any, /, *args: Any, **kwargs: Any
-    ) -> Any:
-        """Run work in a thread under a device-memory reservation."""
-        reservation = await reserve_memory(self.context, size=size, net_memory_delta=0)
-        with opaque_memory_usage(reservation):
-            return await self.ir_context.to_thread(func, *args, **kwargs)
-
     def _prepare(self, right: DataFrame) -> None:
         """Prepare the current right window for repeated probes."""
         ir = self.ir
@@ -235,7 +226,9 @@ class _AsofCursor:
             return None
         if not chunk.table_view().columns()[self.right_index].null_count():
             return chunk
-        non_null = await self._reserved(
+        non_null = await run_with_reservation(
+            self.context,
+            self.ir_context,
             chunk.data_alloc_size(),
             plc.stream_compaction.drop_nulls,
             chunk.table_view(),
@@ -253,7 +246,9 @@ class _AsofCursor:
         """Retain each group's last right row before loading the next window."""
         if self.current is not None:
             if self.ir.right_by:
-                last_rows = await self._reserved(
+                last_rows = await run_with_reservation(
+                    self.context,
+                    self.ir_context,
                     self.current._size_bytes,
                     plc.stream_compaction.stable_distinct,
                     self.current.table,
@@ -271,8 +266,12 @@ class _AsofCursor:
                 )
             else:
                 tail = self.current.slice((-1, 1))
-                last_row = await self._reserved(
-                    tail._size_bytes, tail.table.copy, stream=tail.stream
+                last_row = await run_with_reservation(
+                    self.context,
+                    self.ir_context,
+                    tail._size_bytes,
+                    tail.table.copy,
+                    stream=tail.stream,
                 )
                 self.predecessor = DataFrame.from_table(
                     last_row, tail.column_names, tail.dtypes, stream=tail.stream
@@ -304,7 +303,9 @@ class _AsofCursor:
             self.maximum_stream = right_chunk.stream
             right = chunk_to_frame(right_chunk, self.ir.children[1])
             if self.predecessor is not None:
-                right = await self._reserved(
+                right = await run_with_reservation(
+                    self.context,
+                    self.ir_context,
                     self.predecessor._size_bytes + right._size_bytes,
                     _concat,
                     self.predecessor,
@@ -319,7 +320,9 @@ class _AsofCursor:
         """Prepare the current right window only when needed."""
         if self.joiner is None:
             assert self.current is not None
-            await self._reserved(
+            await run_with_reservation(
+                self.context,
+                self.ir_context,
                 self.current._size_bytes * (2 if self.ir.right_by else 1),
                 self._prepare,
                 self.current,
@@ -393,7 +396,9 @@ class _AsofCursor:
             output_payload = (
                 self.payload._size_bytes * part.num_rows + payload_rows - 1
             ) // payload_rows
-            fragment = await self._reserved(
+            fragment = await run_with_reservation(
+                self.context,
+                self.ir_context,
                 part._size_bytes
                 + self.payload._size_bytes
                 + output_payload
@@ -415,8 +420,12 @@ class _AsofCursor:
             )
         if len(fragments) == 1:
             (result,) = fragments
-            owned = await self._reserved(
-                result._size_bytes, result.table.copy, stream=result.stream
+            owned = await run_with_reservation(
+                self.context,
+                self.ir_context,
+                result._size_bytes,
+                result.table.copy,
+                stream=result.stream,
             )
             return TableChunk.from_pylibcudf_table(
                 owned, result.stream, exclusive_view=True, br=self.context.br()
@@ -444,7 +453,9 @@ class _AsofCursor:
             )
             time_col = chunk.table_view().columns()[self.right_index]
             if time_col.null_count():
-                non_null = await self._reserved(
+                non_null = await run_with_reservation(
+                    self.context,
+                    self.ir_context,
                     time_col.device_buffer_size(),
                     plc.stream_compaction.drop_nulls,
                     plc.Table([time_col]),
@@ -499,6 +510,8 @@ async def asof_join_actor(
         if right_metadata.duplicated or comm.nranks == 1:
             right_source = _iter_channel_chunks(context, ch_right)
         else:
+            # TODO: For large right inputs, use sparse exchange to send each rank
+            # its needed right rows and predecessor state instead of broadcasting.
             right_chunks = await _gather_right(
                 context, comm, ch_right, collective_id=right_gather_id
             )

@@ -40,6 +40,15 @@ option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
+option(CUDF_USE_PRIVATE_TEST_LIBRARIES "Share code between internal test and benchmark binaries" ON)
+mark_as_advanced(CUDF_USE_PRIVATE_TEST_LIBRARIES)
+set(CUDF_PRIVATE_TEST_LIBRARIES OFF)
+if(CUDF_USE_PRIVATE_TEST_LIBRARIES
+   AND BUILD_SHARED_LIBS
+   AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
+)
+  set(CUDF_PRIVATE_TEST_LIBRARIES ON)
+endif()
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)
 mark_as_advanced(CUDF_LARGE_STRINGS_DISABLED)
 option(
@@ -1470,6 +1479,7 @@ add_library(cudf::cudf ALIAS cudf)
 # ##################################################################################################
 # * tests and benchmarks --------------------------------------------------------------------------
 # ##################################################################################################
+rapids_cmake_install_lib_dir(lib_dir)
 
 # ##################################################################################################
 # * build cudftestutil ----------------------------------------------------------------------------
@@ -1568,6 +1578,35 @@ if(CUDF_BUILD_TESTUTIL)
   )
   add_library(cudf::cudftestutil_objects ALIAS cudftestutil_objects)
 
+  if(CUDF_PRIVATE_TEST_LIBRARIES AND (CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS))
+    set_target_properties(cudftestutil_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    add_library(cudf_test_support SHARED $<TARGET_OBJECTS:cudftestutil_objects>)
+    set_target_properties(cudf_test_support PROPERTIES INSTALL_RPATH "\$ORIGIN")
+    # Assertions in the helper and in the executable must update the same GoogleTest state.
+    set_property(
+      TARGET cudf_test_support PROPERTY LINK_LIBRARY_OVERRIDE
+                                        "WHOLE_ARCHIVE,GTest::gmock,GTest::gtest"
+    )
+    target_link_libraries(
+      cudf_test_support PRIVATE cudf::cudftestutil
+                                "$<LINK_LIBRARY:WHOLE_ARCHIVE,GTest::gmock,GTest::gtest>"
+    )
+    target_link_options(cudf_test_support PRIVATE "LINKER:-z,defs")
+    add_library(cudftestutil_internal INTERFACE)
+    target_link_libraries(
+      cudftestutil_internal INTERFACE cudf::cudftestutil cudf_test_support
+                                      "$<COMPILE_ONLY:GTest::gmock>"
+    )
+    install(
+      TARGETS cudf_test_support
+      LIBRARY DESTINATION ${lib_dir}
+              COMPONENT test_support
+              EXCLUDE_FROM_ALL
+    )
+  else()
+    add_library(cudftestutil_internal ALIAS cudftestutil_objects)
+  endif()
+
   install(FILES tests/io/metadata_utilities.cpp DESTINATION src/cudftestutil/io)
   install(
     FILES tests/utilities/column_utilities.cu
@@ -1650,7 +1689,6 @@ endif()
 
 # ##################################################################################################
 # * install targets -------------------------------------------------------------------------------
-rapids_cmake_install_lib_dir(lib_dir)
 include(CPack)
 include(GNUInstallDirs)
 

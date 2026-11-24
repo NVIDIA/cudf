@@ -81,7 +81,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
   )
 
   target_link_libraries(
-    ${CMAKE_TEST_NAME} PRIVATE cudf::cudftestutil_objects nvtx3::nvtx3-cpp
+    ${CMAKE_TEST_NAME} PRIVATE cudftestutil_internal nvtx3::nvtx3-cpp
                                $<TARGET_NAME_IF_EXISTS:conda_env> "${_CUDF_TEST_EXTRA_LIBS}"
   )
   rapids_cuda_set_runtime(${CMAKE_TEST_NAME} USE_STATIC ON)

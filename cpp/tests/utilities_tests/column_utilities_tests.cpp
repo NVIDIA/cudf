@@ -19,6 +19,8 @@
 
 #include <cuda/iterator>
 
+#include <gtest/gtest-spi.h>
+
 #include <sstream>
 
 template <typename T>
@@ -44,6 +46,17 @@ TYPED_TEST_SUITE(ColumnUtilitiesTest, cudf::test::FixedWidthTypes);
 TYPED_TEST_SUITE(ColumnUtilitiesTestIntegral, cudf::test::IntegralTypes);
 TYPED_TEST_SUITE(ColumnUtilitiesTestFloatingPoint, cudf::test::FloatingPointTypes);
 TYPED_TEST_SUITE(ColumnUtilitiesTestFixedPoint, cudf::test::FixedPointTypes);
+
+TEST(ColumnUtilitiesFailureTest, ReportsComparisonFailureToGoogleTest)
+{
+  EXPECT_FATAL_FAILURE(
+    {
+      cudf::test::fixed_width_column_wrapper<int> const lhs{1};
+      cudf::test::fixed_width_column_wrapper<int> const rhs{2};
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(lhs, rhs);
+    },
+    "first difference");
+}
 
 TYPED_TEST(ColumnUtilitiesTest, NonNullableToHost)
 {

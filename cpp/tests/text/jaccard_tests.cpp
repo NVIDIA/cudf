@@ -75,18 +75,38 @@ TEST_F(JaccardTest, Errors)
 }
 
 namespace {
-// host reference for ASCII-only strings
+// split a UTF-8 string into its characters
+std::vector<std::string> to_characters(std::string const& str)
+{
+  std::vector<std::string> result;
+  for (std::size_t i = 0; i < str.size(); ++i) {
+    // continuation bytes are appended to the current character
+    if ((static_cast<unsigned char>(str[i]) & 0xC0) == 0x80) {
+      result.back().push_back(str[i]);
+    } else {
+      result.emplace_back(1, str[i]);
+    }
+  }
+  return result;
+}
+
+// host reference for UTF-8 strings
 float jaccard_reference(std::string const& str1, std::string const& str2, int width)
 {
   auto substrings = [width](std::string const& str) {
     std::set<std::string> result;
-    if (str.empty()) { return result; }
-    if (static_cast<int>(str.size()) < width) {
+    auto const chars = to_characters(str);
+    if (chars.empty()) { return result; }
+    if (static_cast<int>(chars.size()) < width) {
       result.insert(str);
       return result;
     }
-    for (std::size_t i = 0; i + width <= str.size(); ++i) {
-      result.insert(str.substr(i, width));
+    for (std::size_t i = 0; i + width <= chars.size(); ++i) {
+      std::string sub;
+      for (std::size_t j = i; j < i + width; ++j) {
+        sub += chars[j];
+      }
+      result.insert(sub);
     }
     return result;
   };
@@ -99,25 +119,23 @@ float jaccard_reference(std::string const& str1, std::string const& str2, int wi
   auto const unions = static_cast<int>(set1.size() + set2.size()) - intersects;
   return unions ? static_cast<float>(intersects) / static_cast<float>(unions) : 0.f;
 }
-}  // namespace
 
-TEST_F(JaccardTest, LongRows)
+// compare jaccard_index against the reference for random rows built from the given alphabet
+void test_random_rows(std::vector<std::string> const& alphabet, std::vector<int> const& max_lengths)
 {
-  // A small alphabet produces many duplicate substrings within each row.
-  // Mixing short and long rows exercises both the per-row and the partitioned code paths.
   std::mt19937 gen(42);
-  std::uniform_int_distribution<int> chr_dist('a', 'd');
+  std::uniform_int_distribution<std::size_t> chr_dist(0, alphabet.size() - 1);
   auto random_string = [&](int length) {
-    std::string result(length, ' ');
-    for (auto& ch : result) {
-      ch = static_cast<char>(chr_dist(gen));
+    std::string result;
+    for (int i = 0; i < length; ++i) {
+      result += alphabet[chr_dist(gen)];
     }
     return result;
   };
 
   std::vector<std::string> h_input1;
   std::vector<std::string> h_input2;
-  for (auto max_length : {0, 3, 50, 500, 3000, 20000, 100000}) {
+  for (auto max_length : max_lengths) {
     std::uniform_int_distribution<int> len_dist(max_length / 2, max_length);
     for (int i = 0; i < 20; ++i) {
       auto const length = len_dist(gen);
@@ -143,4 +161,18 @@ TEST_F(JaccardTest, LongRows)
     auto results = nvtext::jaccard_index(view1, view2, width);
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(*results, expected);
   }
+}
+}  // namespace
+
+TEST_F(JaccardTest, LongRows)
+{
+  // A small alphabet produces many duplicate substrings within each row.
+  // Mixing short and long rows exercises both the per-row and the partitioned code paths.
+  test_random_rows({"a", "b", "c", "d"}, {0, 3, 50, 500, 3000, 20000, 100000});
+}
+
+TEST_F(JaccardTest, LongRowsUTF8)
+{
+  // characters of 1, 2, 3, and 4 bytes
+  test_random_rows({"a", "é", "中", "😀"}, {0, 3, 50, 500, 3000, 20000});
 }

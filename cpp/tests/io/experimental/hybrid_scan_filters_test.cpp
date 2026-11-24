@@ -59,7 +59,7 @@ TEST_F(HybridScanFiltersTest, Metadata)
   // Create a table with several row groups each with a single page.
   auto constexpr num_concat         = 1;
   auto constexpr rows_per_row_group = page_size_for_ordered_tests;
-  auto file_buffer                  = std::get<1>(create_parquet_with_stats<T, num_concat>());
+  auto const& file_buffer           = std::get<1>(create_parquet_with_stats<T, num_concat>());
 
   // Filtering AST - table[0] < 100
   auto literal_value     = cudf::numeric_scalar<T>(100, true, cudf::get_default_stream());
@@ -133,7 +133,7 @@ TEST_F(HybridScanFiltersTest, MultiSourceMetadata)
 
   // Helper to test multi-source metadata
   auto const test_multisource_metadata = [&](auto num_sources) {
-    auto const file_buffer = std::get<1>(create_parquet_with_stats<T, 1>());
+    auto const& file_buffer = std::get<1>(create_parquet_with_stats<T, 1>());
 
     std::vector<std::unique_ptr<cudf::io::datasource>> datasources(num_sources);
     std::vector<std::reference_wrapper<cudf::io::datasource>> datasource_refs{};
@@ -194,7 +194,8 @@ TEST_F(HybridScanFiltersTest, ExternalMetadata)
   auto parquet_metadata = [&]() {
     // Create a table with several row groups each with a single page.
     auto constexpr num_concat = 1;
-    auto file_buffer = std::get<1>(create_parquet_with_stats<cudf::timestamp_ms, num_concat>());
+    auto const& file_buffer =
+      std::get<1>(create_parquet_with_stats<cudf::timestamp_ms, num_concat>());
     // Input file buffer span
     auto const datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
       reinterpret_cast<std::byte const*>(file_buffer.data()), file_buffer.size()));
@@ -345,9 +346,9 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithStats)
   using T = uint32_t;
 
   // Create a table with 4 row groups each with a single page.
-  auto constexpr num_concat         = 1;
-  auto constexpr rows_per_row_group = page_size_for_ordered_tests;
-  auto [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
+  auto constexpr num_concat                = 1;
+  auto constexpr rows_per_row_group        = page_size_for_ordered_tests;
+  auto const& [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
 
   // Filtering AST - table[0] < 50 and table[2] < "000010000"
   auto literal_value1     = cudf::numeric_scalar<T>(50, true, cudf::get_default_stream());
@@ -408,9 +409,9 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithComplexExpressions)
   using T = uint32_t;
 
   // Create a table with 4 row groups each with a single page.
-  auto constexpr num_concat         = 1;
-  auto constexpr rows_per_row_group = page_size_for_ordered_tests;
-  auto [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
+  auto constexpr num_concat                = 1;
+  auto constexpr rows_per_row_group        = page_size_for_ordered_tests;
+  auto const& [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
 
   auto col_ref0 = cudf::ast::column_reference(0);
   auto col_ref1 = cudf::ast::column_reference(1);
@@ -558,8 +559,8 @@ TEST_F(HybridScanFiltersTest, FilterColumnSelection)
   using T = uint32_t;
 
   // Create a table with 4 row groups each with a single page.
-  auto constexpr num_concat         = 1;
-  auto [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
+  auto constexpr num_concat                = 1;
+  auto const& [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
 
   // Create datasource
   auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
@@ -736,7 +737,7 @@ TYPED_TEST(PageFilteringWithPageIndexStats, FilterPages)
   // per concatenation with multiple pages per row group. Since all row groups will be identical, we
   // can only prune pages based on page index stats
   auto constexpr num_concat = 2;
-  auto const file_buffer    = std::get<1>(create_parquet_with_stats<T, num_concat, false>());
+  auto const& file_buffer   = std::get<1>(create_parquet_with_stats<T, num_concat, false>());
 
   // Input datasource
   auto const datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
@@ -977,9 +978,9 @@ TEST_F(HybridScanFiltersTest, IncompletePageStats)
 
 TEST_F(HybridScanFiltersTest, OffsetIndexOnlyDataPageMask)
 {
-  using T                           = uint32_t;
-  auto constexpr num_concat         = 2;
-  auto [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
+  using T                                  = uint32_t;
+  auto constexpr num_concat                = 2;
+  auto const& [written_table, file_buffer] = create_parquet_with_stats<T, num_concat, false>();
 
   auto const datasource    = cudf::io::datasource::create(cudf::host_span<std::byte const>(
     reinterpret_cast<std::byte const*>(file_buffer.data()), file_buffer.size()));
@@ -1128,7 +1129,7 @@ TYPED_TEST(TimestampPageFiltering, MismatchedPrecisions)
   // Concatenate the table twice so we get multiple row groups with identical data. This forces
   // pruning to happen at the page level rather than at the row-group level.
   auto constexpr num_concat = 2;
-  auto const file_buffer    = std::get<1>(create_parquet_with_stats<NativeTimestamp, num_concat>());
+  auto const& file_buffer   = std::get<1>(create_parquet_with_stats<NativeTimestamp, num_concat>());
 
   auto const datasource = cudf::io::datasource::create(cudf::host_span<std::byte const>(
     reinterpret_cast<std::byte const*>(file_buffer.data()), file_buffer.size()));
@@ -1193,7 +1194,7 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithDictionary)
   // A table with several row groups each containing a single page per column. The data page and row
   // group stats are identical so only row groups can be pruned using stats
   auto constexpr num_concat = 1;
-  auto const buffer         = std::get<1>(create_parquet_with_stats<T, num_concat>());
+  auto const& buffer        = std::get<1>(create_parquet_with_stats<T, num_concat>());
   auto stream               = cudf::get_default_stream();
   auto mr                   = cudf::get_current_device_resource_ref();
 
@@ -1687,7 +1688,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterFewLiteralsTyped)
   auto constexpr is_nullable         = true;
 
   // Specifying ZSTD compression to explicitly test decompression of dictionary pages
-  auto const buffer =
+  auto const& buffer =
     std::get<1>(create_parquet_with_stats<T, num_concat, is_constant_strings, is_nullable>(
       100, cudf::io::compression_type::ZSTD));
 
@@ -1821,7 +1822,7 @@ TYPED_TEST(RowGroupFilteringWithDictTest, FilterManyLiteralsTyped)
   auto constexpr is_nullable         = false;
 
   // Specifying no compression to explicitly test uncompressed dictionary pages
-  auto const buffer =
+  auto const& buffer =
     std::get<1>(create_parquet_with_stats<T, num_concat, is_constant_strings, is_nullable>(
       100, cudf::io::compression_type::NONE));
 
@@ -2712,7 +2713,7 @@ TEST_F(HybridScanFiltersTest, FilterRowGroupsWithBloomFiltersValidatesBitsets)
 
   // 4 row groups. cuDF's Parquet writer does not emit bloom filters, but the bitsets passed to
   // `filter_row_groups_with_bloom_filters` are validated regardless
-  auto [written_table, file_buffer] = create_parquet_with_stats<T, 1>();
+  auto const& file_buffer = std::get<1>(create_parquet_with_stats<T, 1>());
 
   auto const stream  = cudf::get_default_stream();
   auto literal_value = cudf::numeric_scalar<T>(T{42}, true, stream);

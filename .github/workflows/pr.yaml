@@ -8,6 +8,7 @@ concurrency:
   cancel-in-progress: true
 permissions: {}
 jobs:
+  # Trigger the broad PR test matrix for CI timing measurements.
   # Please keep pr-builder as the top job here
   pr-builder:
     needs:

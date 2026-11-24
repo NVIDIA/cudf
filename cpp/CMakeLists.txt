@@ -5,6 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
+# Include CMake checks and C++ linters in the CI timing run.
 cmake_minimum_required(VERSION 4.3 FATAL_ERROR)
 
 include(../cmake/rapids_config.cmake)

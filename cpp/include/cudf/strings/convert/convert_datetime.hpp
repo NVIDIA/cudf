@@ -56,6 +56,10 @@ namespace strings {
  * Invalid formats are not checked. If the string contains unexpected
  * or insufficient characters, that output row entry's timestamp value is undefined.
  *
+ * Range checking is not performed. Dates outside the range of the `timestamp_type` produce
+ * undefined results. For example, `TIMESTAMP_NANOSECONDS` can only represent dates between
+ * the years 1677 and 2262.
+ *
  * Any null string entry will result in a corresponding null row in the output column.
  *
  * The resulting time units are specified by the `timestamp_type` parameter.

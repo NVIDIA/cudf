@@ -735,7 +735,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_size = 1 + max_RLE_page_size(ck_g.dict_rle_bits, values_in_page);
         } else if (write_v2_headers && col_g.physical_type == Type::BOOLEAN) {
           // V2 BOOLEAN data is RLE encoded, so one byte per value is not enough for tiny pages
-          page_size = cuda::std::max<size_t>(page_size, max_RLE_page_size(1, leaf_values_in_page));
+          page_size = cuda::std::max(page_size, max_RLE_page_size(1, leaf_values_in_page));
         }
         if (!t) {
           page_g.num_fragments  = fragments_in_chunk - page_start;

@@ -73,96 +73,96 @@ inline cudf::column make_exp_chrono_column(cudf::type_id type_id)
 {
   switch (type_id) {
     case cudf::type_id::TIMESTAMP_DAYS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_timestamps_D.size(),
-        rmm::device_buffer{test_timestamps_D.data(),
-                           test_timestamps_D.size() * sizeof(test_timestamps_D.front()),
-                           cudf::get_default_stream()},
+      return cudf::column(cudf::data_type{type_id},
+                          test_timestamps_D.size(),
+                          cuda::device_buffer<int32_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_timestamps_D.begin(),
+                                                       test_timestamps_D.end()},
 
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::TIMESTAMP_SECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_timestamps_s.size(),
-        rmm::device_buffer{test_timestamps_s.data(),
-                           test_timestamps_s.size() * sizeof(test_timestamps_s.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_timestamps_s.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_timestamps_s.begin(),
+                                                       test_timestamps_s.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::TIMESTAMP_MILLISECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_timestamps_ms.size(),
-        rmm::device_buffer{test_timestamps_ms.data(),
-                           test_timestamps_ms.size() * sizeof(test_timestamps_ms.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_timestamps_ms.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_timestamps_ms.begin(),
+                                                       test_timestamps_ms.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::TIMESTAMP_MICROSECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_timestamps_us.size(),
-        rmm::device_buffer{test_timestamps_us.data(),
-                           test_timestamps_us.size() * sizeof(test_timestamps_us.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_timestamps_us.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_timestamps_us.begin(),
+                                                       test_timestamps_us.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::TIMESTAMP_NANOSECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_timestamps_ns.size(),
-        rmm::device_buffer{test_timestamps_ns.data(),
-                           test_timestamps_ns.size() * sizeof(test_timestamps_ns.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_timestamps_ns.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_timestamps_ns.begin(),
+                                                       test_timestamps_ns.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::DURATION_DAYS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_durations_D.size(),
-        rmm::device_buffer{test_durations_D.data(),
-                           test_durations_D.size() * sizeof(test_durations_D.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_durations_D.size(),
+                          cuda::device_buffer<int32_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_durations_D.begin(),
+                                                       test_durations_D.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::DURATION_SECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_durations_s.size(),
-        rmm::device_buffer{test_durations_s.data(),
-                           test_durations_s.size() * sizeof(test_durations_s.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_durations_s.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_durations_s.begin(),
+                                                       test_durations_s.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::DURATION_MILLISECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_durations_ms.size(),
-        rmm::device_buffer{test_durations_ms.data(),
-                           test_durations_ms.size() * sizeof(test_durations_ms.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_durations_ms.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_durations_ms.begin(),
+                                                       test_durations_ms.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::DURATION_MICROSECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_durations_us.size(),
-        rmm::device_buffer{test_durations_us.data(),
-                           test_durations_us.size() * sizeof(test_durations_us.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_durations_us.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_durations_us.begin(),
+                                                       test_durations_us.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     case cudf::type_id::DURATION_NANOSECONDS:
-      return cudf::column(
-        cudf::data_type{type_id},
-        test_durations_ns.size(),
-        rmm::device_buffer{test_durations_ns.data(),
-                           test_durations_ns.size() * sizeof(test_durations_ns.front()),
-                           cudf::get_default_stream()},
-        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-        0);
+      return cudf::column(cudf::data_type{type_id},
+                          test_durations_ns.size(),
+                          cuda::device_buffer<int64_t>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       test_durations_ns.begin(),
+                                                       test_durations_ns.end()},
+                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                          0);
     default: CUDF_FAIL("Unsupported type_id");
   }
 };

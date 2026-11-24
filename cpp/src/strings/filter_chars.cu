@@ -133,7 +133,7 @@ std::unique_ptr<column> filter_characters(
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              strings.null_count(),
                              cudf::detail::copy_bitmask(strings.parent(), stream, mr));
 }

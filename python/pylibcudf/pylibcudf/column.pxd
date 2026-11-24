@@ -6,6 +6,7 @@ from libcpp.vector cimport vector
 from libc.stdint cimport uint64_t
 
 from rmm.librmm.device_buffer cimport device_buffer
+from rmm.librmm.device_uvector cimport device_uvector
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport (
@@ -116,3 +117,10 @@ cdef class StructsColumnView:
     cdef Column _column
     cdef structs_column_view view(self)
     cpdef Column get_sliced_child(self, int index, object stream=*)
+
+
+cdef Column _column_from_device_uvector(
+    unique_ptr[device_uvector[size_type]] data,
+    object stream,
+    DeviceMemoryResource mr,
+)

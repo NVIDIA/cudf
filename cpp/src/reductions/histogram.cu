@@ -95,12 +95,14 @@ std::unique_ptr<column> make_empty_histogram_like(column_view const& values)
   std::vector<std::unique_ptr<column>> struct_children;
   struct_children.emplace_back(empty_like(values));
   struct_children.emplace_back(make_empty_column(type_id::INT64));
-  return std::make_unique<column>(data_type{type_id::STRUCT},
-                                  0,
-                                  rmm::device_buffer{},
-                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                  0,
-                                  std::move(struct_children));
+  return std::make_unique<column>(
+    data_type{type_id::STRUCT},
+    0,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(struct_children));
 }
 
 std::pair<std::unique_ptr<cuda::device_buffer<size_type>>, std::unique_ptr<column>>

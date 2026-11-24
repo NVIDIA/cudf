@@ -105,11 +105,13 @@ std::unique_ptr<column> wrap(strings_column_view const& strings,
   auto d_new_offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
-  auto chars_buffer = rmm::device_buffer{strings.chars_begin(stream),
-                                         static_cast<std::size_t>(strings.chars_size(stream)),
-                                         stream,
-                                         mr.get_output_mr()};  // makes a copy
-  auto d_chars      = static_cast<char*>(chars_buffer.data());
+  auto chars_buffer = cuda::device_buffer<std::byte>{
+    stream,
+    mr.get_output_mr(),
+    reinterpret_cast<std::byte const*>(strings.chars_begin(stream)),
+    reinterpret_cast<std::byte const*>(strings.chars_begin(stream)) +
+      (static_cast<std::size_t>(strings.chars_size(stream)))};  // makes a copy
+  auto d_chars = reinterpret_cast<char*>(chars_buffer.data());
 
   device_execute_functor d_execute_fctr{d_column, d_new_offsets, d_chars, width};
 

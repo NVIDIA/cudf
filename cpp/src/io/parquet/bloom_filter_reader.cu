@@ -181,7 +181,8 @@ struct bloom_filter_caster {
     using filter_block_type = typename bloom_filter_type::filter_block_type;
     using word_type         = typename policy_type::word_type;
 
-    auto results = rmm::device_uvector<bool>{total_row_groups, stream, mr.get_output_mr()};
+    auto results =
+      cuda::device_buffer<bool>{stream, mr.get_output_mr(), total_row_groups, cuda::no_init};
 
     // Filter properties
     auto constexpr bytes_per_block = sizeof(word_type) * policy_type::words_per_block;

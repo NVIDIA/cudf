@@ -18,6 +18,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/stream>
@@ -197,7 +198,7 @@ std::unique_ptr<column> filter_characters_of_type(strings_column_view const& str
   // return new strings column
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              strings.null_count(),
                              std::move(null_mask));
 }

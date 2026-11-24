@@ -1766,7 +1766,9 @@ TEST_F(SearchTest, multi_contains_primitive_nan_unequal)
                                        cudf::get_current_device_resource_ref());
 
   // With nan_equality::UNEQUAL, NaN should not match NaN
-  EXPECT_FALSE(result.front_element(cudf::get_default_stream()));
+  cudf::column_view const result_view{
+    cudf::data_type{cudf::type_id::BOOL8}, 1, result.data(), nullptr, 0};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result_view, fixed_width_column_wrapper<bool>{false});
 }
 
 template <typename T>

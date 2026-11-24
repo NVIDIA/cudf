@@ -7,6 +7,7 @@
 
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/detail/utilities/visitor_overload.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
@@ -82,12 +83,14 @@ struct empty_column_functor {
     child_columns.push_back(std::move(child));
     // Do not use `cudf::make_lists_column` since we do not need to call `purge_nonempty_nulls` on
     // the child column as it does not have non-empty nulls. Look issue #17356
-    return std::make_unique<column>(cudf::data_type{type_id::LIST},
-                                    0,
-                                    rmm::device_buffer{},
-                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                    0,
-                                    std::move(child_columns));
+    return std::make_unique<column>(
+      cudf::data_type{type_id::LIST},
+      0,
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref()},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+      0,
+      std::move(child_columns));
   }
 
   template <cudf::concepts::struct_view T>
@@ -123,7 +126,7 @@ struct allnull_column_functor {
   [[nodiscard]] auto make_zeroed_offsets(size_type size) const
   {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr.get_output_mr());
+      cudf::detail::make_zeroed_device_buffer_async<int32_t>(size + 1, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
@@ -131,7 +134,7 @@ struct allnull_column_functor {
   [[nodiscard]] auto make_zeroed_indices(size_type size) const
   {
     auto indices_buff =
-      cudf::detail::make_zeroed_device_uvector_async<size_type>(size, stream, mr.get_output_mr());
+      cudf::detail::make_zeroed_device_buffer_async<size_type>(size, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(indices_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }
@@ -161,7 +164,12 @@ struct allnull_column_functor {
     auto offsets   = make_zeroed_offsets(size);
     auto null_mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
     return make_strings_column(
-      size, std::move(offsets), rmm::device_buffer{}, size, std::move(null_mask));
+      size,
+      std::move(offsets),
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref()},
+      size,
+      std::move(null_mask));
   }
   template <cudf::concepts::list_view T>
   std::unique_ptr<column> operator()(schema_element const& schema, size_type size) const
@@ -177,12 +185,14 @@ struct allnull_column_functor {
     child_columns.push_back(std::move(child));
     // Do not use `cudf::make_lists_column` since we do not need to call `purge_nonempty_nulls` on
     // the child column as it does not have non-empty nulls. Look issue #17356
-    return std::make_unique<column>(cudf::data_type{type_id::LIST},
-                                    size,
-                                    rmm::device_buffer{},
-                                    std::move(null_mask),
-                                    size,
-                                    std::move(child_columns));
+    return std::make_unique<column>(
+      cudf::data_type{type_id::LIST},
+      size,
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref()},
+      std::move(null_mask),
+      size,
+      std::move(child_columns));
   }
 
   template <cudf::concepts::struct_view T>

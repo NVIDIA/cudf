@@ -28,7 +28,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -389,11 +388,13 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
   checked_row_count(input->length);
 
   if (type.id() == type_id::EMPTY) {
-    return std::make_unique<column>(data_type(type_id::EMPTY),
-                                    input->length,
-                                    rmm::device_buffer{},
-                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                    input->length);
+    return std::make_unique<column>(
+      data_type(type_id::EMPTY),
+      input->length,
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref()},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+      input->length);
   }
 
   auto result = type_dispatcher(

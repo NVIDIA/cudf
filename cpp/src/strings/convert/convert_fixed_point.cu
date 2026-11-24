@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/climits>
 #include <cuda/std/limits>
@@ -236,7 +237,7 @@ struct dispatch_from_fixed_point_fn {
 
     return make_strings_column(input.size(),
                                std::move(offsets),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                input.null_count(),
                                cudf::detail::copy_bitmask(input, stream, mr));
   }

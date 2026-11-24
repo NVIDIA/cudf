@@ -41,6 +41,7 @@
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm.max.h>
+#include <cuda/std/execution>
 #include <cuda/std/functional>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -3016,14 +3017,21 @@ std::unique_ptr<column> allocate_materialized_column(
   auto const has_chars = metadata.type().id() != type_id::STRING ||
                          (metadata.num_children() > 0 &&
                           data_offset != packed_metadata_access::data_offset(metadata.child(0)));
-  rmm::device_buffer data;
+  cuda::device_buffer<std::byte> data{stream, mr.get_output_mr()};
   if (data_offset != -1 && has_chars) {
     auto const required_bytes = is_fixed_width(metadata.type())
                                   ? metadata.num_rows() * size_of(metadata.type())
                                   : std::size_t{0};
     auto const bytes          = source.size(data_offset, required_bytes, false);
-    data                      = rmm::device_buffer(bytes, stream, mr.get_output_mr());
-    source.fill(data_offset, {static_cast<uint8_t*>(data.data()), bytes});
+    data                      = cuda::device_buffer<std::byte>(
+      stream,
+      mr.get_output_mr(),
+      bytes,
+      cuda::no_init,
+      cuda::std::execution::prop{
+        cuda::allocation_alignment,
+        is_fixed_width(metadata.type()) ? size_of(metadata.type()) : std::size_t{1}});
+    source.fill(data_offset, {reinterpret_cast<uint8_t*>(data.data()), bytes});
   }
 
   std::vector<std::unique_ptr<column>> children;

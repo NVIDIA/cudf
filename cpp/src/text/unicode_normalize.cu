@@ -1162,7 +1162,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
                           mr.as_temporary());
     return cudf::strings::detail::make_offsets_child_column(sizes.begin(), sizes.end(), stream, mr);
   }();
-  auto chars = rmm::device_uvector<char>(total_bytes, stream, output_mr);
+  auto chars = cuda::device_buffer<char>(stream, output_mr, total_bytes, cuda::no_init);
   detail::scan_with(d_widths,
                     detail::write_utf8_fn{cps.data(), chars.data()},
                     static_cast<int64_t>(cps.size()),
@@ -1171,7 +1171,7 @@ std::unique_ptr<cudf::column> normalize_unicode(cudf::strings_column_view const&
 
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets_column),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    input.null_count(),
                                    cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

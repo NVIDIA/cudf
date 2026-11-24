@@ -157,12 +157,13 @@ cuda::device_buffer<cudf::size_type> null_roll_up(column_view const& input,
 }
 
 template <typename T>
-rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
+cuda::device_buffer<T> compute_ewma_adjust(column_view const& input,
                                            T const beta,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
-  rmm::device_uvector<T> output(input.size(), stream);
+  cuda::device_buffer<T> output(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   cuda::device_buffer<pair_type<T>> pairs(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
 
@@ -231,12 +232,13 @@ rmm::device_uvector<T> compute_ewma_adjust(column_view const& input,
 }
 
 template <typename T>
-rmm::device_uvector<T> compute_ewma_noadjust(column_view const& input,
+cuda::device_buffer<T> compute_ewma_noadjust(column_view const& input,
                                              T const beta,
                                              cuda::stream_ref stream,
                                              cudf::memory_resources mr)
 {
-  rmm::device_uvector<T> output(input.size(), stream);
+  cuda::device_buffer<T> output(
+    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   cuda::device_buffer<pair_type<T>> pairs(
     stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
   cuda::device_buffer<cudf::size_type> nullcnt =
@@ -320,7 +322,7 @@ struct ewma_functor {
     }();
     return std::make_unique<column>(cudf::data_type(cudf::type_to_id<T>()),
                                     input.size(),
-                                    result.release(),
+                                    std::move(result).template as_bytes<std::byte>(),
                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     0);
   }

@@ -863,7 +863,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
   auto d_offsets        = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // CHARS column
-  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), bytes, cuda::no_init);
   auto d_chars = chars.data();
 
   single_thread_fn.d_chars   = d_chars;
@@ -907,7 +907,7 @@ static std::unique_ptr<column> parse_string(string_view_pair_it str_tuples,
 
   return make_strings_column(col_size,
                              std::move(offsets),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              d_null_count.value(stream),
                              std::move(null_mask));
 }

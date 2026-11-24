@@ -62,14 +62,16 @@ struct copy_float_data_fn {
   cudf::memory_resources mr;
 
   template <cuda::std::floating_point T>
-  std::unique_ptr<rmm::device_buffer> operator()() const
+  std::unique_ptr<cuda::device_buffer<std::byte>> operator()() const
   {
-    return std::make_unique<rmm::device_buffer>(
-      input.data<T>(), input.size() * sizeof(T), stream, mr.get_output_mr());
+    return std::make_unique<cuda::device_buffer<std::byte>>(
+      cuda::device_buffer<T>(
+        stream, mr.get_output_mr(), input.data<T>(), input.data<T>() + input.size())
+        .template as_bytes<std::byte>());
   }
 
   template <typename T>
-  std::unique_ptr<rmm::device_buffer> operator()() const
+  std::unique_ptr<cuda::device_buffer<std::byte>> operator()() const
   {
     CUDF_FAIL("Input must be a floating point type");
   }

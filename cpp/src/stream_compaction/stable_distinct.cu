@@ -56,8 +56,8 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
     thrust::scatter(
       rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
       cuda::constant_iterator<bool>(true, 0),
-      cuda::constant_iterator<bool>(true, static_cast<size_type>(distinct_indices.size())),
-      distinct_indices.begin(),
+      cuda::constant_iterator<bool>(true, static_cast<size_type>(distinct_indices.second)),
+      distinct_indices.first.begin(),
       markers.begin());
     return markers;
   }();

@@ -168,8 +168,11 @@ struct escape_strings_fn {
     auto [offsets_column, chars] =
       cudf::strings::detail::make_strings_children(*this, size, stream, mr);
 
-    return cudf::make_strings_column(
-      size, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+    return cudf::make_strings_column(size,
+                                     std::move(offsets_column),
+                                     std::move(chars).template as_bytes<std::byte>(),
+                                     null_count,
+                                     std::move(null_mask));
   }
 };
 
@@ -368,7 +371,8 @@ std::unique_ptr<column> struct_to_strings(table_view const& strings_columns,
 
   // gather from offset and create a new string column
   auto old_offsets = strings_column_view(joined_col->view()).offsets();
-  rmm::device_uvector<size_type> row_string_offsets(num_rows + 1, stream, mr.get_output_mr());
+  cuda::device_buffer<size_type> row_string_offsets(
+    stream, mr.get_output_mr(), num_rows + 1, cuda::no_init);
   auto const d_strview_offsets = cudf::detail::make_counting_transform_iterator(
     0, cuda::proclaim_return_type<size_type>([num_strviews_per_row] __device__(size_type const i) {
       return i * num_strviews_per_row;
@@ -535,7 +539,8 @@ std::unique_ptr<column> join_list_of_strings(lists_column_view const& lists_stri
 
   // gather from offset and create a new string column
   auto old_offsets = strings_column_view(joined_col->view()).offsets();
-  rmm::device_uvector<size_type> row_string_offsets(num_offsets, stream, mr.get_output_mr());
+  cuda::device_buffer<size_type> row_string_offsets(
+    stream, mr.get_output_mr(), num_offsets, cuda::no_init);
   thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                  d_strview_offsets.begin(),
                  d_strview_offsets.end(),

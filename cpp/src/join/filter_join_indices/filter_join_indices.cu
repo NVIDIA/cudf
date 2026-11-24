@@ -18,10 +18,10 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/dispatchers.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/table/table_view.hpp>
@@ -375,7 +375,7 @@ filter_join_indices(cudf::table_view const& left,
   }
 }
 
-std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>>
+std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>>
 filter_join_indices_output_size(cudf::table_view const& left,
                                 cudf::table_view const& right,
                                 cudf::device_span<size_type const> left_indices,
@@ -396,7 +396,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
     std::invalid_argument);
 
   auto empty_counts = [&]() {
-    return std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr());
+    return std::make_unique<cuda::device_buffer<size_type>>(stream, mr.get_output_mr());
   };
 
   if (left_indices.empty()) { return {0, empty_counts()}; }
@@ -424,10 +424,10 @@ filter_join_indices_output_size(cudf::table_view const& left,
       ? static_cast<std::size_t>(left.num_rows()) + right.num_rows()
       : (join_kind == join_kind::LEFT_JOIN ? static_cast<std::size_t>(left.num_rows())
                                            : left_indices.size());
-  auto output_counts = join_kind != join_kind::INNER_JOIN
-                         ? cudf::detail::make_zeroed_device_uvector_async<size_type>(
-                             counts_size, stream, mr.get_output_mr())
-                         : rmm::device_uvector<size_type>(counts_size, stream, mr.get_output_mr());
+  auto output_counts =
+    join_kind != join_kind::INNER_JOIN
+      ? cudf::detail::make_zeroed_device_buffer_async<size_type>(counts_size, stream, mr)
+      : cuda::device_buffer<size_type>(stream, mr.get_output_mr(), counts_size, cuda::no_init);
 
   cudf::detail::dispatch_bool(has_nulls, [&](auto has_nulls_c) {
     cudf::detail::dispatch_bool(has_complex_type, [&](auto has_complex_c) {
@@ -474,7 +474,7 @@ filter_join_indices_output_size(cudf::table_view const& left,
                    output_counts.end(),
                    std::size_t{0});
 
-  return {total, std::make_unique<rmm::device_uvector<size_type>>(std::move(output_counts))};
+  return {total, std::make_unique<cuda::device_buffer<size_type>>(std::move(output_counts))};
 }
 
 }  // namespace detail
@@ -497,7 +497,7 @@ filter_join_indices(cudf::table_view const& left,
     left, right, left_indices, right_indices, predicate, join_kind, output_size, stream, mr);
 }
 
-std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>>
+std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>>
 filter_join_indices_output_size(cudf::table_view const& left,
                                 cudf::table_view const& right,
                                 cudf::device_span<size_type const> left_indices,

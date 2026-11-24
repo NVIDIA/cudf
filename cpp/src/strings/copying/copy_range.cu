@@ -15,6 +15,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/for_each.h>
@@ -88,8 +89,9 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // create chars
-  auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
-  auto d_chars    = chars_data.data();
+  auto chars_data =
+    cuda::device_buffer<char>(stream, mr.get_output_mr(), chars_bytes, cuda::no_init);
+  auto d_chars = chars_data.data();
   thrust::for_each(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<cudf::size_type>{0},
@@ -106,7 +108,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
 
   return make_strings_column(target.size(),
                              std::move(offsets_column),
-                             chars_data.release(),
+                             std::move(chars_data).template as_bytes<std::byte>(),
                              null_count,
                              std::move(null_mask));
 }

@@ -17,6 +17,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/transform.hpp>
@@ -37,7 +38,10 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
   TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
-    : data{_num_elements * sizeof(T), stream},
+    : data{stream,
+           cudf::get_current_device_resource_ref(),
+           _num_elements * sizeof(T),
+           cuda::no_init},
       mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
     std::vector<char> h_data(std::max(data.size(), mask.size() * sizeof(cudf::bitmask_type)));
@@ -57,7 +61,8 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::default_random_engine generator{r()};
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
-  rmm::device_buffer data{};
+  cuda::device_buffer<std::byte> data{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref()};
   cuda::device_buffer<cudf::bitmask_type> mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cuda::device_buffer<cudf::bitmask_type> all_valid_mask =
@@ -301,11 +306,13 @@ TYPED_TEST(TypedColumnTest, MoveDataNoMask)
 
 TYPED_TEST(TypedColumnTest, CopyDataAndMask)
 {
-  cudf::column col{this->type(),
-                   this->num_elements(),
-                   rmm::device_buffer{this->data, cudf::get_default_stream()},
-                   cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
-                   0};
+  cudf::column col{
+    this->type(),
+    this->num_elements(),
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
+    cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
+    0};
   EXPECT_EQ(this->type(), col.type());
   EXPECT_TRUE(col.nullable());
   EXPECT_EQ(0, col.null_count());
@@ -415,13 +422,18 @@ TYPED_TEST(TypedColumnTest, MoveConstructorWithMask)
   EXPECT_EQ(original_mask, moved_to_view.null_mask());
 }
 
-TYPED_TEST(TypedColumnTest, DeviceUvectorConstructorNoMask)
+template <typename T>
+struct DeviceBufferColumnTest : TypedColumnTest<T> {};
+
+TYPED_TEST_SUITE(DeviceBufferColumnTest, cudf::test::FixedWidthTypesWithoutFixedPoint);
+
+TYPED_TEST(DeviceBufferColumnTest, DeviceBufferConstructorNoMask)
 {
-  auto data = cudf::device_span<TypeParam const>(static_cast<TypeParam*>(this->data.data()),
+  auto data = cudf::device_span<TypeParam const>(reinterpret_cast<TypeParam*>(this->data.data()),
                                                  this->num_elements());
 
-  auto original = cudf::detail::make_device_uvector_async(
-    data, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto original = cuda::device_buffer<TypeParam>(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), data);
   auto original_data = original.data();
   cudf::column moved_to{
     std::move(original), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
@@ -430,15 +442,20 @@ TYPED_TEST(TypedColumnTest, DeviceUvectorConstructorNoMask)
   // Verify move
   cudf::column_view moved_to_view = moved_to;
   EXPECT_EQ(original_data, moved_to_view.head());
+
+  auto contents = moved_to.release();
+  auto released = std::move(*contents.data).template as_type<TypeParam>();
+  EXPECT_EQ(original_data, released.data());
+  EXPECT_EQ(this->num_elements(), released.size());
 }
 
-TYPED_TEST(TypedColumnTest, DeviceUvectorConstructorWithMask)
+TYPED_TEST(DeviceBufferColumnTest, DeviceBufferConstructorWithMask)
 {
-  auto data = cudf::device_span<TypeParam const>(static_cast<TypeParam*>(this->data.data()),
+  auto data = cudf::device_span<TypeParam const>(reinterpret_cast<TypeParam*>(this->data.data()),
                                                  this->num_elements());
 
-  auto original = cudf::detail::make_device_uvector_async(
-    data, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  auto original = cuda::device_buffer<TypeParam>(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), data);
   auto original_data = original.data();
   auto original_mask = this->all_valid_mask.data();
   cudf::column moved_to{std::move(original), std::move(this->all_valid_mask), 0};
@@ -450,6 +467,21 @@ TYPED_TEST(TypedColumnTest, DeviceUvectorConstructorWithMask)
   EXPECT_EQ(original_mask, moved_to_view.null_mask());
 }
 
+TYPED_TEST(DeviceBufferColumnTest, FactoryBufferCanBeReinterpreted)
+{
+  auto col           = cudf::make_fixed_width_column(this->type(), this->num_elements());
+  auto const* data   = col->view().head();
+  auto copy          = std::make_unique<cudf::column>(*col);
+  auto copy_contents = copy->release();
+  auto copied_buffer = std::move(*copy_contents.data).template as_type<TypeParam>();
+  EXPECT_NE(data, copied_buffer.data());
+  EXPECT_EQ(this->num_elements(), copied_buffer.size());
+  auto contents = col->release();
+  auto released = std::move(*contents.data).template as_type<TypeParam>();
+  EXPECT_EQ(data, released.data());
+  EXPECT_EQ(this->num_elements(), released.size());
+}
+
 TYPED_TEST(TypedColumnTest, ConstructWithChildren)
 {
   std::vector<std::unique_ptr<cudf::column>> children;
@@ -457,21 +489,25 @@ TYPED_TEST(TypedColumnTest, ConstructWithChildren)
   children.emplace_back(std::make_unique<cudf::column>(
     cudf::data_type{cudf::type_id::INT8},
     42,
-    rmm::device_buffer{this->data, cudf::get_default_stream()},
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
     cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
     0));
   children.emplace_back(std::make_unique<cudf::column>(
     cudf::data_type{cudf::type_id::FLOAT64},
     314,
-    rmm::device_buffer{this->data, cudf::get_default_stream()},
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
     cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
     0));
-  cudf::column col{this->type(),
-                   this->num_elements(),
-                   rmm::device_buffer{this->data, cudf::get_default_stream()},
-                   cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
-                   0,
-                   std::move(children)};
+  cudf::column col{
+    this->type(),
+    this->num_elements(),
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
+    cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
+    0,
+    std::move(children)};
 
   verify_column_views(col);
   EXPECT_EQ(2, col.num_children());
@@ -504,21 +540,25 @@ TYPED_TEST(TypedColumnTest, ReleaseWithChildren)
   children.emplace_back(std::make_unique<cudf::column>(
     this->type(),
     this->num_elements(),
-    rmm::device_buffer{this->data, cudf::get_default_stream()},
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
     cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
     0));
   children.emplace_back(std::make_unique<cudf::column>(
     this->type(),
     this->num_elements(),
-    rmm::device_buffer{this->data, cudf::get_default_stream()},
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
     cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
     0));
-  cudf::column col{this->type(),
-                   this->num_elements(),
-                   rmm::device_buffer{this->data, cudf::get_default_stream()},
-                   cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
-                   0,
-                   std::move(children)};
+  cudf::column col{
+    this->type(),
+    this->num_elements(),
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), this->data},
+    cudf::copy_bitmask(this->all_valid_mask.data(), 0, this->num_elements()),
+    0,
+    std::move(children)};
 
   auto original_data = col.view().head();
   auto original_mask = col.view().null_mask();
@@ -704,7 +744,7 @@ TEST_F(RebindStreamColumnTest, RebindStreamPreservesNestedStructData)
   std::vector<int32_t> h_ints(static_cast<std::size_t>(num_rows));
   std::iota(h_ints.begin(), h_ints.end(), int32_t{0});
 
-  auto d_ints = cudf::detail::make_device_uvector_async(
+  auto d_ints = cudf::detail::make_device_buffer_async(
     h_ints, stream_a, cudf::get_current_device_resource_ref());
   auto null_mask = cudf::create_null_mask(num_rows, cudf::mask_state::ALL_VALID, stream_a);
 

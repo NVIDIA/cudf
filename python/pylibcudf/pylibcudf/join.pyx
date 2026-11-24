@@ -1,11 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pylibcudf.libcudf.types cimport bitmask_type
 from cython.operator import dereference
 
 from libc.stddef cimport size_t
-from libcpp.memory cimport make_unique, unique_ptr
+from libcpp.memory cimport unique_ptr
 from libcpp.optional cimport optional, nullopt
 from libcpp.utility cimport move
 from pylibcudf.exception_handler cimport libcudf_exception_handler
@@ -15,13 +14,11 @@ from pylibcudf.libcudf.asof_join cimport (
     asof_join_strategy,
 )
 from pylibcudf.libcudf cimport join as cpp_join
-from pylibcudf.libcudf cimport null_mask as cpp_null_mask
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
-from pylibcudf.libcudf.types cimport mask_state, null_equality
-from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
+from pylibcudf.libcudf.types cimport null_equality
 from pylibcudf.experimental._join_streams cimport join_streams
 from rmm.librmm.cuda_stream_ref cimport stream_ref
 from rmm.librmm.memory_resource cimport device_async_resource_ref
@@ -36,7 +33,7 @@ from rmm.librmm.memory_resource cimport any_resource, device_accessible
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
-from .column cimport Column
+from .column cimport Column, _column_from_device_uvector
 from .expressions cimport Expression
 from .table cimport Table
 from .utils cimport _get_stream, _get_memory_resource
@@ -91,11 +88,8 @@ cdef extern from * nogil:
     {
       auto indices = joiner.join(
         left_by, left_on, strategy, exact_matches, stream, mr);
-      // cudf::column stores an rmm::device_buffer, so copy the returned CUDA buffer.
-      // TODO: Remove this once cudf::column stores its data in a cuda::buffer instead
-      cudf::column_view view{cudf::data_type{cudf::type_id::INT32},
-                             left_on.size(), indices.data(), nullptr, 0};
-      return std::make_unique<cudf::column>(view, stream, mr);
+      return std::make_unique<cudf::column>(
+        std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr), 0);
     }
     """
     cdef unique_ptr[column] asof_join_indices(
@@ -212,30 +206,6 @@ cdef class AsofJoin:
         return Column.from_libcudf(move(result), _stream, mr)
 
 
-cdef Column _column_from_gather_map(
-    cpp_join.gather_map_type gather_map, object stream, DeviceMemoryResource mr
-):
-    # helper to convert a gather map to a Column
-    cdef Stream _stream = _get_stream(stream)
-    cdef unique_ptr[device_buffer[bitmask_type]] mask = (
-        cpp_null_mask.create_null_mask_unique_ptr(
-            0,
-            mask_state.UNALLOCATED,
-            _stream.view().get(),
-            mr.get_mr(),
-        )
-    )
-    return Column.from_libcudf(
-        move(
-            make_unique[column](
-                move(dereference(gather_map.get())),
-                move(dereference(mask)),
-                0
-            )
-        ), _stream, mr
-    )
-
-
 cpdef tuple[Column, Column] inner_join(
     Table left_keys,
     Table right_keys,
@@ -279,8 +249,8 @@ cpdef tuple[Column, Column] inner_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -327,8 +297,8 @@ cpdef tuple[Column, Column] left_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -375,8 +345,8 @@ cpdef tuple[Column, Column] full_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -429,7 +399,7 @@ cpdef Column left_semi_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef Column left_anti_join(
@@ -481,7 +451,7 @@ cpdef Column left_anti_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef Table cross_join(
@@ -567,8 +537,8 @@ cpdef tuple[Column, Column] conditional_inner_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -617,8 +587,8 @@ cpdef tuple[Column, Column] conditional_left_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -665,8 +635,8 @@ cpdef tuple[Column, Column] conditional_full_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -713,7 +683,7 @@ cpdef Column conditional_left_semi_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef Column conditional_left_anti_join(
@@ -759,7 +729,7 @@ cpdef Column conditional_left_anti_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef tuple[Column, Column] mixed_inner_join(
@@ -821,8 +791,8 @@ cpdef tuple[Column, Column] mixed_inner_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -885,8 +855,8 @@ cpdef tuple[Column, Column] mixed_left_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -949,8 +919,8 @@ cpdef tuple[Column, Column] mixed_full_join(
             mr.get_mr()
         )
     return (
-        _column_from_gather_map(move(c_result.first), _stream, mr),
-        _column_from_gather_map(move(c_result.second), _stream, mr),
+        _column_from_device_uvector(move(c_result.first), _stream, mr),
+        _column_from_device_uvector(move(c_result.second), _stream, mr),
     )
 
 
@@ -1009,7 +979,7 @@ cpdef Column mixed_left_semi_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef Column mixed_left_anti_join(
@@ -1067,7 +1037,7 @@ cpdef Column mixed_left_anti_join(
             _cs,
             mr.get_mr()
         )
-    return _column_from_gather_map(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cdef class FilteredJoin:
@@ -1170,7 +1140,7 @@ cdef class FilteredJoin:
                 _cs,
                 mr.get_mr()
             )
-        return _column_from_gather_map(move(c_result), _stream, mr)
+        return _column_from_device_uvector(move(c_result), _stream, mr)
 
     def anti_join(
         self,
@@ -1211,7 +1181,7 @@ cdef class FilteredJoin:
                 _cs,
                 mr.get_mr()
             )
-        return _column_from_gather_map(move(c_result), _stream, mr)
+        return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cdef class HashJoin:
@@ -1311,8 +1281,8 @@ cdef class HashJoin:
                 c_left, c_size, cstream.view().get(), mr.get_mr()
             )
         return (
-            _column_from_gather_map(move(c_result.first), cstream, mr),
-            _column_from_gather_map(move(c_result.second), cstream, mr),
+            _column_from_device_uvector(move(c_result.first), cstream, mr),
+            _column_from_device_uvector(move(c_result.second), cstream, mr),
         )
 
     def left_join(
@@ -1349,8 +1319,8 @@ cdef class HashJoin:
                 c_left, c_size, cstream.view().get(), mr.get_mr()
             )
         return (
-            _column_from_gather_map(move(c_result.first), cstream, mr),
-            _column_from_gather_map(move(c_result.second), cstream, mr),
+            _column_from_device_uvector(move(c_result.first), cstream, mr),
+            _column_from_device_uvector(move(c_result.second), cstream, mr),
         )
 
     def full_join(
@@ -1387,6 +1357,6 @@ cdef class HashJoin:
                 c_left, c_size, cstream.view().get(), mr.get_mr()
             )
         return (
-            _column_from_gather_map(move(c_result.first), cstream, mr),
-            _column_from_gather_map(move(c_result.second), cstream, mr),
+            _column_from_device_uvector(move(c_result.first), cstream, mr),
+            _column_from_device_uvector(move(c_result.second), cstream, mr),
         )

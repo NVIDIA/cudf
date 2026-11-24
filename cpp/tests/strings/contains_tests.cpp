@@ -11,6 +11,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/strings/contains.hpp>
@@ -285,16 +286,16 @@ TEST_F(StringsContainsTests, HexTest)
   auto const count = static_cast<cudf::size_type>(ascii_chars.size());
   std::vector<cudf::size_type> offsets({cuda::counting_iterator<cudf::size_type>{0},
                                         cuda::counting_iterator<cudf::size_type>{0} + count + 1});
-  auto d_chars = cudf::detail::make_device_uvector(
+  auto d_chars = cudf::detail::make_device_buffer(
     ascii_chars, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   auto d_offsets = std::make_unique<cudf::column>(
-    cudf::detail::make_device_uvector(
+    cudf::detail::make_device_buffer(
       offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
   auto input = cudf::make_strings_column(count,
                                          std::move(d_offsets),
-                                         d_chars.release(),
+                                         std::move(d_chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 

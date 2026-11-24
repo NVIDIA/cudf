@@ -141,7 +141,7 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
          AVG_CHAR_BYTES_THRESHOLD)) {
       return std::get<1>(make_strings_children(
                            join_fn{*d_strings, d_separator, d_narep}, input.size(), stream, mr))
-        .release();
+        .template as_bytes<std::byte>();
     }
     // dynamically feeds index pairs to build the output
     auto indices = cudf::detail::make_counting_transform_iterator(
@@ -151,21 +151,25 @@ std::unique_ptr<column> join_strings(strings_column_view const& input,
     return std::move(*chars_data);
   }();
 
+  auto chars_size = chars.size();
+
   // Null rows are skipped when no narep is specified but a separator is still
   // written after the last valid row if it is followed by only null rows.
-  // Remove this trailing separator by shrinking the output.
+  // Exclude this trailing separator from the logical output size.
   if (!narep.is_valid(stream) && input.has_nulls() && input.null_count() < input.size() &&
       !cudf::detail::is_element_valid_sync(input.parent(), input.size() - 1, stream)) {
-    chars.resize(chars.size() - separator.size(), stream);
+    // TODO Keep the allocation until CCCL supports resizing without copying:
+    // https://github.com/NVIDIA/cccl/issues/12051
+    chars_size -= separator.size();
   }
 
   // API returns a single output row which cannot exceed row limit(max of size_type).
-  CUDF_EXPECTS(chars.size() < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
+  CUDF_EXPECTS(chars_size < static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
                "The output exceeds the row size limit",
                std::overflow_error);
 
   // build the offsets: single string output has offsets [0,chars-size]
-  auto sizes_itr      = cuda::constant_iterator(static_cast<size_type>(chars.size()));
+  auto sizes_itr      = cuda::constant_iterator(static_cast<size_type>(chars_size));
   auto offsets_column = std::get<0>(
     cudf::strings::detail::make_offsets_child_column(sizes_itr, sizes_itr + 1, stream, mr));
 

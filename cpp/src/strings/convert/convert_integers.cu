@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
@@ -358,7 +359,7 @@ struct dispatch_from_integers_fn {
 
     return make_strings_column(strings_count,
                                std::move(offsets),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                integers.null_count(),
                                std::move(null_mask));
   }

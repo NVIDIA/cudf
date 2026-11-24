@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/algorithm.max.h>
@@ -197,7 +198,7 @@ std::unique_ptr<column> cast_from_integer(column_view const& integers,
 
   return make_strings_column(integers.size(),
                              std::move(offsets),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              integers.null_count(),
                              cudf::detail::copy_bitmask(integers, stream, mr));
 }

@@ -330,8 +330,8 @@ class stats_caster_base {
       }
     }
 
-    static inline std::tuple<rmm::device_uvector<char>,
-                             rmm::device_uvector<size_type>,
+    static inline std::tuple<cuda::device_buffer<char>,
+                             cuda::device_buffer<size_type>,
                              cuda::device_buffer<size_type>>
     make_strings_children(cudf::host_span<cudf::string_view const> host_strings,
                           cudf::host_span<char const> host_chars,
@@ -347,9 +347,8 @@ class stats_caster_base {
         offsets.push_back(offsets.back() + str.size_bytes());
         sizes.push_back(str.size_bytes());
       }
-      auto d_chars =
-        cudf::detail::make_device_uvector_async(host_chars, stream, mr.get_output_mr());
-      auto d_offsets = cudf::detail::make_device_uvector_async(offsets, stream, mr.get_output_mr());
+      auto d_chars = cudf::detail::make_device_buffer_async(host_chars, stream, mr.get_output_mr());
+      auto d_offsets = cudf::detail::make_device_buffer_async(offsets, stream, mr.get_output_mr());
       auto d_sizes   = cudf::detail::make_device_buffer_async(sizes, stream, mr);
       stream.sync();  // ensures the vectors are not destroyed before the copy is completed
       return {std::move(d_chars), std::move(d_offsets), std::move(d_sizes)};
@@ -374,11 +373,11 @@ class stats_caster_base {
             std::move(d_offsets),
             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
             0),
-          d_chars.release(),
+          std::move(d_chars).template as_bytes<std::byte>(),
           null_count,
           std::move(null_mask_buffer));
       }
-      auto data = cudf::detail::make_device_uvector_async(val, stream, mr.get_output_mr());
+      auto data = cudf::detail::make_device_buffer_async(val, stream, mr.get_output_mr());
       auto null_mask_buffer =
         cudf::create_null_mask(val.size(), cudf::mask_state::UNINITIALIZED, stream, mr);
       CUDF_CUDA_TRY(cudf::detail::memcpy_async(null_mask_buffer.data(),
@@ -387,7 +386,7 @@ class stats_caster_base {
                                                stream));
       stream.sync();
       return std::make_unique<column>(
-        dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
+        dtype, val.size(), std::move(data), std::move(null_mask_buffer), null_count);
     }
 
    private:

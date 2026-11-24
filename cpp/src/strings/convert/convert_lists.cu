@@ -217,7 +217,7 @@ std::unique_ptr<column> format_list_column(lists_column_view const& input,
 
   return make_strings_column(input.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

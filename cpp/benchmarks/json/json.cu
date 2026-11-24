@@ -166,7 +166,7 @@ auto build_json_string_column(int desired_bytes, int num_rows)
     jb, num_rows, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    0,
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

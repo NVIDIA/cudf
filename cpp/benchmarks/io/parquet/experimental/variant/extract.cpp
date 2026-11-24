@@ -15,7 +15,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <nvbench/nvbench.cuh>
 
@@ -332,9 +332,8 @@ std::unique_ptr<cudf::column> build_variant_column(std::span<std::span<uint8_t c
       offsets[i + 1] = static_cast<int32_t>(flat.size());
     }
 
-    auto d_offsets =
-      rmm::device_buffer{offsets.data(), offsets.size() * sizeof(int32_t), stream, mr};
-    auto d_data = rmm::device_buffer{flat.data(), flat.size() * sizeof(uint8_t), stream, mr};
+    auto d_offsets = cuda::device_buffer<int32_t>{stream, mr, offsets.begin(), offsets.end()};
+    auto d_data    = cuda::device_buffer<uint8_t>{stream, mr, flat.begin(), flat.end()};
 
     auto off_col =
       std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},

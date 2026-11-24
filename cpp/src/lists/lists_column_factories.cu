@@ -8,6 +8,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/gather.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/lists/detail/lists_column_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -82,7 +83,7 @@ std::unique_ptr<column> make_all_nulls_lists_column(size_type size,
 {
   auto offsets = [&] {
     auto offsets_buff =
-      cudf::detail::make_zeroed_device_uvector_async<int32_t>(size + 1, stream, mr.get_output_mr());
+      cudf::detail::make_zeroed_device_buffer_async<int32_t>(size + 1, stream, mr.get_output_mr());
     return std::make_unique<column>(
       std::move(offsets_buff), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
   }();
@@ -119,12 +120,14 @@ std::unique_ptr<column> make_lists_column(size_type num_rows,
   children.emplace_back(std::move(offsets_column));
   children.emplace_back(std::move(child_column));
 
-  return std::make_unique<column>(cudf::data_type{type_id::LIST},
-                                  num_rows,
-                                  rmm::device_buffer{},
-                                  std::move(null_mask),
-                                  null_count,
-                                  std::move(children));
+  return std::make_unique<column>(
+    cudf::data_type{type_id::LIST},
+    num_rows,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    std::move(null_mask),
+    null_count,
+    std::move(children));
 }
 
 }  // namespace cudf

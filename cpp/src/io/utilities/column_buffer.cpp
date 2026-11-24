@@ -63,7 +63,8 @@ void cudf::io::detail::inline_column_buffer::create_string_data(size_t num_bytes
                                                                 cuda::stream_ref stream)
 {
   _is_large_strings_col = is_large_strings_col;
-  _string_data          = rmm::device_buffer(num_bytes, stream, _mr.get_output_mr());
+  _string_data =
+    cuda::device_buffer<std::byte>(stream, _mr.get_output_mr(), num_bytes, cuda::no_init);
 }
 
 namespace {

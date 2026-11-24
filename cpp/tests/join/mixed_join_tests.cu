@@ -402,7 +402,7 @@ struct MixedJoinPairReturnTest : public MixedJoinTest<T> {
    * It should be a simply forwarding of arguments to the appropriate cudf
    * mixed join size computation API.
    */
-  virtual std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<cudf::size_type>>> join_size(
+  virtual std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<cudf::size_type>>> join_size(
     cudf::table_view left_equality,
     cudf::table_view right_equality,
     cudf::table_view left_conditional,
@@ -480,7 +480,7 @@ struct MixedInnerJoinTest : public MixedJoinPairReturnTest<T> {
     return mixed_result;
   }
 
-  std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<cudf::size_type>>> join_size(
+  std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<cudf::size_type>>> join_size(
     cudf::table_view left_equality,
     cudf::table_view right_equality,
     cudf::table_view left_conditional,
@@ -1219,7 +1219,7 @@ struct MixedLeftJoinTest : public MixedJoinPairReturnTest<T> {
     return mixed_result;
   }
 
-  std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<cudf::size_type>>> join_size(
+  std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<cudf::size_type>>> join_size(
     cudf::table_view left_equality,
     cudf::table_view right_equality,
     cudf::table_view left_conditional,
@@ -1455,7 +1455,7 @@ struct MixedFullJoinTest : public MixedJoinPairReturnTest<T> {
       left_equality, right_equality, left_conditional, right_conditional, predicate, compare_nulls);
   }
 
-  std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<cudf::size_type>>> join_size(
+  std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<cudf::size_type>>> join_size(
     cudf::table_view left_equality,
     cudf::table_view right_equality,
     cudf::table_view left_conditional,

@@ -29,8 +29,6 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cub/device/device_partition.cuh>
 #include <cub/device/device_topk.cuh>
 #include <cuda/buffer>
@@ -158,7 +156,7 @@ struct dispatch_top_k_fn {
  * number of non-null rows, which `null_count()` gives without synchronizing. Nulls are partitioned
  * out rather than encoded as a sentinel key, since integral keys have no spare bit pattern.
  */
-[[nodiscard]] rmm::device_uvector<size_type> select_top_k_rows(column_view const& col,
+[[nodiscard]] cuda::device_buffer<size_type> select_top_k_rows(column_view const& col,
                                                                size_type k,
                                                                order topk_order,
                                                                cuda::stream_ref stream,
@@ -168,7 +166,7 @@ struct dispatch_top_k_fn {
   auto const size      = col.size();
   auto const num_valid = size - col.null_count();
 
-  auto output = rmm::device_uvector<size_type>(k, stream, mr.get_output_mr());
+  auto output = cuda::device_buffer<size_type>(stream, mr.get_output_mr(), k, cuda::no_init);
 
   if (col.null_count() == 0) {
     type_dispatcher<dispatch_storage_type>(

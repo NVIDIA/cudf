@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from libc.stdint cimport int64_t
 from libcpp cimport bool
 from libcpp.map cimport map
 from libcpp.memory cimport unique_ptr
@@ -55,7 +56,8 @@ if TYPE_CHECKING:
 
 from cython.operator import dereference
 
-from rmm.pylibrmm.device_buffer cimport DeviceBuffer
+from pylibcudf.gpumemoryview cimport _from_cuda_device_buffer
+from pylibcudf.libcudf.strings.strings_column_view cimport strings_column_view
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 __all__ = [
@@ -867,6 +869,7 @@ cpdef TableWithMetadata read_json_from_string_column(
     )
     cdef unique_ptr[column] c_join_string_column
     cdef column_contents c_contents
+    cdef int64_t source_size
     cdef table_with_metadata c_result
     cdef Stream _stream = _get_stream(stream)
     cdef cudaStream_t _cs = _stream.view().get()
@@ -884,11 +887,18 @@ cpdef TableWithMetadata read_json_from_string_column(
                 mr.get_mr()
             )
         )
+        source_size = strings_column_view(
+            c_join_string_column.get().view()
+        ).chars_size(_cs)
         c_contents = c_join_string_column.get().release()
 
     # Create a new source from the joined string data
-    cdef SourceInfo joined_source = SourceInfo(
-            [DeviceBuffer.c_from_unique_ptr(move(c_contents.data), _stream, mr)])
+    # The allocation may retain an unused trailing separator beyond the last offset.
+    cdef SourceInfo joined_source = SourceInfo([
+        _from_cuda_device_buffer(move(c_contents.data), _stream, mr).byte_slice(
+            slice(0, source_size)
+        )
+    ])
 
     # Create new options using the joined string as source
     cdef JsonReaderOptions options = (

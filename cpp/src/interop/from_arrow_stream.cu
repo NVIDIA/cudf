@@ -41,11 +41,13 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
   auto const type{arrow_to_cudf_type(&schema_view)};
   switch (type.id()) {
     case type_id::EMPTY: {
-      return std::make_unique<column>(data_type(type_id::EMPTY),
-                                      0,
-                                      rmm::device_buffer{},
-                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                      0);
+      return std::make_unique<column>(
+        data_type(type_id::EMPTY),
+        0,
+        cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                       cudf::get_current_device_resource_ref()},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+        0);
     }
     case type_id::LIST: {
       return cudf::make_lists_column(0,

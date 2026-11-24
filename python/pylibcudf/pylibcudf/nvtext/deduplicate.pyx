@@ -1,13 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pylibcudf.libcudf.types cimport bitmask_type
-from cython.operator import dereference
-
-from libcpp.memory cimport unique_ptr, make_unique
+from libcpp.memory cimport unique_ptr
 from libcpp.utility cimport move
-from pylibcudf.column cimport Column
-from pylibcudf.libcudf cimport null_mask as cpp_null_mask
+from pylibcudf.column cimport Column, _column_from_device_uvector
 from pylibcudf.libcudf.column.column cimport column
 from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.nvtext.deduplicate cimport (
@@ -16,8 +12,7 @@ from pylibcudf.libcudf.nvtext.deduplicate cimport (
     resolve_duplicates as cpp_resolve_duplicates,
     resolve_duplicates_pair as cpp_resolve_duplicates_pair,
 )
-from pylibcudf.libcudf.types cimport mask_state, size_type
-from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
+from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.utils cimport _get_stream, _get_memory_resource
 from typing import TYPE_CHECKING
 
@@ -32,28 +27,6 @@ __all__ = [
     "resolve_duplicates",
     "resolve_duplicates_pair",
 ]
-
-cdef Column _column_from_suffix_array(
-    cpp_suffix_array_type suffix_array, Stream stream, DeviceMemoryResource mr
-):
-    # helper to convert a suffix array to a Column
-    cdef unique_ptr[device_buffer[bitmask_type]] mask = (
-        cpp_null_mask.create_null_mask_unique_ptr(
-            0,
-            mask_state.UNALLOCATED,
-            stream.view().get(),
-            mr.get_mr(),
-        )
-    )
-    return Column.from_libcudf(
-        move(
-            make_unique[column](
-                move(dereference(suffix_array.get())),
-                move(dereference(mask)),
-                0
-            )
-        ), stream, mr
-    )
 
 
 cpdef Column build_suffix_array(
@@ -92,7 +65,7 @@ cpdef Column build_suffix_array(
             c_input, min_width, _cs, mr.get_mr()
         )
 
-    return _column_from_suffix_array(move(c_result), _stream, mr)
+    return _column_from_device_uvector(move(c_result), _stream, mr)
 
 
 cpdef Column resolve_duplicates(

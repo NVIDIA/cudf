@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from pylibcudf.libcudf.types cimport bitmask_type
 from libc.stddef cimport size_t
 from libc.stdint cimport uint8_t, uintptr_t, uint64_t
 from libcpp.memory cimport unique_ptr
@@ -13,7 +12,27 @@ import operator
 from typing import Any
 
 from .types cimport DataType, size_of, type_id
-from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+
+
+cdef extern from * nogil:
+    """
+    #include <cuda/buffer>
+    #include <cstddef>
+    #include <memory>
+    #include <utility>
+
+    template <typename T>
+    std::unique_ptr<cuda::device_buffer<std::byte>> as_byte_buffer(
+      std::unique_ptr<cuda::device_buffer<T>> buffer)
+    {
+      return std::make_unique<cuda::device_buffer<std::byte>>(
+        std::move(*buffer).template as_bytes<std::byte>());
+    }
+    """
+    unique_ptr[device_buffer[byte]] as_byte_buffer[T](
+        unique_ptr[device_buffer[T]] buffer
+    ) except +
 
 
 cdef class _CudaDeviceBuffer:
@@ -21,17 +40,17 @@ cdef class _CudaDeviceBuffer:
     def __cuda_array_interface__(self):
         return {
             "data": (<uintptr_t>self.c_obj.get().data(), False),
-            "shape": (self.c_obj.get().size() * sizeof(bitmask_type),),
+            "shape": (self.c_obj.get().size(),),
             "typestr": "|u1",
             "version": 3,
         }
 
 
 cdef gpumemoryview _from_cuda_device_buffer(
-    unique_ptr[device_buffer[bitmask_type]] buf, object stream, object mr
+    unique_ptr[device_buffer[buffer_element]] buf, object stream, object mr
 ):
     cdef _CudaDeviceBuffer owner = _CudaDeviceBuffer.__new__(_CudaDeviceBuffer)
-    owner.c_obj = move(buf)
+    owner.c_obj = as_byte_buffer(move(buf))
     # Keep the stream and memory resource alive until the allocation is freed.
     owner.stream = stream
     owner.mr = mr

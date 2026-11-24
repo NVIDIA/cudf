@@ -66,7 +66,8 @@ std::unique_ptr<cudf::column> synthesize_row_index_column(
   }
 
   // Allocate column data vector
-  auto col_data = rmm::device_uvector<column_type>(read_info.num_rows, stream, mr.get_output_mr());
+  auto col_data =
+    cuda::device_buffer<column_type>(stream, mr.get_output_mr(), read_info.num_rows, cuda::no_init);
 
   // Map global row indices in the current row-range to corresponding source-local row indices
   {
@@ -125,7 +126,8 @@ std::unique_ptr<cudf::column> synthesize_source_index_column(
   }
 
   // Allocate column data vector
-  auto col_data = rmm::device_uvector<column_type>(num_rows, stream, mr.get_output_mr());
+  auto col_data =
+    cuda::device_buffer<column_type>(stream, mr.get_output_mr(), num_rows, cuda::no_init);
 
   // Label each output row with its source index via segment boundaries.
   {

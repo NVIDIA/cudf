@@ -22,7 +22,7 @@
 #include <cudf/wrappers/durations.hpp>
 #include <cudf/wrappers/timestamps.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <array>
 #include <cstdint>
@@ -463,7 +463,8 @@ TEST_F(SparkMurmurHashTest, NonCanonicalBool)
   // bytes to get values the wrapper cannot express.
   auto const stream = cudf::get_default_stream();
   std::vector<uint8_t> const raw{0, 1, 2, 255};
-  auto data = rmm::device_buffer{raw.data(), raw.size(), stream};
+  auto data = cuda::device_buffer<uint8_t>{
+    stream, cudf::get_current_device_resource_ref(), raw.begin(), raw.end()};
   auto const col =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::BOOL8},
                                    static_cast<cudf::size_type>(raw.size()),

@@ -230,8 +230,13 @@ std::unique_ptr<table> make_all_null_table(size_type size,
 {
   std::vector<std::unique_ptr<column>> results;
   auto mask = cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr);
-  results.push_back(std::make_unique<column>(
-    data_type{type_id::STRING}, size, rmm::device_buffer{}, std::move(mask), size));
+  results.push_back(
+    std::make_unique<column>(data_type{type_id::STRING},
+                             size,
+                             cuda::device_buffer<std::byte>{
+                               cudf::get_default_stream(), cudf::get_current_device_resource_ref()},
+                             std::move(mask),
+                             size));
   return std::make_unique<table>(std::move(results));
 }
 

@@ -24,9 +24,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
+#include <cuda/std/execution>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -40,7 +40,10 @@ namespace cudf {
 column::column(column const& other, cuda::stream_ref stream, cudf::memory_resources mr)
   : _type{other._type},
     _size{other._size},
-    _data{other._data, stream, mr.get_output_mr()},
+    _data{stream,
+          mr.get_output_mr(),
+          other._data,
+          cuda::std::execution::prop{cuda::allocation_alignment, other._data.alignment()}},
     _null_mask{cudf::detail::copy_bitmask(other._null_mask.data(), 0, other.size(), stream, mr)},
     _null_count{other._null_count}
 {
@@ -71,7 +74,7 @@ column::contents column::release() noexcept
   _null_count = 0;
   _type       = data_type{type_id::EMPTY};
   return column::contents{
-    std::make_unique<rmm::device_buffer>(std::move(_data)),
+    std::make_unique<cuda::device_buffer<std::byte>>(std::move(_data)),
     std::make_unique<cuda::device_buffer<cudf::bitmask_type>>(std::move(_null_mask)),
     std::move(_children)};
 }
@@ -178,7 +181,7 @@ struct create_column_from_view {
     }
     return std::make_unique<column>(view.type(),
                                     view.size(),
-                                    rmm::device_buffer{0, stream, mr.get_output_mr()},
+                                    cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
                                     cudf::detail::copy_bitmask(view, stream, mr),
                                     view.null_count(),
                                     std::move(children));
@@ -191,14 +194,12 @@ struct create_column_from_view {
     auto begin    = cuda::transform_iterator(view.child_begin(), op);
     auto children = std::vector<std::unique_ptr<column>>(begin, begin + view.num_children());
 
+    using storage_type = cudf::device_storage_type_t<ColumnType>;
     return std::make_unique<column>(
       view.type(),
       view.size(),
-      rmm::device_buffer{
-        static_cast<char const*>(view.head()) + (view.offset() * cudf::size_of(view.type())),
-        view.size() * cudf::size_of(view.type()),
-        stream,
-        mr.get_output_mr()},
+      cuda::device_buffer<storage_type>{
+        stream, mr.get_output_mr(), view.begin<storage_type>(), view.end<storage_type>()},
       cudf::detail::copy_bitmask(view, stream, mr),
       view.null_count(),
       std::move(children));

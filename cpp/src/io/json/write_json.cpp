@@ -15,6 +15,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/data_sink.hpp>
 #include <cudf/io/detail/json.hpp>
@@ -31,6 +32,7 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <thrust/tabulate.h>
@@ -48,7 +50,7 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
 {
   std::string const host_chars =
     std::accumulate(host_strings.begin(), host_strings.end(), std::string(""));
-  auto d_chars = cudf::detail::make_device_uvector_async(
+  auto d_chars = cudf::detail::make_device_buffer_async(
     host_span<char const>{host_chars}, stream, cudf::get_current_device_resource_ref());
   std::vector<cudf::size_type> offsets(host_strings.size() + 1, 0);
   std::transform_inclusive_scan(host_strings.begin(),
@@ -57,12 +59,12 @@ std::unique_ptr<column> make_strings_column_from_host(host_span<std::string cons
                                 std::plus<cudf::size_type>{},
                                 [](auto& str) { return str.size(); });
   auto d_offsets = std::make_unique<cudf::column>(
-    cudf::detail::make_device_uvector(offsets, stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::make_device_buffer(offsets, stream, cudf::get_current_device_resource_ref()),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
   return cudf::make_strings_column(host_strings.size(),
                                    std::move(d_offsets),
-                                   d_chars.release(),
+                                   std::move(d_chars).template as_bytes<std::byte>(),
                                    0,
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

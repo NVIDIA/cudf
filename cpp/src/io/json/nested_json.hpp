@@ -152,7 +152,7 @@ struct device_json_column {
   cuda::device_buffer<row_offset_t> string_lengths;
 
   // Row offsets (LIST offsets child data; always 32-bit)
-  rmm::device_uvector<int32_t> child_offsets;
+  cuda::device_buffer<int32_t> child_offsets;
 
   // Validity bitmap
   cuda::device_buffer<cudf::bitmask_type> validity =
@@ -190,9 +190,9 @@ struct device_json_column {
    * @param mr Optional, resource with which to allocate
    */
   device_json_column(cuda::stream_ref stream, cudf::memory_resources mr)
-    : string_offsets(stream, mr.get_temporary_mr(), 0, cuda::no_init),
-      string_lengths(stream, mr.get_temporary_mr(), 0, cuda::no_init),
-      child_offsets(0, stream, mr.get_output_mr()),
+    : string_offsets(stream, mr.get_temporary_mr()),
+      string_lengths(stream, mr.get_temporary_mr()),
+      child_offsets(stream, mr.get_output_mr()),
       validity(stream, mr.get_output_mr())
   {
   }

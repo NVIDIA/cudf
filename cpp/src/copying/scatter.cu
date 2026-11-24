@@ -265,7 +265,8 @@ struct column_scalar_scatterer_impl<struct_view, MapIterator> {
         : detail::create_null_mask(target.size(), mask_state::UNALLOCATED, stream, mr);
     column null_mask_stub(data_type{type_id::STRUCT},
                           target.size(),
-                          rmm::device_buffer{},
+                          cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                         cudf::get_current_device_resource_ref()},
                           std::move(null_mask),
                           target.null_count());
     scatter_scalar_bitmask_inplace(source, scatter_iter, scatter_rows, null_mask_stub, stream, mr);

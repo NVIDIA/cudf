@@ -13,6 +13,8 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/execution>
+
 namespace cudf {
 namespace {
 struct size_of_helper {
@@ -52,7 +54,12 @@ std::unique_ptr<column> make_empty_column(data_type type)
                "make_empty_column is invalid to call on nested types",
                cudf::data_type_error);
   return std::make_unique<column>(
-    type, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+    type,
+    0,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0);
 }
 
 // Empty column of specified type id
@@ -74,7 +81,12 @@ std::unique_ptr<column> make_numeric_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -94,7 +106,12 @@ std::unique_ptr<column> make_fixed_point_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -114,7 +131,12 @@ std::unique_ptr<column> make_timestamp_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});
@@ -134,7 +156,12 @@ std::unique_ptr<column> make_duration_column(data_type type,
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     detail::create_null_mask(size, state, stream, mr),
     state == mask_state::UNINITIALIZED ? 0 : state_null_count(state, size),
     std::vector<std::unique_ptr<column>>{});

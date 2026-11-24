@@ -17,6 +17,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
+#include <cuda/std/execution>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -65,8 +66,13 @@ struct result_column_creator {
       auto const type_size = cudf::size_of(d_type);
       if (type_size < 4) {
         auto adjusted_size = cudf::detail::round_up_safe(size, static_cast<size_type>(4));
-        auto buffer = rmm::device_buffer(adjusted_size * type_size, stream, mr.get_output_mr());
-        auto mask   = create_null_mask(size, state, stream, mr);
+        auto buffer        = cuda::device_buffer<std::byte>(
+          stream,
+          mr.get_output_mr(),
+          adjusted_size * type_size,
+          cuda::no_init,
+          cuda::std::execution::prop{cuda::allocation_alignment, alignof(uint32_t)});
+        auto mask             = create_null_mask(size, state, stream, mr);
         auto const null_count = state_null_count(state, size);
         return std::make_unique<column>(
           d_type, size, std::move(buffer), std::move(mask), null_count);

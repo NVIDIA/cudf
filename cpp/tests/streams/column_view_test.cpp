@@ -22,7 +22,10 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
   TypedColumnTest(cuda::stream_ref stream = cudf::test::get_default_stream())
-    : data{_num_elements * sizeof(T), stream},
+    : data{stream,
+           cudf::get_current_device_resource_ref(),
+           _num_elements * sizeof(T),
+           cuda::no_init},
       mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
     std::vector<char> h_data(std::max(data.size(), mask.size() * sizeof(cudf::bitmask_type)));
@@ -42,7 +45,8 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::default_random_engine generator{r()};
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
-  rmm::device_buffer data{};
+  cuda::device_buffer<std::byte> data{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref()};
   cuda::device_buffer<cudf::bitmask_type> mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cuda::device_buffer<cudf::bitmask_type> all_valid_mask =

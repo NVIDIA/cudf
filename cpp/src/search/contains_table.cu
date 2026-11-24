@@ -15,16 +15,15 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <algorithm>
 
 namespace cudf::detail {
 
-rmm::device_uvector<bool> contains(table_view const& haystack,
+cuda::device_buffer<bool> contains(table_view const& haystack,
                                    table_view const& needles,
                                    null_equality compare_nulls,
                                    nan_equality compare_nans,
@@ -44,7 +43,8 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
     cudf::detail::row::equality::preprocessed_table::create(haystack, stream, temp_mr);
 
   // The output vector.
-  auto contained = rmm::device_uvector<bool>(needles.num_rows(), stream, mr.get_output_mr());
+  auto contained =
+    cuda::device_buffer<bool>(stream, mr.get_output_mr(), needles.num_rows(), cuda::no_init);
 
   // Only use primitive row operators for non-floating-point types since they don't handle NaN
   // equality

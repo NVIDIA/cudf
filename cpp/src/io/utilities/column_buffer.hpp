@@ -15,10 +15,8 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/buffer>
+#include <cuda/std/execution>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -36,25 +34,30 @@ namespace detail {
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned device_buffer
  *
- * @return `rmm::device_buffer` Device buffer allocation
+ * @return `cuda::device_buffer<std::byte>` Device buffer allocation
  */
-inline rmm::device_buffer create_data(data_type type,
-                                      size_type size,
-                                      bool memset_data,
-                                      cuda::stream_ref stream,
-                                      cudf::memory_resources mr)
+inline cuda::device_buffer<std::byte> create_data(data_type type,
+                                                  size_type size,
+                                                  bool memset_data,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   std::size_t data_size = size_of(type) * size;
 
-  rmm::device_buffer data(data_size, stream, mr.get_output_mr());
+  cuda::device_buffer<std::byte> data(
+    stream,
+    mr.get_output_mr(),
+    data_size,
+    cuda::no_init,
+    cuda::std::execution::prop{cuda::allocation_alignment, size_of(type)});
   if (memset_data) { CUDF_CUDA_TRY(cudaMemsetAsync(data.data(), 0, data_size, stream.get())); }
   return data;
 }
 
-inline rmm::device_buffer create_data(data_type type,
-                                      size_type size,
-                                      cuda::stream_ref stream,
-                                      cudf::memory_resources mr)
+inline cuda::device_buffer<std::byte> create_data(data_type type,
+                                                  size_type size,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr)
 {
   return create_data(type, size, true, stream, mr);
 }
@@ -151,7 +154,8 @@ class column_buffer_base {
   }
 
  protected:
-  rmm::device_buffer _data{};
+  cuda::device_buffer<std::byte> _data{cudf::get_default_stream(),
+                                       cudf::get_current_device_resource_ref()};
   cuda::device_buffer<cudf::bitmask_type> _null_mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   size_type _null_count{0};
@@ -201,8 +205,14 @@ class gather_column_buffer : public column_buffer_base<gather_column_buffer> {
 
   void allocate_strings_data(bool memset_data, cuda::stream_ref stream);
 
-  [[nodiscard]] void* data_impl() { return _strings ? _strings->data() : _data.data(); }
-  [[nodiscard]] void const* data_impl() const { return _strings ? _strings->data() : _data.data(); }
+  [[nodiscard]] void* data_impl()
+  {
+    return _strings ? static_cast<void*>(_strings->data()) : _data.data();
+  }
+  [[nodiscard]] void const* data_impl() const
+  {
+    return _strings ? static_cast<void const*>(_strings->data()) : _data.data();
+  }
   [[nodiscard]] size_t data_size_impl() const { return _strings ? _strings->size() : _data.size(); }
 
   std::unique_ptr<column> make_string_column_impl(cuda::stream_ref stream);
@@ -249,7 +259,8 @@ class inline_column_buffer : public column_buffer_base<inline_column_buffer> {
   [[nodiscard]] bool is_large_strings_column() const { return _is_large_strings_col; }
 
  private:
-  rmm::device_buffer _string_data{};
+  cuda::device_buffer<std::byte> _string_data{cudf::get_default_stream(),
+                                              cudf::get_current_device_resource_ref()};
   bool _is_large_strings_col{};
   size_t initial_string_offset{0};
 };

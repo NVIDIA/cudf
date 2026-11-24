@@ -230,7 +230,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     std::any_of(columns.begin(), columns.end(), [](auto const& col) { return col.has_nulls(); });
 
   // create output chars column
-  rmm::device_uvector<char> output_chars(total_bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> output_chars(stream, mr.get_output_mr(), total_bytes, cuda::no_init);
   auto d_new_chars = output_chars.data();
 
   // create output offsets column
@@ -306,7 +306,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             output_chars.release(),
+                             std::move(output_chars).template as_bytes<std::byte>(),
                              null_count,
                              std::move(null_mask));
 }

@@ -7,6 +7,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/timezone.hpp>
 #include <cudf/detail/timezone_lookup.hpp>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/table/table.hpp>
@@ -590,9 +591,9 @@ std::unique_ptr<table> make_timezone_transition_table(std::optional<std::string_
   if (tz_table.empty()) { return std::make_unique<cudf::table>(); }
 
   auto d_ttimes =
-    cudf::detail::make_device_uvector_async(tz_table.times, stream, mr.get_output_mr());
+    cudf::detail::make_device_buffer_async(tz_table.times, stream, mr.get_output_mr());
   auto d_offsets =
-    cudf::detail::make_device_uvector_async(tz_table.offsets, stream, mr.get_output_mr());
+    cudf::detail::make_device_buffer_async(tz_table.offsets, stream, mr.get_output_mr());
 
   std::vector<std::unique_ptr<column>> tz_table_columns;
   tz_table_columns.emplace_back(std::make_unique<cudf::column>(

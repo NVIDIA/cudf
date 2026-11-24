@@ -604,7 +604,7 @@ std::optional<std::pair<bitmask_type*, size_type>> make_stencil(
   return std::pair<bitmask_type*, size_type>{*stencil, stencil_null_count};
 }
 
-rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
+cuda::device_buffer<char> make_chars_buffer(column_view const& offsets_view,
                                             int64_t chars_size,
                                             string_view const* begin,
                                             bitmask_type const* stencil,
@@ -613,7 +613,7 @@ rmm::device_uvector<char> make_chars_buffer(column_view const& offsets_view,
                                             cudf::memory_resources mr)
 {
   auto offsets = detail::offsetalator_factory::make_input_iterator(offsets_view);
-  auto chars   = rmm::device_uvector<char>(chars_size, stream, mr.get_output_mr());
+  auto chars   = cuda::device_buffer<char>(stream, mr.get_output_mr(), chars_size, cuda::no_init);
 
   auto srcs = detail::make_counting_transform_iterator(
     size_type{0}, [begin] __device__(size_type idx) -> void const* { return begin[idx].data(); });
@@ -664,8 +664,11 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
 
   auto chars = make_chars_buffer(offsets->view(), bytes, strings.data(), stencil, size, stream, mr);
 
-  return make_strings_column(
-    size, std::move(offsets), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(size,
+                             std::move(offsets),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 auto make_outputs(null_aware is_null_aware,
@@ -698,8 +701,8 @@ auto make_outputs(null_aware is_null_aware,
       } else {
         auto chars_size =
           strings::detail::get_offset_value(string_offsets[i]->view(), row_size, stream);
-        auto chars =
-          rmm::device_buffer{static_cast<size_t>(chars_size), stream, mr.get_output_mr()};
+        auto chars = cuda::device_buffer<std::byte>{
+          stream, mr.get_output_mr(), static_cast<size_t>(chars_size), cuda::no_init};
         auto col = mutable_strings_column::make(
           row_size, std::move(chars), std::move(string_offsets[i]), std::move(null_mask), 0);
         cols.emplace_back(std::move(col));

@@ -14,7 +14,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <limits>
 #include <memory>
@@ -360,12 +360,14 @@ TEST_F(TableTest, TablesEqualThrowsForNonEqualityComparableTypes)
 {
   auto left  = column{cudf::data_type{cudf::type_id::EMPTY},
                      3,
-                     rmm::device_buffer{},
+                     cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                     cudf::get_current_device_resource_ref()},
                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                      0};
   auto right = column{cudf::data_type{cudf::type_id::EMPTY},
                       3,
-                      rmm::device_buffer{},
+                      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                     cudf::get_current_device_resource_ref()},
                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                       0};
 

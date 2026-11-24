@@ -270,12 +270,15 @@ std::unique_ptr<column> superimpose_nulls(bitmask_type const* null_mask,
     child =
       superimpose_nulls(content.null_mask->data(), new_null_count, std::move(child), stream, mr);
   }
-  return std::make_unique<column>(cudf::data_type{type_id::STRUCT},
-                                  num_rows,
-                                  rmm::device_buffer{},  // Empty data buffer. Structs hold no data.
-                                  std::move(*content.null_mask),
-                                  new_null_count,
-                                  std::move(content.children));
+  return std::make_unique<column>(
+    cudf::data_type{type_id::STRUCT},
+    num_rows,
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref()},  // Empty data buffer. Structs hold no data.
+    std::move(*content.null_mask),
+    new_null_count,
+    std::move(content.children));
 }
 
 /**
@@ -595,13 +598,15 @@ std::vector<std::unique_ptr<column>> enforce_null_consistency(
     offset += struct_contents[i].num_children;
 
     // Replace the original struct column with a reconstructed one containing updated children
-    columns[struct_column_positions[i]] =
-      std::make_unique<column>(cudf::data_type{type_id::STRUCT},
-                               struct_contents[i].num_elements,
-                               rmm::device_buffer{},  // Empty data buffer. Structs hold no data.
-                               std::move(*struct_contents[i].null_mask),
-                               struct_contents[i].null_count,
-                               std::move(children));
+    columns[struct_column_positions[i]] = std::make_unique<column>(
+      cudf::data_type{type_id::STRUCT},
+      struct_contents[i].num_elements,
+      cuda::device_buffer<std::byte>{
+        cudf::get_default_stream(),
+        cudf::get_current_device_resource_ref()},  // Empty data buffer. Structs hold no data.
+      std::move(*struct_contents[i].null_mask),
+      struct_contents[i].null_count,
+      std::move(children));
   }
 
   return columns;

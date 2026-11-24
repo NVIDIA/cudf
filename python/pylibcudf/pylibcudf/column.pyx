@@ -104,6 +104,25 @@ cdef class _ArrowColumnHolder:
     cdef DeviceMemoryResource mr
 
 
+cdef Column _column_from_device_uvector(
+    unique_ptr[device_uvector[size_type]] data,
+    object stream,
+    DeviceMemoryResource mr,
+):
+    cdef Stream _stream = _get_stream(stream)
+    if data.get().size() > <size_t>numeric_limits[size_type].max():
+        raise OverflowError("The device_buffer size exceeds the column size limit")
+    cdef size_type size = data.get().size()
+    return Column.from_rmm_buffer(
+        DeviceBuffer.c_from_unique_ptr(
+            make_unique[device_buffer](data.get().release()), _stream, mr
+        ),
+        DataType(type_id.INT32),
+        size,
+        [],
+    )
+
+
 cdef class _OwnerWithCAI:
     """An interface for column view's data with gpumemoryview via CAI."""
     @staticmethod
@@ -686,8 +705,8 @@ cdef class Column:
 
         # Note that when converting to cudf Column objects we'll need to pull
         # out the base object.
-        cdef gpumemoryview data = gpumemoryview(
-            DeviceBuffer.c_from_unique_ptr(move(contents.data), _stream, mr)
+        cdef gpumemoryview data = _from_cuda_device_buffer(
+            move(contents.data), _stream, mr
         )
 
         cdef gpumemoryview mask = None

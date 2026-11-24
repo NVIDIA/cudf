@@ -14,6 +14,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/concatenate.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/encode.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -147,20 +148,22 @@ struct fixed_width_type_converter {
  * @param end End of the sequence of elements
  * @param stream CUDA stream used for device memory operations
  * @param mr Memory resources used to allocate the returned buffer
- * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
+ * @return cuda::device_buffer<std::byte> Buffer containing all elements in the range `[begin,end)`
  */
 template <typename ElementTo, typename ElementFrom, typename InputIterator>
-rmm::device_buffer make_elements(InputIterator begin,
-                                 InputIterator end,
-                                 cuda::stream_ref stream,
-                                 cudf::memory_resources mr)
+cuda::device_buffer<std::byte> make_elements(InputIterator begin,
+                                             InputIterator end,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   static_assert(cudf::is_fixed_width<ElementTo>(), "Unexpected non-fixed width type.");
   auto const size = cudf::distance(begin, end);
   auto elements   = thrust::host_vector<ElementTo>(size);
   std::transform(
     begin, end, elements.begin(), fixed_width_type_converter<ElementFrom, ElementTo>{});
-  rmm::device_buffer buffer{elements.data(), size * sizeof(ElementTo), stream, mr.get_output_mr()};
+  auto buffer = cuda::device_buffer<ElementTo>(
+                  stream, mr.get_output_mr(), elements.data(), elements.data() + size)
+                  .template as_bytes<std::byte>();
   stream.sync();  // wait for async H2D before host source is destroyed
   return buffer;
 }
@@ -179,19 +182,21 @@ rmm::device_buffer make_elements(InputIterator begin,
  * @param end End of the sequence of elements
  * @param stream CUDA stream used for device memory operations
  * @param mr Memory resources used to allocate the returned buffer
- * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
+ * @return cuda::device_buffer<std::byte> Buffer containing all elements in the range `[begin,end)`
  */
 template <cudf::concepts::fixed_point ElementTo, typename ElementFrom, typename InputIterator>
-rmm::device_buffer make_elements(InputIterator begin,
-                                 InputIterator end,
-                                 cuda::stream_ref stream,
-                                 cudf::memory_resources mr)
+cuda::device_buffer<std::byte> make_elements(InputIterator begin,
+                                             InputIterator end,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   using RepType   = typename ElementTo::rep;
   auto const size = cudf::distance(begin, end);
   auto elements   = thrust::host_vector<RepType>(size);
   std::transform(begin, end, elements.begin(), fixed_width_type_converter<ElementFrom, RepType>{});
-  rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  auto buffer = cuda::device_buffer<RepType>(
+                  stream, mr.get_output_mr(), elements.data(), elements.data() + size)
+                  .template as_bytes<std::byte>();
   stream.sync();  // wait for async H2D before host source is destroyed
   return buffer;
 }
@@ -206,15 +211,15 @@ rmm::device_buffer make_elements(InputIterator begin,
  * @param end End of the sequence of elements
  * @param stream CUDA stream used for device memory operations
  * @param mr Memory resources used to allocate the returned buffer
- * @return rmm::device_buffer Buffer containing all elements in the range `[begin,end)`
+ * @return cuda::device_buffer<std::byte> Buffer containing all elements in the range `[begin,end)`
  */
 template <cudf::concepts::fixed_point ElementTo,
           cudf::concepts::fixed_point ElementFrom,
           typename InputIterator>
-rmm::device_buffer make_elements(InputIterator begin,
-                                 InputIterator end,
-                                 cuda::stream_ref stream,
-                                 cudf::memory_resources mr)
+cuda::device_buffer<std::byte> make_elements(InputIterator begin,
+                                             InputIterator end,
+                                             cuda::stream_ref stream,
+                                             cudf::memory_resources mr)
 {
   using namespace numeric;
   using RepType = typename ElementTo::rep;
@@ -225,7 +230,9 @@ rmm::device_buffer make_elements(InputIterator begin,
   auto const size = cudf::distance(begin, end);
   auto elements   = thrust::host_vector<RepType>(size);
   std::transform(begin, end, elements.begin(), [](ElementTo const fp) { return fp.value(); });
-  rmm::device_buffer buffer{elements.data(), size * sizeof(RepType), stream, mr.get_output_mr()};
+  auto buffer = cuda::device_buffer<RepType>(
+                  stream, mr.get_output_mr(), elements.data(), elements.data() + size)
+                  .template as_bytes<std::byte>();
   stream.sync();  // wait for async H2D before host source is destroyed
   return buffer;
 }
@@ -615,7 +622,9 @@ class fixed_point_column_wrapper : public detail::column_wrapper {
     auto const elements  = thrust::host_vector<Rep>(begin, end);
     auto const id        = type_to_id<numeric::fixed_point<Rep, numeric::Radix::BASE_10>>();
     auto const data_type = cudf::data_type{id, static_cast<int32_t>(scale)};
-    rmm::device_buffer data{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()};
+    auto data =
+      cuda::device_buffer<Rep>(stream, mr.get_output_mr(), elements.data(), elements.data() + size)
+        .template as_bytes<std::byte>();
     wrapped.reset(new cudf::column{data_type,
                                    size,
                                    std::move(data),
@@ -691,7 +700,9 @@ class fixed_point_column_wrapper : public detail::column_wrapper {
     auto const id                = type_to_id<numeric::fixed_point<Rep, numeric::Radix::BASE_10>>();
     auto const data_type         = cudf::data_type{id, static_cast<int32_t>(scale)};
     auto [null_mask, null_count] = detail::make_null_mask(v, v + size, stream, mr);
-    rmm::device_buffer data{elements.data(), size * sizeof(Rep), stream, mr.get_output_mr()};
+    auto data =
+      cuda::device_buffer<Rep>(stream, mr.get_output_mr(), elements.data(), elements.data() + size)
+        .template as_bytes<std::byte>();
     wrapped.reset(
       new cudf::column{data_type, size, std::move(data), std::move(null_mask), null_count});
     stream.sync();  // wait for async H2D before host source is destroyed
@@ -840,14 +851,14 @@ class strings_column_wrapper : public detail::column_wrapper {
     }
     auto all_valid        = cuda::make_constant_iterator(true);
     auto [chars, offsets] = detail::make_chars_and_offsets(begin, end, all_valid);
-    auto d_chars   = cudf::detail::make_device_uvector_async(chars, stream, mr.get_output_mr());
+    auto d_chars   = cudf::detail::make_device_buffer_async(chars, stream, mr.get_output_mr());
     auto d_offsets = std::make_unique<cudf::column>(
-      cudf::detail::make_device_uvector(offsets, stream, mr.get_output_mr()),
+      cudf::detail::make_device_buffer(offsets, stream, mr.get_output_mr()),
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
       0);
     wrapped = cudf::make_strings_column(num_strings,
                                         std::move(d_offsets),
-                                        d_chars.release(),
+                                        std::move(d_chars).template as_bytes<std::byte>(),
                                         0,
                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }
@@ -896,14 +907,17 @@ class strings_column_wrapper : public detail::column_wrapper {
       return;
     }
     auto [chars, offsets] = detail::make_chars_and_offsets(begin, end, v);
-    auto d_chars   = cudf::detail::make_device_uvector_async(chars, stream, mr.get_output_mr());
+    auto d_chars   = cudf::detail::make_device_buffer_async(chars, stream, mr.get_output_mr());
     auto d_offsets = std::make_unique<cudf::column>(
-      cudf::detail::make_device_uvector_async(offsets, stream, mr.get_output_mr()),
+      cudf::detail::make_device_buffer_async(offsets, stream, mr.get_output_mr()),
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
       0);
     auto [d_bitmask, null_count] = detail::make_null_mask(v, v + num_strings, stream, mr);
-    wrapped                      = cudf::make_strings_column(
-      num_strings, std::move(d_offsets), d_chars.release(), null_count, std::move(d_bitmask));
+    wrapped                      = cudf::make_strings_column(num_strings,
+                                        std::move(d_offsets),
+                                        std::move(d_chars).template as_bytes<std::byte>(),
+                                        null_count,
+                                        std::move(d_bitmask));
   }
 
   /**

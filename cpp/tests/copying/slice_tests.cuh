@@ -221,9 +221,10 @@ inline std::unique_ptr<cudf::column> make_long_offsets_string_column()
   std::transform(iter, iter + num_chars, chars.begin(), [](cudf::size_type i) {
     return static_cast<int8_t>('a' + (i % 26));
   });
-  rmm::device_buffer d_chars(num_chars, cudf::get_default_stream());
+  cuda::device_buffer<std::byte> d_chars(
+    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), num_chars, cuda::no_init);
   cudf::detail::cuda_memcpy(
-    cudf::device_span<int8_t>{static_cast<int8_t*>(d_chars.data()), d_chars.size()},
+    cudf::device_span<int8_t>{reinterpret_cast<int8_t*>(d_chars.data()), d_chars.size()},
     cudf::host_span<int8_t const>{chars.data(), chars.size()},
     cudf::get_default_stream());
 
@@ -242,7 +243,10 @@ inline std::unique_ptr<cudf::column> make_long_offsets_string_column()
 
 inline std::unique_ptr<cudf::column> make_long_offsets_and_chars_string_column()
 {
-  rmm::device_buffer d_chars{size_t{3} * 1024 * 1024 * 1024, cudf::get_default_stream()};
+  cuda::device_buffer<std::byte> d_chars{cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref(),
+                                         size_t{3} * 1024 * 1024 * 1024,
+                                         cuda::no_init};
 
   int8_t* charp         = reinterpret_cast<int8_t*>(d_chars.data());
   auto const block_size = 100 * 1024 * 1024;

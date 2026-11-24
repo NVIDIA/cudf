@@ -18,6 +18,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/stream>
@@ -43,13 +44,14 @@ std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
 
   auto const str_size = input.size();
   auto const iter     = cuda::counting_iterator<cudf::size_type>{0};
-  auto buff           = rmm::device_buffer(repeat_times * input.size(), stream, mr.get_output_mr());
+  auto buff           = cuda::device_buffer<std::byte>(
+    stream, mr.get_output_mr(), repeat_times * input.size(), cuda::no_init);
 
   // Pull data from the input string into each byte of the output string.
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     iter,
                     iter + repeat_times * str_size,
-                    static_cast<char*>(buff.data()),
+                    reinterpret_cast<char*>(buff.data()),
                     [in_ptr = input.data(), str_size] __device__(auto const idx) {
                       return in_ptr[idx % str_size];
                     });
@@ -77,7 +79,8 @@ auto generate_empty_output(strings_column_view const& input,
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             rmm::device_buffer{},
+                             cuda::device_buffer<std::byte>{
+                               cudf::get_default_stream(), cudf::get_current_device_resource_ref()},
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -155,7 +158,7 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
     make_strings_children(fn, strings_count * repeat_times, strings_count, stream, mr);
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -244,8 +247,11 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
   auto [null_mask, null_count] =
     cudf::detail::bitmask_and(table_view{{input.parent(), repeat_times}}, stream, mr);
 
-  return make_strings_column(
-    strings_count, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(strings_count,
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 }  // namespace detail
 

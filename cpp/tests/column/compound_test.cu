@@ -63,9 +63,18 @@ TEST_F(CompoundColumnTest, ChildrenLevel1)
     rmm::exec_policy_nosync(cudf::get_default_stream()), data.begin(), data.end(), 1);
 
   auto null_mask = cudf::create_null_mask(100, cudf::mask_state::UNALLOCATED);
-  rmm::device_buffer data1{data.data() + 100, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data2{data.data() + 200, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data3{data.data() + 300, 100 * sizeof(int32_t), cudf::get_default_stream()};
+  cuda::device_buffer<int32_t> data1{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref(),
+                                     data.begin() + 100,
+                                     data.begin() + 200};
+  cuda::device_buffer<int32_t> data2{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref(),
+                                     data.begin() + 200,
+                                     data.begin() + 300};
+  cuda::device_buffer<int32_t> data3{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref(),
+                                     data.begin() + 300,
+                                     data.begin() + 400};
   auto child1 =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                    100,
@@ -90,13 +99,14 @@ TEST_F(CompoundColumnTest, ChildrenLevel1)
   children.emplace_back(std::move(child2));
   children.emplace_back(std::move(child3));
 
-  auto parent =
-    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                   100,
-                                   rmm::device_buffer{},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0,
-                                   std::move(children));
+  auto parent = std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::STRING},
+    100,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(children));
 
   {
     auto column = cudf::column_device_view::create(parent->view());
@@ -122,12 +132,30 @@ TEST_F(CompoundColumnTest, ChildrenLevel2)
     rmm::exec_policy_nosync(cudf::get_default_stream()), data.begin(), data.end(), 1);
 
   auto null_mask = cudf::create_null_mask(100, cudf::mask_state::UNALLOCATED);
-  rmm::device_buffer data11{data.data() + 100, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data12{data.data() + 200, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data13{data.data() + 300, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data21{data.data() + 400, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data22{data.data() + 500, 100 * sizeof(int32_t), cudf::get_default_stream()};
-  rmm::device_buffer data23{data.data() + 600, 100 * sizeof(int32_t), cudf::get_default_stream()};
+  cuda::device_buffer<int32_t> data11{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 100,
+                                      data.begin() + 200};
+  cuda::device_buffer<int32_t> data12{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 200,
+                                      data.begin() + 300};
+  cuda::device_buffer<int32_t> data13{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 300,
+                                      data.begin() + 400};
+  cuda::device_buffer<int32_t> data21{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 400,
+                                      data.begin() + 500};
+  cuda::device_buffer<int32_t> data22{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 500,
+                                      data.begin() + 600};
+  cuda::device_buffer<int32_t> data23{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref(),
+                                      data.begin() + 600,
+                                      data.begin() + 700};
   auto gchild11 =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                    100,
@@ -174,31 +202,34 @@ TEST_F(CompoundColumnTest, ChildrenLevel2)
   gchildren2.emplace_back(std::move(gchild22));
   gchildren2.emplace_back(std::move(gchild23));
 
-  auto children1 =
-    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                   100,
-                                   rmm::device_buffer{},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0,
-                                   std::move(gchildren1));
-  auto children2 =
-    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                   100,
-                                   rmm::device_buffer{},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0,
-                                   std::move(gchildren2));
+  auto children1 = std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::STRING},
+    100,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(gchildren1));
+  auto children2 = std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::STRING},
+    100,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(gchildren2));
 
   std::vector<std::unique_ptr<cudf::column>> children;
   children.emplace_back(std::move(children1));
   children.emplace_back(std::move(children2));
-  auto parent =
-    std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::STRING},
-                                   100,
-                                   rmm::device_buffer{},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0,
-                                   std::move(children));
+  auto parent = std::make_unique<cudf::column>(
+    cudf::data_type{cudf::type_id::STRING},
+    100,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(children));
 
   {
     auto column = cudf::column_device_view::create(parent->view());

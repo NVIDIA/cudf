@@ -14,7 +14,6 @@
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
@@ -23,10 +22,12 @@
 #include <cuco/static_set.cuh>
 #include <cuco/storage.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace cudf::detail {
 
@@ -92,13 +93,11 @@ using distinct_set_t = cuco::static_set<size_type,
  * @param num_rows The number of input rows
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned vector
- * @return A device vector containing one row index from each group
+ * @return A device buffer containing one row index from each group and their logical count
  */
 template <typename Set>
-rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
-                                                      size_type num_rows,
-                                                      cuda::stream_ref stream,
-                                                      cudf::memory_resources mr);
+std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row_keep_any(
+  Set& set, size_type num_rows, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Returns row indices selected from groups of equal rows according to `keep`.
@@ -112,14 +111,15 @@ rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
  * @param keep The duplicate selection mode; must not be `KEEP_ANY`
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned vector
- * @return A device vector containing the selected row indices
+ * @return A device buffer containing the selected row indices and their logical count
  */
 template <typename Set>
-rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
-                                                                  size_type num_rows,
-                                                                  duplicate_keep_option keep,
-                                                                  cuda::stream_ref stream,
-                                                                  cudf::memory_resources mr);
+std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row_keep_first_last_none(
+  Set& set,
+  size_type num_rows,
+  duplicate_keep_option keep,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 /**
  * @brief Returns row indices selected from groups of equal rows according to `keep`.
@@ -130,14 +130,14 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
  * @param keep The duplicate selection mode
  * @param stream CUDA stream used for device memory operations and kernel launches
  * @param mr Device memory resource used to allocate the returned vector
- * @return A device vector containing the selected row indices
+ * @return A device buffer containing the selected row indices and their logical count
  */
 template <typename Set>
-rmm::device_uvector<size_type> reduce_by_row(Set& set,
-                                             size_type num_rows,
-                                             duplicate_keep_option keep,
-                                             cuda::stream_ref stream,
-                                             cudf::memory_resources mr)
+std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row(Set& set,
+                                                                   size_type num_rows,
+                                                                   duplicate_keep_option keep,
+                                                                   cuda::stream_ref stream,
+                                                                   cudf::memory_resources mr)
 {
   if (keep == duplicate_keep_option::KEEP_ANY) {
     return reduce_by_row_keep_any(set, num_rows, stream, mr);

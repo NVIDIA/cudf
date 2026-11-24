@@ -14,7 +14,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
@@ -71,11 +70,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
   auto const num_row_groups = static_cast<size_type>(row_group_num_rows.size());
 
   if (row_group_offsets.empty()) {
-    auto row_indices = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
-    auto row_indices_iter = static_cast<size_t*>(row_indices.data());
+    auto row_indices =
+      cuda::device_buffer<size_t>(stream, mr.get_output_mr(), num_rows, cuda::no_init);
+    auto row_indices_iter = row_indices.begin();
     thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      row_indices_iter,
-                     row_indices_iter + num_rows,
+                     row_indices.end(),
                      start_row.value_or(size_t{0}));
     return std::make_unique<cudf::column>(
       cudf::data_type{cudf::type_id::UINT64},
@@ -95,11 +95,12 @@ std::unique_ptr<cudf::column> compute_row_index_column(
                "Encountered a mismatch in the number of rows in the row index column and the "
                "number of rows in the row group(s)");
 
-  auto row_indices      = rmm::device_buffer(num_rows * sizeof(size_t), stream, mr.get_output_mr());
-  auto row_indices_iter = static_cast<size_t*>(row_indices.data());
+  auto row_indices =
+    cuda::device_buffer<size_t>(stream, mr.get_output_mr(), num_rows, cuda::no_init);
+  auto row_indices_iter = row_indices.begin();
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                row_indices_iter,
-               row_indices_iter + num_rows,
+               row_indices.end(),
                1);
 
   auto row_group_keys = cuda::device_buffer<size_type>(

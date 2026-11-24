@@ -14,9 +14,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -24,13 +24,14 @@
 
 namespace cudf {
 
-static rmm::device_buffer make_string_device_buffer(std::string_view string,
-                                                    cuda::stream_ref stream,
-                                                    cudf::memory_resources mr)
+static cuda::device_buffer<char> make_string_device_buffer(std::string_view string,
+                                                           cuda::stream_ref stream,
+                                                           cudf::memory_resources mr)
 {
   auto host_data = cudf::detail::make_pinned_vector<char>(string.size(), stream);
   std::ranges::copy(string, host_data.begin());
-  return rmm::device_buffer(host_data.data(), host_data.size(), stream, mr.get_output_mr());
+  return cuda::device_buffer<char>(
+    stream, mr.get_output_mr(), host_data.data(), host_data.data() + host_data.size());
 }
 
 template <typename ScalarType>
@@ -88,7 +89,7 @@ string_scalar::string_scalar(std::string_view string,
 string_scalar::string_scalar(string_scalar const& other,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
-  : scalar(other, stream, mr), _data(other._data, stream, mr.get_output_mr())
+  : scalar(other, stream, mr), _data(stream, mr.get_output_mr(), other._data)
 {
 }
 
@@ -110,15 +111,16 @@ string_scalar::string_scalar(value_type const& source,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
   : scalar(data_type(type_id::STRING), is_valid, stream, mr),
-    _data(source.data(), source.size_bytes(), stream, mr.get_output_mr())
+    _data(stream, mr.get_output_mr(), source.data(), source.data() + source.size_bytes())
 {
 }
 
-string_scalar::string_scalar(rmm::device_buffer&& data,
+string_scalar::string_scalar(cuda::device_buffer<std::byte>&& data,
                              bool is_valid,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
-  : scalar(data_type(type_id::STRING), is_valid, stream, mr), _data(std::move(data))
+  : scalar(data_type(type_id::STRING), is_valid, stream, mr),
+    _data(std::move(data).template as_type<char>())
 {
 }
 
@@ -129,7 +131,7 @@ string_scalar::value_type string_scalar::value(cuda::stream_ref stream) const
 
 size_type string_scalar::size() const { return _data.size(); }
 
-char const* string_scalar::data() const { return static_cast<char const*>(_data.data()); }
+char const* string_scalar::data() const { return _data.data(); }
 
 std::string string_scalar::to_string(cuda::stream_ref stream) const
 {

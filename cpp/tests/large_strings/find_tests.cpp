@@ -16,7 +16,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <limits>
 #include <string>
@@ -33,10 +33,11 @@ TEST_F(FindTest, ContainsLongestRow)
 
   // match at the very end and match 5000 bytes from the end
   for (cudf::size_type suffix : {0, 4997}) {
-    auto chars = rmm::device_buffer(max_size, stream);
+    auto chars = cuda::device_buffer<std::byte>(
+      stream, cudf::get_current_device_resource_ref(), max_size, cuda::no_init);
     CUDF_CUDA_TRY(cudaMemsetAsync(chars.data(), 'a', max_size, stream.get()));
     auto const pos = max_size - static_cast<cudf::size_type>(target.size()) - suffix;
-    CUDF_CUDA_TRY(cudaMemcpyAsync(static_cast<char*>(chars.data()) + pos,
+    CUDF_CUDA_TRY(cudaMemcpyAsync(reinterpret_cast<char*>(chars.data()) + pos,
                                   target.data(),
                                   target.size(),
                                   cudaMemcpyDefault,

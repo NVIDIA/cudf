@@ -22,6 +22,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/execution_policy.h>
@@ -147,8 +148,11 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
     stream,
     mr);
 
-  return make_strings_column(
-    strings_count, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(strings_count,
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 namespace {
@@ -240,8 +244,11 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
     stream,
     mr);
 
-  return make_strings_column(
-    strings_count, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(strings_count,
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 }  // namespace detail

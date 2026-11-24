@@ -15,6 +15,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -161,7 +162,7 @@ std::unique_ptr<column> integers_to_ipv4(column_view const& integers,
 
   return make_strings_column(integers.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              integers.null_count(),
                              cudf::detail::copy_bitmask(integers, stream, mr));
 }

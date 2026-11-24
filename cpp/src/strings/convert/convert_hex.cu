@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -175,7 +176,7 @@ struct dispatch_integers_to_hex_fn {
 
     return make_strings_column(input.size(),
                                std::move(offsets_column),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                input.null_count(),
                                cudf::detail::copy_bitmask(input, stream, mr));
   }

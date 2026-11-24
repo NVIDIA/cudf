@@ -526,11 +526,13 @@ std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_conc
       columns_to_concat.begin(), columns_to_concat.end(), 0, [](auto a, auto const& b) {
         return a + b.size();
       });
-    return std::make_unique<column>(data_type(type_id::EMPTY),
-                                    length,
-                                    rmm::device_buffer{},
-                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                    length);
+    return std::make_unique<column>(
+      data_type(type_id::EMPTY),
+      length,
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                     cudf::get_current_device_resource_ref()},
+      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+      length);
   }
   return type_dispatcher<dispatch_storage_type>(
     columns_to_concat.front().type(), concatenate_dispatch{views_as_host_span, stream, mr});

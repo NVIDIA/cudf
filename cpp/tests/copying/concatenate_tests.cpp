@@ -47,10 +47,13 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   cudf::data_type type() { return cudf::data_type{cudf::type_to_id<T>()}; }
 
   TypedColumnTest(cuda::stream_ref stream = cudf::get_default_stream())
-    : data{_num_elements * sizeof(T), stream},
+    : data{stream,
+           cudf::get_current_device_resource_ref(),
+           _num_elements * sizeof(T),
+           cuda::no_init},
       mask{cudf::create_null_mask(_num_elements, cudf::mask_state::UNINITIALIZED, stream)}
   {
-    auto typed_data = static_cast<char*>(data.data());
+    auto typed_data = reinterpret_cast<char*>(data.data());
     auto typed_mask = mask.data();
     std::vector<char> h_data(data.size());
     std::iota(h_data.begin(), h_data.end(), char{0});
@@ -74,7 +77,8 @@ struct TypedColumnTest : public cudf::test::BaseFixture {
   std::default_random_engine generator{r()};
   std::uniform_int_distribution<cudf::size_type> distribution{200, 1000};
   cudf::size_type _num_elements{distribution(generator)};
-  rmm::device_buffer data{};
+  cuda::device_buffer<std::byte> data{cudf::get_default_stream(),
+                                      cudf::get_current_device_resource_ref()};
   cuda::device_buffer<cudf::bitmask_type> mask =
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
   cudf::size_type _null_count{};
@@ -389,10 +393,11 @@ TEST_F(OverflowTest, OverflowTest)
 
     // try and concatenate 6 string columns of with 1 billion chars in each
     auto offsets    = cudf::test::fixed_width_column_wrapper<int32_t>{0, size};
-    auto many_chars = rmm::device_uvector<char>(size, cudf::get_default_stream());
-    auto col        = cudf::make_strings_column(1,
+    auto many_chars = cuda::device_buffer<char>(
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), size, cuda::no_init);
+    auto col = cudf::make_strings_column(1,
                                          offsets.release(),
-                                         many_chars.release(),
+                                         std::move(many_chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
@@ -408,10 +413,11 @@ TEST_F(OverflowTest, OverflowTest)
     // try and concatenate 6 string columns 1 billion rows each
     auto many_offsets =
       cudf::make_fixed_width_column(cudf::data_type{cudf::type_id::INT32}, size + 1);
-    auto chars = rmm::device_uvector<char>(3, cudf::get_default_stream());
-    auto col   = cudf::make_strings_column(size,
+    auto chars = cuda::device_buffer<char>(
+      cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 3, cuda::no_init);
+    auto col = cudf::make_strings_column(size,
                                          std::move(many_offsets),
-                                         chars.release(),
+                                         std::move(chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
@@ -531,10 +537,13 @@ TEST_F(OverflowTest, Presliced)
     auto offset_gen = cudf::detail::make_counting_transform_iterator(
       0, [](cudf::size_type index) { return index * string_size; });
     cudf::test::fixed_width_column_wrapper<int> offsets(offset_gen, offset_gen + num_rows + 1);
-    auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
+    auto many_chars = cuda::device_buffer<char>(cudf::get_default_stream(),
+                                                cudf::get_current_device_resource_ref(),
+                                                total_chars_size,
+                                                cuda::no_init);
     auto col        = cudf::make_strings_column(num_rows,
                                          offsets.release(),
-                                         many_chars.release(),
+                                         std::move(many_chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
@@ -560,10 +569,13 @@ TEST_F(OverflowTest, Presliced)
     auto offsets    = cudf::sequence(num_rows + 1,
                                   cudf::numeric_scalar<cudf::size_type>(0),
                                   cudf::numeric_scalar<cudf::size_type>(string_size));
-    auto many_chars = rmm::device_uvector<char>(total_chars_size, cudf::get_default_stream());
+    auto many_chars = cuda::device_buffer<char>(cudf::get_default_stream(),
+                                                cudf::get_current_device_resource_ref(),
+                                                total_chars_size,
+                                                cuda::no_init);
     auto col        = cudf::make_strings_column(num_rows,
                                          std::move(offsets),
-                                         many_chars.release(),
+                                         std::move(many_chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
@@ -737,10 +749,13 @@ TEST_F(OverflowTest, BigColumnsSmallSlices)
     auto offsets    = cudf::sequence(num_rows + 1,
                                   cudf::numeric_scalar<cudf::size_type>(0),
                                   cudf::numeric_scalar<cudf::size_type>(string_size));
-    auto many_chars = rmm::device_uvector<char>(inner_size, cudf::get_default_stream());
+    auto many_chars = cuda::device_buffer<char>(cudf::get_default_stream(),
+                                                cudf::get_current_device_resource_ref(),
+                                                inner_size,
+                                                cuda::no_init);
     auto col        = cudf::make_strings_column(num_rows,
                                          std::move(offsets),
-                                         many_chars.release(),
+                                         std::move(many_chars).template as_bytes<std::byte>(),
                                          0,
                                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
@@ -1793,7 +1808,8 @@ TEST_F(EmptyColumnTest, SimpleTest)
   for (auto i = 0; i < num_copies; ++i) {
     columns.emplace_back(cudf::data_type(cudf::type_id::EMPTY),
                          num_rows,
-                         rmm::device_buffer{},
+                         cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                        cudf::get_current_device_resource_ref()},
                          cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                          0);
   }
@@ -1820,12 +1836,13 @@ TEST_F(TableOfEmptyColumnsTest, SimpleTest)
   for (auto i = 0; i < num_copies; ++i) {
     std::vector<std::unique_ptr<cudf::column>> columns;
     for (auto j = 0; j < num_columns; ++j) {
-      columns.push_back(
-        std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
-                                       num_rows,
-                                       rmm::device_buffer{},
-                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                       0));
+      columns.push_back(std::make_unique<cudf::column>(
+        cudf::data_type(cudf::type_id::EMPTY),
+        num_rows,
+        cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                       cudf::get_current_device_resource_ref()},
+        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+        0));
     }
     tables.emplace_back(std::move(columns));
   }

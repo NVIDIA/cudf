@@ -39,8 +39,12 @@ TYPED_TEST(NonTimestampTest, TestThrowsOnNonTimestamp)
   using namespace cuda::std::chrono;
 
   cudf::data_type dtype{cudf::type_to_id<T>()};
-  cudf::column col{
-    dtype, 0, rmm::device_buffer{}, cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
+  cudf::column col{dtype,
+                   0,
+                   cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref()},
+                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                   0};
 
   EXPECT_THROW(extract_datetime_component(col, cudf::datetime::datetime_component::YEAR),
                cudf::logic_error);
@@ -255,12 +259,14 @@ TYPED_TEST(TypedDatetimeOpsTest, TestEmptyColumns)
 
   cudf::column int16s{int16s_dtype,
                       0,
-                      rmm::device_buffer{},
+                      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                     cudf::get_current_device_resource_ref()},
                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                       0};
   cudf::column timestamps{timestamps_dtype,
                           0,
-                          rmm::device_buffer{},
+                          cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                         cudf::get_current_device_resource_ref()},
                           cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                           0};
 

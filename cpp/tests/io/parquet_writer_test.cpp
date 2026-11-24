@@ -1097,7 +1097,7 @@ TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
       "\xc3\xa9\xed\x9f\xbf\xee\x80\x80",
       false},
      // a surrogate already in the input falls back to incrementing the last ASCII byte
-     {"a\xed\xa0\x80b\xc3\xa9\xc3\xa9", "a\xed\xa0\x80b\xc3\xa9", "a\xed\xa0\x80c", false}});
+     {"a\xed\xa0\x80x\xc3\xa9\xc3\xa9", "a\xed\xa0\x80x\xc3\xa9", "a\xed\xa0\x80y", false}});
 
   // truncate length shorter than the first character. the min is empty and there is no valid max
   constexpr auto short_cases = std::to_array<truncation_case>({{"𐀀𐀀", "", nullptr, false}});

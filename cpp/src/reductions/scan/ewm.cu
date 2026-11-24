@@ -180,12 +180,11 @@ cuda::device_buffer<T> compute_ewma_adjust(column_view const& input,
                                      pairs.begin(),
                                      ewma_adjust_nulls_functor<T, true>{beta},
                                      recurrence_functor<T>{});
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr())),
+    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                       pairs.begin(),
                       pairs.end(),
                       output.begin(),
-                      [] __device__(pair_type<T> pair) -> T {
-      return pair.second; });
+                      [] __device__(pair_type<T> pair) -> T { return pair.second; });
 
     thrust::transform_inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                                      data,

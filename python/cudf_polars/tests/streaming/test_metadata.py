@@ -451,7 +451,7 @@ def test_remap_partitioning_select_preserves_keys(streaming_engine) -> None:
         _make_select_ir(streaming_engine, ("a", "b")), part
     )
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == (0, 1)
     assert result.inter_rank.modulus == 8
     assert result.local == "inherit"
@@ -479,7 +479,7 @@ def test_remap_partitioning_groupby(streaming_engine) -> None:
     part = Partitioning(inter_rank=HashScheme(input_indices, 8), local="inherit")
     result = maybe_remap_partitioning(gb, part)
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == expected
     assert result.inter_rank.modulus == 8
     assert result.local == "inherit"
@@ -534,7 +534,7 @@ def test_remap_partitioning_hstack_appends_preserves_keys(streaming_engine) -> N
     part = Partitioning(inter_rank=HashScheme((0, 1), 8), local="inherit")
     result = maybe_remap_partitioning(hstack, part)
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == (0, 1)
     assert result.inter_rank.modulus == 8
     assert result.local == "inherit"
@@ -641,7 +641,7 @@ def test_remap_partitioning_select_renamed_key(streaming_engine) -> None:
     )
     result = maybe_remap_partitioning(select, part)
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == (0, 1)  # a_renamed, b in output
     assert result.inter_rank.modulus == 8
     assert result.local == "inherit"
@@ -661,7 +661,7 @@ def test_remap_partitioning_reorder_columns(streaming_engine) -> None:
     )
     result = maybe_remap_partitioning(select, part)
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == (1, 0)
     assert result.inter_rank.modulus == 8
     assert result.row_orderings == (
@@ -679,7 +679,7 @@ def test_remap_partitioning_reorder_columns_projection(streaming_engine) -> None
     part = Partitioning(inter_rank=HashScheme((0, 1), 8), local="inherit")
     result = maybe_remap_partitioning(proj, part)
     assert result is not None
-    assert result.inter_rank is not None
+    assert isinstance(result.inter_rank, HashScheme)
     assert result.inter_rank.column_indices == (1, 0)
     assert result.inter_rank.modulus == 8
 

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Left-owned, backward as-of join for the streaming actor graph."""
+"""Streaming as-of join actor and cursor."""
 
 from __future__ import annotations
 
@@ -18,8 +18,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 from cudf_polars.containers import DataFrame
-from cudf_polars.dsl.expr import Col
-from cudf_polars.dsl.ir import AsofJoin
+from cudf_polars.dsl.ir import IR, AsofJoin
 from cudf_polars.dsl.utils.naming import names_to_indices
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.dispatch import (
@@ -39,6 +38,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     send_metadata,
     shutdown_on_error,
 )
+from cudf_polars.streaming.join import _has_direct_asof_on
 from cudf_polars.streaming.utils import _concat
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
@@ -49,22 +49,8 @@ if TYPE_CHECKING:
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
-    from cudf_polars.dsl.ir import IR, IRExecutionContext
+    from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
-
-
-def _direct_time_indices(ir: AsofJoin) -> tuple[int, int] | None:
-    if not isinstance(ir.left_on.value, Col) or not isinstance(ir.right_on.value, Col):
-        return None
-    if (
-        ir.left_on.name != ir.left_on.value.name
-        or ir.right_on.name != ir.right_on.value.name
-    ):
-        return None
-    return (
-        names_to_indices((ir.left_on.value.name,), ir.children[0].schema)[0],
-        names_to_indices((ir.right_on.value.name,), ir.children[1].schema)[0],
-    )
 
 
 async def _iter_right_chunks(
@@ -473,11 +459,11 @@ async def asof_join_actor(
     right_gather_id: int,
 ) -> None:
     """
-    Join each left row with the latest eligible right row.
+    Execute a streaming as-of join while preserving left-row ownership.
 
     Notes
     -----
-    The initial multi-rank path broadcasts right chunks to every rank. Each
+    The current backward path broadcasts right chunks to every rank. Each
     rank probes its left chunks with a cursor and preserves their ownership.
     The cursor checks physical time order as chunks arrive. It does not need
     boundary metadata.
@@ -494,8 +480,7 @@ async def asof_join_actor(
         left_metadata, right_metadata = await gather_in_task_group(
             recv_metadata(ch_left, context), recv_metadata(ch_right, context)
         )
-        if _direct_time_indices(ir) is None:
-            raise NotImplementedError("Streaming as-of join requires direct on columns")
+        assert _has_direct_asof_on(ir), "The asof-join actor requires direct keys."
         if tracer is not None:
             tracer.decision = "asof_cursor"
             if left_metadata.duplicated:
@@ -548,7 +533,10 @@ async def asof_join_actor(
 def generate_asof_join_sub_network(
     ir: AsofJoin, rec: SubNetGenerator
 ) -> tuple[dict[IR, list[Any]], dict[IR, ChannelManager]]:
-    """Build channels and register the dedicated as-of actor."""
+    """Select the dedicated as-of actor or the single-partition default actor."""
+    if not _has_direct_asof_on(ir):
+        return generate_ir_sub_network.dispatch(IR)(ir, rec)
+
     actors, channels = process_children(ir, rec)
     channels[ir] = ChannelManager(rec.state["context"])
     right_gather_id = rec.state["collective_id_map"][ir][0]

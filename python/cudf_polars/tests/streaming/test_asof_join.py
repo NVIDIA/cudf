@@ -67,6 +67,27 @@ def test_asof_join_without_ordering_metadata(streaming_engine_factory):
     assert_gpu_result_equal(query, engine=engine, check_row_order=True)
 
 
+@pytest.mark.engine_params(["spmd-small", "ray"])
+def test_asof_join_expression_on(streaming_engine_factory):
+    left = pl.LazyFrame({"time": pl.Series([1, 2, 3, 4], dtype=pl.Int32)})
+    right = pl.LazyFrame(
+        {
+            "time": pl.Series([1, 3, 4], dtype=pl.Int32),
+            "quote": [10, 30, 40],
+        }
+    )
+    query = left.join_asof(
+        right,
+        left_on=pl.col("time").cast(pl.Int64),
+        right_on=pl.col("time").cast(pl.Int64),
+        coalesce=False,
+    )
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="silent")
+    )
+    assert_gpu_result_equal(query, engine=engine, check_row_order=True)
+
+
 @pytest.mark.engine_params(["spmd-small"])
 def test_asof_join_rejects_unordered_left(streaming_engine_factory):
     left = pl.LazyFrame({"time": [3, 1, 4, 2]})

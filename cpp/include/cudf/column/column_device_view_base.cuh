@@ -559,8 +559,8 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The element at the specified index
    */
   template <cudf::concepts::dictionary_element T>
-  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept ->
-    typename T::key_type
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
+    -> cuda::std::remove_cv_t<typename T::key_type>
   {
     auto const& indices = child(dictionary_indices_column_index);
     auto const& keys    = child(dictionary_keys_column_index);
@@ -578,8 +578,8 @@ class alignas(16) column_device_view_core : public detail::column_device_view_ba
    * @return The child value
    */
   template <cudf::concepts::repr_element T>
-  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept ->
-    typename T::value_type
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
+    -> cuda::std::remove_cv_t<typename T::value_type>
   {
     return static_cast<typename T::value_type const*>(_data)[_offset + element_index];
   }
@@ -819,8 +819,8 @@ class alignas(16) mutable_column_device_view_core : public detail::column_device
    * @return The child value
    */
   template <cudf::concepts::repr_element T>
-  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept ->
-    typename T::value_type
+  [[nodiscard]] __device__ auto element(size_type element_index) const noexcept
+    -> cuda::std::remove_cv_t<typename T::value_type>
   {
     return static_cast<typename T::value_type*>(const_cast<void*>(_data))[_offset + element_index];
   }

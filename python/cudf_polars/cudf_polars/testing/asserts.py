@@ -16,6 +16,8 @@ from cudf_polars.dsl.translate import Translator
 from cudf_polars.utils.config import ConfigOptions
 
 if TYPE_CHECKING:
+    from typing import Literal
+
     from cudf_polars.typing import CollectKwargs
 
 
@@ -33,6 +35,7 @@ def assert_gpu_result_equal(
     engine: GPUEngine,
     collect_kwargs: CollectKwargs | None = None,
     polars_collect_kwargs: CollectKwargs | None = None,
+    polars_engine: Literal["in-memory", "streaming"] = "in-memory",
     check_row_order: bool = True,
     check_column_order: bool = True,
     check_dtypes: bool = True,
@@ -58,6 +61,8 @@ def assert_gpu_result_equal(
         Keyword arguments to pass to collect for execution on polars CPU.
         Overrides kwargs in collect_kwargs.
         Useful for controlling optimization settings.
+    polars_engine
+        CPU engine used to compute the expected result.
     check_row_order
         Expect rows to be in same order
     check_column_order
@@ -82,7 +87,7 @@ def assert_gpu_result_equal(
         If GPU collection failed in some way.
     """
     gpu_kwargs = collect_kwargs or {}
-    cpu_kwargs = {"engine": "in-memory"} | gpu_kwargs | (polars_collect_kwargs or {})
+    cpu_kwargs = {"engine": polars_engine} | gpu_kwargs | (polars_collect_kwargs or {})
 
     # These keywords are correct, but mypy doesn't see that.
     # the 'misc' is for 'error: Keywords must be strings'

@@ -54,26 +54,29 @@ def test_sparse_alltoall_non_participating_ranks(
         srcs = []
         dsts = []
 
-    exchange = SparseAlltoall(
-        context,
-        comm,
-        0,
-        srcs,
-        dsts,
-    )
+    async def run_exchange() -> list[PackedData]:
+        async with SparseAlltoall(
+            context,
+            comm,
+            0,
+            srcs,
+            dsts,
+        ) as exchange:
+            if comm.rank == 0:
+                exchange.insert(
+                    1,
+                    make_packed_data(context, np.array([11], dtype=np.int32)),
+                )
+                exchange.insert(
+                    1,
+                    make_packed_data(context, np.array([29], dtype=np.int32)),
+                )
+            await exchange.insert_finished()
+            return exchange.extract(0) if comm.rank == 1 else []
 
-    if comm.rank == 0:
-        exchange.insert(
-            1, make_packed_data(context, np.array([11], dtype=np.int32))
-        )
-        exchange.insert(
-            1, make_packed_data(context, np.array([29], dtype=np.int32))
-        )
-
-    asyncio.run(exchange.insert_finished(context))
+    results = asyncio.run(run_exchange())
 
     if comm.rank == 1:
-        results = exchange.extract(0)
         assert len(results) == 2
         stream = context.br().stream_pool.get_stream()
         assert_eq(

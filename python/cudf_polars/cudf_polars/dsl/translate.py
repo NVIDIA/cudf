@@ -1676,11 +1676,18 @@ def _translate_function(
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
         elif name == "corr":
-            if options != ("pearson",):
-                raise NotImplementedError("Only Pearson correlation is supported")
+            if options == ("pearson",):
+                agg_name, agg_options = "corr", None
+            elif len(options) == 2 and options[0] == "covariance":
+                agg_name, agg_options = "cov", options[1]
+            else:
+                raise NotImplementedError(
+                    "Only Pearson correlation and covariance are supported"
+                )
             if translator._expr_context != ExecutionContext.GROUPBY:
                 raise NotImplementedError(
-                    "Correlation is currently only supported in groupby context"
+                    "Correlation and covariance are currently only supported "
+                    "in groupby context"
                 )
             intermediate_dtype = DataType(pl.Float64())
             left, right = (
@@ -1697,21 +1704,26 @@ def _translate_function(
                     ]
                 )
             )
-            correlation = expr.Agg(
+            aggregation = expr.Agg(
                 intermediate_dtype,
-                "corr",
-                None,
+                agg_name,
+                agg_options,
                 translator._expr_context,
                 expr.UnaryFunction(pair_dtype, "as_struct", (), left, right),
             )
             # Polars returns NaN for undefined correlations, such as groups
             # with fewer than two valid pairs, while libcudf returns null.
-            result: expr.Expr = expr.UnaryFunction(
-                intermediate_dtype,
-                "fill_null",
-                (),
-                correlation,
-                expr.Literal(intermediate_dtype, float("nan")),
+            # Covariance is null in Polars too, so it is left as is.
+            result: expr.Expr = (
+                aggregation
+                if agg_name == "cov"
+                else expr.UnaryFunction(
+                    intermediate_dtype,
+                    "fill_null",
+                    (),
+                    aggregation,
+                    expr.Literal(intermediate_dtype, float("nan")),
+                )
             )
             return (
                 result

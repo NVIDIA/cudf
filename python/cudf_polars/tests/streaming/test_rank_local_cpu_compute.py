@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import collections
 import datetime
+import threading
 
+import numpy as np
 import pytest
 
 import polars as pl
@@ -20,14 +22,17 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.cpu_evaluate import (
     BINARY_OPS,
+    evaluate_ir,
     is_cpu_capable,
 )
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.expressions.binaryop import BinOp
-from cudf_polars.dsl.ir import IRExecutionContext, Select, Slice
+from cudf_polars.dsl.ir import Filter, IRExecutionContext, Select, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.engine.spmd import SPMDEngine
 from cudf_polars.testing.asserts import assert_gpu_result_equal
+from cudf_polars.utils.config import MemoryResourceConfig, RankLocalCPUComputeMode
 
 # The tests count CPU evaluations in this process, so use the in-process
 # engines only.
@@ -47,12 +52,42 @@ def engine(streaming_engine_factory):
 
 
 @pytest.fixture
+def on_oom_engine(streaming_engine_factory):
+    return streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=4,
+            raise_on_fail=True,
+            fallback_mode="silent",
+            rank_local_cpu_compute="on_oom",
+        )
+    )
+
+
+@pytest.fixture
+def filter_oom(monkeypatch):
+    """Make every ``Filter.do_evaluate`` raise ``MemoryError``, and count the calls."""
+    calls = collections.Counter()
+    lock = threading.Lock()
+
+    def raise_oom(cls, *args, **kwargs):
+        with lock:
+            calls["Filter"] += 1
+        raise MemoryError("std::bad_alloc: out_of_memory")
+
+    monkeypatch.setattr(Filter, "do_evaluate", classmethod(raise_oom))
+    return calls
+
+
+@pytest.fixture
 def cpu_calls(monkeypatch):
     calls: collections.Counter[str] = collections.Counter()
+    lock = threading.Lock()
     original = cpu_evaluate_module.cpu_evaluate
 
     def counting(node, *dfs, context):
-        calls[type(node).__name__] += 1
+        # Actors evaluate in worker threads.
+        with lock:
+            calls[type(node).__name__] += 1
         return original(node, *dfs, context=context)
 
     monkeypatch.setattr(cpu_evaluate_module, "cpu_evaluate", counting)
@@ -124,6 +159,32 @@ def test_filter_hstack_select(left, engine, cpu_calls):
     assert cpu_calls["HStack"] > 0
 
 
+@pytest.mark.parametrize("mode", ["always", "on_oom"])
+def test_statistics(left, streaming_engine_factory, cpu_calls, filter_oom, mode):
+    # filter_oom only matters for "on_oom". With "always", Filter runs on the
+    # CPU without calling do_evaluate.
+    engine = streaming_engine_factory(
+        StreamingOptions(
+            max_rows_per_partition=4,
+            raise_on_fail=True,
+            fallback_mode="silent",
+            rank_local_cpu_compute=mode,
+            statistics=True,
+        )
+    )
+    q = left.filter(pl.col("a") > 1).with_columns(d=pl.col("a") * 2 + 1)
+    assert_gpu_result_equal(q, engine=engine)
+    stats = engine.global_statistics()
+    seconds = stats.get_stat("rank-local-cpu-compute-time")
+    nbytes = stats.get_stat("rank-local-cpu-compute-bytes")
+    assert seconds["count"] == nbytes["count"] == sum(cpu_calls.values()) > 0
+    assert seconds["value"] > 0
+    assert nbytes["value"] > 0
+    report = stats.report()
+    assert "rank-local-cpu-compute-time" in report
+    assert "rank-local-cpu-compute-bytes" in report
+
+
 def test_groupby_mean_all_null_group(left, right, engine, cpu_calls):
     # The streaming planner computes the mean as a grouped sum over a grouped
     # count. The sum of an all-null group must be null, as in libcudf. Without
@@ -167,11 +228,11 @@ def test_projection_without_columns(left, right, engine, cpu_calls):
     assert cpu_calls["Projection"] > 0
 
 
-def test_not_cpu_capable(in_memory_engine):
-    # A Select using an expression without a Polars conversion.
+def _not_cpu_capable_select(engine: pl.GPUEngine) -> Select:
+    """A Select using an expression without a Polars conversion."""
     dtype = DataType(pl.Int64())
     df = pl.LazyFrame({"a": [1, 2]})
-    child = Translator(df._ldf.visit(), in_memory_engine).translate_ir()
+    child = Translator(df._ldf.visit(), engine).translate_ir()
     agg = expr.Agg(dtype, "sum", None, ExecutionContext.ROLLING, expr.Col(dtype, "a"))
     node = Select(
         {"a": dtype},
@@ -180,8 +241,13 @@ def test_not_cpu_capable(in_memory_engine):
         child,
     )
     assert not is_cpu_capable(node)
+    return node
+
+
+def test_not_cpu_capable(in_memory_engine):
+    node = _not_cpu_capable_select(in_memory_engine)
     context = IRExecutionContext()
-    df = child.evaluate(cache={}, context=context)
+    df = node.children[0].evaluate(cache={}, context=context)
     with pytest.raises(ValueError, match="not CPU capable"):
         cpu_evaluate_module.cpu_evaluate(node, df, context=context)
 
@@ -487,3 +553,99 @@ def test_binary_ops_cover_gpu():
     }
     special = {plc.binaryop.BinaryOperator.DIV}
     assert translated - special <= set(BINARY_OPS)
+
+
+def test_on_oom_replays_on_cpu(left, on_oom_engine, cpu_calls, filter_oom):
+    q = left.filter(pl.col("a") > 2).with_columns(c=pl.col("a") * 2)
+    assert_gpu_result_equal(q, engine=on_oom_engine)
+    assert filter_oom["Filter"] > 0
+    assert cpu_calls["Filter"] == filter_oom["Filter"]
+    # Nodes that do not run out of memory stay on the GPU.
+    assert cpu_calls.keys() == {"Filter"}
+
+
+def test_on_oom_without_oom_stays_on_gpu(left, on_oom_engine, cpu_calls):
+    q = left.filter(pl.col("a") > 2).with_columns(c=pl.col("a") * 2)
+    assert_gpu_result_equal(q, engine=on_oom_engine)
+    assert not cpu_calls
+
+
+def test_on_oom_not_capable_reraises(in_memory_engine, monkeypatch):
+    node = _not_cpu_capable_select(in_memory_engine)
+    context = IRExecutionContext(rank_local_cpu_compute=RankLocalCPUComputeMode.ON_OOM)
+    df = node.children[0].evaluate(cache={}, context=context)
+
+    def raise_oom(cls, *args, **kwargs):
+        raise MemoryError("std::bad_alloc: out_of_memory")
+
+    monkeypatch.setattr(Select, "do_evaluate", classmethod(raise_oom))
+    with pytest.raises(MemoryError):
+        evaluate_ir(node, df, context=context)
+
+
+@pytest.mark.parametrize("mode", ["always", "on_oom"])
+def test_cpu_error_notes_device_oom(in_memory_engine, monkeypatch, mode):
+    q = pl.LazyFrame({"a": [1, 2]}).select(pl.col("a") + 1)
+    node = Translator(q._ldf.visit(), in_memory_engine).translate_ir()
+    assert isinstance(node, Select)
+    assert is_cpu_capable(node)
+    context = IRExecutionContext(rank_local_cpu_compute=RankLocalCPUComputeMode(mode))
+    df = node.children[0].evaluate(cache={}, context=context)
+
+    def raise_oom(cls, *args, **kwargs):
+        raise MemoryError("std::bad_alloc: out_of_memory")
+
+    def raise_error(node, *dfs, context):
+        raise RuntimeError("CPU failure")
+
+    monkeypatch.setattr(Select, "do_evaluate", classmethod(raise_oom))
+    monkeypatch.setattr(cpu_evaluate_module, "cpu_evaluate", raise_error)
+    with pytest.raises(RuntimeError, match="CPU failure") as excinfo:
+        evaluate_ir(node, df, context=context)
+    # Only a CPU evaluation after a device OOM gets the note.
+    note = (
+        "Raised while evaluating Select on the CPU after the GPU ran out of "
+        "memory: std::bad_alloc: out_of_memory"
+    )
+    expected = [note] if mode == "on_oom" else []
+    assert getattr(excinfo.value, "__notes__", []) == expected
+
+
+@pytest.mark.parametrize("mode", ["never", "on_oom"])
+def test_device_oom(cpu_calls, mode):
+    # The engine reads its memory resource from ``memory_resource_config`` at
+    # construction, so build one with a 39 MiB device memory limit. Sorting
+    # 2**20 rows of two int64 columns (16 MiB) then runs out of device memory
+    # on the GPU, and fits on the CPU.
+    n = 1 << 20
+    data = pl.DataFrame(
+        {"a": np.random.default_rng(42).permutation(n), "b": np.arange(n)}
+    )
+    q = data.lazy().sort("a")
+    options = StreamingOptions(
+        max_rows_per_partition=n,
+        raise_on_fail=True,
+        fallback_mode="silent",
+        rank_local_cpu_compute=mode,
+        memory_resource_config=MemoryResourceConfig(
+            qualname="rmm.mr.LimitingResourceAdaptor",
+            options={
+                "upstream_mr": {"qualname": "rmm.mr.CudaMemoryResource"},
+                "allocation_limit": 39 << 20,
+            },
+        ),
+    )
+    with SPMDEngine(
+        rapidsmpf_options=options.to_rapidsmpf_options(),
+        executor_options=options.to_executor_options(),
+        engine_options=options.to_engine_options(),
+    ) as engine:
+        if mode == "never":
+            with pytest.raises(MemoryError):
+                q.collect(engine=engine)
+            assert not cpu_calls
+        else:
+            assert_frame_equal(q.collect(engine=engine), q.collect())
+            # Fails if the limit no longer makes the sort run out of device
+            # memory on the GPU.
+            assert cpu_calls["Sort"] > 0

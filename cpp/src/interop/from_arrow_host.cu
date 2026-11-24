@@ -388,13 +388,11 @@ std::unique_ptr<column> get_column_copy(ArrowSchemaView const* schema,
   checked_row_count(input->length);
 
   if (type.id() == type_id::EMPTY) {
-    return std::make_unique<column>(
-      data_type(type_id::EMPTY),
-      input->length,
-      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
-                                     cudf::get_current_device_resource_ref()},
-      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-      input->length);
+    return std::make_unique<column>(data_type(type_id::EMPTY),
+                                    input->length,
+                                    cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
+                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                    input->length);
   }
 
   auto result = type_dispatcher(

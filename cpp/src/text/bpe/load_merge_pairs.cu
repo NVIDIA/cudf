@@ -105,7 +105,8 @@ std::pair<std::unique_ptr<detail::merge_pairs_map_type>, uint64_t> initialize_me
                                                  is_collision + elements,
                                                  cudf::size_type{0},
                                                  cuda::std::plus<cudf::size_type>{},
-                                                 stream);
+                                                 stream,
+                                                 mr.as_temporary());
     if (collisions == 0) { return {std::move(merge_pairs_map), salt}; }
   }
 

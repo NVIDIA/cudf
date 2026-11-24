@@ -25,10 +25,10 @@ std::unique_ptr<column> merge(strings_column_view const& lhs,
                               strings_column_view const& rhs,
                               cudf::detail::index_vector const& row_order,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   using cudf::detail::side;
-  if (row_order.is_empty()) { return make_empty_column(type_id::STRING); }
+  if (row_order.empty()) { return make_empty_column(type_id::STRING); }
   auto const strings_count = static_cast<cudf::size_type>(row_order.size());
 
   auto const lhs_column = column_device_view::create(lhs.parent(), stream);

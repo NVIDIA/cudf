@@ -61,3 +61,40 @@ def test_distinct_zero_width(engine: pl.GPUEngine, keep, height):
     q = ldf.unique(keep=keep)
     assert_gpu_result_equal(q, engine=engine)
     assert_gpu_result_equal(q.head(1), engine=engine)
+
+
+@pytest.mark.parametrize(
+    "subset,maintain_order,expected",
+    [
+        pytest.param(["b"], False, False, id="unordered"),
+        pytest.param(["a"], False, True, id="sorted-keys"),
+        pytest.param(["b"], True, True, id="stable"),
+    ],
+)
+def test_distinct_sorted_flag(
+    in_memory_engine: pl.GPUEngine,
+    subset: list[str],
+    *,
+    maintain_order: bool,
+    expected: bool,
+) -> None:
+    ldf = pl.LazyFrame(
+        {"a": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "b": [3, 8, 1, 9, 0, 5, 2, 7, 4, 6]}
+    )
+    q = ldf.with_columns(pl.col("a").set_sorted()).unique(
+        subset=subset, maintain_order=maintain_order
+    )
+    result = q.collect(engine=in_memory_engine)
+    assert result["a"].flags["SORTED_ASC"] is expected
+
+
+def test_distinct_unordered_then_unique_expression(engine: pl.GPUEngine) -> None:
+    ldf = pl.LazyFrame(
+        {"a": [0, 0, 0, 1, 1, 1, 2, 2, 2, 2], "b": [3, 8, 1, 9, 0, 5, 2, 7, 4, 6]}
+    )
+    q = (
+        ldf.with_columns(pl.col("a").set_sorted())
+        .unique(subset=["b"])
+        .select(pl.col("a").unique())
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

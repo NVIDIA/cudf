@@ -67,7 +67,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
                                       cudf::device_span<size_type const> group_offsets,
                                       null_policy null_handling,
                                       cuda::stream_ref stream,
-                                      rmm::device_async_resource_ref mr)
+                                      cudf::memory_resources mr)
 {
   CUDF_EXPECTS(num_groups >= 0, "number of groups cannot be negative");
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
@@ -114,13 +114,15 @@ std::unique_ptr<column> group_nunique(column_view const& values,
 
   // calling this with a vector instead of a transform iterator is 10x faster to compile;
   // it also helps that we are only calling it once for both conditions
+  cudf::memory_resources mrs{mr};
   cudf::detail::reduce_by_key_async(group_labels.begin(),
                                     group_labels.end(),
                                     d_result.begin(),
                                     cuda::make_discard_iterator(),
                                     result->mutable_view().begin<size_type>(),
                                     cuda::std::plus<size_type>(),
-                                    stream);
+                                    stream,
+                                    mrs.as_temporary());
 
   return result;
 }

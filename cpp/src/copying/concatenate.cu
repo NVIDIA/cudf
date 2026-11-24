@@ -29,8 +29,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/exec_policy.hpp>
-
 #include <cuda/iterator>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -242,7 +240,7 @@ template <typename T>
 std::unique_ptr<column> fused_concatenate(host_span<column_view const> views,
                                           bool const has_nulls,
                                           cuda::stream_ref stream,
-                                          rmm::device_async_resource_ref mr)
+                                          cudf::memory_resources mr)
 {
   using mask_policy = cudf::mask_allocation_policy;
 
@@ -292,7 +290,7 @@ template <typename T>
 std::unique_ptr<column> for_each_concatenate(host_span<column_view const> views,
                                              bool const has_nulls,
                                              cuda::stream_ref stream,
-                                             rmm::device_async_resource_ref mr)
+                                             cudf::memory_resources mr)
 {
   size_type const total_element_count =
     std::accumulate(views.begin(), views.end(), 0, [](auto accumulator, auto const& v) {
@@ -333,7 +331,7 @@ std::unique_ptr<column> for_each_concatenate(host_span<column_view const> views,
 struct concatenate_dispatch {
   host_span<column_view const> views;
   cuda::stream_ref stream;
-  rmm::device_async_resource_ref mr;
+  cudf::memory_resources mr;
 
   // fixed width
   template <typename T>
@@ -506,7 +504,7 @@ void bounds_and_type_check(host_span<column_view const> cols, cuda::stream_ref s
 // Concatenates the elements from a vector of column_views
 std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_EXPECTS(not columns_to_concat.empty(), "Unexpected empty list of columns to concatenate.");
 
@@ -540,7 +538,7 @@ std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_conc
 
 std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   if (tables_to_concat.empty()) { return std::make_unique<table>(); }
 
@@ -583,7 +581,7 @@ std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
 
 cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
                                                           cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr)
+                                                          cudf::memory_resources mr)
 {
   bool const has_nulls =
     std::any_of(views.begin(), views.end(), [](column_view const col) { return col.has_nulls(); });
@@ -609,7 +607,7 @@ cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view 
 
 cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view const> views,
                                                           cuda::stream_ref stream,
-                                                          rmm::device_async_resource_ref mr)
+                                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate_masks(views, stream, mr);
@@ -618,7 +616,7 @@ cuda::device_buffer<cudf::bitmask_type> concatenate_masks(std::span<column_view 
 // Concatenates the elements from a vector of column_views
 std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_concat,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(columns_to_concat, stream, mr);
@@ -626,7 +624,7 @@ std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_conc
 
 std::unique_ptr<table> concatenate(std::span<table_view const> tables_to_concat,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr)
+                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::concatenate(tables_to_concat, stream, mr);

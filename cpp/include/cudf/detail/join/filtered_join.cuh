@@ -9,6 +9,7 @@
 #include <cudf/join/join.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -141,21 +142,22 @@ class filtered_join {
   /**
    * @brief Returns indices of left table rows that have matching keys in the right table
    */
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(
-    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_join(cudf::table_view const& left,
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr);
 
   /**
    * @brief Returns indices of left table rows that do not have matching keys in the right table
    */
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(
-    cudf::table_view const& left, cuda::stream_ref stream, rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> anti_join(cudf::table_view const& left,
+                                                                  cuda::stream_ref stream,
+                                                                  cudf::memory_resources mr);
 
  private:
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(
-    cudf::table_view const& left,
-    join_kind kind,
-    cuda::stream_ref stream,
-    rmm::device_async_resource_ref mr);
+  std::unique_ptr<rmm::device_uvector<cudf::size_type>> semi_anti_join(cudf::table_view const& left,
+                                                                       join_kind kind,
+                                                                       cuda::stream_ref stream,
+                                                                       cudf::memory_resources mr);
 
   // Queries the hash table for every left row and writes the matches to contains_map.
   template <int32_t CGSize, typename Iterator, typename Ref>

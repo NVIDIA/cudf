@@ -35,14 +35,18 @@ ColumnView slice(ColumnView const& input, size_type begin, size_type end, cuda::
     children.emplace_back(input.child(index));
   }
 
-  return ColumnView(
-    input.type(),
-    end - begin,
-    input.head(),
-    input.null_mask(),
-    input.null_count() ? cudf::detail::null_count(input.null_mask(), begin, end, stream) : 0,
-    input.offset() + begin,
-    children);
+  // The null mask is indexed from the start of `input`'s data, so shift by its offset.
+  auto const offset_begin = input.offset() + begin;
+  auto const offset_end   = input.offset() + end;
+  return ColumnView(input.type(),
+                    end - begin,
+                    input.head(),
+                    input.null_mask(),
+                    input.null_count() ? cudf::detail::null_count(
+                                           input.null_mask(), offset_begin, offset_end, stream)
+                                       : 0,
+                    offset_begin,
+                    children);
 }
 
 template column_view slice<column_view>(column_view const&, size_type, size_type, cuda::stream_ref);

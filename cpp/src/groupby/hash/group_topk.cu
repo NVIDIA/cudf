@@ -22,7 +22,7 @@ std::unique_ptr<column> group_top_k(size_type k,
                                     column_view const& values,
                                     cudf::device_span<size_type const> group_offsets,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   return cudf::detail::segmented_top_k(values, group_offsets, k, topk_order, stream, mr);
 }

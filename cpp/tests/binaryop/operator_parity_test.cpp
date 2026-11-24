@@ -4,6 +4,7 @@
  */
 
 #include <cudf_test/base_fixture.hpp>
+#include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 
@@ -11,6 +12,7 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/error.hpp>
 
+#include <cmath>
 #include <limits>
 
 struct BinaryOperatorParityTest : public cudf::test::BaseFixture {};
@@ -34,6 +36,59 @@ TEST_F(BinaryOperatorParityTest, CheckedDecimalSupportRequiresOutputScale)
   expect_scale(cudf::binary_operator::MUL_OVERFLOW, -3);
   expect_scale(cudf::binary_operator::DIV_OVERFLOW, -1);
   expect_scale(cudf::binary_operator::MOD_OVERFLOW, -2);
+}
+
+TEST_F(BinaryOperatorParityTest, StringNullMinMaxSupported)
+{
+  auto const str = cudf::data_type{cudf::type_id::STRING};
+  for (auto op : {cudf::binary_operator::NULL_MIN, cudf::binary_operator::NULL_MAX}) {
+    EXPECT_TRUE(cudf::binops::is_supported_operation(str, str, str, op));
+    EXPECT_FALSE(
+      cudf::binops::is_supported_operation(cudf::data_type{cudf::type_id::INT32}, str, str, op));
+    EXPECT_FALSE(
+      cudf::binops::is_supported_operation(str, str, cudf::data_type{cudf::type_id::INT32}, op));
+  }
+  EXPECT_FALSE(cudf::binops::is_supported_operation(str, str, str, cudf::binary_operator::ADD));
+
+  // the implementation must agree with the support query
+  auto const lhs = cudf::test::strings_column_wrapper({"a", "c", "z"}, {true, true, false});
+  auto const rhs = cudf::test::strings_column_wrapper({"b", "b", "d"});
+  {
+    auto const expected = cudf::test::strings_column_wrapper({"a", "b", "d"});
+    auto const result   = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MIN, str);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  }
+  {
+    auto const expected = cudf::test::strings_column_wrapper({"b", "c", "d"});
+    auto const result   = cudf::binary_operation(lhs, rhs, cudf::binary_operator::NULL_MAX, str);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  }
+  EXPECT_THROW(cudf::binary_operation(lhs, rhs, cudf::binary_operator::ADD, str),
+               cudf::data_type_error);
+}
+
+TEST_F(BinaryOperatorParityTest, StringNullMinMaxEmptyStrings)
+{
+  // valid empty strings (whose data pointer may be null) must not become nulls
+  auto const str    = cudf::data_type{cudf::type_id::STRING};
+  auto const valid  = cudf::test::strings_column_wrapper({"", ""});
+  auto const nulls  = cudf::test::strings_column_wrapper({"", ""}, {false, false});
+  auto const mixed  = cudf::test::strings_column_wrapper({"", "x"}, {false, true});
+  auto const expect = cudf::test::strings_column_wrapper({"", ""});
+  for (auto op : {cudf::binary_operator::NULL_MIN, cudf::binary_operator::NULL_MAX}) {
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(valid, nulls, op, str)->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(nulls, valid, op, str)->view());
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expect,
+                                        cudf::binary_operation(valid, valid, op, str)->view());
+  }
+  // valid "" combined with a null on the other side, next to a non-empty value
+  auto const expect_mixed = cudf::test::strings_column_wrapper({"", "x"});
+  auto const empty_valid  = cudf::test::strings_column_wrapper({"", ""});
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(
+    expect_mixed,
+    cudf::binary_operation(empty_valid, mixed, cudf::binary_operator::NULL_MAX, str)->view());
 }
 
 TEST_F(BinaryOperatorParityTest, CheckedArithmeticPropagates)
@@ -155,4 +210,60 @@ TEST_F(BinaryOperatorParityTest, CheckedDecimalScaleRules)
     cudf::binary_operation(
       lhs, rhs, cudf::binary_operator::ADD_OVERFLOW, cudf::data_type{cudf::type_id::DECIMAL32, -1}),
     cudf::data_type_error);
+}
+
+TEST_F(BinaryOperatorParityTest, FloatingPyModEdgeCases)
+{
+  auto const inf  = std::numeric_limits<double>::infinity();
+  auto const type = cudf::data_type{cudf::type_id::FLOAT64};
+
+  // Vector - Vector
+  auto lhs = cudf::test::fixed_width_column_wrapper<double>{1.0, -1.0, 1.0, -1.0, 1.0, -1.0};
+  auto rhs = cudf::test::fixed_width_column_wrapper<double>{inf, inf, -inf, -inf, -1e18, -1e18};
+  auto expected = cudf::test::fixed_width_column_wrapper<double>{1.0, inf, -inf, -1.0, -1e18, -1.0};
+
+  auto result = cudf::binary_operation(lhs, rhs, cudf::binary_operator::PYMOD, type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+
+  // Vector - Scalar with positive infinity divisor (#24898)
+  auto s_inf      = cudf::numeric_scalar<double>{inf};
+  auto v_lhs      = cudf::test::fixed_width_column_wrapper<double>{1.0, 2.5};
+  auto exp_inf    = cudf::test::fixed_width_column_wrapper<double>{1.0, 2.5};
+  auto result_inf = cudf::binary_operation(v_lhs, s_inf, cudf::binary_operator::PYMOD, type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(exp_inf, result_inf->view());
+
+  // Vector - Scalar with large negative divisor (#24895)
+  auto s_neg      = cudf::numeric_scalar<double>{-1e18};
+  auto exp_neg    = cudf::test::fixed_width_column_wrapper<double>{-1e18, -1e18};
+  auto result_neg = cudf::binary_operation(v_lhs, s_neg, cudf::binary_operator::PYMOD, type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(exp_neg, result_neg->view());
+
+  // mod += y rounds to y; Python returns y: -1e-20 % 1.0 == 1.0, 1e-20 % -1.0 == -1.0
+  auto lhs_tiny    = cudf::test::fixed_width_column_wrapper<double>{-1e-20, 1e-20};
+  auto rhs_tiny    = cudf::test::fixed_width_column_wrapper<double>{1.0, -1.0};
+  auto exp_tiny    = cudf::test::fixed_width_column_wrapper<double>{1.0, -1.0};
+  auto result_tiny = cudf::binary_operation(lhs_tiny, rhs_tiny, cudf::binary_operator::PYMOD, type);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(exp_tiny, result_tiny->view());
+
+  // Float32
+  auto const inf_f  = std::numeric_limits<float>::infinity();
+  auto const type_f = cudf::data_type{cudf::type_id::FLOAT32};
+  auto lhs_f        = cudf::test::fixed_width_column_wrapper<float>{1.0f, -1.0f};
+  auto rhs_f        = cudf::test::fixed_width_column_wrapper<float>{inf_f, inf_f};
+  auto expected_f   = cudf::test::fixed_width_column_wrapper<float>{1.0f, inf_f};
+  auto result_f     = cudf::binary_operation(lhs_f, rhs_f, cudf::binary_operator::PYMOD, type_f);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_f, result_f->view());
+
+  // Exact-multiple signed zero tests (1.0 % -1.0 == -0.0, -1.0 % 1.0 == +0.0)
+  auto s_neg_one    = cudf::numeric_scalar<double>{-1.0};
+  auto s_pos_one    = cudf::numeric_scalar<double>{1.0};
+  auto v_one        = cudf::test::fixed_width_column_wrapper<double>{1.0};
+  auto v_neg_one    = cudf::test::fixed_width_column_wrapper<double>{-1.0};
+  auto res_neg_zero = cudf::binary_operation(v_one, s_neg_one, cudf::binary_operator::PYMOD, type);
+  auto res_pos_zero =
+    cudf::binary_operation(v_neg_one, s_pos_one, cudf::binary_operator::PYMOD, type);
+  auto const neg_data = cudf::test::to_host<double>(res_neg_zero->view()).first;
+  auto const pos_data = cudf::test::to_host<double>(res_pos_zero->view()).first;
+  EXPECT_TRUE(std::signbit(neg_data.front()));
+  EXPECT_FALSE(std::signbit(pos_data.front()));
 }

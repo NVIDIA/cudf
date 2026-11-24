@@ -178,7 +178,7 @@ CUDF_KERNEL void fused_concatenate_string_offset_kernel(
 CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const* input_views,
                                                        size_t const* partition_offsets,
                                                        size_type const num_input_views,
-                                                       size_type const output_size,
+                                                       int64_t const output_size,
                                                        char* output_data)
 {
   auto output_index = cudf::detail::grid_1d::global_thread_id();
@@ -207,7 +207,7 @@ CUDF_KERNEL void fused_concatenate_string_chars_kernel(column_device_view const*
 
 std::unique_ptr<column> concatenate(host_span<column_view const> columns,
                                     cuda::stream_ref stream,
-                                    rmm::device_async_resource_ref mr)
+                                    cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   // Compute output sizes
@@ -230,7 +230,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
     std::any_of(columns.begin(), columns.end(), [](auto const& col) { return col.has_nulls(); });
 
   // create output chars column
-  rmm::device_uvector<char> output_chars(total_bytes, stream, mr);
+  rmm::device_uvector<char> output_chars(total_bytes, stream, mr.get_output_mr());
   auto d_new_chars = output_chars.data();
 
   // create output offsets column
@@ -278,7 +278,7 @@ std::unique_ptr<column> concatenate(host_span<column_view const> columns,
       kernel<<<num_blocks, block_size, 0, stream.get()>>>(d_views,
                                                           d_partition_offsets.data(),
                                                           static_cast<size_type>(columns.size()),
-                                                          total_bytes,
+                                                          static_cast<int64_t>(total_bytes),
                                                           d_new_chars);
       CUDF_CUDA_TRY(cudaGetLastError());
     } else {

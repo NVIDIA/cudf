@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -97,7 +97,7 @@ public class ORCChunkedReader implements AutoCloseable {
     }
 
     long[] columnPtrs = readChunk(handle);
-    return columnPtrs != null ? new Table(columnPtrs) : null;
+    return columnPtrs != null ? Table.fromRowCountAndColumns(columnPtrs) : null;
   }
 
   @Override

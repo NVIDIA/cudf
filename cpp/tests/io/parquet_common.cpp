@@ -9,6 +9,7 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_metadata.hpp>
@@ -20,6 +21,7 @@
 #include <src/io/parquet/compact_protocol_reader.hpp>
 #include <src/io/parquet/timestamp_utils.cuh>
 
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <numeric>
@@ -253,6 +255,32 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
   auto const footer_buffer = cudf::io::parquet::fetch_footer_to_host(*source);
   cudf::io::parquet::detail::decode_footer_bytes({footer_buffer->data(), footer_buffer->size()},
                                                  file_meta_data);
+}
+
+void edit_footer(std::vector<char>& buffer,
+                 std::function<void(cudf::io::parquet::FileMetaData&)> const& edit)
+{
+  namespace pq_experimental = cudf::io::parquet::experimental;
+
+  // parquet files end with 4-byte footer_length and 4-byte magic == "PAR1"
+  auto constexpr ender_size = 2 * sizeof(uint32_t);
+  CUDF_EXPECTS(buffer.size() >= ender_size, "Buffer is too small to be a Parquet file");
+  uint32_t footer_size{};
+  std::memcpy(&footer_size, buffer.data() + buffer.size() - ender_size, sizeof(footer_size));
+  CUDF_EXPECTS(buffer.size() >= ender_size + footer_size, "Invalid Parquet footer length");
+  auto const footer_begin = buffer.size() - ender_size - footer_size;
+
+  auto file_meta_data = pq_experimental::read_parquet_footer_bytes(
+    {reinterpret_cast<uint8_t const*>(buffer.data()) + footer_begin, footer_size});
+  edit(file_meta_data);
+  auto const footer = pq_experimental::write_parquet_footer_bytes(file_meta_data);
+
+  auto const new_footer_size = static_cast<uint32_t>(footer.size());
+  auto const size_bytes      = reinterpret_cast<char const*>(&new_footer_size);
+  buffer.resize(footer_begin);
+  buffer.insert(buffer.end(), footer.begin(), footer.end());
+  buffer.insert(buffer.end(), size_bytes, size_bytes + sizeof(new_footer_size));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
 }
 
 // returns the number of bits used for dictionary encoding data at the given page location.

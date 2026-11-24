@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 
-cmake_minimum_required(VERSION 3.30.4 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.3 FATAL_ERROR)
 
 include(../set_cuda_architecture.cmake)
 

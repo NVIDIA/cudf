@@ -5110,6 +5110,7 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
                                                              cudf::get_current_device_resource_ref(),
                                                              vec.data(),
                                                              vec.data() + size};
+      cudf::get_default_stream().sync();
       auto gather_map_col =
         std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                        size,

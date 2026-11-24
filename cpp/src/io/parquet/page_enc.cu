@@ -29,6 +29,7 @@
 #include <cuda/std/algorithm.any_of.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
+#include <cuda/std/bit>
 #include <cuda/std/chrono>
 #include <cuda/std/cstring>
 #include <cuda/std/functional>
@@ -688,11 +689,11 @@ CUDF_KERNEL void __launch_bounds__(128)
         if (t == 0) { frag_g = ck_g.fragments[fragments_in_chunk]; }
         if (!t && ck_g.stats) {
           if (col_g.stats_dtype == dtype_string) {
-            minmax_len = max(ck_g.stats[fragments_in_chunk].min_value.str_val.length,
-                             ck_g.stats[fragments_in_chunk].max_value.str_val.length);
+            minmax_len = cuda::std::max(ck_g.stats[fragments_in_chunk].min_value.str_val.length,
+                                        ck_g.stats[fragments_in_chunk].max_value.str_val.length);
           } else if (col_g.stats_dtype == dtype_byte_array) {
-            minmax_len = max(ck_g.stats[fragments_in_chunk].min_value.byte_val.length,
-                             ck_g.stats[fragments_in_chunk].max_value.byte_val.length);
+            minmax_len = cuda::std::max(ck_g.stats[fragments_in_chunk].min_value.byte_val.length,
+                                        ck_g.stats[fragments_in_chunk].max_value.byte_val.length);
           }
         }
       } else if (!t) {
@@ -1147,9 +1148,9 @@ static __device__ void RleEncode(
       if (t < warp_size) {
         uint32_t c32 = ballot(t >= 4 || s->rpt_map[t] != 0xffff'ffffu);
         if (t == 0) {
-          uint32_t last_idx = __ffs(c32) - 1;
-          s->rle_rpt_count =
-            last_idx * warp_size + ((last_idx < 4) ? __ffs(~s->rpt_map[last_idx]) - 1 : 0);
+          uint32_t last_idx = cuda::std::countr_zero(c32);
+          s->rle_rpt_count  = last_idx * warp_size +
+                             ((last_idx < 4) ? cuda::std::countr_zero(~s->rpt_map[last_idx]) : 0);
         }
       }
       __syncthreads();
@@ -1187,7 +1188,8 @@ static __device__ void RleEncode(
         mask                 = ballot((__funnelshift_r(m0, m1, pos8) & needed_mask) == needed_mask);
         if (!t) {
           uint32_t rle_run_start =
-            (mask != 0) ? cuda::std::min<uint32_t>((__ffs(mask) - 1) * 8, maxvals) : maxvals;
+            (mask != 0) ? cuda::std::min<uint32_t>(cuda::std::countr_zero(mask) * 8, maxvals)
+                        : maxvals;
           uint32_t rpt_len = 0;
           if (rle_run_start < maxvals) {
             uint32_t idx_cur = rle_run_start / warp_size;
@@ -1197,7 +1199,7 @@ static __device__ void RleEncode(
               m1   = (idx_cur < 3) ? s->rpt_map[idx_cur + 1] : 0;
               mask = ~__funnelshift_r(m0, m1, idx_ofs);
               if (mask != 0) {
-                rpt_len += __ffs(mask) - 1;
+                rpt_len += cuda::std::countr_zero(mask);
                 break;
               }
               rpt_len += warp_size;
@@ -2407,7 +2409,8 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
       block_scan(temp_storage.scan_storage)
         .ExclusiveScan(suff_len, s_off, str_data_len, cuda::std::plus(), total);
 
-      if (t_idx < s->page.num_valid) {
+      // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+      if (t_idx < s->page.num_valid and suff_len != 0) {
         auto const dst = strings_ptr + s_off;
         cuda::std::memcpy(dst, s_ptr + pref_len, suff_len);
       }
@@ -2664,7 +2667,8 @@ class header_encoder {
   inline __device__ void put_binary(void const* value, uint32_t length)
   {
     current_header_ptr = cpw_put_uint32(current_header_ptr, length);
-    cuda::std::memcpy(current_header_ptr, value, length);
+    // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+    if (length != 0) { cuda::std::memcpy(current_header_ptr, value, length); }
     current_header_ptr += length;
   }
 
@@ -2706,7 +2710,8 @@ class header_encoder {
     current_header_ptr =
       cpw_put_fldh(current_header_ptr, field, current_field_index, FieldType::BINARY);
     current_header_ptr = cpw_put_uint32(current_header_ptr, length);
-    cuda::std::memcpy(current_header_ptr, value, length);
+    // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+    if (length != 0) { cuda::std::memcpy(current_header_ptr, value, length); }
     current_header_ptr += length;
     current_field_index = field;
   }

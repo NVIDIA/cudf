@@ -303,7 +303,7 @@ class _AsofCursor:
         right: ChannelMetadata,
         nranks: int,
     ) -> tuple[Literal["time", "key", "prepared"], plc.types.NullOrder | None]:
-        """Choose a streaming order or the bounded grouped fallback."""
+        """Choose a streaming order or full-right grouped preparation."""
         if not ir.right_by:
             return "time", None
         right_scope = (

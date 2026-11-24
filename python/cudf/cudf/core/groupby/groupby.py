@@ -499,7 +499,7 @@ def _collect_series_key_column_names(obj, by) -> list[Hashable]:
     """Find extracted Series keys that still reference their frame column."""
     import cudf
 
-    result = []
+    result: list[Hashable] = []
     if not isinstance(obj, cudf.DataFrame):
         return result
     by_list = by if isinstance(by, list) else [by]

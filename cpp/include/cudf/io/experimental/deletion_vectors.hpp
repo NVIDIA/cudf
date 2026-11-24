@@ -152,7 +152,7 @@ class chunked_parquet_reader {
   bool _are_retentions;
   cuda::stream_ref _stream;
   cudf::memory_resources _mr;
-  rmm::device_async_resource_ref _table_mr;
+  cudf::memory_resources _table_mr;
 };
 
 /**

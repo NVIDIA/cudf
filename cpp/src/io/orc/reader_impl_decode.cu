@@ -18,14 +18,13 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/config_utils.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -63,6 +62,7 @@ namespace {
  * @param row_index_stride Distance between each row index
  * @param use_base_stride Whether to use base stride obtained from meta or use the computed value
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate the returned buffer and temporary device memory
  * @return Device buffer to decompressed data
  */
 cuda::device_buffer<std::uint8_t> decompress_stripe_data(
@@ -78,7 +78,8 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
   cudf::detail::hostdevice_2dvector<row_group>& row_groups,
   size_type row_index_stride,
   bool use_base_stride,
-  cuda::stream_ref stream)
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
   // Whether we have the comppression info precomputed.
   auto const compinfo_ready = not compinfo_map.empty();
@@ -131,7 +132,7 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
   // Buffer needs to be padded.This is required by `decode_column_data_kernel`.
   cuda::device_buffer<std::uint8_t> decomp_data(
     stream,
-    cudf::get_current_device_resource_ref(),
+    mr.get_output_mr(),
     cudf::detail::round_up_safe(total_decomp_size, BUFFER_PADDING_MULTIPLE),
     cuda::no_init);
 
@@ -140,18 +141,12 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
   if (decomp_data.empty()) { return decomp_data; }
 
   cuda::device_buffer<device_span<uint8_t const>> inflate_in(
-    stream,
-    cudf::get_current_device_resource_ref(),
-    num_compressed_blocks + num_uncompressed_blocks,
-    cuda::no_init);
+    stream, mr.get_temporary_mr(), num_compressed_blocks + num_uncompressed_blocks, cuda::no_init);
   cuda::device_buffer<device_span<uint8_t>> inflate_out(
-    stream,
-    cudf::get_current_device_resource_ref(),
-    num_compressed_blocks + num_uncompressed_blocks,
-    cuda::no_init);
+    stream, mr.get_temporary_mr(), num_compressed_blocks + num_uncompressed_blocks, cuda::no_init);
   cuda::device_buffer<codec_exec_result> inflate_res(
-    stream, cudf::get_current_device_resource_ref(), num_compressed_blocks, cuda::no_init);
-  thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_temporary_mr(), num_compressed_blocks, cuda::no_init);
+  thrust::fill(cudf::detail::exec_policy_nosync(stream, mr),
                inflate_res.begin(),
                inflate_res.end(),
                codec_exec_result{0, codec_status::FAILURE});
@@ -186,8 +181,7 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
 
   // Value for checking whether we decompress successfully.
   // It doesn't need to be atomic as there is no race condition: we only write `true` if needed.
-  cudf::detail::hostdevice_vector<bool> any_block_failure(
-    1, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::hostdevice_vector<bool> any_block_failure(1, stream, mr.as_temporary());
   any_block_failure[0] = false;
   any_block_failure.host_to_device_async(stream);
 
@@ -199,11 +193,11 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
     max_uncomp_block_size,
     total_decomp_size,
     stream,
-    cudf::get_current_device_resource_ref());
+    mr.as_temporary());
 
   // Check if any block has been failed to decompress.
   // Not using `thrust::any` or `thrust::count_if` to defer stream sync.
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    cuda::counting_iterator<std::size_t>{0},
                    cuda::counting_iterator{inflate_res.size()},
                    [results           = inflate_res.begin(),
@@ -229,12 +223,8 @@ cuda::device_buffer<std::uint8_t> decompress_stripe_data(
       cuda::proclaim_return_type<size_t>([inputs, outputs] __device__(std::size_t i) {
         return inputs[i].size() < outputs[i].size() ? inputs[i].size() : outputs[i].size();
       }));
-    cudf::detail::batched_memcpy_async(src_iter,
-                                       dst_iter,
-                                       size_iter,
-                                       num_uncompressed_blocks,
-                                       stream,
-                                       cudf::get_current_device_resource_ref());
+    cudf::detail::batched_memcpy_async(
+      src_iter, dst_iter, size_iter, num_uncompressed_blocks, stream, mr.as_temporary());
   }
 
   // Copy without stream sync, thus need to wait for stream sync below to access.
@@ -337,7 +327,7 @@ void update_null_mask(cudf::detail::hostdevice_2dvector<column_desc>& chunks,
         uint32_t* dst_idx_ptr = dst_idx.data();
         // Copy child valid bits from child column to valid indexes, this will merge both child
         // and parent null masks
-        thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                          cuda::counting_iterator<std::size_t>{0},
                          cuda::counting_iterator<std::size_t>{0} + dst_idx.size(),
                          [child_valid_map_base, dst_idx_ptr, merged_mask] __device__(auto idx) {
@@ -413,7 +403,7 @@ void decode_stream_data(int64_t num_dicts,
 
   // Allocate global dictionary for deserializing
   cuda::device_buffer<dictionary_entry> global_dict(
-    stream, cudf::get_current_device_resource_ref(), num_dicts, cuda::no_init);
+    stream, mr.get_temporary_mr(), num_dicts, cuda::no_init);
 
   chunks.host_to_device_async(stream);
   decode_nulls_and_string_dictionaries(chunks.base_device_ptr(),
@@ -430,8 +420,7 @@ void decode_stream_data(int64_t num_dicts,
     update_null_mask(chunks, out_buffers, stream, mr);
   }
 
-  cudf::detail::device_scalar<size_type> error_count(
-    0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<size_type> error_count(0, stream, mr.get_temporary_mr());
   decode_column_data(chunks.base_device_ptr(),
                      global_dict.data(),
                      row_groups,
@@ -467,7 +456,8 @@ void decode_stream_data(int64_t num_dicts,
  */
 void scan_null_counts(cudf::detail::hostdevice_2dvector<column_desc> const& chunks,
                       uint32_t* d_prefix_sums,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
   auto const num_stripes = chunks.size().first;
   if (num_stripes == 0) return;
@@ -486,10 +476,10 @@ void scan_null_counts(cudf::detail::hostdevice_2dvector<column_desc> const& chun
       prefix_sums_to_update.push_back({col_idx, d_prefix_sums + num_stripes * col_idx});
     }
   }
-  auto const d_prefix_sums_to_update = cudf::detail::make_device_buffer_async(
-    prefix_sums_to_update, stream, cudf::get_current_device_resource_ref());
+  auto const d_prefix_sums_to_update =
+    cudf::detail::make_device_buffer_async(prefix_sums_to_update, stream, mr.as_temporary());
 
-  thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    d_prefix_sums_to_update.begin(),
                    d_prefix_sums_to_update.end(),
                    [num_stripes, chunks = chunks.device_view()] __device__(auto const& idx_psums) {
@@ -621,10 +611,12 @@ struct list_buffer_data {
 };
 
 // Generates offsets for list buffer from number of elements in a row.
-void generate_offsets_for_list(host_span<list_buffer_data> buff_data, cuda::stream_ref stream)
+void generate_offsets_for_list(host_span<list_buffer_data> buff_data,
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
   for (auto& list_data : buff_data) {
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                            list_data.data,
                            list_data.data + list_data.size,
                            list_data.data);
@@ -646,12 +638,14 @@ void generate_offsets_for_list(host_span<list_buffer_data> buff_data, cuda::stre
  * @param segment_length Value to control granularity of the output ranges
  * @param size_limit A limit on the output size of each split range
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary device memory
  * @return A vector of ranges as splits of the input
  */
 std::vector<range> find_table_splits(table_view const& input,
                                      size_type segment_length,
                                      std::size_t size_limit,
-                                     cuda::stream_ref stream)
+                                     cuda::stream_ref stream,
+                                     cudf::memory_resources mr)
 {
   if (size_limit == 0) {
     return std::vector<range>{range{0, static_cast<std::size_t>(input.num_rows())}};
@@ -662,14 +656,14 @@ std::vector<range> find_table_splits(table_view const& input,
   // `segmented_row_bit_count` requires that `segment_length` is not larger than number of rows.
   segment_length = std::min(segment_length, input.num_rows());
 
-  auto const d_segmented_sizes = cudf::detail::segmented_row_bit_count(
-    input, segment_length, stream, cudf::get_current_device_resource_ref());
+  auto const d_segmented_sizes =
+    cudf::detail::segmented_row_bit_count(input, segment_length, stream, mr.as_temporary());
 
   auto segmented_sizes = cudf::detail::hostdevice_vector<cumulative_size>(
-    d_segmented_sizes->size(), stream, cudf::get_current_device_resource_ref());
+    d_segmented_sizes->size(), stream, mr.as_temporary());
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{d_segmented_sizes->size()},
     segmented_sizes.d_begin(),
@@ -684,7 +678,7 @@ std::vector<range> find_table_splits(table_view const& input,
                              static_cast<std::size_t>(size)};
     });
 
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          segmented_sizes.d_begin(),
                          segmented_sizes.d_end(),
                          segmented_sizes.d_begin(),
@@ -757,7 +751,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       [](auto const& sum, auto const& cols_level) { return sum + cols_level.size(); });
 
     return cudf::detail::make_zeroed_device_buffer_async<uint32_t>(
-      num_total_cols * stripe_count, _stream, cudf::get_current_device_resource_ref());
+      num_total_cols * stripe_count, _stream, _mr.as_temporary());
   }();
   std::size_t num_processed_lvl_columns      = 0;
   std::size_t num_processed_prev_lvl_columns = 0;
@@ -776,7 +770,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
       }
     }
     return cudf::detail::hostdevice_vector<compressed_stream_info>{
-      max_num_streams, _stream, cudf::get_current_device_resource_ref()};
+      max_num_streams, _stream, _mr.as_temporary()};
   }();
 
   auto& col_meta = *_col_meta;
@@ -794,7 +788,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
 
     auto const num_lvl_columns = columns_level.size();
     chunks                     = cudf::detail::hostdevice_2dvector<column_desc>(
-      stripe_count, num_lvl_columns, _stream, cudf::get_current_device_resource_ref());
+      stripe_count, num_lvl_columns, _stream, _mr.as_temporary());
     memset(chunks.base_host_ptr(), 0, chunks.size_bytes());
 
     bool const use_index =
@@ -911,7 +905,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
 
     // Process dataset chunks into output columns.
     auto row_groups = cudf::detail::hostdevice_2dvector<row_group>(
-      num_rowgroups, num_lvl_columns, _stream, cudf::get_current_device_resource_ref());
+      num_rowgroups, num_lvl_columns, _stream, _mr.as_temporary());
     if (level > 0 and row_groups.size().first) {
       cudf::host_span<row_group> row_groups_span(row_groups.base_host_ptr(),
                                                  num_rowgroups * num_lvl_columns);
@@ -946,13 +940,14 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
                                                 row_groups,
                                                 _metadata.get_row_index_stride(),
                                                 level == 0,
-                                                _stream);
+                                                _stream,
+                                                _mr.as_temporary());
 
       // Just save the decompressed data and clear out the raw data to free up memory.
       stripe_data[stripe_start - load_stripe_start] = std::move(decomp_data);
       for (std::size_t i = 1; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
       }
 
     } else {
@@ -1004,8 +999,10 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
 
     if (nested_cols.size()) {
       // Extract information to process nested child columns.
-      scan_null_counts(
-        chunks, null_count_prefix_sums.data() + num_processed_lvl_columns * stripe_count, _stream);
+      scan_null_counts(chunks,
+                       null_count_prefix_sums.data() + num_processed_lvl_columns * stripe_count,
+                       _stream,
+                       _mr);
 
       row_groups.device_to_host(_stream);
       aggregate_child_meta(
@@ -1021,7 +1018,7 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
           }
         });
 
-      if (not buff_data.empty()) { generate_offsets_for_list(buff_data, _stream); }
+      if (not buff_data.empty()) { generate_offsets_for_list(buff_data, _stream, _mr); }
     }
     num_processed_prev_lvl_columns = num_processed_lvl_columns;
     num_processed_lvl_columns += num_lvl_columns;
@@ -1052,11 +1049,11 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
     auto& stripe_data = _file_itm_data.lvl_stripe_data[level];
     if (_metadata.per_file_metadata[0].ps.compression != orc::NONE) {
       stripe_data[stripe_start - load_stripe_start] =
-        cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+        cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
     } else {
       for (std::size_t i = 0; i < stripe_count; ++i) {
         stripe_data[i + stripe_start - load_stripe_start] =
-          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_output_mr());
+          cuda::device_buffer<std::uint8_t>(_stream, _mr.get_temporary_mr());
       }
     }
   }
@@ -1069,7 +1066,8 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
   _chunk_read_data.output_table_ranges = find_table_splits(_chunk_read_data.decoded_table->view(),
                                                            _chunk_read_data.output_row_granularity,
                                                            _chunk_read_data.chunk_read_limit,
-                                                           _stream);
+                                                           _stream,
+                                                           _mr);
 }
 
 }  // namespace cudf::io::orc::detail

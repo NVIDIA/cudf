@@ -14,6 +14,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/batched_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
@@ -35,7 +36,6 @@
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
@@ -1504,7 +1504,7 @@ struct cast_variant_fn {
 
     auto* dp_s = d_status;
 
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>(0),
                      cuda::counting_iterator<size_type>(num_rows),
                      [vals  = this->values,
@@ -1861,7 +1861,7 @@ std::unique_ptr<table> get_variant_fields(column_view const& variant_column,
       cudf::detail::make_sizes_to_offsets_iterator(offsets_ptrs[path_idx],
                                                    offsets_ptrs[path_idx] + num_rows + 1,
                                                    d_byte_totals.data() + path_idx);
-    thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, resources),
                            path_sizes,
                            path_sizes + num_rows + 1,
                            offsets_out,
@@ -2039,7 +2039,7 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
     static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr.get_output_mr()};
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>(0),
     cuda::counting_iterator<size_type>(num_rows),
     static_cast<uint8_t*>(data.data()),
@@ -2099,7 +2099,7 @@ std::unique_ptr<column> extract_variant_field(column_view const& variant_column,
                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.as_temporary();
 
   if (status.has_value()) {
     // `status` is filled by `get_variant_field`, then read back by `cast_variant` as incoming

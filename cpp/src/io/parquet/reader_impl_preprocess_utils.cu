@@ -10,12 +10,11 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -283,13 +282,13 @@ std::string encoding_to_string(Encoding encoding)
 }
 
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     cuda::stream_ref stream)
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const to_mask        = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
+  auto const to_mask     = cuda::proclaim_return_type<uint32_t>([] __device__(auto const& page) {
     return is_supported_encoding(page.encoding) ? uint32_t{0} : encoding_to_mask(page.encoding);
   });
-  auto const unsupported    = cudf::detail::transform_reduce(pages.begin(),
+  auto const unsupported = cudf::detail::transform_reduce(pages.begin(),
                                                           pages.end(),
                                                           to_mask,
                                                           uint32_t{0},
@@ -330,7 +329,7 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // We also need to preserve key-relative page ordering, so we need to use a stable sort.
   cuda::device_buffer<int32_t> page_keys(stream, temp_mr, unsorted_pages.size(), cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     unsorted_pages.begin(),
     unsorted_pages.end(),
     page_keys.begin(),
@@ -342,15 +341,14 @@ cudf::detail::hostdevice_vector<PageInfo> sort_pages(device_span<PageInfo const>
   // directly.
   cuda::device_buffer<int32_t> sort_indices(stream, temp_mr, unsorted_pages.size(), cuda::no_init);
   thrust::sequence(
-    rmm::exec_policy_nosync(stream, temp_mr), sort_indices.begin(), sort_indices.end(), 0);
-  thrust::stable_sort_by_key(rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr), sort_indices.begin(), sort_indices.end(), 0);
+  thrust::stable_sort_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                              page_keys.begin(),
                              page_keys.end(),
                              sort_indices.begin(),
                              cuda::std::less<int>());
-  auto pass_pages =
-    cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream, mr.get_output_mr());
-  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
+  auto pass_pages = cudf::detail::hostdevice_vector<PageInfo>(unsorted_pages.size(), stream, mr);
+  thrust::gather(cudf::detail::exec_policy_nosync(stream, mr),
                  sort_indices.begin(),
                  sort_indices.end(),
                  unsorted_pages.data(),
@@ -427,7 +425,7 @@ cuda::device_buffer<size_type> compute_chunk_page_offsets(device_span<ColumnChun
     stream, mr.get_output_mr(), chunks.size() + 1, cuda::no_init);
   auto iter = cuda::counting_iterator<size_t>{0};
   thrust::transform_exclusive_scan(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     iter,
     iter + chunks.size() + 1,
     chunk_page_offsets.begin(),
@@ -476,7 +474,7 @@ cuda::device_buffer<cudf::device_span<uint8_t const>> compute_page_spans(
   cuda::device_buffer<chunk_page_info> chunk_page_infos(
     stream, temp_mr, chunks.size(), cuda::no_init);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     chunks.device_begin(),
     chunks.device_end(),
     chunk_page_infos.begin(),
@@ -545,8 +543,9 @@ cuda::device_buffer<cudf::device_span<uint8_t const>> compute_page_spans(
 
   // A chunk's data does not overlap other chunks, so its pages stay contiguous once sorted
   auto const sorted_page_addrs = device_span<cuda::std::uintptr_t>{page_addrs.data(), total_pages};
-  thrust::sort(
-    rmm::exec_policy_nosync(stream, temp_mr), sorted_page_addrs.begin(), sorted_page_addrs.end());
+  thrust::sort(cudf::detail::exec_policy_nosync(stream, mr),
+               sorted_page_addrs.begin(),
+               sorted_page_addrs.end());
 
   auto const chunk_page_offsets = compute_chunk_page_offsets(chunks, stream, mr.as_temporary());
 
@@ -558,7 +557,7 @@ cuda::device_buffer<cudf::device_span<uint8_t const>> compute_page_spans(
                std::overflow_error);
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>(0),
     cuda::counting_iterator<size_type>(total_pages),
     page_spans.begin(),
@@ -627,7 +626,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   if (auto const error = error_code.value_sync(stream); error != 0) {
     if (BitAnd(error, decode_error::UNSUPPORTED_ENCODING) != 0) {
       auto const unsupported_str =
-        ". With unsupported encodings found: " + list_unsupported_encodings(pass.pages, stream);
+        ". With unsupported encodings found: " + list_unsupported_encodings(pass.pages, stream, mr);
       CUDF_FAIL("Parquet header parsing failed with code(s) " + kernel_error::to_string(error) +
                 unsupported_str);
     } else {
@@ -641,7 +640,7 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
     auto const page_keys = cuda::transform_iterator(unsorted_pages.begin(), get_page_chunk_idx{});
     auto const page_rows = cuda::transform_iterator(unsorted_pages.begin(), get_page_num_rows{});
     thrust::exclusive_scan_by_key(
-      rmm::exec_policy_nosync(stream, temp_mr),
+      cudf::detail::exec_policy_nosync(stream, mr),
       page_keys,
       page_keys + unsorted_pages.size(),
       page_rows,
@@ -687,13 +686,13 @@ void decode_page_headers_impl(pass_intermediate_data& pass,
   auto const num_page_counts = page_counts_end - page_counts.begin();
   pass.page_offsets =
     cuda::device_buffer<size_type>(stream, temp_mr, num_page_counts + 1, cuda::no_init);
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          page_counts.begin(),
                          page_counts.begin() + num_page_counts + 1,
                          pass.page_offsets.begin());
 
   // setup dict_page for each chunk if necessary
-  thrust::for_each(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::for_each(cudf::detail::exec_policy_nosync(stream, mr),
                    pass.pages.d_begin(),
                    pass.pages.d_end(),
                    [chunks = pass.chunks.d_begin()] __device__(PageInfo const& p) {

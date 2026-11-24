@@ -100,10 +100,12 @@ std::string encoding_to_string(Encoding encoding);
  *
  * @param pages List of page information
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used to allocate temporary device memory
  * @returns Human readable string with unsupported encodings
  */
 [[nodiscard]] std::string list_unsupported_encodings(device_span<PageInfo const> pages,
-                                                     cuda::stream_ref stream);
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
 
 /**
  * @brief Count and decode the page headers of a given pass using the offset index

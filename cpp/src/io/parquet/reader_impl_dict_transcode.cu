@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/batched_memset.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/host_vector.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
@@ -19,8 +20,6 @@
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
@@ -153,8 +152,7 @@ void update_from_chunk(column_eligibility& e, ColumnChunkDesc const& chunk)
   cudf::memory_resources mr)
 {
   if (entry_count <= 0) { return cudf::make_empty_column(data_type{type_id::STRING}); }
-  return cudf::strings::detail::make_strings_column(
-    begin, begin + entry_count, stream, mr.get_output_mr());
+  return cudf::strings::detail::make_strings_column(begin, begin + entry_count, stream, mr);
 }
 
 /**
@@ -191,15 +189,17 @@ struct stacked_key_gather_fn {
  * num_chunks+1
  * @param stacked_to_unique Map from stacked-key position to compact unique-key index
  * @param stream CUDA stream used for the kernel launch
+ * @param mr Memory resources used to allocate temporary device memory
  */
 void remap_dict_indices_by_chunk(cudf::device_span<int32_t> indices,
                                  cudf::device_span<size_type const> row_offsets,
                                  cudf::device_span<size_type const> key_counts_prefix,
                                  cudf::device_span<int32_t const> stacked_to_unique,
-                                 cuda::stream_ref stream)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator{static_cast<size_type>(indices.size())},
     [row_offsets, key_counts_prefix, stacked_to_unique, indices] __device__(size_type row) -> void {
@@ -385,8 +385,8 @@ void reader_impl::assemble_dict_transcoded_columns(
         auto const num_distinct_keys = cudf::detail::distinct_count(
           keys->view(), null_policy::INCLUDE, nan_policy::NAN_IS_VALID, _stream);
         if (num_distinct_keys != keys->size()) { return true; }  // fall back: dedup below
-        out_columns[out_idx] = cudf::make_dictionary_column(
-          std::move(keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+        out_columns[out_idx] =
+          cudf::make_dictionary_column(std::move(keys), std::move(indices_owner), _stream, _mr);
         return false;
       };
 
@@ -481,7 +481,7 @@ void reader_impl::assemble_dict_transcoded_columns(
                                 cudf::device_span<size_type const>{d_key_base_offsets.data(),
                                                                    d_key_base_offsets.size()}});
         stacked_keys_owner = cudf::strings::detail::make_strings_column(
-          keys_begin, keys_begin + total_keys, _stream, _mr.get_temporary_mr());
+          keys_begin, keys_begin + total_keys, _stream, _mr.as_temporary());
       }
       column_view const stacked_keys = stacked_keys_owner->view();
 
@@ -506,12 +506,13 @@ void reader_impl::assemble_dict_transcoded_columns(
         cudf::device_span<size_type const>{d_key_counts_prefix.data(), d_key_counts_prefix.size()},
         cudf::device_span<int32_t const>{stacked_to_unique->view().data<int32_t>(),
                                          static_cast<std::size_t>(stacked_to_unique->size())},
-        _stream);
+        _stream,
+        _mr);
 
       _stream.sync();
 
       out_columns[out_idx] = cudf::make_dictionary_column(
-        std::move(unique_keys), std::move(indices_owner), _stream, _mr.get_output_mr());
+        std::move(unique_keys), std::move(indices_owner), _stream, _mr);
     });
 }
 

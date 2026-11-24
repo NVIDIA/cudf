@@ -76,8 +76,7 @@ void hybrid_scan_reader_impl::setup_next_pass(
   std::span<bool const> data_page_mask,
   std::optional<cudf::column_view> row_mask)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const num_passes     = _file_itm_data.num_passes();
+  auto const num_passes = _file_itm_data.num_passes();
   CUDF_EXPECTS(num_passes == 1,
                "The hybrid scan reader currently only supports single-pass read mode");
 
@@ -151,7 +150,8 @@ void hybrid_scan_reader_impl::setup_next_pass(
                            uses_custom_row_bounds(read_mode::READ_ALL)
                              ? std::nullopt
                              : std::make_optional(pass.num_rows),
-                           _stream);
+                           _stream,
+                           _mr);
 
     // Get the decompressed size of dictionary pages to help estimate memory usage
     auto const decomp_dict_data_size = std::accumulate(
@@ -181,7 +181,7 @@ void hybrid_scan_reader_impl::setup_next_pass(
                                   size_t{0},
                                   cuda::std::plus<size_t>{},
                                   _stream,
-                                  mr.as_temporary());
+                                  _mr.as_temporary());
     }();
     pass.base_mem_size = decomp_dict_data_size + compressed_data_size;
 

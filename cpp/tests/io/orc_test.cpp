@@ -934,7 +934,7 @@ TEST_F(OrcWriterTest, WriterTimezoneStatisticsOutsideNanosecondRange)
       column_wrapper<cudf::timestamp_ns, cudf::timestamp_ns::rep>{value * 1'000'000'000};
 
     // The eastern offset leaves the range at the top, the western one at the bottom
-    for (auto const [timezone, offset] :
+    for (auto const& [timezone, offset] :
          {std::pair{"Etc/GMT-8", east_offset}, std::pair{"Etc/GMT+5", west_offset}}) {
       auto const expected_ms = (value + offset) * 1000;
       bounds_survive_the_shift(seconds, timezone, expected_ms);

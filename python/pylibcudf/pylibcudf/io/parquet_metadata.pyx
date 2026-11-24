@@ -1122,9 +1122,8 @@ cpdef Table read_parquet_column_chunk_bounds(
     """
     Decode parquet column-chunk min/max statistics for selected columns.
 
-    Missing min/max statistics, and inexact (truncated) ones with
-    min == max, are returned as nulls. Other inexact min/max values are
-    returned as stored.
+    Missing min/max statistics, and invalid ones (truncated inexact values
+    with min == max), are returned as nulls.
 
     Parameters
     ----------

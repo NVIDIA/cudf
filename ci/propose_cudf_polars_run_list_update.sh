@@ -12,7 +12,8 @@
 #   GITHUB_REPOSITORY   owner/name
 #   GITHUB_RUN_ID       the nightly run to read
 #   TESTED_SHA          the revision the nightly run tested
-#   AUDIT_ARTIFACT      name of the diagnostics artifact of this attempt
+#   GITHUB_RUN_ATTEMPT  the attempt of the nightly run
+#   AUDIT_ARTIFACT_PREFIX  name of the diagnostics artifact without its attempt suffix
 #   DRY_RUN             if set, print the decision and change nothing
 #   PROPOSAL_BRANCH     branch for the proposal (default ci/auto-update-gpu-run-list)
 
@@ -22,12 +23,18 @@ branch=${PROPOSAL_BRANCH:-ci/auto-update-gpu-run-list}
 run_list=ci/cudf_polars/gpu_test_run_list.json
 work=$(mktemp -d)
 
-# The artifact the audit job reads. A rerun of only the failed jobs does not
-# repeat the diagnostics job, so the current attempt may have none.
-artifact=${AUDIT_ARTIFACT}
-if ! gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
-    --name "${artifact}" --dir "${work}"; then
-    echo "No ${artifact} in run ${GITHUB_RUN_ID}; nothing to propose."
+# A rerun of only the failed jobs does not repeat the diagnostics job, so the
+# current attempt may have none: use the newest attempt that does.
+artifact=
+for ((attempt = GITHUB_RUN_ATTEMPT; attempt >= 1; attempt--)); do
+    if gh run download "${GITHUB_RUN_ID}" --repo "${GITHUB_REPOSITORY}" \
+        --name "${AUDIT_ARTIFACT_PREFIX}-${attempt}" --dir "${work}" 2> /dev/null; then
+        artifact=${AUDIT_ARTIFACT_PREFIX}-${attempt}
+        break
+    fi
+done
+if [[ -z "${artifact}" ]]; then
+    echo "No ${AUDIT_ARTIFACT_PREFIX} artifact in run ${GITHUB_RUN_ID}; nothing to propose."
     exit 0
 fi
 

@@ -26,10 +26,10 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.all_of.h>
 #include <cuda/std/algorithm.any_of.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
-#include <cuda/std/algorithm.none_of.h>
 #include <cuda/std/chrono>
 #include <cuda/std/cstring>
 #include <cuda/std/functional>
@@ -2748,7 +2748,7 @@ __device__ void byte_reverse128(__int128_t v, void* dst)
  * @param span device_span to test.
  * @return true if the span contains all valid UTF-8 characters.
  */
-__device__ bool is_valid_utf8(device_span<unsigned char const> span)
+[[nodiscard]] __device__ bool is_valid_utf8(device_span<unsigned char const> span)
 {
   auto idx = 0;
   while (idx < span.size_bytes()) {
@@ -2764,67 +2764,8 @@ __device__ bool is_valid_utf8(device_span<unsigned char const> span)
   return true;
 }
 
-/**
- * @brief Increment part of a UTF-8 character.
- *
- * Attempt to increment the char pointed to by ptr, which is assumed to be part of a valid UTF-8
- * character. Returns true if successful, false if the increment caused an overflow, in which case
- * the data at ptr will be set to the lowest valid UTF-8 bit pattern (start or continuation).
- * Will halt execution if passed invalid UTF-8.
- */
-__device__ bool increment_utf8_at(unsigned char* ptr)
-{
-  unsigned char elem = *ptr;
-  // elem is one of (no 5 or 6 byte chars allowed):
-  //  0b0vvvvvvv a 1 byte character
-  //  0b10vvvvvv a continuation byte
-  //  0b110vvvvv start of a 2 byte character
-  //  0b1110vvvv start of a 3 byte character
-  //  0b11110vvv start of a 4 byte character
-
-  // TODO(ets): starting at 4 byte and working down.  Should probably start low and work higher.
-  uint8_t mask  = 0xF8;
-  uint8_t valid = 0xF0;
-
-  while (mask != 0) {
-    if ((elem & mask) == valid) {
-      elem++;
-      if ((elem & mask) != mask) {  // no overflow
-        *ptr = elem;
-        return true;
-      }
-      *ptr = valid;
-      return false;
-    }
-    mask <<= 1;
-    valid <<= 1;
-  }
-
-  // should not reach here since we test for valid UTF-8 higher up the call chain
-  CUDF_UNREACHABLE("Trying to increment non-utf8");
-}
-
 /// Pointer to an encoded min or max value and its length in bytes
 using extremum = cuda::std::pair<void const*, uint32_t>;
-
-/**
- * @brief Returns false if any UTF-8 character in the buffer encodes a surrogate (U+D800-U+DFFF)
- * or a code point above U+10FFFF, neither of which is valid Unicode.
- *
- * The buffer must hold whole UTF-8 characters.
- */
-__device__ bool is_valid_unicode(unsigned char const* ptr, int32_t len)
-{
-  constexpr uint32_t surrogates_begin = 0xD800;
-  constexpr uint32_t surrogates_end   = 0xDFFF;
-  constexpr uint32_t max_code_point   = 0x10FFFF;
-  auto const str                      = string_view{reinterpret_cast<char const*>(ptr), len};
-  return cuda::std::none_of(str.begin(), str.end(), [](char_utf8 chr) {
-    auto const code_point = strings::detail::utf8_to_codepoint(chr);
-    return (code_point >= surrogates_begin and code_point <= surrogates_end) or
-           code_point > max_code_point;
-  });
-}
 
 /**
  * @brief Truncates binary data to at most `truncate_length` bytes.
@@ -2833,11 +2774,12 @@ __device__ bool is_valid_unicode(unsigned char const* ptr, int32_t len)
  *
  * @return Truncated value, or nullopt if no valid max fits
  */
-__device__ cuda::std::optional<extremum> truncate_binary(device_span<uint8_t const> arr,
-                                                         bool is_min,
-                                                         void* scratch,
-                                                         int32_t truncate_length,
-                                                         uint8_t max_byte)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_binary(
+  device_span<uint8_t const> arr,
+  bool is_min,
+  void* scratch,
+  int32_t truncate_length,
+  uint8_t max_byte)
 {
   if (is_min) { return extremum{arr.data(), truncate_length}; }
   // increment the last byte that won't exceed max_byte, dropping the saturated bytes after it
@@ -2856,51 +2798,46 @@ __device__ cuda::std::optional<extremum> truncate_binary(device_span<uint8_t con
 /**
  * @brief Truncates UTF-8 data to at most `truncate_length` bytes on a character boundary.
  *
- * A max increments its last character, dropping any that overflow, using `scratch`.
+ * A max increments its last character to the next valid code point of the same width, dropping
+ * characters that have none, using `scratch`.
  *
  * @return Truncated value, or nullopt if no valid max fits
  */
-__device__ cuda::std::optional<extremum> truncate_utf8(device_span<unsigned char const> span,
-                                                       bool is_min,
-                                                       void* scratch,
-                                                       int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_utf8(
+  device_span<unsigned char const> span, bool is_min, void* scratch, int32_t truncate_length)
 {
-  // we know at this point that truncate_length < size_bytes, so
-  // there is data at [len]. work backwards until we find
-  // the start of a UTF-8 encoded character, since UTF-8 characters may be multi-byte.
-  auto len = truncate_length;
-  while (not strings::detail::is_begin_utf8_char(span[len]) && len > 0) {
-    len--;
-  }
+  // Longest prefix of at most `truncate_length` bytes that ends on a character boundary: up to
+  // the start of the character at byte `truncate_length`, which exists since the string is longer
+  auto const str    = string_view{reinterpret_cast<char const*>(span.data()), truncate_length + 1};
+  auto const prefix = string_view{str.data(), (--str.end()).byte_offset()};
 
-  // an empty prefix is still a valid minimum
-  if (is_min) { return extremum{span.data(), len}; }
-  memcpy(scratch, span.data(), len);
-  // increment last byte, working backwards if the byte overflows
-  auto const ptr = static_cast<unsigned char*>(scratch);
-  for (int32_t i = len - 1; i >= 0; i--) {
-    if (increment_utf8_at(&ptr[i])) {  // true if no overflow
-      auto const lead = i > 0 ? ptr[i - 1] : 0;
-      if (lead == 0xED and ptr[i] == 0xA0) {
-        // U+D7FF + 1 is a surrogate, so skip ahead to U+E000
-        ptr[i - 1] = 0xEE;
-        ptr[i]     = 0x80;
-      } else if (lead == 0xF4 and ptr[i] == 0x90) {
-        // U+10FFFF + 1 is out of range, so drop this character and carry into the preceding one
-        len = --i;
-        continue;
-      }
-      // an invalid code point in the input itself falls back to incrementing the last ASCII byte,
-      // which always yields valid UTF-8
-      if (is_valid_unicode(ptr, len)) { return extremum{scratch, len}; }
-      return truncate_binary(
-        span, false, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());
-    }
-    // drop a character that overflowed entirely rather than keep its overlong reset bytes, and
-    // carry into the preceding character
-    if (strings::detail::is_begin_utf8_char(ptr[i])) { len = i; }
+  // An empty prefix is still a valid min
+  if (is_min) { return extremum{prefix.data(), prefix.size_bytes()}; }
+  // Input with an invalid code point falls back to incrementing its last ASCII byte, which always
+  // yields valid UTF-8
+  auto const is_valid_unicode = cuda::std::all_of(prefix.begin(), prefix.end(), [](char_utf8 chr) {
+    return strings::detail::is_valid_codepoint(strings::detail::utf8_to_codepoint(chr));
+  });
+  if (not is_valid_unicode) {
+    return truncate_binary(
+      span, false, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());
   }
-  // cannot increment
+  // Increment the last character. A character without a successor of the same width is dropped
+  // and the preceding character is incremented instead
+  for (auto itr = prefix.end(); itr != prefix.begin();) {
+    auto const chr  = *--itr;
+    auto const next = strings::detail::next_codepoint(strings::detail::utf8_to_codepoint(chr));
+    if (not next.has_value()) { continue; }
+    auto const next_chr = strings::detail::codepoint_to_utf8(*next);
+    auto const width    = strings::detail::bytes_in_char_utf8(chr);
+    if (strings::detail::bytes_in_char_utf8(next_chr) != width) { continue; }
+    auto const offset = itr.byte_offset();
+    auto const ptr    = static_cast<char*>(scratch);
+    if (offset > 0) { cuda::std::memcpy(ptr, prefix.data(), offset); }
+    strings::detail::from_char_utf8(next_chr, ptr + offset);
+    return extremum{scratch, offset + width};
+  }
+  // No character can be incremented
   return cuda::std::nullopt;
 }
 
@@ -2910,10 +2847,10 @@ __device__ cuda::std::optional<extremum> truncate_utf8(device_span<unsigned char
  * ASCII-only or non-UTF-8 strings are truncated as binary, incrementing only bytes below 0x7F so
  * that a max stays valid UTF-8.
  */
-__device__ cuda::std::optional<extremum> truncate_string(string_view const& str,
-                                                         bool is_min,
-                                                         void* scratch,
-                                                         int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_string(string_view const& str,
+                                                                       bool is_min,
+                                                                       void* scratch,
+                                                                       int32_t truncate_length)
 {
   if (truncate_length == NO_TRUNC_STATS or str.size_bytes() <= truncate_length) {
     return extremum{str.data(), str.size_bytes()};
@@ -2934,10 +2871,8 @@ __device__ cuda::std::optional<extremum> truncate_string(string_view const& str,
 /**
  * @brief Attempt to truncate a binary array to at most truncate_length bytes.
  */
-__device__ cuda::std::optional<extremum> truncate_byte_array(statistics::byte_array_view const& arr,
-                                                             bool is_min,
-                                                             void* scratch,
-                                                             int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_byte_array(
+  statistics::byte_array_view const& arr, bool is_min, void* scratch, int32_t truncate_length)
 {
   if (truncate_length == NO_TRUNC_STATS or arr.size_bytes() <= truncate_length) {
     return extremum{arr.data(), arr.size_bytes()};
@@ -2953,9 +2888,9 @@ __device__ cuda::std::optional<extremum> truncate_byte_array(statistics::byte_ar
 /**
  * @brief Returns true if get_extremum() truncates the given min or max value.
  */
-__device__ bool is_truncated(statistics_val const& stats_val,
-                             statistics_dtype dtype,
-                             int32_t truncate_length)
+[[nodiscard]] __device__ bool is_truncated(statistics_val const& stats_val,
+                                           statistics_dtype dtype,
+                                           int32_t truncate_length)
 {
   if (truncate_length == NO_TRUNC_STATS) { return false; }
   switch (dtype) {
@@ -2973,11 +2908,11 @@ __device__ bool is_truncated(statistics_val const& stats_val,
  * valid min or max binary value.  String and byte array types will be truncated if they exceed
  * truncate_length. Returns nullopt if a truncated max cannot be made a valid upper bound.
  */
-__device__ cuda::std::optional<extremum> get_extremum(statistics_val const* stats_val,
-                                                      statistics_dtype dtype,
-                                                      void* scratch,
-                                                      bool is_min,
-                                                      int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> get_extremum(statistics_val const* stats_val,
+                                                                    statistics_dtype dtype,
+                                                                    void* scratch,
+                                                                    bool is_min,
+                                                                    int32_t truncate_length)
 {
   switch (dtype) {
     case dtype_bool: return extremum{stats_val, sizeof(bool)};
@@ -3005,13 +2940,13 @@ __device__ cuda::std::optional<extremum> get_extremum(statistics_val const* stat
 }
 
 /**
- * @brief Returns true if a column's fixed-length min/max values are too wide for
+ * @brief Returns true if a fixed-length byte array column's min/max values are too wide for
  * `truncate_length` and so must be omitted, since fixed-length values are never truncated.
  *
  * Fixed-width values are always allowed at least `sizeof(__int128_t)` bytes.
  */
-__device__ bool is_fixed_len_too_wide(parquet_column_device_view const& col,
-                                      int32_t truncate_length)
+[[nodiscard]] __device__ bool is_flba_too_wide(parquet_column_device_view const& col,
+                                               int32_t truncate_length)
 {
   return col.physical_type == Type::FIXED_LEN_BYTE_ARRAY and truncate_length != NO_TRUNC_STATS and
          col.type_length >
@@ -3022,15 +2957,21 @@ __device__ bool is_fixed_len_too_wide(parquet_column_device_view const& col,
 
 __device__ uint8_t* EncodeStatistics(uint8_t* start,
                                      statistics_chunk const* s,
-                                     statistics_dtype dtype,
+                                     parquet_column_device_view const& col,
                                      void* scratch,
-                                     int32_t truncate_length,
-                                     bool omit_minmax)
+                                     int32_t statistics_truncate_length)
 {
+  auto const dtype = col.stats_dtype;
+  // Fixed-length min/max values must keep their full width so are never truncated, and are
+  // omitted if too wide
+  auto const has_minmax = s->has_minmax and not is_flba_too_wide(col, statistics_truncate_length);
+  auto const truncate_length =
+    col.physical_type == Type::FIXED_LEN_BYTE_ARRAY ? NO_TRUNC_STATS : statistics_truncate_length;
+
   uint8_t* end;
   header_encoder encoder(start);
   encoder.field_int64(3, s->null_count);
-  if (s->has_minmax and not omit_minmax) {
+  if (has_minmax) {
     // A truncated string/binary max is built in the output buffer past the space its encoding
     // (1 byte field header + up to 5 bytes length + truncate_length bytes) needs, which is within
     // the space reserved for the min and max values by gpuInitPages
@@ -3072,22 +3013,15 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
   auto const page_idx = cudf::detail::grid_1d::global_thread_id();
   if (page_idx >= pages.size()) { return; }
 
-  auto page             = pages[page_idx];
-  auto const chunk      = *page.chunk;
-  auto const stats_type = chunk.col_desc->stats_dtype;
-  // Fixed-length min/max values must keep their full width so are never truncated, but omitted
-  // if too wide
-  auto const truncate_length = chunk.col_desc->physical_type == Type::FIXED_LEN_BYTE_ARRAY
-                                 ? NO_TRUNC_STATS
-                                 : statistics_truncate_length;
-  auto const omit_minmax     = is_fixed_len_too_wide(*chunk.col_desc, statistics_truncate_length);
+  auto page        = pages[page_idx];
+  auto const chunk = *page.chunk;
 
   uint8_t* hdr_start{};
   uint8_t* hdr_end{};
   if (chunk_stats && &pages[page_idx] == chunk.pages) {  // Is this the first page in a chunk?
     hdr_start = (chunk.is_compressed) ? chunk.compressed_bfr : chunk.uncompressed_bfr;
     hdr_end   = EncodeStatistics(
-      hdr_start, &chunk_stats[page.chunk_id], stats_type, scratch, truncate_length, omit_minmax);
+      hdr_start, &chunk_stats[page.chunk_id], *chunk.col_desc, scratch, statistics_truncate_length);
     page.chunk->ck_stat_size = static_cast<uint32_t>(hdr_end - hdr_start);
   }
   // For V2 pages, compressed_page_size and uncompressed_page_size include level bytes.
@@ -3125,10 +3059,9 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
       encoder.field_struct_begin(5);
       encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
                                        &page_stats[page_idx],
-                                       stats_type,
+                                       *chunk.col_desc,
                                        scratch,
-                                       truncate_length,
-                                       omit_minmax));
+                                       statistics_truncate_length));
       encoder.field_struct_end(5);
     }
     encoder.field_struct_end(5);
@@ -3147,10 +3080,9 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
       encoder.field_struct_begin(8);
       encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
                                        &page_stats[page_idx],
-                                       stats_type,
+                                       *chunk.col_desc,
                                        scratch,
-                                       truncate_length,
-                                       omit_minmax));
+                                       statistics_truncate_length));
       encoder.field_struct_end(8);
     }
     encoder.field_struct_end(8);
@@ -3232,7 +3164,7 @@ namespace {
  * @brief Tests if statistics are comparable given the column's
  * physical and converted types
  */
-__device__ bool is_comparable(Type ptype, ConvertedType ctype)
+[[nodiscard]] __device__ bool is_comparable(Type ptype, ConvertedType ctype)
 {
   switch (ptype) {
     case Type::BOOLEAN:
@@ -3293,10 +3225,10 @@ __device__ int32_t compare_values(Type ptype,
 /**
  * @brief Determine if a set of statstistics are in ascending order.
  */
-__device__ bool is_ascending(statistics_chunk const* s,
-                             Type ptype,
-                             ConvertedType ctype,
-                             uint32_t num_pages)
+[[nodiscard]] __device__ bool is_ascending(statistics_chunk const* s,
+                                           Type ptype,
+                                           ConvertedType ctype,
+                                           uint32_t num_pages)
 {
   for (uint32_t i = 1; i < num_pages; i++) {
     if (compare_values(ptype, ctype, s[i - 1].min_value, s[i].min_value) > 0 ||
@@ -3310,10 +3242,10 @@ __device__ bool is_ascending(statistics_chunk const* s,
 /**
  * @brief Determine if a set of statstistics are in descending order.
  */
-__device__ bool is_descending(statistics_chunk const* s,
-                              Type ptype,
-                              ConvertedType ctype,
-                              uint32_t num_pages)
+[[nodiscard]] __device__ bool is_descending(statistics_chunk const* s,
+                                            Type ptype,
+                                            ConvertedType ctype,
+                                            uint32_t num_pages)
 {
   for (uint32_t i = 1; i < num_pages; i++) {
     if (compare_values(ptype, ctype, s[i - 1].min_value, s[i].min_value) < 0 ||
@@ -3419,7 +3351,7 @@ CUDF_KERNEL void __launch_bounds__(1)
   auto const ci_truncate_length = col_g.physical_type == Type::FIXED_LEN_BYTE_ARRAY
                                     ? NO_TRUNC_STATS
                                     : column_index_truncate_length;
-  auto const is_too_wide        = is_fixed_len_too_wide(col_g, statistics_truncate_length);
+  auto const is_too_wide        = is_flba_too_wide(col_g, statistics_truncate_length);
 
   // make sure scratch is aligned properly. here column_index_size indicates
   // how much scratch space is available for this chunk, including space for

@@ -62,6 +62,7 @@ Read `git diff $BASE` hunk by hunk, leaving code it only moves as it was.
 - Run `/review-cudf` on the diff and fix the findings you can confirm. Leave its `.agents/reviews/` output out of the commit.
 - Commit, then run `pre-commit run --from-ref $BASE --to-ref HEAD`, which checks committed files only, and commit its fixes.
 - Build and run the tests that exercise the changed functions, not only the suite you edited (see the `build-test-cudf` skill). For a widely included header, cover its nearest users and leave the rest to CI.
+- When the diff changes device code or adds tests that reach it, run those tests again under `compute-sanitizer` with `memcheck`, `racecheck`, and `synccheck`, using the environment and flags of `ci/run_compute_sanitizer_test.sh`. Narrow each run with `--gtest_filter`, because a whole test executable can take hours, and tell the user which GPU it ran on: some hazards appear only on newer architectures.
 
 ## 6. Write the PR
 

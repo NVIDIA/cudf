@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-from collections import deque
 from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -14,6 +13,7 @@ import pylibcudf as plc
 from cudf_streaming.channel_metadata import ChannelMetadata, OrderKey, RowOrderingScope
 from cudf_streaming.table_chunk import TableChunk, make_table_chunks_available_or_wait
 from rapidsmpf.streaming.core.actor import define_actor
+from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl.ir import IR, AsofJoin
@@ -30,6 +30,7 @@ from cudf_polars.streaming.actor_graph.partitioning import (
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
+    ChunkStore,
     chunk_to_frame,
     concat_batch,
     empty_table_chunk,
@@ -64,13 +65,11 @@ async def _iter_channel_chunks(
 
 
 async def _iter_buffered_chunks(
-    chunks: list[TableChunk],
+    context: Context, chunks: ChunkStore
 ) -> AsyncGenerator[TableChunk, None]:
-    """Yield gathered chunks and clear the input list."""
-    pending = deque(chunks)
-    chunks.clear()
-    while pending:
-        yield pending.popleft()
+    """Yield gathered chunks from spillable storage."""
+    for msg in chunks:
+        yield TableChunk.from_message(msg, br=context.br())
 
 
 async def _gather_right(
@@ -79,17 +78,26 @@ async def _gather_right(
     channel: Channel[TableChunk],
     *,
     collective_id: int,
-) -> list[TableChunk]:
-    """Gather right chunks from all ranks in rank order."""
-    async with AllGatherManager(context, comm, collective_id) as allgather:
-        with allgather.inserting() as inserter:
-            sequence_number = 0
-            while (msg := await channel.recv(context)) is not None:
-                await inserter.insert(
-                    sequence_number, TableChunk.from_message(msg, br=context.br())
-                )
-                sequence_number += 1
-        return await allgather.extract_chunks(ordered=True)
+) -> ChunkStore:
+    """Gather right chunks into registered spillable storage in rank order."""
+    store = ChunkStore(context)
+    try:
+        async with AllGatherManager(context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                sequence_number = 0
+                while (msg := await channel.recv(context)) is not None:
+                    await inserter.insert(
+                        sequence_number, TableChunk.from_message(msg, br=context.br())
+                    )
+                    sequence_number += 1
+            for sequence_number, chunk in enumerate(
+                await allgather.extract_chunks(ordered=True)
+            ):
+                store.insert(Message(sequence_number, chunk))
+    except BaseException:
+        store.clear()
+        raise
+    return store
 
 
 class _AscendingOrder:
@@ -634,64 +642,69 @@ async def asof_join_actor(
             tracer.decision = "passthrough" if skip_probe else f"asof_{mode}"
             if left_metadata.duplicated:
                 tracer.set_duplicated()
-        if skip_probe:
-            while await ch_right.recv(context) is not None:
-                pass
-        elif right_metadata.duplicated or comm.nranks == 1:
-            right_source = _iter_channel_chunks(context, ch_right)
-        else:
-            # TODO: For large right inputs, use sparse exchange to send each rank
-            # its needed right rows and predecessor state instead of broadcasting.
-            right_chunks = await _gather_right(
-                context, comm, ch_right, collective_id=right_gather_id
-            )
-            right_source = _iter_buffered_chunks(right_chunks)
-        output_metadata = ChannelMetadata(
-            local_count=left_metadata.local_count,
-            partitioning=maybe_remap_partitioning(
-                ir,
-                left_metadata.partitioning,
-                child_index=0,
-                context=context,
-                preserves_row_order=True,
-            ),
-            duplicated=left_metadata.duplicated,
-        )
-        await send_metadata(ch_out, context, output_metadata)
-        if skip_probe:
-            while (msg := await ch_left.recv(context)) is not None:
-                await send_chunk(
-                    context,
-                    ch_out,
-                    TableChunk.from_message(msg, br=context.br()),
-                    msg.sequence_number,
-                    tracer=tracer,
+        right_store: ChunkStore | None = None
+        try:
+            if skip_probe:
+                while await ch_right.recv(context) is not None:
+                    pass
+            elif right_metadata.duplicated or comm.nranks == 1:
+                right_source = _iter_channel_chunks(context, ch_right)
+            else:
+                # TODO: For large right inputs, use sparse exchange to send each rank
+                # its needed right rows and predecessor state instead of broadcasting.
+                right_store = await _gather_right(
+                    context, comm, ch_right, collective_id=right_gather_id
                 )
-        else:
-            cursor = _AsofCursor(
-                context, ir_context, ir, right_source, key_major=mode == "key"
+                right_source = _iter_buffered_chunks(context, right_store)
+            output_metadata = ChannelMetadata(
+                local_count=left_metadata.local_count,
+                partitioning=maybe_remap_partitioning(
+                    ir,
+                    left_metadata.partitioning,
+                    child_index=0,
+                    context=context,
+                    preserves_row_order=True,
+                ),
+                duplicated=left_metadata.duplicated,
             )
-            async with aclosing(right_source):
-                if mode == "prepared":
-                    await cursor.prepare_grouped_right()
+            await send_metadata(ch_out, context, output_metadata)
+            if skip_probe:
                 while (msg := await ch_left.recv(context)) is not None:
-                    chunk = TableChunk.from_message(msg, br=context.br())
-                    chunk, _ = await make_table_chunks_available_or_wait(
-                        context, chunk, reserve_extra=0, net_memory_delta=0
-                    )
-                    result = await cursor.probe(chunk)
                     await send_chunk(
                         context,
                         ch_out,
-                        result,
+                        TableChunk.from_message(msg, br=context.br()),
                         msg.sequence_number,
                         tracer=tracer,
                     )
-                    del chunk, result
-                # A later disorder cannot change a completed match, but must fail
-                # the query rather than silently return a potentially wrong result.
-                await cursor.validate_remaining_right()
-        await ch_out.drain(context)
+            else:
+                cursor = _AsofCursor(
+                    context, ir_context, ir, right_source, key_major=mode == "key"
+                )
+                async with aclosing(right_source):
+                    if mode == "prepared":
+                        await cursor.prepare_grouped_right()
+                    while (msg := await ch_left.recv(context)) is not None:
+                        chunk = TableChunk.from_message(msg, br=context.br())
+                        chunk, _ = await make_table_chunks_available_or_wait(
+                            context, chunk, reserve_extra=0, net_memory_delta=0
+                        )
+                        result = await cursor.probe(chunk)
+                        await send_chunk(
+                            context,
+                            ch_out,
+                            result,
+                            msg.sequence_number,
+                            tracer=tracer,
+                        )
+                        del chunk, result
+                    # A later disorder cannot change a completed match, but must fail
+                    # the query rather than silently return a potentially wrong result.
+                    await cursor.validate_remaining_right()
+            await ch_out.drain(context)
+        finally:
+            if right_store is not None:
+                right_store.clear()
 
 
 @generate_ir_sub_network.register(AsofJoin)

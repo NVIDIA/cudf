@@ -113,7 +113,7 @@ class AllGatherManager:
         return AllGatherManager.Inserter(self)
 
     async def extract_chunks(self, *, ordered: bool = True) -> list[TableChunk]:
-        """Extract each gathered piece as a packed, spillable table chunk."""
+        """Extract packed chunks, which callers can register for spilling."""
         partitions = await self.allgather.extract_all(self.context, ordered=ordered)
         return [
             TableChunk.from_packed_data(partition, self.context.br())

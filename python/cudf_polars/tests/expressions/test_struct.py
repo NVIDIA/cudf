@@ -2,10 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import pickle
+
 import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
+from cudf_polars import Translator
+from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -77,9 +83,85 @@ def test_prefix_suffix_fields(engine: pl.GPUEngine, ldf, expr):
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_map_field_names(engine: pl.GPUEngine, ldf):
-    q = ldf.select(pl.col("a").name.map_fields(lambda x: x.upper()).struct.unnest())
-    assert_ir_translation_raises(q, engine, NotImplementedError)
+@pytest.mark.parametrize("unnest", [False, True])
+def test_map_field_names(
+    engine: pl.GPUEngine, *, with_nulls: bool, unnest: bool
+) -> None:
+    rows: list[dict[str, str | None] | None] = [
+        {"b": "c", "d": None},
+        {"b": None, "d": "g"},
+    ]
+    if with_nulls:
+        rows.append(None)
+    ldf = pl.LazyFrame({"a": rows})
+    expr = pl.col("a").name.map_fields(str.upper)
+    if unnest:
+        expr = expr.struct.unnest()
+    q = ldf.select(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_map_field_names_nested(engine: pl.GPUEngine) -> None:
+    rows = [
+        {"x": {"i": 0, "j": None}, "y": 1},
+        None,
+        {"x": {"i": None, "j": 2}, "y": None},
+        {"x": None, "y": 3},
+    ]
+    ldf = pl.LazyFrame({"a": rows})
+    q = ldf.select(pl.col("a").name.map_fields(lambda x: f"{x}_new"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_map_field_names_empty(engine: pl.GPUEngine) -> None:
+    ldf = pl.LazyFrame(
+        {"a": pl.Series([], dtype=pl.Struct({"b": pl.String, "d": pl.Int64}))}
+    )
+    q = ldf.select(pl.col("a").name.map_fields(str.upper))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_map_field_names_pickle(in_memory_engine: pl.GPUEngine, ldf) -> None:
+    q = ldf.select(pl.col("a").name.map_fields(lambda x: x.upper()))
+    ir = Translator(q._ldf.visit(), in_memory_engine).translate_ir()
+    assert pickle.loads(pickle.dumps(ir)) == ir
+
+
+@pytest.mark.parametrize("method", ["map_fields", "rename_fields"])
+def test_rename_duplicate_field_names(
+    in_memory_engine: pl.GPUEngine, method: str
+) -> None:
+    ldf = pl.LazyFrame({"a": [{"b": 1, "d": 2}]})
+    if method == "map_fields":
+        expr = pl.col("a").name.map_fields(lambda x: "same")
+    else:
+        expr = pl.col("a").struct.rename_fields(["x", "x"])
+    q = ldf.select(expr)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+def test_map_field_names_then_field(engine: pl.GPUEngine, ldf) -> None:
+    q = ldf.select(pl.col("a").name.map_fields(str.upper).struct.field("D"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("a").name.map_fields(str.upper),
+        pl.col("a").struct.rename_fields(["x"]),
+        pl.col("a").name.prefix_fields("p_"),
+        pl.col("a").name.suffix_fields("_s"),
+    ],
+    ids=["map_fields", "rename_fields", "prefix_fields", "suffix_fields"],
+)
+def test_rename_fields_preserves_sortedness(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    ldf = pl.LazyFrame({"a": [{"b": 1}, {"b": 2}]}).set_sorted("a")
+    node = Translator(ldf.select(expr)._ldf.visit(), in_memory_engine).translate_ir()
+    result = node.evaluate(cache={}, context=IRExecutionContext())
+    assert result.columns[0].is_sorted == plc.types.Sorted.YES
 
 
 @pytest.mark.parametrize("name", [None, "my_count"])

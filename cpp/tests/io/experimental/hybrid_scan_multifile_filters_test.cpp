@@ -52,8 +52,8 @@ auto host_row_mask_data(cudf::column_view const& column, cuda::stream_ref stream
 template <typename T>
 std::vector<char> create_empty_parquet_with_stats()
 {
-  auto const non_empty = std::get<0>(create_parquet_with_stats<T, 1>());
-  auto const empty     = cudf::empty_like(non_empty->view());
+  auto const& non_empty = std::get<0>(create_parquet_with_stats<T, 1>());
+  auto const empty      = cudf::empty_like(non_empty->view());
 
   cudf::io::table_input_metadata output_metadata(empty->view());
   output_metadata.column_metadata[0].set_name("col0");
@@ -222,8 +222,8 @@ TEST_F(HybridScanMultifileFiltersTest, MismatchedNullabilityDoesNotLeakIntoMetad
 {
   // First source has REQUIRED columns and the second one has reordered and
   // nullable ones.
-  auto const buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
-  auto const buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
+  auto const& buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
+  auto const& buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
     100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
 
   auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};

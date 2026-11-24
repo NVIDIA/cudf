@@ -45,8 +45,13 @@ using void_t [[deprecated("Use cuda::std::void_t instead.")]] = void;
  * void foo();
  * \endcode
  *
+ * @deprecated Use C++20 concepts or `requires` clauses instead.
  */
-#define CUDF_ENABLE_IF(...) cuda::std::enable_if_t<(__VA_ARGS__)>* = nullptr
+// A [[deprecated]] entity named in the expansion would not warn under GCC when cudf headers are
+// included as system headers, so the warning is emitted by the preprocessor instead
+#define CUDF_ENABLE_IF(...)                                                                  \
+  _Pragma("GCC warning \"CUDF_ENABLE_IF is deprecated. Use concepts or requires clauses.\"") \
+    cuda::std::enable_if_t<(__VA_ARGS__)>* = nullptr
 
 /**
  * @brief Checks if two types are comparable using less operator (i.e. <).

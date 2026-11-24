@@ -506,10 +506,10 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         std::string const& predicate_code,
                         cudf::join_kind join_kind,
-                        std::span<transform_input const> extra_inputs,
                         udf_source_type source_type,
                         null_aware is_null_aware,
                         std::optional<void*> user_data,
+                        std::span<transform_input const> extra_inputs,
                         cuda::stream_ref stream,
                         cudf::memory_resources mr)
 {
@@ -540,9 +540,9 @@ filter_join_indices_jit_lto(cudf::table_view const& left,
                             std::span<uint8_t const> udf,
                             cudf::join_kind join_kind,
                             lto_binary_type binary_type,
-                            std::span<transform_input const> extra_inputs,
                             null_aware is_null_aware,
                             std::optional<void*> user_data,
+                            std::span<transform_input const> extra_inputs,
                             cuda::stream_ref stream,
                             cudf::memory_resources mr)
 {

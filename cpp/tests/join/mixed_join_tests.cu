@@ -37,6 +37,7 @@
 #include <array>
 #include <cstdint>
 #include <numeric>
+#include <optional>
 #include <random>
 #include <span>
 #include <sstream>
@@ -2357,28 +2358,29 @@ __device__ cudf::errc predicate(void* user_data, int row, bool* output, int a, i
   std::sort(expected.begin(), expected.end());
 
   for (bool lto : {false, true}) {
-    auto const run = [&](cudf::table_view const& l,
-                         cudf::table_view const& r,
-                         cudf::device_span<cudf::size_type const> li,
-                         cudf::device_span<cudf::size_type const> ri) {
+    auto const run = [&](cudf::table_view const& left_table,
+                         cudf::table_view const& right_table,
+                         cudf::device_span<cudf::size_type const> left_map,
+                         cudf::device_span<cudf::size_type const> right_map) {
       if (lto) {
         return cudf::filter_join_indices_jit_lto(
-          l,
-          r,
-          li,
-          ri,
+          left_table,
+          right_table,
+          left_map,
+          right_map,
           cudf_test_fragments::get(cudf_test_fragments::join_overflow_filter),
           GetParam(),
           cudf::lto_binary_type::FATBIN,
+          cudf::null_aware::NO,
+          std::nullopt,
           extra_inputs);
       }
-      return cudf::filter_join_indices_jit(l,
-                                           r,
-                                           li,
-                                           ri,
+      return cudf::filter_join_indices_jit(left_table,
+                                           right_table,
+                                           left_map,
+                                           right_map,
                                            udf,
                                            GetParam(),
-                                           {},
                                            cudf::udf_source_type::CUDA,
                                            cudf::null_aware::NO,
                                            user_data);
@@ -2442,9 +2444,10 @@ __device__ void predicate(cuda::std::optional<bool>* output,
                                                    maps,
                                                    udf,
                                                    GetParam(),
-                                                   extra_inputs,
                                                    cudf::udf_source_type::CUDA,
-                                                   cudf::null_aware::YES)),
+                                                   cudf::null_aware::YES,
+                                                   std::nullopt,
+                                                   extra_inputs)),
             expected);
   EXPECT_EQ(to_pairs(cudf::filter_join_indices_jit_lto(
               cudf::table_view{{left}},
@@ -2454,8 +2457,9 @@ __device__ void predicate(cuda::std::optional<bool>* output,
               cudf_test_fragments::get(cudf_test_fragments::join_null_aware_filter),
               GetParam(),
               cudf::lto_binary_type::FATBIN,
-              extra_inputs,
-              cudf::null_aware::YES)),
+              cudf::null_aware::YES,
+              std::nullopt,
+              extra_inputs)),
             expected);
 }
 

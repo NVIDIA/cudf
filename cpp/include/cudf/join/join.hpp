@@ -546,10 +546,10 @@ filter_join_indices_output_size(
  * @param right_indices Device span of row indices in the right table from hash join.
  * @param predicate_code String containing CUDA device code for predicate function.
  * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
- * @param extra_inputs Scalars or per-pair columns passed to the predicate after the table columns.
  * @param source_type Whether predicate_code contains CUDA C++ or PTX assembly.
  * @param is_null_aware Whether the predicate receives row inputs as optional values.
  * @param user_data Caller-owned device data passed to the predicate.
+ * @param extra_inputs Scalars or per-pair columns passed to the predicate after the table columns.
  * @param stream CUDA stream used for kernel launches and memory operations.
  * @param mr Device memory resource used to allocate output indices.
  *
@@ -564,10 +564,10 @@ filter_join_indices_jit(cudf::table_view const& left,
                         cudf::device_span<size_type const> right_indices,
                         std::string const& predicate_code,
                         cudf::join_kind join_kind,
-                        std::span<transform_input const> extra_inputs = {},
                         udf_source_type source_type                   = udf_source_type::CUDA,
                         null_aware is_null_aware                      = null_aware::NO,
                         std::optional<void*> user_data                = std::nullopt,
+                        std::span<transform_input const> extra_inputs = {},
                         cuda::stream_ref stream                       = cudf::get_default_stream(),
                         cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
@@ -592,9 +592,9 @@ filter_join_indices_jit(cudf::table_view const& left,
  * @param udf The LTO-IR, FATBIN, or PTX fragment containing the predicate.
  * @param join_kind The type of join operation. Must be INNER_JOIN, LEFT_JOIN, or FULL_JOIN.
  * @param binary_type The type of the binary provided in `udf`.
- * @param extra_inputs Scalars or per-pair columns passed to the predicate after the table columns.
  * @param is_null_aware Whether the predicate receives row inputs as optional values.
  * @param user_data Caller-owned device data passed to the predicate.
+ * @param extra_inputs Scalars or per-pair columns passed to the predicate after the table columns.
  * @param stream CUDA stream used for kernel launches and memory operations.
  * @param mr Device memory resource used to allocate output indices.
  *
@@ -609,9 +609,9 @@ filter_join_indices_jit_lto(cudf::table_view const& left,
                             std::span<uint8_t const> udf,
                             cudf::join_kind join_kind,
                             lto_binary_type binary_type,
-                            std::span<transform_input const> extra_inputs = {},
                             null_aware is_null_aware                      = null_aware::NO,
                             std::optional<void*> user_data                = std::nullopt,
+                            std::span<transform_input const> extra_inputs = {},
                             cuda::stream_ref stream   = cudf::get_default_stream(),
                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

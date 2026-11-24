@@ -68,9 +68,12 @@ def test_replace_new_length_mismatch(engine: pl.GPUEngine, strict: bool) -> None
             df.select(expr).collect(engine=engine)
 
 
-def test_replace_only_null_to_one(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"a": [1, None, 2, None]})
-    q = df.select(pl.col("a").replace(None, 100))
+@pytest.mark.parametrize(
+    "values,new", [([1, None, 2, None], 100), (["x", None, "y", None], "missing")]
+)
+def test_replace_only_null_to_one(engine: pl.GPUEngine, values, new) -> None:
+    df = pl.LazyFrame({"a": values})
+    q = df.select(pl.col("a").replace(None, new))
     assert_gpu_result_equal(q, engine=engine)
 
 
@@ -100,9 +103,10 @@ def test_replace_value_to_value_collision_with_null_fill(
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_replace_new_all_null(engine: pl.GPUEngine) -> None:
-    df = pl.LazyFrame({"a": [1, 2, 3]})
-    q = df.select(pl.col("a").replace([1, 2], None))
+@pytest.mark.parametrize("values", [[1, 2, 3], ["x", "y", "z"]])
+def test_replace_new_all_null(engine: pl.GPUEngine, values) -> None:
+    df = pl.LazyFrame({"a": values})
+    q = df.select(pl.col("a").replace(values[:2], None))
     assert_gpu_result_equal(q, engine=engine)
 
 

@@ -101,7 +101,8 @@ cuda::device_buffer<cudf::size_type> create_token_row_offsets(
     cudf::detail::count_if(cuda::counting_iterator<cudf::size_type>{0},
                            cuda::counting_iterator<cudf::size_type>{tokens_counts},
                            fn,
-                           stream);
+                           stream,
+                           mr.as_temporary());
 
   auto tokens_offsets = cuda::device_buffer<cudf::size_type>(
     stream, mr.get_output_mr(), output_count + 1, cuda::no_init);
@@ -110,7 +111,8 @@ cuda::device_buffer<cudf::size_type> create_token_row_offsets(
                               cuda::counting_iterator<cudf::size_type>{tokens_counts},
                               tokens_offsets.begin(),
                               fn,
-                              stream);
+                              stream,
+                              mr.as_temporary());
 
   // set the last element to the total number of tokens
   cudf::detail::cuda_memcpy<cudf::size_type>(

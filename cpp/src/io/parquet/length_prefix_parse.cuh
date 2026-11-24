@@ -10,6 +10,7 @@
 #include <cooperative_groups.h>
 #include <cooperative_groups/scan.h>
 #include <cuda/std/bit>
+#include <cuda/std/limits>
 
 #include <cstdint>
 
@@ -264,10 +265,11 @@ __device__ inline bool speculative_parse_window(length_prefix_warp const& warp,
     while (offset < slice_end) {
       if (offset + 4 > window_bytes) { break; }  // The next prefix is not in this window
       int32_t const length = read_length_prefix(window, offset);
-      // Negative, or the string runs past the page. The bound is taken from the page-relative
-      // position, which lies in [0, data_size - 4], so it cannot overflow.
-      if (static_cast<uint32_t>(length) >
-          static_cast<uint32_t>(data_size - (window_start + offset) - 4)) {
+      // The aligned window can start before the page. Its relative end must also fit in int32_t.
+      auto const max_length = min(data_size - (window_start + offset),
+                                  cuda::std::numeric_limits<int32_t>::max() - offset) -
+                              4;
+      if (static_cast<uint32_t>(length) > static_cast<uint32_t>(max_length)) {
         invalid = true;
         break;
       }
@@ -279,7 +281,7 @@ __device__ inline bool speculative_parse_window(length_prefix_warp const& warp,
   if (warp.any(invalid)) { return false; }
   slice_starts[lane] = start;
   warp.sync();
-  bool const terminal = start < 0 || chain_end + 4 > window_bytes;
+  bool const terminal = start < 0 || chain_end > window_bytes - 4;
   int32_t const next  = terminal ? warp_size : chain_end / length_prefix_slice_size;
   bool const linked   = terminal || slice_starts[next] == chain_end;
 

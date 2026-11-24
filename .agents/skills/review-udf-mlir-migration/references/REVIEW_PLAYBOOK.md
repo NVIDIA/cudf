@@ -29,11 +29,11 @@ Exclude merge-only noise before reasoning about semantics.
 Find or write the smallest Python UDF that needs this change. Examples:
 
 ```python
-lambda row: row["a"] + row["b"]          # Masked binary
-lambda x: cudf.NA if x < 0 else x        # NA unification
-lambda s: len(s)                          # borrowed string
-lambda s: s.upper()                       # owned string
-lambda g: (g["x"] - g["y"]).mean()       # cooperative group
+lambda row: row["a"] + row["b"]  # Masked binary
+lambda x: cudf.NA if x < 0 else x  # NA unification
+lambda s: len(s)  # borrowed string
+lambda s: s.upper()  # owned string
+lambda g: (g["x"] - g["y"]).mean()  # cooperative group
 ```
 
 State whether the PR adds user-visible behavior or only rebuilds existing

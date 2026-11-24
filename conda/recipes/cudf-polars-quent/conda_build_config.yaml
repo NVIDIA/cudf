@@ -1,0 +1,8 @@
+c_compiler_version:
+  - 14
+
+c_stdlib:
+  - sysroot
+
+c_stdlib_version:
+  - "2.28"

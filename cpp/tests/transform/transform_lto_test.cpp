@@ -16,6 +16,10 @@
 
 #include <cudf_test_fragments.hpp>
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 struct TransformLTOTest : public cudf::test::BaseFixture {};
 
 template <typename T>
@@ -23,6 +27,78 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
+
+TEST_F(TransformLTOTest, CompileUdfWithIncludes)
+{
+  constexpr char source[] = R"(
+#include "scale.cuh"
+extern "C" __device__ int transform(float* output, float input)
+{
+  *output = scale * input;
+  return 0;
+}
+)";
+  column_wrapper<float> input{{1, 2, 4}};
+  cudf::transform_input inputs[]{input};
+  cudf::transform_output outputs[]{
+    {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
+  struct test_case {
+    char const* header;
+    float factor;
+  };
+  test_case const cases[]{{"inline constexpr float scale = 3.0f;", 3},
+                          {"inline constexpr float scale = 3.0f;", 3},
+                          {"inline constexpr float scale = 5.0f;", 5}};
+  for (auto const& test : cases) {
+    SCOPED_TRACE(test.header);
+    char const* names[]{"scale.cuh"};
+    char const* headers[]{test.header};
+    // Header contents change under the same include name, so disable PCH reuse.
+    auto fragment   = cudf::compile_cuda_to_lto_ir(source, names, headers, {}, false);
+    auto const view = fragment.view();
+    auto result     = cudf::transform_lto(view.data,
+                                      view.type,
+                                      cudf::null_aware::NO,
+                                      std::nullopt,
+                                      inputs,
+                                      outputs,
+                                          {},
+                                      std::nullopt,
+                                      cudf::test::get_default_stream());
+    column_wrapper<float> expected{{test.factor, 2 * test.factor, 4 * test.factor}};
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
+  }
+}
+
+TEST_F(TransformLTOTest, NullableDictionary)
+{
+  constexpr char source[] = R"(
+#include <cuda/std/optional>
+extern "C" __device__ int transform(cuda::std::optional<int>* output,
+                                   cuda::std::optional<int> input)
+{
+  *output = input;
+  return 0;
+}
+)";
+  auto fragment           = cudf::compile_cuda_to_lto_ir(source, {}, {}, {});
+  cudf::test::dictionary_column_wrapper<int32_t> input{{1, 2, 3}, {true, false, true}};
+  cudf::transform_input inputs[]{input};
+  cudf::transform_output outputs[]{
+    {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::PRESERVE}};
+  auto view   = fragment.view();
+  auto result = cudf::transform_lto(view.data,
+                                    view.type,
+                                    cudf::null_aware::YES,
+                                    std::nullopt,
+                                    inputs,
+                                    outputs,
+                                    {},
+                                    std::nullopt,
+                                    cudf::test::get_default_stream());
+  column_wrapper<int32_t> expected{{1, 2, 3}, {true, false, true}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
+}
 
 TEST_F(TransformLTOTest, InvSqrt)
 {
@@ -32,10 +108,7 @@ TEST_F(TransformLTOTest, InvSqrt)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::invsqrt];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::invsqrt),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,
@@ -61,10 +134,7 @@ TEST_F(TransformLTOTest, Distance)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::distance];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::distance),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,
@@ -96,10 +166,7 @@ TEST_F(TransformLTOTest, ToUpper)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::UINT8}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::to_upper];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::to_upper),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,
@@ -114,6 +181,28 @@ TEST_F(TransformLTOTest, ToUpper)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(result->get_column(0), expected);
 }
 
+TEST_F(TransformLTOTest, OutputWithPreallocatedOffsets)
+{
+  auto input                     = cudf::test::strings_column_wrapper{"abc", "", "é", "猫", "xyz"};
+  cudf::transform_input inputs[] = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::ALL_VALID}};
+  std::vector<std::unique_ptr<cudf::column>> string_offsets;
+  string_offsets.push_back(column_wrapper<int32_t>{0, 3, 3, 5, 8, 11}.release());
+
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::copy_string),
+                                    cudf::lto_binary_type::FATBIN,
+                                    cudf::null_aware::NO,
+                                    std::nullopt,
+                                    inputs,
+                                    outputs,
+                                    std::move(string_offsets),
+                                    std::nullopt,
+                                    cudf::test::get_default_stream());
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
+}
+
 TEST_F(TransformLTOTest, SumOfSquares)
 {
   column_wrapper<float> lhs{{1.0f, 4.0f, 9.0f, 16.0f}};
@@ -123,10 +212,7 @@ TEST_F(TransformLTOTest, SumOfSquares)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::FLOAT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::sum_of_squares];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
-  auto result = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::sum_of_squares),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,
@@ -153,12 +239,9 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
   cudf::transform_output outputs[] = {
     {cudf::data_type{cudf::type_id::INT32}, cudf::output_nullability::ALL_VALID}};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::lehmer_mean];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
   cudf::transform_input inputs[] = {a, b};
 
-  auto result      = cudf::transform_lto(udf,
+  auto result      = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::lehmer_mean),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,
@@ -179,7 +262,7 @@ TEST_F(TransformLTOTest, FallibleIntegerLehmerMean)
 
   cudf::transform_input inputs_fail[] = {a_fail, b};
 
-  EXPECT_THROW(cudf::transform_lto(udf,
+  EXPECT_THROW(cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::lehmer_mean),
                                    cudf::lto_binary_type::FATBIN,
                                    cudf::null_aware::NO,
                                    std::nullopt,
@@ -201,13 +284,10 @@ TEST_F(TransformLTOTest, BankersRounding)
   cudf::transform_output output{cudf::data_type{cudf::type_to_id<T>(), numeric::scale_type{0}},
                                 cudf::output_nullability::ALL_VALID};
 
-  auto const range = cudf_test_fragments::file_ranges[cudf_test_fragments::bankers_rounding];
-  std::span<uint8_t const> udf{cudf_test_fragments::files.subspan(range[0], range[1])};
-
   cudf::transform_input inputs[]   = {input};
   cudf::transform_output outputs[] = {output};
 
-  auto result = cudf::transform_lto(udf,
+  auto result = cudf::transform_lto(cudf_test_fragments::get(cudf_test_fragments::bankers_rounding),
                                     cudf::lto_binary_type::FATBIN,
                                     cudf::null_aware::NO,
                                     std::nullopt,

@@ -44,7 +44,7 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
                                                 device_span<size_type const> offsets,
                                                 null_policy null_handling,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   // only support non-nested types
   CUDF_EXPECTS(!cudf::is_nested(col.type()),
@@ -52,7 +52,8 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
 
   // compute the unique identifiers within each segment
   auto const identifiers = [&] {
-    auto const temp_mr = cudf::get_current_device_resource_ref();
+    cudf::memory_resources mrs(mr);
+    auto const temp_mr = mrs.get_temporary_mr();
     auto const d_col   = column_device_view::create(col, stream, temp_mr);
     auto const comparator =
       cudf::detail::row::equality::self_comparator{table_view({col}), stream, temp_mr};
@@ -61,7 +62,7 @@ std::unique_ptr<cudf::column> segmented_nunique(column_view const& col,
 
     auto labels = cuda::device_buffer<size_type>(stream, temp_mr, col.size(), cuda::no_init);
     cudf::detail::label_segments(
-      offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream);
+      offsets.begin(), offsets.end(), labels.begin(), labels.end(), stream, mrs.as_temporary());
     auto fn = is_unique_fn{*d_col, row_equal, null_handling, offsets.begin(), labels.begin()};
 
     auto identifiers = cuda::device_buffer<size_type>(stream, temp_mr, col.size(), cuda::no_init);

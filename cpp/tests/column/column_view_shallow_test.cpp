@@ -10,27 +10,27 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
 #include <cuda/iterator>
+#include <cuda/std/concepts>
 #include <cuda/std/type_traits>
 
 #include <memory>
 #include <type_traits>
 
 // fixed_width, dict, string, list, struct
-template <typename T>
+template <cudf::concepts::fixed_width T>
 std::unique_ptr<cudf::column> example_column()
-  requires(cudf::is_fixed_width<T>())
 {
   auto begin = cuda::counting_iterator<int32_t>{1};
   auto end   = cuda::counting_iterator<int32_t>{16};
   return cudf::test::fixed_width_column_wrapper<T>(begin, end).release();
 }
 
-template <typename T>
+template <cudf::concepts::dictionary T>
 std::unique_ptr<cudf::column> example_column()
-  requires(cudf::is_dictionary<T>())
 {
   return cudf::test::dictionary_column_wrapper<std::string>(
            {"fff", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "", ""},
@@ -41,23 +41,21 @@ std::unique_ptr<cudf::column> example_column()
 template <typename T>
 std::unique_ptr<cudf::column> example_column()
 
-  requires(std::is_same_v<T, std::string> or std::is_same_v<T, cudf::string_view>)
+  requires(cuda::std::same_as<T, std::string> or cudf::concepts::string_view<T>)
 {
   return cudf::test::strings_column_wrapper(
            {"fff", "aaa", "ddd", "bbb", "ccc", "ccc", "ccc", "", ""})
     .release();
 }
 
-template <typename T>
+template <cudf::concepts::list_view T>
 std::unique_ptr<cudf::column> example_column()
-  requires(std::is_same_v<T, cudf::list_view>)
 {
   return cudf::test::lists_column_wrapper<int>({{1, 2, 3}, {4, 5}, {}, {6, 7, 8}}).release();
 }
 
-template <typename T>
+template <cudf::concepts::struct_view T>
 std::unique_ptr<cudf::column> example_column()
-  requires(std::is_same_v<T, cudf::struct_view>)
 {
   auto begin    = cuda::counting_iterator<int32_t>{1};
   auto end      = cuda::counting_iterator<int32_t>{16};

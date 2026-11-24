@@ -1,7 +1,9 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
+import pandas as pd
+import pytest
 
 import cudf
 from cudf.testing import assert_eq
@@ -47,6 +49,43 @@ def test_dataset_timeseries():
     assert gdf["a"].head().dtype == int
     assert gdf["b"].head().dtype == float
     assert len(gdf) == 20
+
+
+@pytest.mark.parametrize(
+    "start, end",
+    [
+        ("2020-01-03", "2020-01-01"),
+        (pd.Timestamp("2020-01-01"), pd.Timestamp("2020-01-01")),
+    ],
+)
+def test_dataset_timeseries_empty_range(start, end):
+    gdf = cudf.datasets.timeseries(
+        start=start,
+        end=end,
+        freq="D",
+        dtypes={"value": float},
+        nulls_frequency=0.5,
+        seed=1,
+    )
+    assert len(gdf) == 0
+    assert list(gdf.columns) == ["value"]
+    assert gdf.index.name == "timestamp"
+
+
+@pytest.mark.parametrize("nulls_frequency", [0.5, 1])
+def test_dataset_timeseries_exclusive_end_null_mask(nulls_frequency):
+    gdf = cudf.datasets.timeseries(
+        start="2020-01-01",
+        end=pd.Timestamp("2020-01-03"),
+        freq="D",
+        dtypes={"value": float, "count": int},
+        nulls_frequency=nulls_frequency,
+        seed=1,
+    )
+    assert len(gdf) == 2
+    assert gdf.index.name == "timestamp"
+    if nulls_frequency == 1:
+        assert gdf.isna().all().all()
 
 
 def test_make_bool():

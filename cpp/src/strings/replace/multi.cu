@@ -305,8 +305,9 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
                                                    strings_column_view const& targets,
                                                    strings_column_view const& repls,
                                                    cuda::stream_ref stream,
-                                                   rmm::device_async_resource_ref mr)
+                                                   cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   auto d_strings = column_device_view::create(input.parent(), stream);
 
   auto const strings_count = input.size();
@@ -351,8 +352,8 @@ std::unique_ptr<column> replace_character_parallel(strings_column_view const& in
     cuda::transform_iterator(cuda::counting_iterator<int64_t>{0}, pair_generator{fn, chars_bytes});
   auto const out_itr = cuda::make_zip_iterator(
     cuda::std::make_tuple(targets_positions.begin(), targets_indices.begin()));
-  auto const copy_end =
-    cudf::detail::copy_if(copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream);
+  auto const copy_end = cudf::detail::copy_if(
+    copy_itr, copy_itr + chars_bytes, out_itr, copy_if_fn{}, stream, mrs.as_temporary());
 
   // adjust target count since the copy-if may have eliminated some invalid targets
   target_count = std::min(static_cast<int64_t>(std::distance(out_itr, copy_end)), target_count);
@@ -483,7 +484,7 @@ std::unique_ptr<column> replace_string_parallel(strings_column_view const& input
                                                 strings_column_view const& targets,
                                                 strings_column_view const& repls,
                                                 cuda::stream_ref stream,
-                                                rmm::device_async_resource_ref mr)
+                                                cudf::memory_resources mr)
 {
   auto d_strings      = column_device_view::create(input.parent(), stream);
   auto d_targets      = column_device_view::create(targets.parent(), stream);
@@ -508,7 +509,7 @@ std::unique_ptr<column> replace_multiple(strings_column_view const& input,
                                          strings_column_view const& targets,
                                          strings_column_view const& repls,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }

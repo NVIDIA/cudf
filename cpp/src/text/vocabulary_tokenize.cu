@@ -353,6 +353,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
                                                        cuda::stream_ref stream,
                                                        cudf::memory_resources mr)
 {
+  cudf::memory_resources mrs{mr};
   CUDF_EXPECTS(delimiter.is_valid(stream), "Parameter delimiter must be valid");
 
   auto const output_type = cudf::data_type{cudf::type_to_id<cudf::size_type>()};
@@ -431,7 +432,8 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
       if (idx == 0) return true;
       return d_marks[idx] && !d_marks[idx - 1];
     },
-    stream);
+    stream,
+    mrs.as_temporary());
 
   auto tmp_offsets = std::make_unique<cudf::column>(
     std::move(d_tmp_offsets),

@@ -8,17 +8,17 @@
 #include "reduction_operators.cuh"
 
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/reduction/detail/reduction_policy.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/error.hpp>
-#include <cudf/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_segmented_reduce.cuh>
 #include <cuda/buffer>
-#include <cuda/execution>
+#include <cuda/execution.tune.h>
 #include <cuda/iterator>
 #include <cuda/std/execution>
 #include <cuda/stream>

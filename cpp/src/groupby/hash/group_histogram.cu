@@ -36,7 +36,7 @@ std::unique_ptr<column> build_histogram(column_view const& values,
                                         std::optional<column_view> const& partial_counts,
                                         size_type num_groups,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   CUDF_EXPECTS(static_cast<size_t>(values.size()) == group_labels.size(),
                "Size of values column should be the same as that of group labels.",
@@ -90,7 +90,7 @@ std::unique_ptr<column> group_histogram(column_view const& values,
                                         cudf::device_span<size_type const> group_labels,
                                         size_type num_groups,
                                         cuda::stream_ref stream,
-                                        rmm::device_async_resource_ref mr)
+                                        cudf::memory_resources mr)
 {
   // Empty group should be handled before reaching here.
   CUDF_EXPECTS(num_groups > 0, "Group should not be empty.", std::invalid_argument);
@@ -145,7 +145,7 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
                                               cudf::device_span<size_type const> group_offsets,
                                               size_type num_groups,
                                               cuda::stream_ref stream,
-                                              rmm::device_async_resource_ref mr)
+                                              cudf::memory_resources mr)
 {
   // Empty group should be handled before reaching here.
   CUDF_EXPECTS(num_groups > 0, "Group should not be empty.", std::invalid_argument);
@@ -166,31 +166,33 @@ std::unique_ptr<column> group_merge_histogram(column_view const& values,
   CUDF_EXPECTS(histogram_cv.type().id() == type_id::STRUCT && histogram_cv.num_children() == 2,
                "The input column has invalid histograms structure.",
                std::invalid_argument);
-  CUDF_EXPECTS(
-    cudf::is_integral(histogram_cv.child(1).type()) && !histogram_cv.child(1).has_nulls(),
-    "The input column has invalid histograms structure.",
-    std::invalid_argument);
+  auto const structs_cv   = structs_column_view{histogram_cv};
+  auto const input_values = structs_cv.get_sliced_child(0, stream);
+  auto const input_counts = structs_cv.get_sliced_child(1, stream);
+  CUDF_EXPECTS(cudf::is_integral(input_counts.type()) && !input_counts.has_nulls(),
+               "The input column has invalid histograms structure.",
+               std::invalid_argument);
 
+  cudf::memory_resources mrs(mr);
+  auto temp_mr = mrs.get_temporary_mr();
   // Concatenate the histograms corresponding to the same key values.
   // That is equivalent to creating a new lists column (view) from the input lists column
   // with new offsets gathered as below.
-  auto new_offsets = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), num_groups + 1, cuda::no_init);
-  thrust::gather(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto new_offsets = cuda::device_buffer<size_type>(stream, temp_mr, num_groups + 1, cuda::no_init);
+  thrust::gather(rmm::exec_policy_nosync(stream, temp_mr),
                  group_offsets.begin(),
                  group_offsets.end(),
                  lists_cv.offsets_begin(),
                  new_offsets.begin());
 
   // Generate labels for the new lists.
-  cuda::device_buffer<size_type> key_labels(
-    stream, cudf::get_current_device_resource_ref(), histogram_cv.size(), cuda::no_init);
-  cudf::detail::label_segments(
-    new_offsets.begin(), new_offsets.end(), key_labels.begin(), key_labels.end(), stream);
-
-  auto const structs_cv   = structs_column_view{histogram_cv};
-  auto const input_values = structs_cv.get_sliced_child(0, stream);
-  auto const input_counts = structs_cv.get_sliced_child(1, stream);
+  cuda::device_buffer<size_type> key_labels(stream, temp_mr, histogram_cv.size(), cuda::no_init);
+  cudf::detail::label_segments(new_offsets.begin(),
+                               new_offsets.end(),
+                               key_labels.begin(),
+                               key_labels.end(),
+                               stream,
+                               mrs.as_temporary());
 
   return build_histogram(input_values, key_labels, input_counts, num_groups, stream, mr);
 }

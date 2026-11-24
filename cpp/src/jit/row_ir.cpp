@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/utilities/strings.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/std/inplace_vector>
 
@@ -191,8 +192,8 @@ struct [[nodiscard]] opcode_info {
       {"CAST_TO_UINT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, UINT64},
       {"CAST_TO_FLOAT32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT32},
       {"CAST_TO_FLOAT64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, FLOAT64},
-      {"CAST_TO_DECIMAL32", PROPAGATE, false, false, {DECIMALS}, DECIMAL32},
-      {"CAST_TO_DECIMAL64", PROPAGATE, false, false, {DECIMALS}, DECIMAL64},
+      {"CAST_TO_DECIMAL32", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, DECIMAL32},
+      {"CAST_TO_DECIMAL64", PROPAGATE, false, false, {ARITHMETIC | BOOL8}, DECIMAL64},
       {"CAST_TO_DECIMAL128", PROPAGATE, false, false, {DECIMALS}, DECIMAL128},
       {"RESCALE", PROPAGATE, false, false, {DECIMALS, INT32}, ARG0},
       {"EQUAL", PROPAGATE, false, false, {ALL, ARG0}, BOOL8},
@@ -300,6 +301,18 @@ opcode as_opcode(ast::ast_operator op)
     case ast::ast_operator::CAST_TO_INT64: return opcode::CAST_TO_INT64;
     case ast::ast_operator::CAST_TO_UINT64: return opcode::CAST_TO_UINT64;
     case ast::ast_operator::CAST_TO_FLOAT64: return opcode::CAST_TO_FLOAT64;
+    case ast::ast_operator::CAST_TO_BOOL8: return opcode::CAST_TO_BOOL8;
+    case ast::ast_operator::CAST_TO_INT8: return opcode::CAST_TO_INT8;
+    case ast::ast_operator::CAST_TO_INT16: return opcode::CAST_TO_INT16;
+    case ast::ast_operator::CAST_TO_INT32: return opcode::CAST_TO_INT32;
+    case ast::ast_operator::CAST_TO_UINT8: return opcode::CAST_TO_UINT8;
+    case ast::ast_operator::CAST_TO_UINT16: return opcode::CAST_TO_UINT16;
+    case ast::ast_operator::CAST_TO_UINT32: return opcode::CAST_TO_UINT32;
+    case ast::ast_operator::CAST_TO_FLOAT32: return opcode::CAST_TO_FLOAT32;
+    case ast::ast_operator::CAST_TO_DECIMAL32: return opcode::CAST_TO_DECIMAL32;
+    case ast::ast_operator::CAST_TO_DECIMAL64: return opcode::CAST_TO_DECIMAL64;
+    case ast::ast_operator::CAST_TO_DECIMAL128: return opcode::CAST_TO_DECIMAL128;
+    case ast::ast_operator::RESCALE: return opcode::RESCALE;
     default:
       CUDF_FAIL(std::format("Unrecognized operator type: {}.", static_cast<int>(op)),
                 std::runtime_error);
@@ -891,8 +904,10 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& e
   for (auto& operand : expr.get_operands()) {
     args.emplace_back(operand.get().accept(*this));
   }
-  return std::make_unique<row_ir::node>(
-    as_opcode(expr.get_operator()), std::nullopt, error_policy::PROPAGATE, std::move(args));
+  return std::make_unique<row_ir::node>(as_opcode(expr.get_operator()),
+                                        expr.get_target_scale(),
+                                        error_policy::PROPAGATE,
+                                        std::move(args));
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::predicate const& expr)
@@ -1100,7 +1115,7 @@ transform_args ast_converter::compute_table(
   table_view const& right_table,
   std::string_view function_name,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr)
+  cudf::memory_resources mr)
 {
   ast_converter converter{stream, mr, left_table, right_table};
 
@@ -1166,7 +1181,7 @@ transform_args ast_converter::filter(target target_id,
                                      table_view const& right_table,
                                      std::string_view function_name,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr)
+                                     cudf::memory_resources mr)
 {
   auto filter = ast::detail::predicate{expr};
   std::array<std::reference_wrapper<ast::expression const>, 1> expressions{filter};

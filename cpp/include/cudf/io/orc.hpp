@@ -9,6 +9,7 @@
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -277,9 +278,13 @@ class orc_reader_options {
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
    *
+   * TIMESTAMP_DAYS resolution is not supported; cast the output column to get it.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
+   *
    * @param type Type of timestamp
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type);
 
   /**
    * @brief Set columns that should be read as 128-bit Decimal
@@ -403,6 +408,8 @@ class orc_reader_options_builder {
   /**
    * @brief Sets timestamp type to which timestamp column will be cast.
    *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
+   *
    * @param type Type of timestamp
    * @return this for chaining
    */
@@ -470,10 +477,9 @@ class orc_reader_options_builder {
  *
  * @return The set of columns
  */
-table_with_metadata read_orc(
-  orc_reader_options const& options,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+table_with_metadata read_orc(orc_reader_options const& options,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief The chunked orc reader class to read an ORC file iteratively into a series of
@@ -537,13 +543,12 @@ class chunked_orc_reader {
    *
    * @throw cudf::logic_error if `output_row_granularity` is non-positive
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    size_type output_row_granularity,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              std::size_t pass_read_limit,
+                              size_type output_row_granularity,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from input/output size limits along with other ORC reader options.
@@ -559,12 +564,11 @@ class chunked_orc_reader {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource to use for device memory allocation
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    std::size_t pass_read_limit,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              std::size_t pass_read_limit,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct the reader from output size limits along with other ORC reader options.
@@ -578,11 +582,10 @@ class chunked_orc_reader {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource to use for device memory allocation
    */
-  explicit chunked_orc_reader(
-    std::size_t chunk_read_limit,
-    orc_reader_options const& options,
-    cuda::stream_ref stream           = cudf::get_default_stream(),
-    rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  explicit chunked_orc_reader(std::size_t chunk_read_limit,
+                              orc_reader_options const& options,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Destructor, destroying the internal reader instance.
@@ -922,8 +925,10 @@ class orc_writer_options {
    * A non-UTC file is meant for a reader whose timezone matches; it does not round-trip through
    * the libcudf reader, which has no session timezone and returns the writer's wall clock.
    *
-   * Timestamp statistics hold the input instants, which is what a reader that honors the recorded
-   * timezone materializes from the data stream.
+   * Timestamp statistics hold the wall-clock values that a reader materializes from the data
+   * stream, so that the bounds and the data agree. Apache's writer records them the same way. In a
+   * non-UTC file, the pre-ORC-135 `minimum` and `maximum` fields are omitted, as Apache omits them,
+   * leaving only `minimumUtc` and `maximumUtc`.
    *
    * An empty name, or one that does not resolve to a timezone file, is rejected by the writer,
    * not by this setter.

@@ -186,6 +186,12 @@ std::vector<FileMetaData> aggregate_reader_metadata::parquet_metadatas() const
   return {per_file_metadata.begin(), per_file_metadata.end()};
 }
 
+FileMetaData const& aggregate_reader_metadata::parquet_metadata(std::size_t source_index) const
+{
+  CUDF_EXPECTS(source_index < per_file_metadata.size(), "Invalid source index", std::out_of_range);
+  return per_file_metadata[source_index];
+}
+
 void aggregate_reader_metadata::setup_page_indexes(
   std::span<std::span<uint8_t const> const> page_index_bytes)
 {
@@ -375,14 +381,15 @@ std::vector<std::vector<cudf::size_type>> aggregate_reader_metadata::filter_row_
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Compute total number of input row groups
   auto const total_row_groups = compute_total_row_groups(row_group_indices);
 
   // Filter stats table with StatsAST expression and collect filtered row group indices
   auto const stats_filtered_row_group_indices = apply_stats_filters(
-    row_group_indices, total_row_groups, output_dtypes, output_column_schemas, filter, stream);
+    row_group_indices, total_row_groups, output_dtypes, output_column_schemas, filter, stream, mr);
 
   return stats_filtered_row_group_indices.value_or(all_row_group_indices(row_group_indices));
 }
@@ -394,15 +401,15 @@ aggregate_reader_metadata::bloom_filters_byte_ranges(
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter)
 {
-  // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const ts_precision_mismatches =
-    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+  // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
+  auto const bloom_hash_mismatch_mask =
+    calc_bloom_hash_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
+    std::span{bloom_hash_mismatch_mask.data(), bloom_hash_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return {}; }
@@ -598,7 +605,8 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> dictionary_col_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
   // Compute total number of input row groups
   auto const total_row_groups =
@@ -614,7 +622,8 @@ aggregate_reader_metadata::filter_row_groups_with_dictionary_pages(
                                                                       output_dtypes,
                                                                       dictionary_col_schemas,
                                                                       filter,
-                                                                      stream);
+                                                                      stream,
+                                                                      mr);
 
   return dictionary_filtered_row_groups.value_or(all_row_group_indices(row_group_indices));
 }
@@ -626,17 +635,18 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
   std::span<data_type const> output_dtypes,
   std::span<cudf::size_type const> output_column_schemas,
   std::reference_wrapper<ast::expression const> filter,
-  cuda::stream_ref stream) const
+  cuda::stream_ref stream,
+  cudf::memory_resources mr) const
 {
-  // Timestamp columns stored with another precision in any source cannot use bloom filters
-  auto const ts_precision_mismatches =
-    calc_mismatched_timestamp_mask(output_dtypes, output_column_schemas);
+  // Mismatched timestamp and narrowed decimal columns cannot use bloom filters
+  auto const bloom_hash_mismatch_mask =
+    calc_bloom_hash_mismatch_mask(output_dtypes, output_column_schemas);
 
   // Collect equality literals for each input table column
   auto literals_collector = equality_literals_collector{
     filter.get(),
     output_dtypes,
-    std::span{ts_precision_mismatches.data(), ts_precision_mismatches.size()}};
+    std::span{bloom_hash_mismatch_mask.data(), bloom_hash_mismatch_mask.size()}};
 
   // Return early if bloom filters cannot prune any row groups with this filter
   if (not literals_collector.can_filter()) { return all_row_group_indices(row_group_indices); }
@@ -679,7 +689,8 @@ aggregate_reader_metadata::filter_row_groups_with_bloom_filters(
                                                              output_dtypes,
                                                              bloom_filter_col_schemas,
                                                              filter,
-                                                             stream);
+                                                             stream,
+                                                             mr);
 
   return bloom_filtered_row_groups.value_or(all_row_group_indices(row_group_indices));
 }

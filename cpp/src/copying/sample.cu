@@ -29,7 +29,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               sample_with_replacement replacement,
                               int64_t const seed,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_EXPECTS(n >= 0, "expected number of samples should be non-negative", std::invalid_argument);
   auto const num_rows = input.num_rows();
@@ -89,7 +89,7 @@ std::unique_ptr<table> sample(table_view const& input,
                               sample_with_replacement replacement,
                               int64_t const seed,
                               cuda::stream_ref stream,
-                              rmm::device_async_resource_ref mr)
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::sample(input, n, replacement, seed, stream, mr);

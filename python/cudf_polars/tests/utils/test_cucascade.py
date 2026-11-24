@@ -96,6 +96,19 @@ def test_extension_built_against_this_libcudf_is_accepted(monkeypatch):
     assert cucascade._load_extension() is current
 
 
+def test_installed_libcudf_version_does_not_need_the_pylibcudf_distribution_name(
+    monkeypatch,
+):
+    # pip installs pylibcudf as pylibcudf-cu12 or pylibcudf-cu13
+    import importlib.metadata
+
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert cucascade._installed_cudf_version() is not None
+
+
 def test_wrap_sources_opens_every_remote_path(glue):
     paths = ["s3://bucket/a.parquet", "s3://bucket/b.parquet"]
     sources = cucascade.wrap_sources(paths)

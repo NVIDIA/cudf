@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import importlib
-import importlib.metadata
 import os
 import threading
 import types
@@ -36,14 +35,20 @@ _registered: set[str] = set()
 
 
 def _installed_cudf_version() -> tuple[int, int] | None:
-    """The (major, minor) of the libcudf in use, from the installed pylibcudf, or None."""
-    for distribution in ("pylibcudf", "libcudf"):
-        try:
-            installed = Version(importlib.metadata.version(distribution))
-        except (importlib.metadata.PackageNotFoundError, InvalidVersion):
-            continue
-        return installed.major, installed.minor
-    return None
+    """
+    The (major, minor) of the libcudf in use, from the installed pylibcudf, or None.
+
+    Read from the version file pylibcudf ships, not from package metadata: the
+    distribution is named ``pylibcudf-cu12`` or ``pylibcudf-cu13`` when installed
+    with pip.
+    """
+    try:
+        from pylibcudf._version import __version__
+
+        installed = Version(__version__)
+    except (ImportError, OSError, InvalidVersion):
+        return None
+    return installed.major, installed.minor
 
 
 def _load_extension() -> types.ModuleType:

@@ -2264,6 +2264,83 @@ class IndexedFrame(Frame):
             self._data._from_columns_like_self(data_columns)
         )
 
+    def _find_valid_index(self, *, how: Literal["first", "last"]):
+        if len(self) == 0 or self._num_columns == 0:
+            return None
+        # A row is valid if any of its values is not NA.
+        is_valid = self._columns[0].notnull()
+        for col in self._columns[1:]:
+            is_valid = is_valid | col.notnull()
+        values = is_valid.values
+        if how == "last":
+            values = values[::-1]
+        idxpos = int(values.argmax())
+        if not values[idxpos]:
+            return None
+        if how == "last":
+            idxpos = len(values) - 1 - idxpos
+        return self.index[idxpos]
+
+    @_performance_tracking
+    def first_valid_index(self):
+        """
+        Return index for first non-NA value or None, if no non-NA value is found.
+
+        For a DataFrame, a row is considered valid if any of its values
+        is non-NA.
+
+        Returns
+        -------
+        type of index
+
+        See Also
+        --------
+        last_valid_index : Return index for last non-NA value.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> s = cudf.Series([None, 3, 4, None])
+        >>> s.first_valid_index()
+        1
+        >>> cudf.Series([None, None]).first_valid_index() is None
+        True
+        >>> df = cudf.DataFrame({"A": [None, None, 2], "B": [None, 3, None]})
+        >>> df.first_valid_index()
+        1
+        """
+        return self._find_valid_index(how="first")
+
+    @_performance_tracking
+    def last_valid_index(self):
+        """
+        Return index for last non-NA value or None, if no non-NA value is found.
+
+        For a DataFrame, a row is considered valid if any of its values
+        is non-NA.
+
+        Returns
+        -------
+        type of index
+
+        See Also
+        --------
+        first_valid_index : Return index for first non-NA value.
+
+        Examples
+        --------
+        >>> import cudf
+        >>> s = cudf.Series([None, 3, 4, None])
+        >>> s.last_valid_index()
+        2
+        >>> cudf.Series([None, None]).last_valid_index() is None
+        True
+        >>> df = cudf.DataFrame({"A": [None, None, 2], "B": [None, 3, None]})
+        >>> df.last_valid_index()
+        2
+        """
+        return self._find_valid_index(how="last")
+
     @_performance_tracking
     def truncate(self, before=None, after=None, axis=0, copy=True):
         """

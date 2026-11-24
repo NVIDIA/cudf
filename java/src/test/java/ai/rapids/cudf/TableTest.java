@@ -60,6 +60,7 @@ import static ai.rapids.cudf.ParquetWriterOptions.listBuilder;
 import static ai.rapids.cudf.ParquetWriterOptions.structBuilder;
 import static ai.rapids.cudf.Table.TestBuilder;
 import static ai.rapids.cudf.Table.removeNullMasksIfNeeded;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -614,8 +615,9 @@ public class TableTest extends CudfTestBase {
       .withNormalizeSingleQuotes(false)
       .build();
     try (MultiBufferDataSource source = sourceFrom(TEST_JSON_SINGLE_QUOTES_FILE)) {
-      assertThrows(CudfException.class, () ->
-        Table.readJSON(schema, opts, source));
+      assertThatThrownBy(() -> Table.readJSON(schema, opts, source))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: The logical stack is not empty!");
     }
   }
 
@@ -1017,8 +1019,9 @@ public class TableTest extends CudfTestBase {
             .withLines(true)
             .withMixedTypesAsStrings(false)
             .build();
-    assertThrows(CudfException.class, () ->
-      Table.readJSON(schema, opts, TEST_MIXED_TYPE_2_JSON));
+    assertThatThrownBy(() -> Table.readJSON(schema, opts, TEST_MIXED_TYPE_2_JSON))
+        .isInstanceOf(CudfException.class)
+        .hasMessageMatching("CUDF failure at: \\S+:\\d+: A mix of lists and structs within the same column is not supported");
   }
 
   @Test
@@ -1103,8 +1106,9 @@ public class TableTest extends CudfTestBase {
               .withLines(true)
               .withRecoverWithNull(false)
               .build();
-      assertThrows(CudfException.class, () ->
-        Table.readJSON(schema, opts, TEST_JSON_ERROR_FILE));
+      assertThatThrownBy(() -> Table.readJSON(schema, opts, TEST_JSON_ERROR_FILE))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: JSON Parser encountered an invalid format at location 68");
     }
   }
 
@@ -4285,8 +4289,12 @@ public class TableTest extends CudfTestBase {
             .column(.3)
             .column(.7)
             .build()) {
-      assertThrows(CudfException.class, () -> getBoundsCv(descFlags, true, table, values));
-      assertThrows(CudfException.class, () ->  getBoundsCv(descFlags, false, table, values));
+      assertThatThrownBy(() -> getBoundsCv(descFlags, true, table, values))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Cannot compare tables with different number of columns");
+      assertThatThrownBy(() -> getBoundsCv(descFlags, false, table, values))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Cannot compare tables with different number of columns");
     }
   }
 
@@ -4302,8 +4310,12 @@ public class TableTest extends CudfTestBase {
             .column(120)
             .column(.3)
             .build()) {
-      assertThrows(CudfException.class, () -> getBoundsCv(descFlags, true, table, values));
-      assertThrows(CudfException.class, () -> getBoundsCv(descFlags, false, table, values));
+      assertThatThrownBy(() -> getBoundsCv(descFlags, true, table, values))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Cannot compare tables with different number of columns");
+      assertThatThrownBy(() -> getBoundsCv(descFlags, false, table, values))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Cannot compare tables with different number of columns");
     }
   }
 
@@ -4593,8 +4605,9 @@ public class TableTest extends CudfTestBase {
         .column(1f,2f,3f,4f,5f)
         .column(6,7,8,9,10)
         .build()) {
-      assertThrows(CudfException.class, () -> t.interleaveColumns(),
-          "All columns must have the same data type in interleave_columns");
+      assertThatThrownBy(t::interleaveColumns)
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Input columns must have the same type");
     }
   }
 

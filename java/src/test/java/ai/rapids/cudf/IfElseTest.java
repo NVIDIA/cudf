@@ -15,7 +15,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.util.stream.Stream;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class IfElseTest extends CudfTestBase {
   private static Stream<Arguments> createBooleanVVParams() {
@@ -1137,7 +1137,9 @@ public class IfElseTest extends CudfTestBase {
     try (ColumnVector pred = ColumnVector.fromBoxedBooleans(true, false, false, true);
          ColumnVector trueVec = ColumnVector.fromBoxedInts(1, 2, 3, 4);
          ColumnVector falseVec = ColumnVector.fromBoxedLongs(5L, 6L, 7L, 8L)) {
-      assertThrows(CudfException.class, () -> pred.ifElse(trueVec, falseVec));
+      assertThatThrownBy(() -> pred.ifElse(trueVec, falseVec))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Both inputs must be of the same type");
     }
   }
 
@@ -1146,7 +1148,9 @@ public class IfElseTest extends CudfTestBase {
     try (ColumnVector pred = ColumnVector.fromBoxedBooleans(true, false, false, true);
          ColumnVector trueVec = ColumnVector.fromBoxedLongs(1L, 2L, 3L, 4L);
          Scalar falseScalar = Scalar.fromString("hey")) {
-      assertThrows(CudfException.class, () -> pred.ifElse(trueVec, falseScalar));
+      assertThatThrownBy(() -> pred.ifElse(trueVec, falseScalar))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Both inputs must be of the same type");
     }
   }
 
@@ -1155,7 +1159,9 @@ public class IfElseTest extends CudfTestBase {
     try (ColumnVector pred = ColumnVector.fromBoxedBooleans(true, false, false, true);
          Scalar trueScalar = Scalar.fromByte((byte) 1);
          ColumnVector falseVec = ColumnVector.fromBoxedInts(0, 2, 4, 6)) {
-      assertThrows(CudfException.class, () -> pred.ifElse(trueScalar, falseVec));
+      assertThatThrownBy(() -> pred.ifElse(trueScalar, falseVec))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Both inputs must be of the same type");
     }
   }
 
@@ -1164,7 +1170,9 @@ public class IfElseTest extends CudfTestBase {
     try (ColumnVector pred = ColumnVector.fromBoxedBooleans(true, false, false, true);
          Scalar trueScalar = Scalar.fromByte((byte) 1);
          Scalar falseScalar = Scalar.fromString("hey")) {
-      assertThrows(CudfException.class, () -> pred.ifElse(trueScalar, falseScalar));
+      assertThatThrownBy(() -> pred.ifElse(trueScalar, falseScalar))
+          .isInstanceOf(CudfException.class)
+          .hasMessageMatching("CUDF failure at: \\S+:\\d+: Both inputs must be of the same type");
     }
   }
 }

@@ -356,12 +356,12 @@ async def compute_sort_boundaries(
             exclusive_view=True,
             br=context.br(),
         )
-        allgather = AllGatherManager(context, comm, allgather_id)
-        with allgather.inserting() as inserter:
-            await inserter.insert(comm.rank, chunk)
-        concat_table = await allgather.extract_concatenated(
-            stream, ordered=True, ir_context=ir_context
-        )
+        async with AllGatherManager(context, comm, allgather_id) as allgather:
+            with allgather.inserting() as inserter:
+                await inserter.insert(comm.rank, chunk)
+            concat_table = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=ir_context
+            )
         return get_final_sort_boundaries(
             DataFrame.from_table(
                 concat_table,

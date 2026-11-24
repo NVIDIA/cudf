@@ -222,14 +222,18 @@ class StreamingFallbackMode(enum.StrEnum):
 
 class RankLocalCPUComputeMode(enum.StrEnum):
     """
-    When the streaming executor evaluates an IR node on the CPU with Polars.
+    When the streaming executor evaluates an operation on the CPU with Polars.
 
     * ``RankLocalCPUComputeMode.NEVER`` : Always evaluate on the GPU.
-    * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported IR node on
-      the CPU with Polars. Unsupported nodes are evaluated on the GPU.
+    * ``RankLocalCPUComputeMode.ON_OOM`` : Evaluate on the GPU. If that raises
+      ``MemoryError`` and the operation is supported, evaluate it again on the
+      CPU with Polars.
+    * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported operation
+      on the CPU with Polars. Unsupported operations are evaluated on the GPU.
     """
 
     NEVER = "never"
+    ON_OOM = "on_oom"
     ALWAYS = "always"
 
 
@@ -759,9 +763,10 @@ class DynamicPlanningOptions:
 
     Parameters
     ----------
-    sample_chunk_count
-        The maximum number of chunks to sample before making
-        dynamic-planning decisions. Default is 2.
+    sample_byte_count
+        The maximum number of bytes to sample before making
+        dynamic-planning decisions. The default of 0 uses
+        ``target_partition_size``.
     infer_ordering
         Whether to infer scan ordering from input metadata. Parquet scans use
         footer min/max statistics. For floating-point columns, this assumes row
@@ -772,9 +777,9 @@ class DynamicPlanningOptions:
 
     _env_prefix = "CUDF_POLARS__EXECUTOR__DYNAMIC_PLANNING"
 
-    sample_chunk_count: int = dataclasses.field(
+    sample_byte_count: int = dataclasses.field(
         default_factory=_make_default_factory(
-            f"{_env_prefix}__SAMPLE_CHUNK_COUNT", int, default=2
+            f"{_env_prefix}__SAMPLE_BYTE_COUNT", int, default=0
         )
     )
     infer_ordering: bool = dataclasses.field(
@@ -784,10 +789,10 @@ class DynamicPlanningOptions:
     )
 
     def __post_init__(self) -> None:  # noqa: D105
-        if not isinstance(self.sample_chunk_count, int):
-            raise TypeError("sample_chunk_count must be an int")
-        if self.sample_chunk_count < 1:
-            raise ValueError("sample_chunk_count must be at least 1")
+        if type(self.sample_byte_count) is not int:
+            raise TypeError("sample_byte_count must be an int if specified")
+        if self.sample_byte_count < 0:
+            raise ValueError("sample_byte_count must be at least 0")
         if not isinstance(self.infer_ordering, bool):
             raise TypeError("infer_ordering must be a bool")
 
@@ -1090,7 +1095,7 @@ class StreamingExecutor:
         This can be set using the ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``
         environment variable.
     rank_local_cpu_compute
-        When to evaluate IR nodes on the CPU with Polars instead of on the GPU.
+        When to evaluate operations on the CPU with Polars instead of on the GPU.
         ``RankLocalCPUComputeMode.NEVER`` by default. Only applies inside streaming
         actors. This can be set using the
         ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE`` environment variable.
@@ -1391,7 +1396,18 @@ class StreamingExecutor:
                 "dynamic_planning",
                 DynamicPlanningOptions(**self.dynamic_planning),
             )
-
+        if (
+            (planning := self.dynamic_planning) is not None
+            and planning.sample_byte_count == 0
+            and isinstance(self.target_partition_size, int)
+        ):
+            object.__setattr__(
+                self,
+                "dynamic_planning",
+                dataclasses.replace(
+                    planning, sample_byte_count=self.target_partition_size
+                ),
+            )
         if isinstance(self.join_filter_pushdown, dict):
             object.__setattr__(
                 self,

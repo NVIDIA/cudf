@@ -284,8 +284,8 @@ class StreamingOptions:
         Default: ``"warn"``.
         Category: executor.
     rank_local_cpu_compute
-        When to evaluate IR nodes on the CPU with Polars (``"never"``,
-        ``"always"``).
+        When to evaluate operations on the CPU with Polars (``"never"``,
+        ``"on_oom"``, ``"always"``).
         Env: ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE``.
         Default: ``"never"``.
         Category: executor.
@@ -876,9 +876,9 @@ class StreamingOptions:
             dest="rank_local_cpu_compute",
             default=None,
             type=str,
-            choices=["never", "always"],
+            choices=["never", "on_oom", "always"],
             help=textwrap.dedent("""\
-                When to evaluate IR nodes on the CPU with Polars.
+                When to evaluate operations on the CPU with Polars.
                 Env: CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE. Built-in default: never."""),
         )
         g.add_argument(

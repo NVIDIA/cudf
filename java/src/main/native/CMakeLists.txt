@@ -5,7 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
-cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.3 FATAL_ERROR)
 
 include(../../../../cmake/rapids_config.cmake)
 include(rapids-cmake)
@@ -156,6 +156,7 @@ add_library(
   src/HybridScanReaderJni.cpp
   src/HybridScanReaderJniInternal.cpp
   src/HybridScanReaderJniMaterialize.cpp
+  src/JoinMatchContextJni.cpp
   src/KeyRemappingJni.cpp
   src/HostUDFWrapperJni.cpp
   src/NvcompJni.cpp

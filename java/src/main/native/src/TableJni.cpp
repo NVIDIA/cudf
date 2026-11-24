@@ -27,6 +27,7 @@
 #include <cudf/io/orc.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/join/conditional_join.hpp>
+#include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/filtered_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -577,6 +578,23 @@ std::vector<cudf::null_order> resolve_null_precedence(JNIEnv* env,
   return null_precedence;
 }
 
+jlongArray gather_maps_to_java(
+  JNIEnv* env,
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
+{
+  // release the underlying device buffer to Java
+  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
+  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
+  cudf::jni::native_jlongArray result(env, 5);
+  result[0] = static_cast<jlong>(left_map_buffer->size());
+  result[1] = ptr_as_jlong(left_map_buffer->data());
+  result[2] = release_as_jlong(left_map_buffer);
+  result[3] = ptr_as_jlong(right_map_buffer->data());
+  result[4] = release_as_jlong(right_map_buffer);
+  return result.get_jArray();
+}
+
 namespace {
 
 int set_column_metadata(cudf::io::column_in_metadata& column_metadata,
@@ -708,30 +726,6 @@ bool valid_window_parameters(native_jintArray const& values,
 {
   return values.size() == ops.size() && values.size() == min_periods.size() &&
          values.size() == preceding.size() && values.size() == following.size();
-}
-
-// Convert a cudf gather map pair into the form that Java expects
-// The resulting Java long array contains the following at each index:
-//   0: Size of each gather map in bytes
-//   1: Device address of the gather map for the left table
-//   2: Host address of the rmm::device_buffer instance that owns the left gather map data
-//   3: Device address of the gather map for the right table
-//   4: Host address of the rmm::device_buffer instance that owns the right gather map data
-jlongArray gather_maps_to_java(
-  JNIEnv* env,
-  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
-            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> maps)
-{
-  // release the underlying device buffer to Java
-  auto left_map_buffer  = std::make_unique<rmm::device_buffer>(maps.first->release());
-  auto right_map_buffer = std::make_unique<rmm::device_buffer>(maps.second->release());
-  cudf::jni::native_jlongArray result(env, 5);
-  result[0] = static_cast<jlong>(left_map_buffer->size());
-  result[1] = ptr_as_jlong(left_map_buffer->data());
-  result[2] = release_as_jlong(left_map_buffer);
-  result[3] = ptr_as_jlong(right_map_buffer->data());
-  result[4] = release_as_jlong(right_map_buffer);
-  return result.get_jArray();
 }
 
 // Convert a cudf gather map into the form that Java expects
@@ -3287,6 +3281,23 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctJoinGatherMa
       cudf::distinct_hash_join hash(right, nulleq, load_factor);
       return hash.inner_join(left);
     });
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_directInnerJoinGatherMaps(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_keys, jlong j_capacity)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys column is null", NULL);
+  JNI_NULL_CHECK(env, j_right_keys, "right keys column is null", NULL);
+  JNI_ARG_CHECK(env, j_capacity >= 0, "capacity must not be negative", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto left_keys  = reinterpret_cast<cudf::column_view const*>(j_left_keys);
+    auto right_keys = reinterpret_cast<cudf::column_view const*>(j_right_keys);
+    return cudf::jni::gather_maps_to_java(
+      env, cudf::direct_inner_join(*left_keys, *right_keys, static_cast<std::size_t>(j_capacity)));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctHashJoinGatherMaps(

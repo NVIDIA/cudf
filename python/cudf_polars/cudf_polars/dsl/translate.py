@@ -226,6 +226,7 @@ class Translator:
         self._expr_context: ExecutionContext = ExecutionContext.FRAME
         self._internal_name_gen: Generator[str, None, None] | None = None
         self._list_literals_as_elements: bool = False
+        self._num_unwrapped_implodes: int = 0
 
     def translate_ir(self, *, n: int | None = None) -> ir.IR:
         """
@@ -353,7 +354,7 @@ class Translator:
             Schema of the IR node this expression uses as evaluation context.
         allow_passthrough
             Whether a direct Array, Null or Time column, or a ``dt.time()`` result, may be
-            returned.
+            returned. Also allows a direct cast of a Null column to String.
 
         Returns
         -------
@@ -432,7 +433,14 @@ class Translator:
             )
             self.errors.append(error)
             return expr.ErrorExpr(dtype, str(error))
-        is_null_passthrough = allow_passthrough and isinstance(translated, expr.Col)
+        is_null_passthrough = allow_passthrough and (
+            isinstance(translated, expr.Col)
+            or (
+                isinstance(translated, expr.Cast)
+                and isinstance(dtype.polars_type, pl.String)
+                and isinstance(translated.children[0], expr.Col)
+            )
+        )
         if not is_null_passthrough and _contains_null_column_input(translated):
             error = NotImplementedError(_NULL_PASSTHROUGH_ERROR)
             self.errors.append(error)
@@ -785,10 +793,67 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             translate_named_expr(translator, n=e, schema=inp_right.schema)
             for e in node.right_on
         ]
+    if isinstance(how := node.options[0], tuple) and how[0] == "AsOf":
+        (
+            _,
+            strategy,
+            tolerance,
+            tolerance_str,
+            left_by,
+            right_by,
+            exact_matches,
+            check_sortedness,
+        ) = how
+        if (
+            strategy != "backward"
+            or tolerance is not None
+            or tolerance_str is not None
+            or not exact_matches
+        ):
+            raise NotImplementedError(
+                "Only backward as-of joins with exact matches and no tolerance "
+                "are supported"
+            )
+        if len(left_on) != 1 or len(right_on) != 1:  # pragma: no cover
+            raise NotImplementedError("As-of joins require one ordered key per side")
+        left_by = tuple(left_by or ())
+        right_by = tuple(right_by or ())
+        if len(left_by) != len(right_by):  # pragma: no cover
+            raise NotImplementedError("As-of grouping keys must match on both sides")
+        if not all(
+            plc.traits.is_integral_not_bool(key.value.dtype.plc_type)
+            or plc.traits.is_timestamp(key.value.dtype.plc_type)
+            or plc.traits.is_duration(key.value.dtype.plc_type)
+            for key in (left_on[0], right_on[0])
+        ):
+            raise NotImplementedError("Unsupported as-of ordered key dtype")
+        if left_on[0].value.dtype != right_on[0].value.dtype:  # pragma: no cover
+            raise NotImplementedError("As-of ordered key dtypes must match")
+        if any(
+            inp_left.schema[left_name] != inp_right.schema[right_name]
+            or not (
+                plc.traits.is_fixed_width(inp_left.schema[left_name].plc_type)
+                or inp_left.schema[left_name].plc_type.id() == plc.types.TypeId.STRING
+            )
+            for left_name, right_name in zip(left_by, right_by, strict=True)
+        ):
+            raise NotImplementedError("Unsupported as-of grouping key dtype")
+        _, _, zlice, suffix, coalesce, _maintain_order = node.options
+        return ir.AsofJoin(
+            schema,
+            left_on[0],
+            right_on[0],
+            left_by,
+            right_by,
+            (zlice, suffix, coalesce, check_sortedness),
+            inp_left,
+            inp_right,
+        )
+
     if _contains_categorical_key(left_on) or _contains_categorical_key(right_on):
         raise NotImplementedError("Joining on Categorical/Enum keys is not supported")
 
-    if (how := node.options[0]) in {
+    if how in {
         "Inner",
         "Left",
         "Right",
@@ -819,7 +884,7 @@ def _(node: plrs._ir_nodes.Join, translator: Translator, schema: Schema) -> ir.I
             node, translator, schema, inp_left, inp_right, left_on, right_on
         )
     else:
-        if how[0] != "IEJoin":  # pragma: no cover; asof joins not yet exposed
+        if how[0] != "IEJoin":  # pragma: no cover
             raise NotImplementedError(f"Unsupported join type {how}")
         _, op1, op2 = how
         if op2 is None:
@@ -1478,9 +1543,44 @@ def _translate_function(
         if name == plrs._expr_nodes.StructFunction.RenameFields:
             (new_field_names,) = options
             options = (tuple(new_field_names),)
+        elif name == plrs._expr_nodes.StructFunction.MapFieldNames:
+            options = ()
         return expr.StructFunction(
             dtype,
             expr.StructFunction.Name.from_polars(name),
+            options,
+            *(translator.translate_expr(n=n, schema=schema) for n in node.input),
+        )
+    elif isinstance(name, plrs._expr_nodes.ListFunction):
+        # Unwrapping an implode in group_by or rolling turns its list input
+        # into the element-wise column, so list functions above it would
+        # operate on the wrong values.
+        num_unwrapped_implodes = translator._num_unwrapped_implodes
+        list_inputs = [
+            translator.translate_expr(n=n, schema=schema) for n in node.input
+        ]
+        if translator._num_unwrapped_implodes != num_unwrapped_implodes:
+            raise NotImplementedError(
+                f"{name} is not supported for implode in group_by or rolling"
+            )
+        if translator._expr_context in (
+            ExecutionContext.GROUPBY,
+            ExecutionContext.ROLLING,
+        ) and any(isinstance(e, expr.LiteralColumn) for e in traversal(list_inputs)):
+            raise NotImplementedError(
+                f"{name} is not supported for list literals in group_by or rolling"
+            )
+        return expr.ListFunction(
+            dtype,
+            expr.ListFunction.Name.from_polars(name),
+            options,
+            *list_inputs,
+        )
+    # Polars does not register BitwiseFunction in _expr_nodes (crates/polars-python/src/c_api/mod.rs)
+    elif type(name).__name__ == "BitwiseFunction":
+        return expr.BitwiseFunction(
+            dtype,
+            expr.BitwiseFunction.Name.from_polars(name),
             options,
             *(translator.translate_expr(n=n, schema=schema) for n in node.input),
         )
@@ -1576,11 +1676,18 @@ def _translate_function(
         elif name == "product":
             return expr.Agg(dtype, "product", None, translator._expr_context, *children)
         elif name == "corr":
-            if options != ("pearson",):
-                raise NotImplementedError("Only Pearson correlation is supported")
+            if options == ("pearson",):
+                agg_name, agg_options = "corr", None
+            elif len(options) == 2 and options[0] == "covariance":
+                agg_name, agg_options = "cov", options[1]
+            else:
+                raise NotImplementedError(
+                    "Only Pearson correlation and covariance are supported"
+                )
             if translator._expr_context != ExecutionContext.GROUPBY:
                 raise NotImplementedError(
-                    "Correlation is currently only supported in groupby context"
+                    "Correlation and covariance are currently only supported "
+                    "in groupby context"
                 )
             intermediate_dtype = DataType(pl.Float64())
             left, right = (
@@ -1597,21 +1704,26 @@ def _translate_function(
                     ]
                 )
             )
-            correlation = expr.Agg(
+            aggregation = expr.Agg(
                 intermediate_dtype,
-                "corr",
-                None,
+                agg_name,
+                agg_options,
                 translator._expr_context,
                 expr.UnaryFunction(pair_dtype, "as_struct", (), left, right),
             )
             # Polars returns NaN for undefined correlations, such as groups
             # with fewer than two valid pairs, while libcudf returns null.
-            result: expr.Expr = expr.UnaryFunction(
-                intermediate_dtype,
-                "fill_null",
-                (),
-                correlation,
-                expr.Literal(intermediate_dtype, float("nan")),
+            # Covariance is null in Polars too, so it is left as is.
+            result: expr.Expr = (
+                aggregation
+                if agg_name == "cov"
+                else expr.UnaryFunction(
+                    intermediate_dtype,
+                    "fill_null",
+                    (),
+                    aggregation,
+                    expr.Literal(intermediate_dtype, float("nan")),
+                )
             )
             return (
                 result
@@ -1959,7 +2071,13 @@ def _(
     # TODO: node.options can be 2 meaning wrap_numerical=True
     # don't necessarily raise because wrapping isn't always needed, but it's unhandled
     strict = node.options != 1
-    inner = translator.translate_expr(n=node.expr, schema=schema)
+    # SQL UNION ALL can coerce an untyped NULL branch to String in a projection.
+    inner = translator.translate_expr(
+        n=node.expr,
+        schema=schema,
+        allow_passthrough=isinstance(dtype.polars_type, pl.String)
+        and isinstance(translator.visitor.get_dtype(node.expr), pl.Null),
+    )
 
     if isinstance(inner.dtype.polars_type, pl.Array):
         raise NotImplementedError("Casting from Array is not supported")
@@ -2014,6 +2132,7 @@ def _(
         # wrapped in an explicit ``implode`` node. Unwrap it so the existing
         # pointwise-collect path handles it.
         (child,) = args
+        translator._num_unwrapped_implodes += 1
         return child
 
     # libcudf does not support std/var on decimal types; cast to float first.

@@ -2998,7 +2998,9 @@ def test_parquet_writer_statistics(tmp_path, pdf, add_nulls, store_schema):
     gdf = cudf.from_pandas(pdf)
     if add_nulls:
         for col in gdf:
-            set_random_null_mask_inplace(gdf[col])
+            values = gdf[col]
+            set_random_null_mask_inplace(values)
+            gdf[col] = values
     gdf.to_parquet(file_path, index=False, store_schema=store_schema)
 
     # Read back from pyarrow
@@ -3019,6 +3021,8 @@ def test_parquet_writer_statistics(tmp_path, pdf, add_nulls, store_schema):
             stats_max = stats.max
             assert normalized_equals(actual_max, stats_max)
 
+            if add_nulls and len(pd_slice):
+                assert stats.null_count > 0
             assert stats.null_count == pd_slice[col].isna().sum()
             assert stats.num_values == pd_slice[col].count()
 

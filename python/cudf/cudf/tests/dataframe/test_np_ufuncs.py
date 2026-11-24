@@ -72,7 +72,9 @@ def test_ufunc_dataframe(request, numpy_ufunc, has_nulls, indexed):
         # float pd.Series, so instead we replace nulls with an arbitrary
         # integer value, precompute the mask, and then reapply it afterwards.
         for arg in args:
-            set_random_null_mask_inplace(arg["foo"])
+            values = arg["foo"]
+            set_random_null_mask_inplace(values)
+            arg["foo"] = values
         pandas_args = [arg.copy() for arg in args]
         for arg in pandas_args:
             arg["foo"] = arg["foo"].fillna(0)
@@ -88,6 +90,7 @@ def test_ufunc_dataframe(request, numpy_ufunc, has_nulls, indexed):
         mask = reduce(
             operator.or_, (a["foo"].isna() for a in aligned)
         ).to_pandas()
+        assert mask.any()
         if numpy_ufunc in (np.power, np.float_power):
             # pandas honors 1 ** x == 1 and x ** 0 == 1 even when x is
             # missing, and cudf matches, so those positions are valid in the

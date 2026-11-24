@@ -232,14 +232,14 @@ class ReserveOpIDs:
                     # Union needs one ID per child. Only an order-preserving
                     # multi-rank union uses them: ID 0 for the chunk-count
                     # AllGather and then child 0's exchange (the AllGather
-                    # completes before the exchange starts, so they can
+                    # is closed before the exchange starts, so they can
                     # share), and ID i for child i's exchange.
                     self.collective_id_map[node] = [
                         pool.acquire_unsafe() for _ in node.children
                     ]
                 elif isinstance(node, Over) and not node.is_scalar:
                     # Non-scalar Over needs 2 IDs: one for the size AllGather +
-                    # forward shuffle (the AllGather completes before the forward
+                    # forward shuffle (the AllGather is closed before the forward
                     # shuffle starts, so they can share), and a separate ID for
                     # the return shuffle (which overlaps with the forward shuffle
                     # during extract+insert).

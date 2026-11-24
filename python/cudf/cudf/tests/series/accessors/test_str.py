@@ -66,6 +66,103 @@ def test_getitem_out_of_bounds():
     assert_eq(result, expected)
 
 
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python"),
+        pd.StringDtype(storage="pyarrow"),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.ArrowDtype(pa.string()),
+    ],
+)
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("contains", ("a",)),
+        ("startswith", ("a",)),
+        ("endswith", ("a",)),
+        ("isdigit", ()),
+        ("isnumeric", ()),
+        ("isalnum", ()),
+    ],
+)
+@pytest.mark.parametrize("data", [[], [None, None], ["12"], ["a", None, "12"]])
+def test_string_predicate_extension_dtype(dtype, method, args, data):
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("match", ("a",)),
+        ("isalpha", ()),
+        ("isdecimal", ()),
+        ("islower", ()),
+        ("isupper", ()),
+        ("istitle", ()),
+        ("isspace", ()),
+    ],
+)
+@pytest.mark.parametrize(
+    "data",
+    [[], [None, None], ["Abc"], ["a", None, "12", "", " ", "ABC", "Abc"]],
+)
+def test_string_additional_predicate_nullable_dtype(
+    storage, method, args, data
+):
+    ps = pd.Series(data, dtype=pd.StringDtype(storage=storage))
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        pd.StringDtype(storage="python"),
+        pd.StringDtype(storage="pyarrow"),
+        pd.StringDtype(storage="python", na_value=np.nan),
+        pd.StringDtype(storage="pyarrow", na_value=np.nan),
+        pd.ArrowDtype(pa.string()),
+    ],
+)
+@pytest.mark.parametrize(
+    "data", [["aba", None, "abc"], [], [None, None], ["aba"]]
+)
+@pytest.mark.parametrize(
+    "method,args",
+    [
+        ("len", ()),
+        ("count", ("a",)),
+        ("find", ("a",)),
+        ("rfind", ("a",)),
+        ("index", ("a",)),
+        ("rindex", ("a",)),
+    ],
+)
+def test_string_numeric_nullable_dtype(dtype, data, method, args):
+    ps = pd.Series(data, dtype=dtype)
+    gs = cudf.from_pandas(ps)
+
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(gs.str, method)(*args)
+
+    assert result.dtype == expected.dtype
+    assert_eq(result, expected)
+
+
 @pytest.mark.parametrize("method", ["startswith", "endswith"])
 @pytest.mark.parametrize("pat", [None, (1, 2), pd.Series([1])])
 def test_startsendwith_invalid_pat(method, pat):
@@ -87,6 +184,25 @@ def test_replace_invalid_scalar_repl():
     ser = cudf.Series(["1"])
     with pytest.raises(TypeError):
         ser.str.replace("1", 2)
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize("na", [no_default, None, pd.NA, np.nan, True, False])
+def test_string_contains_nan_dtype_na(storage, na):
+    dtype = pd.StringDtype(storage=storage, na_value=np.nan)
+    ps = pd.Series(["abc", None, "a"], dtype=dtype)
+    gs = cudf.from_pandas(ps)
+    kwargs = {} if na is no_default else {"na": na}
+
+    assert_eq(gs.str.contains("a", **kwargs), ps.str.contains("a", **kwargs))
+
+
+@pytest.mark.parametrize("method", ["contains", "startswith", "endswith"])
+def test_string_object_predicate_preserves_nulls(method):
+    ps = pd.Series(["abc", None, "a"], dtype=object)
+    gs = cudf.from_pandas(ps)
+
+    assert_eq(getattr(gs.str, method)("a"), getattr(ps.str, method)("a"))
 
 
 @pytest.mark.parametrize("flags", [re.IGNORECASE, re.MULTILINE, re.DOTALL])

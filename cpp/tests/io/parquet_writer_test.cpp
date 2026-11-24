@@ -41,6 +41,7 @@
 #include <optional>
 #include <random>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 
@@ -1036,71 +1037,71 @@ TEST_F(ParquetWriterTest, CheckColumnIndexTruncation)
 
   // NOTE: UTF8 min is initialized with 0xf7bfbfbf. Binary values larger
   // than that will not become minimum value (when written as UTF-8).
-  std::vector<truncation_case> const cases{
-    // in-range 7 bit
-    {"yyyyyyyyy", "yyyyyyyy", "yyyyyyyz", false},
-    // max 7 bit. no valid max, since a byte past 0x7f would not be UTF-8
-    {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", nullptr, false},
-    // 0x7e is the largest 7 bit byte that can be incremented
-    {"~~~~~~~~~", "~~~~~~~~", "~~~~~~~\x7f", false},
-    // max binary. no valid max
-    {"\xff\xff\xff\xff\xff\xff\xff\xff\xff", "\xf7\xbf\xbf\xbf", nullptr, true},
-    // in-range 2-byte UTF8 (U+00E9)
-    {"ééééé", "éééé", "éééê", false},
-    // exactly the truncate length, so not truncated
-    {"éééé", "éééé", "éééé", true},
-    // max 2-byte UTF8 (U+07FF). no valid max
-    {"߿߿߿߿߿", "߿߿߿߿", nullptr, false},
-    // U+00BF carries into its 2-byte lead, keeping the reset continuation byte
-    {"aaaaa\xc2\xbf\xc2\xbf", "aaaaa\xc2\xbf", "aaaaa\xc3\x80", false},
-    // in-range 3-byte UTF8 (U+0800)
-    {"ࠀࠀࠀ", "ࠀࠀ", "ࠀࠁ", false},
-    // U+0FFF carries into its 3-byte lead
-    {"aa\xe0\xbf\xbf\xe0\xbf\xbfx",
-     "aa\xe0\xbf\xbf\xe0\xbf\xbf",
-     "aa\xe0\xbf\xbf\xe1\x80\x80",
-     false},
-    // U+CFFF carries into its 3-byte lead, giving the valid U+D000
-    {"aa\xec\xbf\xbf\xec\xbf\xbfx",
-     "aa\xec\xbf\xbf\xec\xbf\xbf",
-     "aa\xec\xbf\xbf\xed\x80\x80",
-     false},
-    // max 3-byte UTF8 (U+FFFF). no valid max
-    {"\xef\xbf\xbf\xef\xbf\xbf\xef\xbf\xbf", "\xef\xbf\xbf\xef\xbf\xbf", nullptr, false},
-    // in-range 4-byte UTF8 (U+10000)
-    {"𐀀𐀀𐀀", "𐀀𐀀", "𐀀𐀁", false},
-    // U+FFFFF carries into its 4-byte lead, giving the valid U+100000
-    {"\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbfx",
-     "\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbf",
-     "\xf3\xbf\xbf\xbf\xf4\x80\x80\x80",
-     false},
-    // max unicode (U+10FFFF). no valid max, since incrementing goes past U+10FFFF
-    {"\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
-     "\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
-     nullptr,
-     false},
-    // U+10FFFF after ASCII. the character that goes past U+10FFFF is dropped
-    {"ab\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf", "ab\xf4\x8f\xbf\xbf", "ac", false},
-    // max 4-byte UTF8 (U+1FFFFF). no valid max
-    {"\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf", "\xf7\xbf\xbf\xbf", nullptr, true},
-    // max 2-byte UTF8 (U+07FF) after ASCII. the overflowed character is dropped rather than left
-    // as overlong "\xc0\x80"
-    {"aaaaaa\xdf\xbf\xdf\xbf", "aaaaaa\xdf\xbf", "aaaaab", false},
-    // several overflowed characters dropped, then a carry into a 2-byte character
-    {"a\xc3\xa9\xdf\xbf\xdf\xbf\xdf\xbf", "a\xc3\xa9\xdf\xbf\xdf\xbf", "a\xc3\xaa", false},
-    // U+D7FF after ASCII. incrementing skips the surrogates U+D800-U+DFFF to U+E000
-    {"aaaaa\xed\x9f\xbf\xed\x9f\xbf", "aaaaa\xed\x9f\xbf", "aaaaa\xee\x80\x80", false},
-    // U+D7FF with no ASCII byte to fall back on
-    {"\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf\xed\x9f\xbf",
-     "\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf",
-     "\xc3\xa9\xed\x9f\xbf\xee\x80\x80",
-     false}};
+  constexpr auto cases = std::to_array<truncation_case>(
+    {// in-range 7 bit
+     {"yyyyyyyyy", "yyyyyyyy", "yyyyyyyz", false},
+     // max 7 bit. no valid max, since a byte past 0x7f would not be UTF-8
+     {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", "\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f", nullptr, false},
+     // 0x7e is the largest 7 bit byte that can be incremented
+     {"~~~~~~~~~", "~~~~~~~~", "~~~~~~~\x7f", false},
+     // max binary. no valid max
+     {"\xff\xff\xff\xff\xff\xff\xff\xff\xff", "\xf7\xbf\xbf\xbf", nullptr, true},
+     // in-range 2-byte UTF8 (U+00E9)
+     {"ééééé", "éééé", "éééê", false},
+     // exactly the truncate length, so not truncated
+     {"éééé", "éééé", "éééé", true},
+     // max 2-byte UTF8 (U+07FF). no valid max
+     {"߿߿߿߿߿", "߿߿߿߿", nullptr, false},
+     // U+00BF carries into its 2-byte lead, keeping the reset continuation byte
+     {"aaaaa\xc2\xbf\xc2\xbf", "aaaaa\xc2\xbf", "aaaaa\xc3\x80", false},
+     // in-range 3-byte UTF8 (U+0800)
+     {"ࠀࠀࠀ", "ࠀࠀ", "ࠀࠁ", false},
+     // U+0FFF carries into its 3-byte lead
+     {"aa\xe0\xbf\xbf\xe0\xbf\xbfx",
+      "aa\xe0\xbf\xbf\xe0\xbf\xbf",
+      "aa\xe0\xbf\xbf\xe1\x80\x80",
+      false},
+     // U+CFFF carries into its 3-byte lead, giving the valid U+D000
+     {"aa\xec\xbf\xbf\xec\xbf\xbfx",
+      "aa\xec\xbf\xbf\xec\xbf\xbf",
+      "aa\xec\xbf\xbf\xed\x80\x80",
+      false},
+     // max 3-byte UTF8 (U+FFFF). no valid max
+     {"\xef\xbf\xbf\xef\xbf\xbf\xef\xbf\xbf", "\xef\xbf\xbf\xef\xbf\xbf", nullptr, false},
+     // in-range 4-byte UTF8 (U+10000)
+     {"𐀀𐀀𐀀", "𐀀𐀀", "𐀀𐀁", false},
+     // U+FFFFF carries into its 4-byte lead, giving the valid U+100000
+     {"\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbfx",
+      "\xf3\xbf\xbf\xbf\xf3\xbf\xbf\xbf",
+      "\xf3\xbf\xbf\xbf\xf4\x80\x80\x80",
+      false},
+     // max unicode (U+10FFFF). no valid max, since incrementing goes past U+10FFFF
+     {"\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
+      "\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf",
+      nullptr,
+      false},
+     // U+10FFFF after ASCII. the character that goes past U+10FFFF is dropped
+     {"ab\xf4\x8f\xbf\xbf\xf4\x8f\xbf\xbf", "ab\xf4\x8f\xbf\xbf", "ac", false},
+     // max 4-byte UTF8 (U+1FFFFF). no valid max
+     {"\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf\xf7\xbf\xbf\xbf", "\xf7\xbf\xbf\xbf", nullptr, true},
+     // max 2-byte UTF8 (U+07FF) after ASCII. the overflowed character is dropped rather than left
+     // as overlong "\xc0\x80"
+     {"aaaaaa\xdf\xbf\xdf\xbf", "aaaaaa\xdf\xbf", "aaaaab", false},
+     // several overflowed characters dropped, then a carry into a 2-byte character
+     {"a\xc3\xa9\xdf\xbf\xdf\xbf\xdf\xbf", "a\xc3\xa9\xdf\xbf\xdf\xbf", "a\xc3\xaa", false},
+     // U+D7FF after ASCII. incrementing skips the surrogates U+D800-U+DFFF to U+E000
+     {"aaaaa\xed\x9f\xbf\xed\x9f\xbf", "aaaaa\xed\x9f\xbf", "aaaaa\xee\x80\x80", false},
+     // U+D7FF with no ASCII byte to fall back on
+     {"\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf\xed\x9f\xbf",
+      "\xc3\xa9\xed\x9f\xbf\xed\x9f\xbf",
+      "\xc3\xa9\xed\x9f\xbf\xee\x80\x80",
+      false}});
 
   // truncate length shorter than the first character. the min is empty and there is no valid max
-  std::vector<truncation_case> const short_cases{{"𐀀𐀀", "", nullptr, false}};
+  constexpr auto short_cases = std::to_array<truncation_case>({{"𐀀𐀀", "", nullptr, false}});
 
   auto const as_string = [](auto const& bytes) { return std::string(bytes.begin(), bytes.end()); };
-  auto const check     = [&](std::vector<truncation_case> const& test_cases,
+  auto const check     = [&](std::span<truncation_case const> test_cases,
                          int32_t truncate_length,
                          cudf::io::statistics_freq stats_level) {
     SCOPED_TRACE("truncate_length=" + std::to_string(truncate_length) +

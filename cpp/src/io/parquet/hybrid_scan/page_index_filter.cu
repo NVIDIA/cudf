@@ -93,8 +93,8 @@ struct page_stats_caster : public stats_caster_base {
       cuda::counting_iterator{row_group_indices.size()},
       [&](auto src_idx) {
         auto const mapped_schema_idx = schema_indices_per_source[src_idx];
-        auto const conversion =
-          get_conversion_info<T>(per_file_metadata[src_idx].schema[mapped_schema_idx]);
+        auto const [ts_scale, is_narrowing_column] =
+          compute_conversion_info<T>(per_file_metadata[src_idx].schema[mapped_schema_idx]);
 
         // For all column chunks in this source
         auto const& rg_indices = row_group_indices[src_idx];
@@ -108,7 +108,7 @@ struct page_stats_caster : public stats_caster_base {
           auto const& colchunk               = *colchunk_iter;
           auto const page_offset_in_colchunk = col_chunk_page_offsets[page_offset_idx++];
           // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them
-          auto const unordered_int96 = parquet::detail::is_unordered_int96(
+          auto const ignore_int96_min_max = parquet::detail::is_unordered_int96(
             per_file_metadata[src_idx],
             colchunk.meta_data.type,
             std::distance(row_group.columns.begin(), colchunk_iter));
@@ -119,7 +119,7 @@ struct page_stats_caster : public stats_caster_base {
               std::views::iota(page_offset_in_colchunk, col_chunk_page_offsets[page_offset_idx]),
               [&](auto column_page_idx) {
                 host_column<T>::set_min_max(
-                  min, max, column_page_idx, std::nullopt, std::nullopt, {}, {});
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
                 all_null.set_value(column_page_idx, std::nullopt);
                 has_nan.set_value(column_page_idx, std::nullopt);
               });
@@ -158,21 +158,28 @@ struct page_stats_caster : public stats_caster_base {
               // Check if the page is completely null
               if (column_index.null_pages[page_idx]) {
                 host_column<T>::set_min_max(
-                  min, max, column_page_idx, std::nullopt, std::nullopt, {}, {});
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
                 all_null.val[column_page_idx] = true;
                 has_nan.set_value(column_page_idx, false);
                 return;
               }
 
-              // Translate binary data to Type then to <T>
-              host_column<T>::set_min_max(min,
-                                          max,
-                                          column_page_idx,
-                                          min_value,
-                                          max_value,
-                                          colchunk.meta_data.type,
-                                          conversion,
-                                          unordered_int96);
+              // Also ignore INT96 min/max that cannot bound the converted values
+              if (ignore_int96_min_max or
+                  int96_minmax_unusable<T>(colchunk.meta_data.type, min_value, max_value)) {
+                host_column<T>::set_min_max(
+                  min, max, column_page_idx, std::nullopt, std::nullopt, false, {});
+              } else {
+                // Translate binary data to Type then to <T>
+                host_column<T>::set_min_max(min,
+                                            max,
+                                            column_page_idx,
+                                            min_value,
+                                            max_value,
+                                            is_narrowing_column,
+                                            colchunk.meta_data.type,
+                                            ts_scale);
+              }
               has_nan.set_value(column_page_idx,
                                 parquet::detail::has_nans(
                                   column_index.nan_counts.has_value()

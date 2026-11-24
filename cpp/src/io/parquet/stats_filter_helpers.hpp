@@ -119,8 +119,8 @@ class stats_caster_base {
    */
   template <typename T>
   [[nodiscard]] static bool int96_minmax_unusable(Type type,
-                                                  std::optional<std::span<uint8_t const>> min,
-                                                  std::optional<std::span<uint8_t const>> max)
+                                                  std::optional<std::vector<uint8_t>> const& min,
+                                                  std::optional<std::vector<uint8_t>> const& max)
   {
     if constexpr (cudf::is_timestamp<T>()) {
       if (type != Type::INT96) { return false; }
@@ -137,30 +137,27 @@ class stats_caster_base {
     }
   }
 
-  /// Per-column parameters to convert statistics values to `T`
-  struct conversion_info {
-    int32_t ts_scale         = 0;      ///< Timestamp scale
-    bool is_narrowing_column = false;  ///< Whether values may be truncated to `T`
-  };
-
   /**
    * @brief Computes the parameters to convert the statistics values of a column to `T`
    *
    * @param schema Schema element of the column in a source
-   * @return Timestamp scale and whether values may be truncated to `T`, e.g. decimals read with a
-   * narrower `decimal_width`
+   * @return Pair of the timestamp scale and whether values may be truncated to `T`, e.g. decimals
+   * read with a narrower `decimal_width`
    */
   template <typename T>
-  [[nodiscard]] static inline conversion_info get_conversion_info(SchemaElement const& schema)
+  [[nodiscard]] static inline cuda::std::pair<int32_t, bool> compute_conversion_info(
+    SchemaElement const& schema)
   {
-    auto info = conversion_info{.is_narrowing_column =
-                                  cuda::std::signed_integral<T> and
-                                  is_column_wider_than(schema.type, schema.type_length, sizeof(T))};
-    if constexpr (cudf::is_timestamp<T>()) {
-      info.ts_scale =
-        calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
-    }
-    return info;
+    auto const ts_scale = [&] {
+      if constexpr (cudf::is_timestamp<T>()) {
+        return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
+      }
+      return 0;
+    }();
+    auto const is_narrowing_column =
+      cuda::std::signed_integral<T> and
+      is_column_wider_than(schema.type, schema.type_length, sizeof(T));
+    return {ts_scale, is_narrowing_column};
   }
 
   template <typename ToType, typename FromType>
@@ -299,28 +296,26 @@ class stats_caster_base {
     /**
      * @brief Sets the min and max statistics
      *
-     * Both are nulled if they are unordered INT96 values or cannot bound the converted INT96
-     * timestamps. Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose
-     * their order, so if the column can truncate, both are nulled unless both are present and fit
-     * in `T`
+     * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
+     * order, so if the column can truncate, both are nulled unless both are present and fit in `T`
      *
      * @param min Min statistics column
      * @param max Max statistics column
      * @param index Row of the column chunk or page in this column
      * @param min_value Optional binary min value
      * @param max_value Optional binary max value
+     * @param is_narrowing_column Whether values may be truncated to `T`
      * @param type Parquet physical type
-     * @param info Per-column conversion parameters
-     * @param is_unordered_int96 Whether the values are INT96 without `INT96_TIMESTAMP_ORDER`
+     * @param ts_scale Timestamp scale
      */
     static inline void set_min_max(host_column& min,
                                    host_column& max,
                                    size_type index,
                                    std::optional<std::span<uint8_t const>> min_value,
                                    std::optional<std::span<uint8_t const>> max_value,
+                                   bool is_narrowing_column,
                                    Type const type,
-                                   conversion_info const& info,
-                                   bool is_unordered_int96 = false)
+                                   int32_t ts_scale = 0)
     {
       // Truncated values lose their order, so use the stats only if both bounds are present and fit
       auto const value_fits_in_type = [&](auto const& value) {
@@ -331,13 +326,11 @@ class stats_caster_base {
         return true;
       };
 
-      auto const are_stats_usable =
-        not is_unordered_int96 and not int96_minmax_unusable<T>(type, min_value, max_value) and
-        (not info.is_narrowing_column or
-         (value_fits_in_type(min_value) and value_fits_in_type(max_value)));
+      auto const are_stats_usable = not is_narrowing_column or (value_fits_in_type(min_value) and
+                                                                value_fits_in_type(max_value));
       if (are_stats_usable) {
-        min.set_index(index, min_value, type, info.ts_scale);
-        max.set_index(index, max_value, type, info.ts_scale);
+        min.set_index(index, min_value, type, ts_scale);
+        max.set_index(index, max_value, type, ts_scale);
       } else {
         min.set_index(index, std::nullopt, type);
         max.set_index(index, std::nullopt, type);

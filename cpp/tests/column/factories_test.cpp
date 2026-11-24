@@ -415,6 +415,20 @@ TEST_F(ColumnFactoryTest, DictionaryFromNullNumericScalar)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, cudf::dictionary::decode(dview)->view());
 }
 
+TEST_F(ColumnFactoryTest, DictionaryFromNullStringScalar)
+{
+  cudf::string_scalar value("", false);
+  auto column = cudf::make_dictionary_from_scalar(value, 3);
+  EXPECT_EQ(3, column->size());
+  EXPECT_EQ(3, column->null_count());
+  auto const dview = cudf::dictionary_column_view(column->view());
+  EXPECT_EQ(0, dview.keys_size());
+  EXPECT_EQ(dview.keys().type(), value.type());
+
+  auto const expected = cudf::test::strings_column_wrapper({"", "", ""}, {0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, cudf::dictionary::decode(dview)->view());
+}
+
 template <typename T>
 class ListsFixedWidthLeafTest : public ColumnFactoryTest {};
 

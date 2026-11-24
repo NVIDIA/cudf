@@ -1017,29 +1017,22 @@ TEST_F(HybridScanFiltersTest, FilteringWithTruncatedStats)
     auto const all_row_groups = reader.all_row_groups(options);
 
     // Only the first row group survives filtering with the chunk statistics
-    auto const stats_filtered_row_groups =
-      reader.filter_row_groups_with_stats(all_row_groups, options, stream);
-    EXPECT_EQ(stats_filtered_row_groups, std::vector<cudf::size_type>{0});
+    EXPECT_EQ(reader.filter_row_groups_with_stats(all_row_groups, options, stream),
+              std::vector<cudf::size_type>{0});
 
-    // Pages can only be pruned in row groups with a column index, so start from all row groups if
-    // the second row group has one, else from the stats-filtered ones. Either way the first page
-    // ("a", "b") is pruned, and so are the second row group's pages if it has a column index
+    // Starting from all row groups, the first page ("a", "b") is pruned, and the second row
+    // group's pages only if it has a column index
+    auto const row_mask = reader.build_row_mask_with_page_index_stats(
+      all_row_groups, options, stream, cudf::get_current_device_resource_ref());
     auto const has_column_index = stats_length == 0;
-    auto const row_mask         = reader.build_row_mask_with_page_index_stats(
-      has_column_index ? all_row_groups : stats_filtered_row_groups,
-      options,
-      stream,
-      cudf::get_current_device_resource_ref());
-    auto const expected =
-      has_column_index ? cudf::test::fixed_width_column_wrapper<bool>{false,
-                                                                      false,
-                                                                      true,
-                                                                      true,
-                                                                      false,
-                                                                      false,
-                                                                      false,
-                                                                      false}
-                       : cudf::test::fixed_width_column_wrapper<bool>{false, false, true, true};
+    auto const expected         = cudf::test::fixed_width_column_wrapper<bool>{false,
+                                                                               false,
+                                                                               true,
+                                                                               true,
+                                                                               not has_column_index,
+                                                                               not has_column_index,
+                                                                               not has_column_index,
+                                                                               not has_column_index};
     CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, row_mask->view());
   }
 }

@@ -38,6 +38,7 @@
 #include <cuda/std/iterator>
 #include <cuda/stream>
 #include <thrust/binary_search.h>
+#include <thrust/count.h>
 #include <thrust/for_each.h>
 #include <thrust/gather.h>
 

@@ -15,6 +15,7 @@
 
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <thrust/count.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/scan.h>

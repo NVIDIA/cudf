@@ -23,6 +23,7 @@
 #include <cuda/std/limits>
 #include <cuda/std/tuple>
 #include <thrust/transform.h>
+#include <thrust/transform_reduce.h>
 
 using doubles_col = cudf::test::fixed_width_column_wrapper<double>;
 using int32s_col  = cudf::test::fixed_width_column_wrapper<int32_t>;

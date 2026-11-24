@@ -14,6 +14,7 @@
 #include <cudf/logger.hpp>
 
 #include <cuda/iterator>
+#include <thrust/execution_policy.h>
 
 #include <algorithm>
 #include <cstdint>

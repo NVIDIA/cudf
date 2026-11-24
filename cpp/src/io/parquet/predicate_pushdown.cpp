@@ -17,6 +17,8 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <thrust/execution_policy.h>
+
 #include <algorithm>
 #include <functional>
 #include <iterator>

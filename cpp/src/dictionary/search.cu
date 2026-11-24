@@ -8,6 +8,7 @@
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/search.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>

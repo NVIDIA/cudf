@@ -7,7 +7,7 @@
 #include <benchmarks/common/memory_stats.hpp>
 
 #include <cudf/column/column_factories.hpp>
-#include <cudf/strings/string_view.cuh>
+#include <cudf/strings/string_view.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/utilities.hpp>
 #include <cudf/utilities/default_stream.hpp>

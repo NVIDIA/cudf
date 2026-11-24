@@ -8,6 +8,7 @@
 #include <cudf_test/default_stream.hpp>
 
 #include <cudf/strings/char_types/char_types.hpp>
+#include <cudf/strings/detail/utf8.hpp>
 #include <cudf/strings/translate.hpp>
 
 #include <string>

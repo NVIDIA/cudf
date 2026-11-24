@@ -27,6 +27,7 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/iterator>
+#include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
 
 #include <algorithm>

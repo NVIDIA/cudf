@@ -7,6 +7,7 @@
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/errc.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 
 #include <cuda/atomic>

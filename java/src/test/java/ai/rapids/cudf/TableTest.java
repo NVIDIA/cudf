@@ -2608,6 +2608,32 @@ public class TableTest extends CudfTestBase {
   }
 
   @Test
+  void testDirectInnerJoinGatherMapsEmptyRight() {
+    try (ColumnVector leftKeys = ColumnVector.fromUnsignedInts();
+         ColumnVector rightKeys = ColumnVector.fromUnsignedInts();
+         Table expected = new Table.TestBuilder()
+             .column(new Integer[0]) // left
+             .column(new Integer[0]) // right
+             .build()) {
+      checkInnerDistinctJoinGatherMaps(
+          Table.directInnerJoinGatherMaps(leftKeys, rightKeys, 0), expected);
+    }
+  }
+
+  @Test
+  void testDirectInnerJoinGatherMapsNoMatch() {
+    try (ColumnVector leftKeys = ColumnVector.fromUnsignedInts(0, 2, 4, 2);
+         ColumnVector rightKeys = ColumnVector.fromUnsignedInts(5, 1, 3);
+         Table expected = new Table.TestBuilder()
+             .column(new Integer[0]) // left
+             .column(new Integer[0]) // right
+             .build()) {
+      checkInnerDistinctJoinGatherMaps(
+          Table.directInnerJoinGatherMaps(leftKeys, rightKeys, 8), expected);
+    }
+  }
+
+  @Test
   void testDirectInnerJoinGatherMapsInvalidArguments() {
     try (ColumnVector uint32Keys = ColumnVector.fromUnsignedInts(0, 1, 2);
          ColumnVector int32Keys = ColumnVector.fromInts(0, 1, 2);

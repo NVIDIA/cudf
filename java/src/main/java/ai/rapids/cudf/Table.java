@@ -3246,8 +3246,8 @@ public final class Table implements AutoCloseable {
    *                 containing pre-hashed keys in {@code [0, capacity)}
    * @param rightKeys right join key column of type {@link DType#UINT32}, without nulls,
    *                  containing distinct pre-hashed keys in {@code [0, capacity)}
-   * @param capacity number of entries in the lookup table; must not be less than the number of
-   *                 right keys
+   * @param capacity number of entries in the lookup table; must be greater than every left and
+   *                 right key value, and not less than the number of right keys
    * @return left and right table gather maps
    */
   public static GatherMap[] directInnerJoinGatherMaps(ColumnView leftKeys, ColumnView rightKeys,

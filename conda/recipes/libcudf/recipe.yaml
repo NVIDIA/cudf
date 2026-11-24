@@ -10,6 +10,7 @@ context:
   datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
   head_rev: ${{ git.head_rev(".")[:8] }}
   build_cpp_tests: ${{ env.get("BUILD_CPP_TESTS", default="true") == "true" }}
+  build_cpp_benchmarks: ${{ build_cpp_tests and env.get("BUILD_CPP_BENCHMARKS", default="true") == "true" }}
 
 recipe:
   name: libcudf-split
@@ -44,7 +45,10 @@ outputs:
 
           test_targets=()
           if [[ "$BUILD_CPP_TESTS" == true ]]; then
-            test_targets=(benchmarks tests)
+            test_targets+=(tests)
+          fi
+          if [[ "$BUILD_CPP_BENCHMARKS" == true ]]; then
+            test_targets+=(benchmarks)
           fi
 
           ./build.sh -n -v \
@@ -58,6 +62,7 @@ outputs:
           - SCCACHE_DIST_AUTH_TOKEN
         env:
           BUILD_CPP_TESTS: ${{ env.get("BUILD_CPP_TESTS", default="true") }}
+          BUILD_CPP_BENCHMARKS: ${{ "true" if build_cpp_benchmarks else "false" }}
           CMAKE_C_COMPILER_LAUNCHER: ${{ env.get("CMAKE_C_COMPILER_LAUNCHER") }}
           CMAKE_CUDA_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CUDA_COMPILER_LAUNCHER") }}
           CMAKE_CXX_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CXX_COMPILER_LAUNCHER") }}
@@ -409,7 +414,46 @@ outputs:
     about:
       homepage: ${{ load_from_file("python/libcudf/pyproject.toml").project.urls.Homepage }}
       license: ${{ load_from_file("python/libcudf/pyproject.toml").project.license }}
-      summary: libcudf test & benchmark executables
+      summary: libcudf test executables
+
+  - package:
+      name: libcudf-benchmarks
+      version: ${{ version }}
+    inherit: libcudf-build
+    build:
+      skip: not build_cpp_benchmarks
+      script: cmake --install cpp/build --component benchmarking
+      string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
+      dynamic_linking:
+        overlinking_behavior: "error"
+        missing_dso_allowlist:
+          - "libnvidia-ml.so.1"
+    requirements:
+      build:
+        - cmake ${{ cmake_version }}
+        - ${{ stdlib("c") }}
+      host:
+        - ${{ pin_subpackage("libcudf", exact=True) }}
+        - croaring ${{ croaring_version }}
+        - libkvikio =${{ minor_version }}
+        - librmm =${{ minor_version }}
+        - rapids-logger =0.3
+      run:
+        - ${{ pin_subpackage("libcudf", exact=True) }}
+        - croaring ${{ croaring_version }}
+        - libkvikio =${{ minor_version }}
+        - librmm =${{ minor_version }}
+        - rapids-logger =0.3
+      ignore_run_exports:
+        by_name:
+          - libcudf
+          - cuda-version
+          - libkvikio
+          - librmm
+    about:
+      homepage: ${{ load_from_file("python/libcudf/pyproject.toml").project.urls.Homepage }}
+      license: ${{ load_from_file("python/libcudf/pyproject.toml").project.license }}
+      summary: libcudf benchmark executables
 
   - package:
       name: libcudf-streaming-tests

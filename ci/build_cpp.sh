@@ -9,6 +9,11 @@ source rapids-datetime-string
 
 export CMAKE_GENERATOR=Ninja
 
+# PRs compile benchmarks in the devcontainer job. The Conda test artifact only needs test executables.
+if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
+    export BUILD_CPP_BENCHMARKS=false
+fi
+
 rapids-print-env
 
 rapids-logger "Begin cpp build"

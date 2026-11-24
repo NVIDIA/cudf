@@ -93,7 +93,7 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
   )
   install(
     TARGETS ${CMAKE_BENCH_NAME}
-    COMPONENT testing
+    COMPONENT benchmarking
     DESTINATION bin/benchmarks/libcudf
     EXCLUDE_FROM_ALL
   )

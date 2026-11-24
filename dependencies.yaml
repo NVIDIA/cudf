@@ -74,6 +74,11 @@ files:
       - depends_on_libcudf
       - test_cpp
       - test_cpp_cudf
+  test_cpp_benchmarks:
+    output: none
+    includes:
+      - cuda_version
+      - test_cpp_benchmarks
   test_python_cudf_pandas:
     output: none
     includes:
@@ -1176,6 +1181,11 @@ dependencies:
           - libcudf_kafka==27.2.*,>=0.0.0a0
           - libcudf-tests==27.2.*,>=0.0.0a0
           - libcudf-streaming-tests==27.2.*,>=0.0.0a0
+  test_cpp_benchmarks:
+    common:
+      - output_types: conda
+        packages:
+          - libcudf-benchmarks==27.2.*,>=0.0.0a0
   test_python_common:
     common:
       - output_types: [conda, requirements, constraints, pyproject]

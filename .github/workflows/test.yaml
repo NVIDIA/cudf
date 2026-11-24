@@ -85,6 +85,7 @@ jobs:
       # https://github.com/NVIDIA/cudf/issues/23498
       matrix_filter: map(select(.GPU != "gb300" and .GPU != "gh200"))
   conda-cpp-benchmark-tests:
+    if: inputs.build_type != 'pull-request'
     permissions:
       actions: read
       contents: read

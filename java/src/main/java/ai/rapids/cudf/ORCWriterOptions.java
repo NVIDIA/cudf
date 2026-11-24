@@ -47,8 +47,14 @@ public class ORCWriterOptions extends CompressionMetadataWriterOptions {
     return writerTimezone;
   }
 
+  /** Returns the requested calendar, or {@code null} when left to the writer. */
   public CalendarKind getCalendarKind() {
     return calendarKind;
+  }
+
+  int getNativeCalendarKind() {
+    // Zero is the native UNKNOWN_CALENDAR value, meaning use the writer default.
+    return calendarKind == null ? 0 : calendarKind.nativeId;
   }
 
   public static class Builder extends CompressionMetadataWriterOptions.Builder
@@ -56,7 +62,7 @@ public class ORCWriterOptions extends CompressionMetadataWriterOptions {
     // < 1M rows default orc stripe rows, defined in cudf/cpp/include/cudf/io/orc.hpp
     private int stripeSizeRows = 1000000;
     private String writerTimezone = "UTC";
-    private CalendarKind calendarKind = CalendarKind.PROLEPTIC_GREGORIAN;
+    private CalendarKind calendarKind;
 
     public Builder withStripeSizeRows(int stripeSizeRows) {
       // maximum stripe size cannot be smaller than 512
@@ -94,6 +100,11 @@ public class ORCWriterOptions extends CompressionMetadataWriterOptions {
      * dates in October 5-14, 1582, and dates outside the int32 hybrid domain.
      * Use {@link ORCOptions.Builder#convertDatesToProleptic(boolean)} to read legacy output
      * back as cuDF proleptic Gregorian dates.
+     *
+     * <p>By default, the writer declares a proleptic calendar for files without TIMESTAMP
+     * columns and omits the calendar otherwise, preserving the reader's previous calendar
+     * fallback. An explicit proleptic calendar requires any TIMESTAMP values to already be
+     * proleptic. The footer calendar applies to all DATE and TIMESTAMP columns in the file.
      *
      * @param calendarKind calendar kind
      * @throws IllegalArgumentException if the calendar is null

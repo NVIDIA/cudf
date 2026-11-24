@@ -2349,7 +2349,7 @@ TEST_F(OrcWriterTest, ProlepticCalendar)
       auto opts = cudf::io::orc_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
                     .compression(compression)
                     .build();
-      EXPECT_EQ(opts.get_calendar_kind(), calendar::PROLEPTIC_GREGORIAN);
+      EXPECT_EQ(opts.get_calendar_kind(), calendar::UNKNOWN_CALENDAR);
       cudf::io::write_orc(opts);
     }
     cudf::io::source_info source{cudf::host_span<std::byte const>{

@@ -17,14 +17,14 @@ import java.util.Collections;
 import static ai.rapids.cudf.AssertUtils.assertTablesAreEqual;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ORCCalendarTest {
   @Test
   void rejectsUnsupportedCalendars() {
-    assertEquals(ORCWriterOptions.CalendarKind.PROLEPTIC_GREGORIAN,
-        ORCWriterOptions.builder().build().getCalendarKind());
+    assertNull(ORCWriterOptions.builder().build().getCalendarKind());
     assertThrows(IllegalArgumentException.class,
         () -> ORCWriterOptions.builder().withCalendarKind(null));
     assertEquals(ORCWriterOptions.CalendarKind.JULIAN_GREGORIAN, ORCWriterOptions.builder()

@@ -1706,7 +1706,7 @@ public final class Table implements AutoCloseable {
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
           options.getWriterTimezone(),
-          options.getCalendarKind().nativeId,
+          options.getNativeCalendarKind(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
     }
@@ -1724,7 +1724,7 @@ public final class Table implements AutoCloseable {
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
           options.getWriterTimezone(),
-          options.getCalendarKind().nativeId,
+          options.getNativeCalendarKind(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
     }

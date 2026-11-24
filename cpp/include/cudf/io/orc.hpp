@@ -692,8 +692,8 @@ class orc_writer_options {
   bool _enable_dictionary_sort = true;
   // Timezone that the written timestamps are relative to, recorded in the stripe footers
   std::string _writer_timezone = "UTC";
-  // Calendar used to encode DATE values and recorded in the file footer
-  orc::CalendarKind _calendar_kind = orc::CalendarKind::PROLEPTIC_GREGORIAN;
+  // UNKNOWN_CALENDAR means the caller did not specify a calendar.
+  orc::CalendarKind _calendar_kind = orc::CalendarKind::UNKNOWN_CALENDAR;
 
   friend orc_writer_options_builder;
 
@@ -831,8 +831,8 @@ class orc_writer_options {
   [[nodiscard]] std::string const& get_writer_timezone() const { return _writer_timezone; }
 
   /**
-   * @brief Returns the calendar recorded in the file footer.
-   * @return Calendar kind
+   * @brief Returns the requested writer calendar.
+   * @return Calendar kind, or UNKNOWN_CALENDAR if no calendar was specified
    */
   [[nodiscard]] orc::CalendarKind get_calendar_kind() const { return _calendar_kind; }
 
@@ -978,6 +978,12 @@ class orc_writer_options {
    * statistics. TIMESTAMP columns, dates in 1582-10-05 through 1582-10-14, and dates outside
    * the int32 hybrid domain are rejected. Use convert_dates_to_proleptic when reading legacy
    * output back into libcudf.
+   *
+   * By default, files without TIMESTAMP columns declare PROLEPTIC_GREGORIAN. For files with
+   * TIMESTAMP columns, the default omits the calendar field so readers retain their previous
+   * interpretation of the timestamps. An explicit PROLEPTIC_GREGORIAN requires any TIMESTAMP
+   * values to already be proleptic. A single calendar applies to the entire file, including DATE
+   * columns in a file that also contains TIMESTAMP columns.
    *
    * @param calendar_kind Calendar kind
    * @throw cudf::logic_error if the calendar kind is unknown or invalid
@@ -1230,8 +1236,8 @@ class chunked_orc_writer_options {
   bool _enable_dictionary_sort = true;
   // Timezone that the written timestamps are relative to, recorded in the stripe footers
   std::string _writer_timezone = "UTC";
-  // Calendar recorded in the file footer
-  orc::CalendarKind _calendar_kind = orc::CalendarKind::PROLEPTIC_GREGORIAN;
+  // UNKNOWN_CALENDAR means the caller did not specify a calendar.
+  orc::CalendarKind _calendar_kind = orc::CalendarKind::UNKNOWN_CALENDAR;
 
   friend chunked_orc_writer_options_builder;
 

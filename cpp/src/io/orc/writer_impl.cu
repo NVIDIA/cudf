@@ -2899,7 +2899,9 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
-  _footer.calendar = options.get_calendar_kind();
+  if (options.get_calendar_kind() != CalendarKind::UNKNOWN_CALENDAR) {
+    _footer.calendar = options.get_calendar_kind();
+  }
   if (options.get_metadata()) {
     _table_meta = std::make_unique<table_input_metadata>(*options.get_metadata());
   }
@@ -2924,7 +2926,9 @@ writer::impl::impl(std::unique_ptr<data_sink> sink,
     _timezone(options.get_writer_timezone()),
     _out_sink(std::move(sink))
 {
-  _footer.calendar = options.get_calendar_kind();
+  if (options.get_calendar_kind() != CalendarKind::UNKNOWN_CALENDAR) {
+    _footer.calendar = options.get_calendar_kind();
+  }
   if (options.get_metadata()) {
     _table_meta = std::make_unique<table_input_metadata>(*options.get_metadata());
   }
@@ -2973,7 +2977,7 @@ void writer::impl::write(table_view const& input)
                               _max_stripe_size,
                               _row_index_stride,
                               _timezone,
-                              *_footer.calendar,
+                              _footer.calendar.value_or(CalendarKind::PROLEPTIC_GREGORIAN),
                               _enable_dictionary,
                               _sort_dictionaries,
                               _compression,
@@ -3235,6 +3239,15 @@ void writer::impl::close()
   }
 
   _persisted_stripe_statistics.clear();
+
+  // Some callers pass TIMESTAMP data already rebased to the legacy calendar.
+  // Without an explicit choice, preserve the reader's existing calendar fallback for such files.
+  if (not _footer.calendar.has_value() and
+      std::none_of(_footer.types.begin(), _footer.types.end(), [](auto const& type) {
+        return type.kind == TIMESTAMP;
+      })) {
+    _footer.calendar = CalendarKind::PROLEPTIC_GREGORIAN;
+  }
 
   _footer.contentLength = _out_sink->bytes_written();
   std::transform(

@@ -10,6 +10,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hive.ql.exec.vector.ListColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.StructColumnVector;
+import org.apache.hadoop.hive.ql.exec.vector.TimestampColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.orc.DateColumnStatistics;
 import org.apache.orc.OrcFile;
@@ -20,7 +21,9 @@ import org.junit.jupiter.api.Test;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Collections;
 
@@ -167,6 +170,101 @@ class ORCCalendarInteropTest {
       assertThrows(CudfException.class, () -> Table.readORC(ORCOptions.builder()
           .convertDatesToProleptic(true).build(), file.toFile()));
     } finally { Files.deleteIfExists(file); }
+  }
+
+  @Test
+  void defaultWriterPreservesLegacyTimestamps() throws IOException {
+    Instant historical = Instant.parse("1500-01-01T00:00:00.123456Z");
+    Instant modern = Instant.parse("2000-01-01T00:00:00Z");
+    // Spark's UTC ORC writer converts January 1, 1500 to the hybrid-calendar encoding
+    // before passing it to cuDF. The same epoch value denotes January 10 in proleptic Gregorian.
+    long rebasedMicros = toEpochMicros(historical.plus(9, ChronoUnit.DAYS));
+    long modernMicros = toEpochMicros(modern);
+    try (ColumnVector timestamps =
+             ColumnVector.timestampMicroSecondsFromLongs(rebasedMicros, modernMicros);
+         ColumnVector struct = ColumnVector.makeStruct(timestamps)) {
+      // Both outright timestamp columns and timestamp leaves must retain the reader's fallback.
+      for (boolean nested : new boolean[] {false, true}) {
+        ORCWriterOptions.Builder builder = ORCWriterOptions.builder().withWriterTimezone("UTC");
+        if (nested) {
+          builder.withStructColumn(
+              ColumnWriterOptions.structBuilder("s").withColumns(true, "t").build());
+        } else {
+          builder.withColumns(true, "t");
+        }
+        java.nio.file.Path file = Files.createTempFile("spark-legacy-timestamp", ".orc");
+        try {
+          try (Table input = new Table(nested ? struct : timestamps);
+               TableWriter writer = Table.writeORCChunked(builder.build(), file.toFile())) {
+            writer.write(input);
+          }
+          Configuration conf = new Configuration();
+          conf.setBoolean("orc.proleptic.gregorian.default", false);
+          OrcFile.ReaderOptions readOptions = OrcFile.readerOptions(conf).useUTCTimestamp(true)
+              .convertToProlepticGregorian(true);
+          try (Reader reader = OrcFile.createReader(new Path(file.toUri()), readOptions);
+               RecordReader rows = reader.rows()) {
+            VectorizedRowBatch batch = reader.getSchema().createRowBatch();
+            assertTrue(rows.nextBatch(batch));
+            assertEquals(2, batch.size);
+            TimestampColumnVector readTimestamps = (TimestampColumnVector) (nested
+                ? ((StructColumnVector) batch.cols[0]).fields[0] : batch.cols[0]);
+            assertEquals(historical, readInstant(readTimestamps, 0));
+            assertEquals(modern, readInstant(readTimestamps, 1));
+            assertFalse(rows.nextBatch(batch));
+            assertFalse(reader.getFileTail().getFooter().hasCalendar());
+          }
+        } finally {
+          Files.deleteIfExists(file);
+        }
+      }
+    }
+  }
+
+  @Test
+  void explicitProlepticCalendarPreservesDatesAndTimestamps() throws IOException {
+    int epochDay = Math.toIntExact(LocalDate.parse("1500-01-01").toEpochDay());
+    Instant timestamp = Instant.parse("1500-01-01T00:00:00.123456Z");
+    long micros = toEpochMicros(timestamp);
+    ORCWriterOptions options = ORCWriterOptions.builder().withColumns(true, "d", "t")
+        .withWriterTimezone("UTC")
+        .withCalendarKind(ORCWriterOptions.CalendarKind.PROLEPTIC_GREGORIAN)
+        .build();
+    java.nio.file.Path file = Files.createTempFile("orc-proleptic-timestamp", ".orc");
+    try {
+      try (ColumnVector dates = ColumnVector.timestampDaysFromBoxedInts(epochDay);
+           ColumnVector timestamps = ColumnVector.timestampMicroSecondsFromLongs(micros);
+           Table input = new Table(dates, timestamps);
+           TableWriter writer = Table.writeORCChunked(options, file.toFile())) {
+        writer.write(input);
+      }
+      Configuration conf = new Configuration();
+      conf.setBoolean("orc.proleptic.gregorian.default", false);
+      OrcFile.ReaderOptions readOptions = OrcFile.readerOptions(conf).useUTCTimestamp(true)
+          .convertToProlepticGregorian(true);
+      try (Reader reader = OrcFile.createReader(new Path(file.toUri()), readOptions);
+           RecordReader rows = reader.rows()) {
+        assertTrue(reader.writerUsedProlepticGregorian());
+        VectorizedRowBatch batch = reader.getSchema().createRowBatch();
+        assertTrue(rows.nextBatch(batch));
+        assertEquals(1, batch.size);
+        assertDate((LongColumnVector) batch.cols[0], 0, epochDay);
+        assertEquals(timestamp, readInstant((TimestampColumnVector) batch.cols[1], 0));
+        DateColumnStatistics stats = (DateColumnStatistics) reader.getStatistics()[1];
+        assertEquals(epochDay, stats.getMinimumDayOfEpoch());
+        assertEquals(epochDay, stats.getMaximumDayOfEpoch());
+      }
+    } finally {
+      Files.deleteIfExists(file);
+    }
+  }
+
+  private static long toEpochMicros(Instant instant) {
+    return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000;
+  }
+
+  private static Instant readInstant(TimestampColumnVector timestamps, int row) {
+    return Instant.ofEpochSecond(Math.floorDiv(timestamps.time[row], 1_000), timestamps.nanos[row]);
   }
 
   @SuppressWarnings("unchecked")

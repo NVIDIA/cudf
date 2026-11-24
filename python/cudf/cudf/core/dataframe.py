@@ -1339,6 +1339,21 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
         elif isinstance(data, Mapping):
             # Note: We excluded ColumnAccessor already above
+            if columns is not None:
+                # Only selected columns contribute to index inference and
+                # value-length validation. Missing columns are added below.
+                # Match pandas' key-index inference, including missing and tuple
+                # labels, without changing dict keys.
+                selected = pd.Index(list(data), tupleize_cols=False).isin(
+                    columns
+                )
+                data = {
+                    key: value
+                    for (key, value), keep in zip(
+                        data.items(), selected, strict=True
+                    )
+                    if keep
+                }
             result = _mapping_to_column_accessor(
                 data,
                 index,
@@ -1376,12 +1391,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
             )
 
         if second_columns is not None:
+            nrows = col_accessor.nrows if col_accessor else len(index)
             new_data = {
                 second_label: col_accessor[second_label]
                 if second_label in col_accessor
-                else column_empty(
-                    col_accessor.nrows, dtype=DEFAULT_STRING_DTYPE
-                )
+                else column_empty(nrows, dtype=DEFAULT_STRING_DTYPE)
                 for second_label in second_columns
             }
             col_accessor = ColumnAccessor(

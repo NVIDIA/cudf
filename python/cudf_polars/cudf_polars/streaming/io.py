@@ -498,7 +498,10 @@ class ScanTask(IR):
         return (
             type(self),
             tuple(self.schema.items()),
-            self.base_scan.get_hashable(),
+            # The base scan node itself, not its hashable: Node digests are cached,
+            # so the base scan's payload (every path of the query) is hashed once
+            # instead of once per scan task.
+            self.base_scan,
             tuple(self.paths),
             self.split_index,
             self.total_splits,
@@ -590,7 +593,10 @@ class ParquetScanTask(ScanTask):
         return (
             type(self),
             tuple(self.schema.items()),
-            self.base_scan.get_hashable(),
+            # The base scan node itself, not its hashable: Node digests are cached,
+            # so the base scan's payload (every path of the query) is hashed once
+            # instead of once per scan task.
+            self.base_scan,
             tuple(self.paths),
             self.split_index,
             self.total_splits,

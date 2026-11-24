@@ -55,6 +55,7 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <utility>
 
 // altered: use cudf namespaces
 namespace cudf::io::detail {
@@ -118,8 +119,8 @@ std::string base64_decode(std::string_view encoded_string)
 {
   // altered: there must be at least 2 characters in the base64-encoded string
   if (encoded_string.size() < 2) {
-    CUDF_LOG_ERROR(
-      "Parquet reader encountered invalid base64-encoded string size."
+    CUDF_LOG_WARN(
+      "Parquet reader encountered invalid base64-encoded string size. "
       "arrow:schema not processed.");
     return std::string{};
   }
@@ -153,6 +154,11 @@ std::string base64_decode(std::string_view encoded_string)
   //
   // altered: modify base64 encoder loop to number of iterations using STL and Thrust.
   // TODO: Port this loop to thrust cooperative groups if needed for too-wide tables.
+  // Treat reads past the end of the input as padding so unpadded input never reads out of bounds
+  auto const char_at = [&](int32_t idx) {
+    return std::cmp_less(idx, encoded_string.size()) ? encoded_string[idx] : '=';
+  };
+
   if (not std::all_of(
         cuda::counting_iterator<int32_t>{0},
         cuda::counting_iterator{num_iterations},
@@ -164,10 +170,10 @@ std::string base64_decode(std::string_view encoded_string)
 
           // Check for data that is not padded with equal
           // signs (which is allowed by RFC 2045)
-          if (encoded_string[idx] == '=') { return true; }
+          if (char_at(idx) == '=') { return true; }
 
-          current_char_position = base64_chars.find(encoded_string[idx]);
-          char1_position        = base64_chars.find(encoded_string[idx + 1]);
+          current_char_position = base64_chars.find(char_at(idx));
+          char1_position        = base64_chars.find(char_at(idx + 1));
           if (current_char_position == std::string::npos or char1_position == std::string::npos) {
             return false;
           }
@@ -178,15 +184,15 @@ std::string base64_decode(std::string_view encoded_string)
           // increment the index by 1
           idx += 1;
           // check for = padding
-          if (encoded_string[idx] == '=') { return true; }
+          if (char_at(idx) == '=') { return true; }
 
           // increment the index by 1
           idx += 1;
           // check for = padding
-          if (encoded_string[idx] == '=') { return true; }
+          if (char_at(idx) == '=') { return true; }
 
-          char1_position = base64_chars.find(encoded_string[idx - 1]);
-          char2_position = base64_chars.find(encoded_string[idx]);
+          char1_position = base64_chars.find(char_at(idx - 1));
+          char2_position = base64_chars.find(char_at(idx));
           if (char1_position == std::string::npos or char2_position == std::string::npos) {
             return false;
           }
@@ -198,10 +204,10 @@ std::string base64_decode(std::string_view encoded_string)
           // increment the index by 1
           idx += 1;
           // check for = padding
-          if (encoded_string[idx] == '=') { return true; }
+          if (char_at(idx) == '=') { return true; }
 
-          char2_position        = base64_chars.find(encoded_string[idx - 1]);
-          current_char_position = base64_chars.find(encoded_string[idx]);
+          char2_position        = base64_chars.find(char_at(idx - 1));
+          current_char_position = base64_chars.find(char_at(idx));
           if (current_char_position == std::string::npos or char2_position == std::string::npos) {
             return false;
           }

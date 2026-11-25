@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [plain-reference, plain-01, plain-02, plain-03, plain-04, plain-05, plain-06, plain-07, plain-08, plain-09, plain-10, plain-11, plain-12]
+        trial: [plain-01, plain-02, plain-03, plain-04, plain-05, plain-06, plain-07, plain-08, plain-09, plain-10, plain-11, plain-12]
     permissions:
       actions: read
       contents: read
@@ -44,7 +44,7 @@ jobs:
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: arm64-polars-preflight-${{ matrix.trial }}
+          name: arm64-polars-preflight-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/arm64-polars/gpus.csv
             artifacts/arm64-polars/gpu-health-before.txt
@@ -81,6 +81,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: arm64-polars-${{ matrix.trial }}
+          name: arm64-polars-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
           path: artifacts/arm64-polars/
           if-no-files-found: warn

@@ -258,7 +258,7 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
  * Offsets every column reference by `offset` to account for the prepended columns, and replaces
  * `IS_NULL` on the `k`-th distinct nested column with a reference to column `num_columns + k`,
  * where `num_columns` is the number of input columns. The caller must append `is_null` of each
- * column in `null_check_cols`, in order, to the input columns.
+ * input column whose index `get_converted_expr()` returns, in order, to the input columns.
  */
 class row_filter_expression_converter : public ast::detail::expression_transformer {
  public:

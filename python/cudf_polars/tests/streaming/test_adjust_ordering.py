@@ -107,12 +107,13 @@ def _frame(values: list[int]) -> pl.DataFrame:
     )
 
 
-def _chunk_to_polars(chunk: TableChunk) -> pl.DataFrame:
+def _chunk_to_polars(context: Context, chunk: TableChunk) -> pl.DataFrame:
+    available = chunk.make_available_and_spill(context.br(), allow_overbooking=True)
     return DataFrame.from_table(
-        chunk.table_view(),
+        available.table_view(),
         _NAMES,
         _DTYPES,
-        chunk.stream,
+        available.stream,
     ).to_polars()
 
 
@@ -153,7 +154,7 @@ async def _adjust_and_collect(
     async def _consume() -> None:
         while (msg := await ch_out.recv(context)) is not None:
             output[msg.sequence_number] = _chunk_to_polars(
-                TableChunk.from_message(msg, br=context.br())
+                context, TableChunk.from_message(msg, br=context.br())
             )
 
     with ThreadPoolExecutor(max_workers=1) as executor:

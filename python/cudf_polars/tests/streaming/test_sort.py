@@ -278,7 +278,9 @@ def _chunk_sequences_and_data(
     rows = []
     for msg in result.chunks:
         sequence_numbers.append(msg.sequence_number)
-        chunk = TableChunk.from_message(msg, br=context.br())
+        chunk = TableChunk.from_message(msg, br=context.br()).make_available_and_spill(
+            context.br(), allow_overbooking=True
+        )
         df = DataFrame.from_table(
             chunk.table_view(),
             names,

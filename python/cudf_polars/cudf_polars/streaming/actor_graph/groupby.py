@@ -72,6 +72,7 @@ from cudf_polars.streaming.utils import partition_range
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -199,7 +200,7 @@ async def _local_aggregation(
     target_partition_size: int,
     *,
     allow_early_exit: bool = True,
-) -> tuple[TableChunk, bool, int]:
+) -> tuple[AvailableTableChunk, bool, int]:
     """
     Local groupby or distinct aggregation.
 
@@ -231,7 +232,7 @@ async def _local_aggregation(
     total_size = 0
     chunks_received = 0
     input_drained = False
-    evaluated_chunks: list[TableChunk] = []
+    evaluated_chunks: list[AvailableTableChunk] = []
     while True:
         msg = await ch_in.recv(context)
         if msg is None:
@@ -262,7 +263,7 @@ async def _local_aggregation(
         if total_size > target_partition_size and allow_early_exit:
             break
 
-    aggregated: TableChunk
+    aggregated: AvailableTableChunk
     if len(evaluated_chunks) > 1:
         aggregated = await evaluate_batch(
             evaluated_chunks,
@@ -292,7 +293,7 @@ async def _tree_reduce(
     collective_id: int,
     *,
     local: bool,
-    aggregated: TableChunk,
+    aggregated: AvailableTableChunk,
     tracer: ActorTracer | None = None,
 ) -> None:
     """
@@ -362,7 +363,7 @@ async def _shuffle_reduce(
     target_partition_size: int,
     *,
     local: bool,
-    aggregated: TableChunk,
+    aggregated: AvailableTableChunk,
     input_drained: bool = False,
     tracer: ActorTracer | None = None,
 ) -> None:
@@ -472,7 +473,7 @@ async def _shuffle_reduce(
 
 
 def _key_run_split(
-    chunk: TableChunk, keys: tuple[OrderKey, ...], *, leading: bool
+    chunk: AvailableTableChunk, keys: tuple[OrderKey, ...], *, leading: bool
 ) -> int:
     """Find the split after the first or before the last key run."""
     table = chunk.table_view()
@@ -761,7 +762,7 @@ class _OrderedGroupBy:
             return keys
         return best
 
-    async def run(self, initial: TableChunk, *, input_drained: bool) -> None:
+    async def run(self, initial: AvailableTableChunk, *, input_drained: bool) -> None:
         """Prepare rank ownership and metadata, then stream the reduction."""
         initial = _enforce_schema(
             initial, self.decomposed.reduction_ir.schema, self.context.br()
@@ -842,7 +843,7 @@ class _OrderedGroupBy:
         gathered: plc.Table,
         keys: tuple[OrderKey, ...],
         stream: Stream,
-        boundaries: TableChunk | None,
+        boundaries: AvailableTableChunk | None,
         ir_context: IRExecutionContext,
     ) -> dict[int, int]:
         """Route leading runs using gathered keys and optional rank boundaries."""
@@ -887,7 +888,7 @@ class _OrderedGroupBy:
 
     async def _first_key_routes(
         self, initial: TableChunk
-    ) -> tuple[dict[int, int], TableChunk]:
+    ) -> tuple[dict[int, int], AvailableTableChunk]:
         """Find the lower owner of each rank's leading prefix run."""
         stream = self.ir_context.get_cuda_stream()
         chunk, extra = await make_table_chunks_available_or_wait(
@@ -953,7 +954,9 @@ class _OrderedGroupBy:
             )
         return routes, chunk
 
-    async def _sort(self, chunk: TableChunk, sort_ir: Sort | None) -> TableChunk:
+    async def _sort[ChunkT: TableChunk](
+        self, chunk: ChunkT, sort_ir: Sort | None
+    ) -> ChunkT | AvailableTableChunk:
         return (
             await evaluate_chunk(
                 self.context, chunk, sort_ir, ir_context=self.ir_context
@@ -1077,10 +1080,10 @@ class _OrderedGroupBy:
 
 
 def _enforce_schema(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     canonical_schema: dict[str, Any],
     br: BufferResource,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """Enforce the canonical schema of a TableChunk."""
     tbl = chunk.table_view()
     cols = tbl.columns()

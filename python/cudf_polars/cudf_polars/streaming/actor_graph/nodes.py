@@ -231,13 +231,13 @@ async def default_node_multi(
             chunks = [chunk for chunk in ready_chunks if chunk is not None]
             assert len(chunks) == n_children
             # Ensure all table chunks are unspilled and available.
-            chunks, extra = await make_table_chunks_available_or_wait(
+            available, extra = await make_table_chunks_available_or_wait(
                 context,
                 chunks,
                 reserve_extra=sum(chunk.data_alloc_size() for chunk in chunks),
                 net_memory_delta=0,
             )
-            ready_chunks[:] = chunks
+            ready_chunks[:] = available
             dfs = [
                 chunk_to_frame(
                     chunk,
@@ -245,13 +245,13 @@ async def default_node_multi(
                     ordering_metadata=child_ordering_metadata,
                 )
                 for chunk, child, child_ordering_metadata in zip(
-                    chunks,
+                    available,
                     ir.children,
                     child_ordering_metadatas,
                     strict=True,
                 )
             ]
-            del chunks
+            del chunks, available
             with opaque_memory_usage(extra):
                 df = await ir_context.to_thread(
                     evaluate_ir, ir, *dfs, context=ir_context

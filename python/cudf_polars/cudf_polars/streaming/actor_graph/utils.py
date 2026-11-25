@@ -14,7 +14,7 @@ from collections import deque
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import pylibcudf as plc
 import rmm.mr
@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     import cudf_polars_quent as _quent
 
     from cudf_streaming import CardinalityEstimator
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -435,13 +436,13 @@ def _make_hash_shuffle_metadata(
 
 
 def _evaluate_chunk_sync(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: IR,
     ir_context: IRExecutionContext,
     br: BufferResource,
     *,
     ordering_metadata: OrderingMetadata | None = None,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
 
@@ -480,7 +481,7 @@ async def evaluate_chunk(
     ir_context: IRExecutionContext,
     ordering_metadata: OrderingMetadata | None = None,
     already_available: bool = False,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
 
@@ -528,6 +529,7 @@ async def evaluate_chunk(
     overbooked = 0
     if already_available and not chunk.is_available():
         raise ValueError("already_available=True requires an available TableChunk")
+    available: AvailableTableChunk
     if on_oom:
         size = chunk.data_alloc_size()
         if not already_available:
@@ -535,14 +537,18 @@ async def evaluate_chunk(
         reservation, overbooked = await context.memory(
             MemoryType.DEVICE
         ).reserve_or_wait_or_overbook(size, net_memory_delta=0)
-        if not already_available:
-            chunk = chunk.make_available(reservation)
+        available = (
+            cast("AvailableTableChunk", chunk)
+            if already_available
+            else chunk.make_available(reservation)
+        )
     elif already_available:
+        available = cast("AvailableTableChunk", chunk)
         reservation = await reserve_memory(
-            context, size=chunk.data_alloc_size(), net_memory_delta=0
+            context, size=available.data_alloc_size(), net_memory_delta=0
         )
     else:
-        chunk, reservation = await make_table_chunks_available_or_wait(
+        available, reservation = await make_table_chunks_available_or_wait(
             context,
             chunk,
             reserve_extra=chunk.data_alloc_size(),
@@ -557,16 +563,16 @@ async def evaluate_chunk(
         )
     with opaque_memory_usage(reservation):
         for single_ir in irs:
-            chunk = await ir_context.to_thread(
+            available = await ir_context.to_thread(
                 _evaluate_chunk_sync,
-                chunk,
+                available,
                 single_ir,
                 ir_context,
                 context.br(),
                 ordering_metadata=ordering_metadata,
             )
             ordering_metadata = None
-        return chunk
+        return available
 
 
 async def allgather_and_reduce(
@@ -576,7 +582,7 @@ async def allgather_and_reduce(
     local_chunk: TableChunk,
     reduce_ir: IR,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     AllGather ``local_chunk`` across ranks and apply ``reduce_ir`` to the result.
 
@@ -616,11 +622,11 @@ async def allgather_and_reduce(
 
 
 async def concat_batch(
-    batch: list[TableChunk],
+    batch: Sequence[TableChunk],
     context: Context,
     schema: Schema,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Concatenate a list of table chunks.
 
@@ -641,11 +647,11 @@ async def concat_batch(
     """
     if len(batch) == 1:
         (chunk,) = batch
-        chunk, _ = await make_table_chunks_available_or_wait(
+        available, _ = await make_table_chunks_available_or_wait(
             context, chunk, reserve_extra=0, net_memory_delta=0
         )
-        return chunk
-    batch, extra = await make_table_chunks_available_or_wait(
+        return available
+    available_batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
         reserve_extra=sum(c.data_alloc_size() for c in batch),
@@ -661,7 +667,7 @@ async def concat_batch(
                     list(schema.values()),
                     c.stream,
                 )
-                for c in batch
+                for c in available_batch
             ],
             context=ir_context,
         )
@@ -671,11 +677,11 @@ async def concat_batch(
 
 
 async def evaluate_batch(
-    batch: list[TableChunk],
+    batch: Sequence[TableChunk],
     context: Context,
     *irs: IR,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Concatenate a list of table chunks and evaluate the result.
 
@@ -1194,7 +1200,7 @@ def process_children(
     return nodes, channels
 
 
-def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
+def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> AvailableTableChunk:
     """
     Make an empty table chunk.
 
@@ -1253,7 +1259,7 @@ def _apply_ordering_metadata(
 
 
 def chunk_to_frame(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: IR,
     *,
     ordering_metadata: OrderingMetadata | None = None,

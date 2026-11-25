@@ -30,11 +30,13 @@ from typing import TYPE_CHECKING, assert_type
 import pylibcudf as plc
 
 if TYPE_CHECKING:
-    from cudf_streaming.table_chunk import TableChunk
+    from cudf_streaming.table_chunk import AvailableTableChunk, TableChunk
 
 
-def _check_table_chunk(chunk: TableChunk) -> None:
-    assert_type(chunk.table_view(), plc.Table)
+def _check_table_chunk(chunk: TableChunk, available: AvailableTableChunk) -> None:
     assert_type(chunk.is_available(), bool)
     assert_type(chunk.shape, tuple[int, int])
     chunk.no_such_method()  # type: ignore[attr-defined]
+    assert_type(available.table_view(), plc.Table)
+    # A chunk that may be spilled has no ``table_view``.
+    chunk.table_view()  # type: ignore[attr-defined]

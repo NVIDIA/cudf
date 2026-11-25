@@ -36,6 +36,7 @@ from cudf_polars.utils.cuda_stream import join_cuda_streams
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
 
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from pylibcudf.utils import CudaStreamLike
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
@@ -77,7 +78,7 @@ class RangeValidation(IntEnum):
 class BufferedChunk:
     """An available chunk with its span in the prepared input stream."""
 
-    chunk: TableChunk
+    chunk: AvailableTableChunk
     row_start: int
     num_rows: int
 
@@ -1250,7 +1251,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     async def _range_pieces(
         self,
         policy: RangeOverlapPolicy,
-        chunk: TableChunk,
+        chunk: AvailableTableChunk,
         size: int,
         chunk_values: RangeValues,
         requests: Sequence[RangeRequest],

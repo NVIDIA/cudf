@@ -23,6 +23,7 @@ from cudf_polars.streaming.actor_graph.utils import ChunkStore
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
 
@@ -92,7 +93,7 @@ class SparseExchange:
 
     async def insert_slices(
         self,
-        chunk: TableChunk,
+        chunk: AvailableTableChunk,
         routes: Sequence[SliceRoute],
     ) -> None:
         """Insert remote row slices without consuming an available chunk."""

@@ -39,11 +39,12 @@ _frozen_colref_cases = {
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_load_initial_conftests(args):
+def pytest_load_initial_conftests(early_config, args):
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return
     if _trial.endswith(("-frozen-shuffle", "-dask-datetime")):
-        # Coverage from archived tests and packages can drift independently of a crash.
+        # pytest-cov holds the early options even after pytest reparses the arguments.
+        early_config.known_args_namespace.cov_fail_under = 0
         args.append("--cov-fail-under=0")
     if _trial == "warmup-serial":
         args.append("--numprocesses=1")

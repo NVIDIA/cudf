@@ -11,9 +11,12 @@ nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$evidence/
 trial=$CUDF_POLARS_DIAGNOSTICS_TRIAL
 gpu_inventory=$(< "$evidence/gpus.csv")
 shuffle_gpu=GPU-ffa4d437-0552-ea7a-0e5d-0fe4bf4fd918
+# The paired replay can compare both conditions on any GPU with a known Dask fault.
 dask_gpus=(
     GPU-1ae60e36-999e-c6da-6055-0ad23bd269d2
     GPU-72a129d8-0178-3e41-9997-3c8f9c9b46ae
+    GPU-3f28f3e0-a495-7627-a7a7-5ca0298669fe
+    GPU-bb45021e-c845-0adf-d508-f0a6a6995a1f
     "$shuffle_gpu"
 )
 if [[ "$trial" == probe-* ]]; then

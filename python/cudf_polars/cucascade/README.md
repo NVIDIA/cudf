@@ -67,7 +67,8 @@ own cache, and that has not been measured.
 pytest python/cudf_polars/cucascade/tests
 ```
 
-The tests need a GPU (the cache is pinned host memory) and no network.
+The tests need a GPU (the cache is pinned host memory) and no network. The read test runs a local
+S3 server with `moto` and is skipped without it; the engine tests need `ray` and `distributed`.
 
 ## Layout
 

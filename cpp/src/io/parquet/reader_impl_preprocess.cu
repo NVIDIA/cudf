@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "error.hpp"
 #include "io/comp/common.hpp"
+#include "io/utilities/kernel_error.hpp"
 #include "page_decode.cuh"
 #include "reader_impl.hpp"
 #include "reader_impl_chunking_utils.cuh"

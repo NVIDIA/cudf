@@ -26,6 +26,9 @@ from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from rapidsmpf.memory.memory_reservation import MemoryReservation
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
 
@@ -481,6 +484,56 @@ def test_into_packed_data(
     result_chunk = TableChunk.from_packed_data(result, br=context.br())
     assert result_chunk.is_available()
     assert_eq(expect, result_chunk.table_view())
+
+
+def test_release_frees_owned_data(context: Context, stream: Stream) -> None:
+    br = context.br()
+    column = plc.Column.from_array(cupy.arange(256, dtype=cupy.int32))
+    table = plc.Table([column.copy(stream=stream, mr=br.device_mr)])
+    del column
+    chunk = TableChunk.from_pylibcudf_table(
+        table, stream, exclusive_view=True, br=br
+    )
+    del table
+    adaptor = br.device_mr_adaptor()
+    assert adaptor.current_allocated == 1024
+    chunk.release()
+    assert adaptor.current_allocated == 0
+
+
+def test_release_keeps_shared_data(context: Context, stream: Stream) -> None:
+    table = random_table(1024)
+    expect = plc.Table([c.copy(stream=stream) for c in table.columns()])
+    chunk = TableChunk.from_pylibcudf_table(
+        table, stream, exclusive_view=True, br=context.br()
+    )
+    chunk.release()
+    # The table is still referenced here, so its data stays alive.
+    assert_eq(expect, table)
+
+
+@pytest.mark.parametrize(
+    "use",
+    [
+        lambda chunk, res: chunk.table_view(),
+        lambda chunk, res: chunk.release(),
+        lambda chunk, res: chunk.shape,
+        lambda chunk, res: chunk.copy(res),
+    ],
+    ids=["table_view", "release", "shape", "copy"],
+)
+def test_use_after_release_raises(
+    context: Context,
+    stream: Stream,
+    use: Callable[[TableChunk, MemoryReservation], object],
+) -> None:
+    chunk = TableChunk.from_pylibcudf_table(
+        random_table(1024), stream, exclusive_view=True, br=context.br()
+    )
+    chunk.release()
+    res, _ = context.br().reserve(MemoryType.DEVICE, 0, allow_overbooking=True)
+    with pytest.raises(ValueError, match="released"):
+        use(chunk, res)
 
 
 @pytest.mark.parametrize("chunk_location", ["device", "host"])

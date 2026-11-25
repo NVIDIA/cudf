@@ -492,6 +492,29 @@ cdef class TableChunk:
             ret = deref(handle).table_view()
         return Table.from_table_view_of_arbitrary(ret, owner=self, stream=self.stream)
 
+    def release(self):
+        """
+        Release the table chunk and the data it owns.
+
+        Device memory the chunk owns is freed. Data the chunk shares with other
+        owners, such as a pylibcudf Table that is still referenced, stays alive.
+
+        Raises
+        ------
+        ValueError
+            If the table chunk has already been released.
+
+        Warnings
+        --------
+        The table chunk and any table returned by :meth:`table_view` must not be
+        used after this call. Methods of a released table chunk raise
+        ``ValueError``, but a table returned by :meth:`table_view` before the
+        release refers to freed memory.
+        """
+        cdef unique_ptr[cpp_TableChunk] handle = self.release_handle()
+        with nogil:
+            handle.reset()
+
     def is_spillable(self):
         """
         Indicates whether this chunk can be spilled.
@@ -532,6 +555,7 @@ cdef class TableChunk:
         """
         cdef unique_ptr[cpp_TableChunk] ret
         cdef cpp_MemoryReservation* res = reservation._handle.get()
+        self.handle_ptr()  # Raises if the chunk has been released.
         with nogil:
             ret = cpp_table_copy(self._handle, res)
         return TableChunk.from_handle(move(ret), self._br)
@@ -596,7 +620,7 @@ cdef class TableChunk:
         -------
         Tuple of shape ``(num_rows, num_columns)```.
         """
-        return deref(self._handle).shape()
+        return deref(self.handle_ptr()).shape()
 
 
 async def make_table_chunks_available_or_wait(

@@ -8,6 +8,7 @@ handle SIGSEGV stop print pass
 catch signal SIGSEGV
 commands
   silent
+  shell date -u +%Y-%m-%dT%H:%M:%S.%NZ
   printf "\nCUDF_NATIVE_SIGSEGV\n"
   p $_siginfo
   info symbol $pc

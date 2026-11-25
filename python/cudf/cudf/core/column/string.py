@@ -34,7 +34,6 @@ from cudf.core.mixins import Scannable
 from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
     cudf_dtype_to_pa_type,
-    dtype_from_pylibcudf_column,
     dtype_to_pylibcudf_type,
     get_dtype_of_same_kind,
     is_pandas_nullable_extension_dtype,
@@ -440,6 +439,23 @@ class StringColumn(ColumnBase, Scannable):
                 )
             return cast("Self", ColumnBase.create(self.plc_column, dtype))
         return self
+
+    def fillna(
+        self,
+        fill_value: ScalarLike | ColumnLike,
+        method: plc.replace.ReplacePolicy | None = None,
+    ) -> Self:
+        if (
+            cudf.get_option("mode.pandas_compatible")
+            and method is None
+            and fill_value is pd.NA
+            and self.dtype == np.dtype("object")
+            and self.has_nulls()
+        ):
+            raise NotImplementedError(
+                "Object string columns cannot represent an explicit pd.NA fill"
+            )
+        return super().fillna(fill_value, method)
 
     def _process_values_for_isin(
         self, values: Sequence | ColumnBase
@@ -1213,9 +1229,7 @@ class StringColumn(ColumnBase, Scannable):
                 ),
                 maxsplit,
             )
-            result_dtype = get_dtype_of_same_kind(
-                self.dtype, cudf.ListDtype(self.dtype)
-            )
+            result_dtype = self._list_result_dtype()
             return cast(
                 "Self",
                 ColumnBase.create(plc_column, result_dtype),
@@ -1281,9 +1295,7 @@ class StringColumn(ColumnBase, Scannable):
                 delimiter,
                 maxsplit,
             )
-            result_dtype = get_dtype_of_same_kind(
-                self.dtype, cudf.ListDtype(self.dtype)
-            )
+            result_dtype = self._list_result_dtype()
             return cast(
                 "Self",
                 ColumnBase.create(plc_column, result_dtype),
@@ -1292,6 +1304,15 @@ class StringColumn(ColumnBase, Scannable):
     def split_record(self, delimiter: plc.Scalar, maxsplit: int) -> Self:
         return self._split_record(
             delimiter, maxsplit, plc.strings.split.split.split_record
+        )
+
+    def _list_result_dtype(self) -> DtypeObj:
+        # pandas StringDtype returns object arrays of Python lists even when
+        # the input strings use Arrow storage. Explicit ArrowDtype is different.
+        return (
+            cudf.ListDtype(self.dtype, _pandas_string_result=True)
+            if isinstance(self.dtype, pd.StringDtype)
+            else get_dtype_of_same_kind(self.dtype, cudf.ListDtype(self.dtype))
         )
 
     def rsplit_record(self, delimiter: plc.Scalar, maxsplit: int) -> Self:
@@ -1831,23 +1852,18 @@ class StringColumn(ColumnBase, Scannable):
         # - plc.strings.findall.findall -> LIST<STRING>
         # - plc.strings.findall.find_re -> INT32
         with self.access(mode="read", scope="internal"):
-            if len(self) == 0:
-                return cast(
-                    "Self",
-                    column_empty(0, dtype=self.dtype),
-                )
             plc_result = method(
                 self.plc_column,
                 plc.strings.regex_program.RegexProgram.create(
                     pat, plc_flags_from_re_flags(flags)
                 ),
             )
-            res = ColumnBase.create(
-                plc_result,
-                get_dtype_of_same_kind(
-                    self.dtype, dtype_from_pylibcudf_column(plc_result)
-                ),
+            dtype = (
+                self._list_result_dtype()
+                if method is plc.strings.findall.findall
+                else get_dtype_of_same_kind(self.dtype, np.dtype("int32"))
             )
+            res = ColumnBase.create(plc_result, dtype)
             return cast("Self", res)
 
     def find_multiple(self, patterns: Self) -> Self:

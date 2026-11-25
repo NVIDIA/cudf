@@ -420,8 +420,11 @@ class ListDtype(_BaseDtype):
 
     name: str = "list"
 
-    def __init__(self, element_type: Dtype) -> None:
+    def __init__(
+        self, element_type: Dtype, *, _pandas_string_result: bool = False
+    ) -> None:
         self._element_type = cudf.dtype(element_type)
+        self._pandas_string_result = _pandas_string_result
 
     @cached_property
     def element_type(self) -> DtypeObj:
@@ -537,7 +540,7 @@ class ListDtype(_BaseDtype):
         return hash(self.to_arrow())
 
     def serialize(self) -> tuple[dict, list]:
-        header: dict[str, Dtype] = {}
+        header: dict[str, Any] = {}
 
         frames = []
 
@@ -548,6 +551,13 @@ class ListDtype(_BaseDtype):
         else:
             header["element-type"] = getattr(
                 self.element_type, "name", self.element_type
+            )
+        if self._pandas_string_result and isinstance(
+            self.element_type, pd.StringDtype
+        ):
+            header["pandas-string-result"] = (
+                self.element_type.storage,
+                self.element_type.na_value is pd.NA,
             )
         header["frame_count"] = len(frames)
         return header, frames
@@ -561,6 +571,12 @@ class ListDtype(_BaseDtype):
             )
         else:
             element_type = header["element-type"]
+        if "pandas-string-result" in header:
+            storage, nullable = header["pandas-string-result"]
+            element_type = pd.StringDtype(
+                storage=storage, na_value=pd.NA if nullable else np.nan
+            )
+            return cls(element_type=element_type, _pandas_string_result=True)
         return cls(element_type=element_type)
 
     @cached_property

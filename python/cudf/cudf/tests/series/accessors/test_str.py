@@ -99,6 +99,43 @@ def test_string_predicate_extension_dtype(dtype, method, args, data):
 
 
 @pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize("na_value", [np.nan, pd.NA])
+@pytest.mark.parametrize(
+    "method, args", [("split", ()), ("findall", (r"\w+",))]
+)
+def test_string_list_result_pandas_conversion(storage, na_value, method, args):
+    ps = pd.Series(
+        ["first second", None, ""],
+        dtype=pd.StringDtype(storage=storage, na_value=na_value),
+    )
+    expected = getattr(ps.str, method)(*args)
+    result = getattr(cudf.from_pandas(ps).str, method)(*args)
+    assert_eq(result.to_pandas(), expected)
+    assert result.to_pandas().iloc[1] is na_value
+
+    header, frames = result.device_serialize()
+    restored = cudf.Series.device_deserialize(header, frames)
+    assert_eq(restored.to_pandas(), expected)
+    assert restored.to_pandas().iloc[1] is na_value
+
+
+def test_arrow_string_regex_replacement_backreferences():
+    ps = pd.Series(["ab", "ab ab", None], dtype="string[pyarrow]")
+    args = (r"(a)(b)", r"\20")
+    expected = ps.str.replace(*args, regex=True)
+    result = cudf.from_pandas(ps).str.replace(*args, regex=True)
+    assert_eq(result.to_pandas(), expected)
+
+
+def test_arrow_string_unicode_isdigit():
+    ps = pd.Series(
+        ["¼", "፸", "Ⅷ", "٣", "³٣", "\U00011de0", "", "3\n", None],
+        dtype="string[pyarrow]",
+    )
+    assert_eq(cudf.from_pandas(ps).str.isdigit(), ps.str.isdigit())
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
 @pytest.mark.parametrize(
     "method,args",
     [

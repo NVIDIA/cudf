@@ -26,6 +26,7 @@ import cudf
     ],
 )
 @pytest.mark.parametrize("method", ["first_valid_index", "last_valid_index"])
-def test_series_first_last_valid_index(psr, method):
-    gsr = cudf.from_pandas(psr)
+@pytest.mark.parametrize("nan_as_null", [True, False])
+def test_series_first_last_valid_index(psr, method, nan_as_null):
+    gsr = cudf.from_pandas(psr, nan_as_null=nan_as_null)
     assert getattr(gsr, method)() == getattr(psr, method)()

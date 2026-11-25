@@ -141,6 +141,28 @@ def test_layout_covers_every_column_chunk(parquet_info):
     assert offsets == sorted(offsets)
 
 
+def test_layout_covers_every_leaf_of_nested_columns(tmp_path):
+    path = tmp_path / "nested.parquet"
+    pl.DataFrame(
+        {
+            "a": range(1000),
+            "s": [{"x": i, "y": str(i)} for i in range(1000)],
+            "l": [[i, i] for i in range(1000)],
+        }
+    ).write_parquet(path, row_group_size=250)
+    (file_metadata,) = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.types.SourceInfo([str(path)])
+    )
+    info = types.SimpleNamespace(
+        path=str(path), size=path.stat().st_size, file_metadata=file_metadata
+    )
+    columns, col_index, offsets, sizes = cucascade._layout(info)
+    assert columns == ["a", "s.x", "s.y", "l.list.element"]
+    assert col_index == [0, 1, 2, 3] * 4
+    assert all(size > 0 for size in sizes)
+    assert max(o + s for o, s in zip(offsets, sizes, strict=True)) <= info.size
+
+
 def test_register_layouts_registers_each_file_once(glue, parquet_info):
     cucascade.register_layouts([parquet_info, parquet_info])
     assert list(glue.layouts) == [parquet_info.path]

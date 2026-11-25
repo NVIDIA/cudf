@@ -176,8 +176,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
     Tell the cache where each column chunk of the given files lives.
 
     The cache uses the layout to rank columns by how often queries read them and
-    to admit only the hot ones. A file whose layout cannot be computed is read
-    without column-aware admission.
+    to admit only the hot ones.
 
     Parameters
     ----------
@@ -194,10 +193,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
             if path in _registered:
                 continue
             _registered.add(path)
-        try:
-            columns, col_index, offsets, sizes = _layout(info)
-        except Exception:
-            continue
+        columns, col_index, offsets, sizes = _layout(info)
         _cache.register_layout(
             path, path.rsplit("/", 1)[0], columns, col_index, offsets, sizes
         )
@@ -224,12 +220,9 @@ def register_layouts_from_sources(paths: Sequence[str], sources: Sequence[Any]) 
         ]
     if not todo:
         return
-    try:
-        footers = plc.io.parquet_metadata.read_parquet_footers(
-            plc.io.types.SourceInfo([s for _, s in todo])
-        )
-    except Exception:
-        return
+    footers = plc.io.parquet_metadata.read_parquet_footers(
+        plc.io.types.SourceInfo([s for _, s in todo])
+    )
     register_layouts(
         [
             types.SimpleNamespace(path=str(p), size=s.nbytes(), file_metadata=fm)

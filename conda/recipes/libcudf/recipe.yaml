@@ -37,11 +37,6 @@ outputs:
           cudf_ROOT="$(realpath ./cpp/build)"
           export cudf_ROOT
 
-          cmake_args=
-          for arg in $CMAKE_ARGS; do
-            cmake_args="$cmake_args \"$arg\""
-          done
-
           test_targets=()
           if [[ "$BUILD_CPP_TESTS" == true ]]; then
             test_targets=(benchmarks tests)
@@ -50,7 +45,7 @@ outputs:
           ./build.sh -n -v \
               libcudf libcudf_kafka libcudf_streaming "${test_targets[@]}" \
               --build_metrics --incl_cache_stats --allgpuarch \
-              --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON\" \"-DCUDF_DOWNLOAD_ZSTD=OFF\" $cmake_args"
+              --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON -DCUDF_DOWNLOAD_ZSTD=OFF ${CMAKE_ARGS:-}\""
         secrets:
           - AWS_ACCESS_KEY_ID
           - AWS_SECRET_ACCESS_KEY
@@ -116,9 +111,11 @@ outputs:
         - rapids-logger =0.3
         - zlib ${{ zlib_version }}
         - zstd-static =1.5.7
+        - xxhash =0.8.3
       ignore_run_exports:
         by_name:
           - zstd
+          - xxhash
 
   - package:
       name: libcudf
@@ -335,6 +332,7 @@ outputs:
         - cuda-nvrtc-dev
         - libnvjitlink-dev
         - zstd-static =1.5.7
+        - xxhash =0.8.3
       run:
         - librmm =${{ minor_version }}
         - rapids-logger =0.3
@@ -355,6 +353,7 @@ outputs:
           - librdkafka
           - librmm
           - zstd
+          - xxhash
           - libzlib
           - libnvcomp
     about:

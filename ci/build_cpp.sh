@@ -9,11 +9,6 @@ source rapids-datetime-string
 
 export CMAKE_GENERATOR=Ninja
 
-# The PR devcontainer compiles core benchmarks, so omit their Conda package here.
-if [[ ${RAPIDS_BUILD_TYPE:-} == pull-request ]]; then
-    export BUILD_CPP_BENCHMARKS=false
-fi
-
 rapids-print-env
 
 rapids-logger "Begin cpp build"

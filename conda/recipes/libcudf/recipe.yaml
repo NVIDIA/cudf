@@ -10,7 +10,7 @@ context:
   datetime_string: ${{ env.get("RAPIDS_DATETIME_STRING") }}
   head_rev: ${{ git.head_rev(".")[:8] }}
   build_cpp_tests: ${{ env.get("BUILD_CPP_TESTS", default="true") == "true" }}
-  build_cpp_benchmarks: ${{ build_cpp_tests and env.get("BUILD_CPP_BENCHMARKS", default="true") == "true" }}
+  package_cpp_benchmarks: ${{ build_cpp_tests and env.get("RAPIDS_BUILD_TYPE", default="branch") != "pull-request" }}
 
 recipe:
   name: libcudf-split
@@ -45,11 +45,7 @@ outputs:
 
           test_targets=()
           if [[ "$BUILD_CPP_TESTS" == true ]]; then
-            # Conda PR builds provide MPI/UCXX benchmark coverage for libcudf_streaming.
-            test_targets+=(tests libcudf_streaming_benchmarks)
-          fi
-          if [[ "$BUILD_CPP_BENCHMARKS" == true ]]; then
-            test_targets+=(benchmarks)
+            test_targets=(benchmarks tests)
           fi
 
           ./build.sh -n -v \
@@ -63,7 +59,6 @@ outputs:
           - SCCACHE_DIST_AUTH_TOKEN
         env:
           BUILD_CPP_TESTS: ${{ env.get("BUILD_CPP_TESTS", default="true") }}
-          BUILD_CPP_BENCHMARKS: ${{ "true" if build_cpp_benchmarks else "false" }}
           CMAKE_C_COMPILER_LAUNCHER: ${{ env.get("CMAKE_C_COMPILER_LAUNCHER") }}
           CMAKE_CUDA_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CUDA_COMPILER_LAUNCHER") }}
           CMAKE_CXX_COMPILER_LAUNCHER: ${{ env.get("CMAKE_CXX_COMPILER_LAUNCHER") }}
@@ -422,7 +417,7 @@ outputs:
       version: ${{ version }}
     inherit: libcudf-build
     build:
-      skip: not build_cpp_benchmarks
+      skip: not package_cpp_benchmarks
       script: cmake --install cpp/build --component benchmarking
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:

@@ -48,8 +48,8 @@ enum class replace_policy : bool { PRECEDING, FOLLOWING };
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   column_view const& replacement,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces all null values in a column with a scalar.
@@ -67,8 +67,8 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   scalar const& replacement,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces all null values in a column with the first non-null value that precedes/follows.
@@ -86,8 +86,8 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nulls(
   column_view const& input,
   replace_policy const& replace_policy,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces all NaN values in a column with corresponding values from another column
@@ -114,8 +114,8 @@ std::unique_ptr<column> replace_nulls(
 std::unique_ptr<column> replace_nans(
   column_view const& input,
   column_view const& replacement,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces all NaN values in a column with a scalar
@@ -141,8 +141,8 @@ std::unique_ptr<column> replace_nans(
 std::unique_ptr<column> replace_nans(
   column_view const& input,
   scalar const& replacement,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Return a copy of `input_col` replacing any `values_to_replace[i]`
@@ -160,8 +160,8 @@ std::unique_ptr<column> find_and_replace_all(
   column_view const& input_col,
   column_view const& values_to_replace,
   column_view const& replacement_values,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces values less than `lo` in `input` with `lo_replace`,
@@ -209,14 +209,13 @@ std::unique_ptr<column> find_and_replace_all(
  *
  * @return Returns a clamped column as per `lo` and `hi` boundaries
  */
-std::unique_ptr<column> clamp(
-  column_view const& input,
-  scalar const& lo,
-  scalar const& lo_replace,
-  scalar const& hi,
-  scalar const& hi_replace,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> clamp(column_view const& input,
+                              scalar const& lo,
+                              scalar const& lo_replace,
+                              scalar const& hi,
+                              scalar const& hi_replace,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Replaces values less than `lo` in `input` with `lo`,
@@ -257,12 +256,11 @@ std::unique_ptr<column> clamp(
  *
  * @return Returns a clamped column as per `lo` and `hi` boundaries
  */
-std::unique_ptr<column> clamp(
-  column_view const& input,
-  scalar const& lo,
-  scalar const& hi,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<column> clamp(column_view const& input,
+                              scalar const& lo,
+                              scalar const& hi,
+                              cuda::stream_ref stream   = cudf::get_default_stream(),
+                              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Copies from a column of floating-point elements and replaces `-NaN` and `-0.0` with `+NaN`
@@ -281,8 +279,8 @@ std::unique_ptr<column> clamp(
  */
 std::unique_ptr<column> normalize_nans_and_zeros(
   column_view const& input,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Modifies a column of floating-point elements to replace all `-NaN` and `-0.0` with `+NaN`

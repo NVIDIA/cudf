@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <span>
@@ -30,7 +31,7 @@ namespace cudf::io::parquet::detail {
  * @brief Converts row-group column chunk statistics to device columns.
  *
  * Each output column has one row for every selected row group. The min and max columns are always
- * returned, followed by the all-null column if `has_is_null_operator` is set.
+ * returned, followed by the all-null and has-NaN columns if `with_null_and_nan_stats` is set.
  */
 struct row_group_stats_caster : public stats_caster_base {
   using result_type = std::vector<std::unique_ptr<column>>;
@@ -50,13 +51,13 @@ struct row_group_stats_caster : public stats_caster_base {
   size_type total_row_groups;
   std::vector<metadata> const& per_file_metadata;
   std::span<std::vector<size_type> const> row_group_indices;
-  bool has_is_null_operator;
+  bool with_null_and_nan_stats;
 
   template <typename T>
   result_type operator()(std::span<int const> schema_indices_per_source,
                          cudf::data_type dtype,
                          cuda::stream_ref stream,
-                         rmm::device_async_resource_ref mr) const
+                         cudf::memory_resources mr) const
   {
     CUDF_EXPECTS(row_group_indices.size() == per_file_metadata.size(),
                  "Row-group indices must match parquet metadata sources",
@@ -81,7 +82,11 @@ struct row_group_stats_caster : public stats_caster_base {
       host_column<T> min(total_row_groups, stream);
       host_column<T> max(total_row_groups, stream);
       std::optional<host_column<bool>> is_null;
-      if (has_is_null_operator) { is_null = host_column<bool>(total_row_groups, stream); }
+      std::optional<host_column<bool>> has_nan;
+      if (with_null_and_nan_stats) {
+        is_null = host_column<bool>(total_row_groups, stream);
+        has_nan = host_column<bool>(total_row_groups, stream);
+      }
 
       size_type stats_idx = 0;
       for (size_t src_idx = 0; src_idx < row_group_indices.size(); ++src_idx) {
@@ -91,14 +96,8 @@ struct row_group_stats_caster : public stats_caster_base {
                        static_cast<size_t>(mapped_schema_idx) < source_metadata.schema.size(),
                      "Mapped schema index is out of bounds",
                      std::invalid_argument);
-        // Compute timestamp scale factor for precision conversion from the mapped source schema.
-        auto const ts_scale = [&] {
-          if constexpr (cudf::is_timestamp<T>()) {
-            auto const& schema = source_metadata.schema[mapped_schema_idx];
-            return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
-          }
-          return 0;
-        }();
+        auto const [ts_scale, is_narrowing_column] =
+          compute_conversion_info<T>(source_metadata.schema[mapped_schema_idx]);
 
         for (auto const rg_idx : row_group_indices[src_idx]) {
           CUDF_EXPECTS(
@@ -115,42 +114,51 @@ struct row_group_stats_caster : public stats_caster_base {
             auto const& colchunk = *col;
             auto const& stats    = colchunk.meta_data.statistics;
             // Deprecated min/max use signed physical ordering, so only fall back
-            // when that ordering is compatible with the output type.
+            // when that ordering is compatible with the output type and defined (not INT96).
             auto const* min_value = &stats.min_value;
             auto const* max_value = &stats.max_value;
-            if constexpr (can_use_deprecated_minmax<T>()) {
+            if (can_use_deprecated_minmax<T>() and colchunk.meta_data.type != Type::INT96) {
               if (not min_value->has_value()) { min_value = &stats.min; }
               if (not max_value->has_value()) { max_value = &stats.max; }
             }
-            // translate binary data to Type then to <T>
-            min.set_index(stats_idx, *min_value, colchunk.meta_data.type, ts_scale);
-            max.set_index(stats_idx, *max_value, colchunk.meta_data.type, ts_scale);
-            // Check the nullability of this column chunk
-            if (has_is_null_operator) {
-              if (colchunk.meta_data.statistics.null_count.has_value()) {
-                auto const& null_count = colchunk.meta_data.statistics.null_count.value();
-                if (null_count == 0) {
-                  is_null->val[stats_idx] = false;
-                } else if (null_count < colchunk.meta_data.num_values) {
-                  is_null->set_index(stats_idx, std::nullopt, {});
-                } else if (null_count == colchunk.meta_data.num_values) {
-                  is_null->val[stats_idx] = true;
-                } else {
-                  CUDF_FAIL("Invalid null count");
-                }
-              } else {
-                // Statistics without a null count say nothing about this chunk's nullability. The
-                // value array is allocated uninitialized and the null mask starts out all valid, so
-                // this entry has to be marked null; leaving it alone would let an uninitialized
-                // byte be read as an answer.
-                is_null->set_index(stats_idx, std::nullopt, {});
-              }
+            // INT96 min/max without INT96_TIMESTAMP_ORDER have no defined order, so ignore them,
+            // along with ones that cannot bound the converted values
+            auto const ignore_int96_min_max =
+              is_unordered_int96(source_metadata,
+                                 colchunk.meta_data.type,
+                                 std::distance(row_group.columns.begin(), col)) or
+              int96_minmax_unusable<T>(colchunk.meta_data.type, *min_value, *max_value);
+            // Inexact (truncated) min == max does not mean the column chunk is constant. Spec
+            // compliant writers never produce it, so ignore it
+            auto const ignore_inexact_min_max =
+              (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
+              min_value->has_value() and *min_value == *max_value;
+            if (ignore_int96_min_max or ignore_inexact_min_max) {
+              host_column<T>::set_min_max(
+                min, max, stats_idx, std::nullopt, std::nullopt, false, {});
+            } else {
+              // translate binary data to Type then to <T>
+              host_column<T>::set_min_max(min,
+                                          max,
+                                          stats_idx,
+                                          *min_value,
+                                          *max_value,
+                                          is_narrowing_column,
+                                          colchunk.meta_data.type,
+                                          ts_scale);
+            }
+            // Check the nullability and NaN presence of this column chunk
+            if (with_null_and_nan_stats) {
+              has_nan->set_value(stats_idx, has_nans(stats.nan_count));
+              is_null->set_all_null(stats_idx, stats.null_count, colchunk.meta_data.num_values);
             }
           } else {
             // Mark it null if the column chunk is absent from this row group.
-            min.set_index(stats_idx, std::nullopt, {});
-            max.set_index(stats_idx, std::nullopt, {});
-            if (has_is_null_operator) { is_null->set_index(stats_idx, std::nullopt, {}); }
+            host_column<T>::set_min_max(min, max, stats_idx, std::nullopt, std::nullopt, false, {});
+            if (with_null_and_nan_stats) {
+              is_null->set_value(stats_idx, std::nullopt);
+              has_nan->set_value(stats_idx, std::nullopt);
+            }
           }
           stats_idx++;
         }
@@ -159,8 +167,9 @@ struct row_group_stats_caster : public stats_caster_base {
       columns.reserve(stats_cols_per_column);
       columns.emplace_back(min.to_device(dtype, stream, mr));
       columns.emplace_back(max.to_device(dtype, stream, mr));
-      if (has_is_null_operator) {
+      if (with_null_and_nan_stats) {
         columns.emplace_back(is_null->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
+        columns.emplace_back(has_nan->to_device(data_type{cudf::type_id::BOOL8}, stream, mr));
       }
       return columns;
     }

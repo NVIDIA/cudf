@@ -13,7 +13,9 @@
 
 #include <cooperative_groups.h>
 #include <cuda/iterator>
-#include <cuda/std/algorithm>
+#include <cuda/std/algorithm.max.h>
+#include <cuda/std/algorithm.min.h>
+#include <cuda/std/algorithm.upper_bound.h>
 
 namespace cudf::detail {
 namespace {
@@ -145,14 +147,14 @@ hash_csr_retrieve(bool is_outer,
                   size_type left_index_offset,
                   std::size_t extra_capacity,
                   cuda::stream_ref stream,
-                  rmm::device_async_resource_ref mr)
+                  cudf::memory_resources mr)
 {
   CUDF_EXPECTS(offsets.size() == probe_groups.size() + 1,
                "Need one offset per probe row plus the end offset");
-  auto left_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(output_size + extra_capacity, stream, mr);
-  auto right_indices =
-    std::make_unique<rmm::device_uvector<size_type>>(output_size + extra_capacity, stream, mr);
+  auto left_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    output_size + extra_capacity, stream, mr.get_output_mr());
+  auto right_indices = std::make_unique<rmm::device_uvector<size_type>>(
+    output_size + extra_capacity, stream, mr.get_output_mr());
   left_indices->resize(output_size, stream);
   right_indices->resize(output_size, stream);
   cudf::prefetch::detail::prefetch(*left_indices, stream);

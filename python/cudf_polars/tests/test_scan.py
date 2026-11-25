@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
-import zstandard as zstd
 from werkzeug import Response
 
 import polars as pl
@@ -268,6 +269,40 @@ def test_scan_parquet_insert_missing_columns_raises(engine: pl.GPUEngine, tmp_pa
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize("tz", [None, "UTC"])
+def test_scan_parquet_timestamps_from_different_writers(
+    engine: pl.GPUEngine, tmp_path, tz
+):
+    # pyarrow also writes the deprecated converted type for UTC, polars does not
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456789)
+    pq.write_table(
+        pa.table({"t": pa.array([t], pa.timestamp("us", tz))}),
+        tmp_path / "0.parquet",
+    )
+    pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime("us", tz)}).write_parquet(
+        tmp_path / "1.parquet"
+    )
+    q = pl.scan_parquet(tmp_path / "*.parquet")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_scan_parquet_timestamp_units(engine: pl.GPUEngine, tmp_path, units):
+    # polars writes only the logical type, which differs in unit
+    t = dt.datetime(2026, 10, 1, 1, 2, 3, 456000)
+    for i, unit in enumerate(units):
+        pl.DataFrame({"t": [t]}, schema={"t": pl.Datetime(unit)}).write_parquet(
+            tmp_path / f"{i}.parquet"
+        )
+    q = pl.scan_parquet(tmp_path / "*.parquet")
+    with pytest.raises(pl.exceptions.SchemaError):
+        q.collect()
+    with pytest.RaisesGroup(
+        pytest.RaisesExc(RuntimeError, match="same schema"), allow_unwrapped=True
+    ):
+        q.collect(engine=engine)
+
+
 def test_scan_ndjson_nrows_notimplemented(engine: pl.GPUEngine, tmp_path, df):
     df = pl.DataFrame({"a": [1, 2, 3]})
 
@@ -467,6 +502,19 @@ def test_scan_ndjson_unsupported(engine: pl.GPUEngine, df, tmp_path):
     make_partitioned_source(df, tmp_path / "file", "ndjson")
     q = pl.scan_ndjson(tmp_path / "file", ignore_errors=True)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+def test_scan_parquet_empty_name_null_slice(engine: pl.GPUEngine, tmp_path):
+    path = tmp_path / "null.parquet"
+    pq.write_table(
+        pa.table({"": pa.array([None], type=pa.null())}),
+        path,
+        data_page_size=1,
+        use_dictionary=True,
+    )
+    q = pl.scan_parquet(path).slice(0, 0)
+
+    assert_gpu_result_equal(q, engine=engine)
 
 
 def test_scan_parquet_nested_null_raises(engine: pl.GPUEngine, tmp_path):
@@ -863,9 +911,8 @@ def test_scan_compressed_file_raises(
         with path.open("wb") as f:
             f.write(zlib.compress(data))
     else:
-        cctx = zstd.ZstdCompressor()
         with path.open("wb") as f:
-            f.write(cctx.compress(data))
+            f.write(pa.compress(data, codec="zstd", asbytes=True))
 
     q = scan_fn(path)
     assert_ir_translation_raises(q, engine, NotImplementedError)

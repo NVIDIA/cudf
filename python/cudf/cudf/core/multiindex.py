@@ -550,6 +550,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def __repr__(self) -> str:
         max_seq_items = pd.get_option("display.max_seq_items") or len(self)
+        indices = None
 
         if len(self) > max_seq_items:
             n = int(max_seq_items / 2) + 1
@@ -560,20 +561,46 @@ class MultiIndex(Index):
             indices = indices.append(
                 ColumnBase.from_range(range(len(self) - n, len(self), 1))
             )
-            preprocess = self.take(indices)
-        else:
-            preprocess = self
 
-        arrays = []
-        for name, col in zip(self.names, preprocess._columns, strict=True):
+        pd_levels = []
+        pd_codes = []
+        for i, col in enumerate(self._columns):
+            if self._levels is not None and self._codes is not None:
+                level = self._levels[i]
+                code = self._codes[i]
+                if indices is not None:
+                    code = code.take(indices, check_bounds=False)
+                code = code.find_and_replace(
+                    as_column(np.iinfo(SIZE_TYPE_DTYPE).min, length=1),
+                    as_column(-1, length=1),
+                )
+            else:
+                # Datetime and timedelta formatting can depend on values
+                # outside the preview. Other lazy levels only need the preview.
+                temporal = col.dtype.kind in "Mm"
+                if indices is not None and not temporal:
+                    col = col.take(indices, check_bounds=False)
+                labels, categories = col.factorize(
+                    sort=False, use_na_sentinel=True
+                )
+                level = Index._from_column(categories)
+                code = as_column(labels)
+                if indices is not None and temporal:
+                    code = code.take(indices, check_bounds=False)
+
             try:
-                pd_idx = col.to_pandas(nullable=True)
+                pd_idx = level.to_pandas(nullable=True)
             except NotImplementedError:
-                pd_idx = col.to_pandas(nullable=False)
-            pd_idx.name = name
-            arrays.append(pd_idx)
+                pd_idx = level.to_pandas(nullable=False)
+            pd_levels.append(pd_idx)
+            pd_codes.append(code.to_numpy())
 
-        preprocess_pd = pd.MultiIndex.from_arrays(arrays)
+        preprocess_pd = pd.MultiIndex(
+            levels=pd_levels,
+            codes=pd_codes,
+            names=self.names,
+            verify_integrity=False,
+        )
 
         output = repr(preprocess_pd)
         output_prefix = self.__class__.__name__ + "("
@@ -2394,7 +2421,7 @@ class MultiIndex(Index):
     @_performance_tracking
     def _new_index_for_reset_index(
         self, levels: tuple | None, name
-    ) -> None | Index:
+    ) -> Index | None:
         """Return the new index after .reset_index"""
         if levels is None:
             return None

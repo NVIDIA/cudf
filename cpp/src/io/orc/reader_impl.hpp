@@ -44,22 +44,22 @@ class reader_impl {
   explicit reader_impl(std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::io::orc::detail::chunked_reader::chunked_reader(std::size_t, std::size_t,
-   * orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * orc_reader_options const&, cuda::stream_ref, cudf::memory_resources)
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   /**
    * @copydoc cudf::io::orc::detail::chunked_reader::chunked_reader(std::size_t, std::size_t,
-   * size_type, orc_reader_options const&, cuda::stream_ref, rmm::device_async_resource_ref)
+   * size_type, orc_reader_options const&, cuda::stream_ref, cudf::memory_resources)
    */
   explicit reader_impl(std::size_t chunk_read_limit,
                        std::size_t pass_read_limit,
@@ -67,7 +67,7 @@ class reader_impl {
                        std::vector<std::unique_ptr<datasource>>&& sources,
                        orc_reader_options const& options,
                        cuda::stream_ref stream,
-                       rmm::device_async_resource_ref mr);
+                       cudf::memory_resources mr);
 
   reader_impl(reader_impl const&)            = delete;
   reader_impl& operator=(reader_impl const&) = delete;
@@ -159,13 +159,14 @@ class reader_impl {
   table_metadata get_meta_with_user_data();
 
   cuda::stream_ref const _stream;
-  rmm::device_async_resource_ref const _mr;
+  cudf::memory_resources const _mr;
 
   // Reader configs.
   struct {
-    data_type timestamp_type;  // override output timestamp resolution
-    bool use_index;            // enable or disable attempt to use row index for parsing
-    bool use_np_dtypes;        // enable or disable the conversion to numpy-compatible dtypes
+    data_type timestamp_type;         // override output timestamp resolution
+    bool use_index;                   // enable or disable attempt to use row index for parsing
+    bool convert_dates_to_proleptic;  // rebase explicitly marked hybrid DATE values
+    bool use_np_dtypes;               // enable or disable the conversion to numpy-compatible dtypes
     std::vector<std::string> decimal128_columns;  // control decimals conversion
     bool ignore_timezone_in_stripe_footer;        // ignore writer timezone in strip footer
 

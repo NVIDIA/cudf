@@ -283,6 +283,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``.
         Default: ``"warn"``.
         Category: executor.
+    rank_local_cpu_compute
+        When to evaluate operations on the CPU with Polars (``"never"``,
+        ``"on_oom"``, ``"always"``).
+        Env: ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE``.
+        Default: ``"never"``.
+        Category: executor.
     max_rows_per_partition
         Maximum rows per partition.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION``.
@@ -439,6 +445,9 @@ class StreamingOptions:
     fallback_mode: str | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__FALLBACK_MODE"
     )
+    rank_local_cpu_compute: str | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE"
+    )
     max_rows_per_partition: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION", int
     )
@@ -448,11 +457,11 @@ class StreamingOptions:
     target_partition_size: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__TARGET_PARTITION_SIZE", int
     )
-    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | None | Unspecified = (
+    dynamic_planning: dict[str, Any] | DynamicPlanningOptions | Unspecified | None = (
         _opt("executor")
     )
     join_filter_pushdown: (
-        dict[str, Any] | JoinFilterPushdownOptions | None | Unspecified
+        dict[str, Any] | JoinFilterPushdownOptions | Unspecified | None
     ) = _opt("executor")
     sink_to_directory: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__SINK_TO_DIRECTORY", parse_boolean
@@ -460,7 +469,7 @@ class StreamingOptions:
     parallel_sink_batches: bool | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__PARALLEL_SINK_BATCHES", parse_boolean
     )
-    quent_context: QuentConfig | None | Unspecified = _opt(
+    quent_context: QuentConfig | Unspecified | None = _opt(
         "executor",
     )
 
@@ -861,6 +870,16 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Behavior when a query node cannot run on the GPU.
                 Env: CUDF_POLARS__EXECUTOR__FALLBACK_MODE. Built-in default: warn."""),
+        )
+        g.add_argument(
+            "--rank-local-cpu-compute",
+            dest="rank_local_cpu_compute",
+            default=None,
+            type=str,
+            choices=["never", "on_oom", "always"],
+            help=textwrap.dedent("""\
+                When to evaluate operations on the CPU with Polars.
+                Env: CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE. Built-in default: never."""),
         )
         g.add_argument(
             "--max-rows-per-partition",

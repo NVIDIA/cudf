@@ -17,6 +17,18 @@
 
 namespace cudf::jit {
 
+/// @brief Describes a column's logical type, children and scalar broadcasting.
+transform_input_spec make_input_spec(column_view const& column, bool is_scalar);
+
+/// @brief Reflects accessor storage types, including dictionary indices and keys.
+std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type);
+
+/// @brief Reflects decoded values, using dictionary keys rather than their indices.
+std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type);
+
+/// @brief Reflects the mutable device-view type for an output specification.
+std::string reflect_output_column(transform_output_spec const& spec);
+
 struct transform_reflection {
   std::string input_accessors;
   std::string output_accessors;

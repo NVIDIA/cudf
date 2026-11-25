@@ -145,7 +145,7 @@ correct for one rank without a separate branch.
 
 ## Device Memory and Spilling
 
-### Reserve memory asynchronously, sized to the real allocation
+### Reserve memory asynchronously, with a best-effort size
 
 Every device allocation in an actor (unspill, pack, sort, concat, key
 evaluation) must be covered by an awaited reservation. A synchronous
@@ -153,6 +153,11 @@ evaluation) must be covered by an awaited reservation. A synchronous
 on the event loop. `net_memory_delta` and `reserve_extra` must match the
 real memory effect. Use no unexplained multipliers, and no extra
 reservation for a single-chunk concat.
+
+The size of a reservation passed to `opaque_memory_usage` is a best-effort
+estimate based on the inputs and the expected output. It may use knowledge
+of libcudf internals, such as sort workspace or temporary buffers, but do not
+require it. The rapidsmpf reservation system tolerates an inexact estimate.
 
 ```python
 # Bad: blocks the event loop and can overbook
@@ -205,22 +210,33 @@ with set_memory_resource(mr):
 
 ## rapidsmpf Collectives
 
-### Always finish collective inserts
+### Always finish and release collectives
 
 If a shuffle, allgather, or `SparseAlltoall` is never told that insertion
 is finished, the worker aborts. Finish insertion on every path, including
 errors and cancellation. Clear temporary `ChunkStore`s in `finally`.
 
+Release every collective when it is no longer needed. Otherwise its
+unextracted data stays alive until the Python garbage collector frees it,
+which can be long after the query ends. `ShuffleManager`,
+`LocalRepartitioner`, `AllGatherManager`, `ShufflerAsync`, and
+`SparseAlltoall` are async context managers that release on exit. Use
+`contextlib.aclosing` for a bare `AllGather`.
+
 ```python
-# Bad: an exception in the loop skips insert_finished()
-for msg in messages:
-    shuffler.insert(msg)
-shuffler.insert_finished()
+# Bad: an exception in the loop skips insert_finished(), and the shuffler
+# is never released
+shuffle = ShuffleManager(context, comm, num_partitions, collective_id)
+for chunks in partitioned_chunks:
+    shuffle.shuffler.insert(chunks)
+await shuffle.shuffler.insert_finished()
 
 # Good
-async with manager.inserting() as inserter:
-    for msg in messages:
-        inserter.insert(msg)
+async with ShuffleManager(context, comm, num_partitions, collective_id) as shuffle:
+    async with shuffle.inserting() as inserter:
+        for chunk in chunks:
+            await inserter.insert_hash(chunk, columns_to_hash)
+    ...  # extract
 ```
 
 ### Collective IDs are deterministic and per query
@@ -228,7 +244,8 @@ async with manager.inserting() as inserter:
 Register each new collective-using IR type with `ReserveOpIDs`. The number
 of reserved IDs must not depend on `nranks` or runtime state, because every
 rank must get the same IDs. Do not share an ID between concurrent
-collectives, and do not release an ID before its collective completes.
+collectives, and do not release an ID before its collective is closed
+(`aclose()` has returned).
 
 ### Every rank builds and runs the same graph
 
@@ -424,6 +441,7 @@ def do_evaluate(self, df, *, context):
     if self.children[1].value < 0:
         raise ValueError(...)
 
+
 # Good
 def __init__(self, dtype, name, options, *children):
     if not isinstance(children[1], Literal):
@@ -495,9 +513,13 @@ dtype or 64-bit integers.
 
 ```python
 # Bad: three kernels and two full-size intermediate columns for abs(a * b) + c
-ab = plc.binaryop.binary_operation(a, b, plc.binaryop.BinaryOperator.MUL, dtype, stream=stream)
+ab = plc.binaryop.binary_operation(
+    a, b, plc.binaryop.BinaryOperator.MUL, dtype, stream=stream
+)
 abs_ab = plc.unary.unary_operation(ab, plc.unary.UnaryOperator.ABS, stream=stream)
-out = plc.binaryop.binary_operation(abs_ab, c, plc.binaryop.BinaryOperator.ADD, dtype, stream=stream)
+out = plc.binaryop.binary_operation(
+    abs_ab, c, plc.binaryop.BinaryOperator.ADD, dtype, stream=stream
+)
 
 # Good: one AST, evaluated in one kernel
 Op, Col = plc.expressions.Operation, plc.expressions.ColumnReference
@@ -558,6 +580,7 @@ bad values fail at engine creation. Reject incompatible combinations in
 ```python
 # Bad: read during lowering, so bad values fail deep in a query
 threshold = int(os.environ.get("CUDF_POLARS_BROADCAST_THRESHOLD", 8))
+
 
 # Good
 @dataclasses.dataclass(frozen=True)
@@ -640,6 +663,12 @@ assert got["a"].flags["SORTED_ASC"]
 - Do not construct engines or communicators in tests, and do not call
   `shutdown()` on fixture engines. Use
   `streaming_engine_factory(StreamingOptions(...))` instead.
+- A test may construct its own engine when it tests the engine itself,
+  such as its constructor, `_reset` or `shutdown`. A test that needs an
+  option fixed when the engine is built, such as `memory_resource_config`,
+  may construct its own `SPMDEngine` in a `with` block. `SPMDEngine` is
+  cheap to create, unlike `RayEngine` and `DaskEngine`, which start worker
+  processes.
 - Use `warns_on_spmd` instead of `pytest.warns` for fallback warnings.
 - Use `timeout_seconds` instead of hard-coded timeouts.
 - Do not `pytest.skip` on setup errors; use `pytest.importorskip` for
@@ -655,6 +684,7 @@ def test_join():
         pytest.skip("engine unavailable")
     finally:
         engine.shutdown()
+
 
 # Good
 def test_join(engine):
@@ -673,6 +703,7 @@ same check.
 # Bad: runs the same translation check once per engine
 def test_unsupported_dtype(streaming_engine):
     assert_ir_translation_raises(q, streaming_engine, NotImplementedError)
+
 
 # Good
 def test_unsupported_dtype(in_memory_engine):

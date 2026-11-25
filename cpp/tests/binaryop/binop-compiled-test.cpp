@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2021-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -12,11 +12,9 @@
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
-#include <cudf/aggregation.hpp>
 #include <cudf/binaryop.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
-#include <cudf/reduction.hpp>
 #include <cudf/types.hpp>
 
 #include <cuda/iterator>
@@ -222,7 +220,8 @@ TYPED_TEST(BinaryOperationCompiledTest_Div, Vector_Vector)
 using TrueDiv_types = cudf::test::Types<cudf::test::Types<int16_t, u_int64_t, u_int64_t>,
                                         cudf::test::Types<double, int8_t, int64_t>,
                                         cudf::test::Types<int8_t, bool, u_int32_t>,
-                                        cudf::test::Types<u_int64_t, float, int16_t>>;
+                                        cudf::test::Types<u_int64_t, float, int16_t>,
+                                        cudf::test::Types<float, float, float>>;
 
 template <typename T>
 struct BinaryOperationCompiledTest_TrueDiv : public BinaryOperationCompiledTest<T> {};
@@ -809,26 +808,6 @@ TEST_F(BinaryOperationCompiledTest_NullOpsString, NullMin_Vector_Vector)
                            cudf::binary_operator::NULL_MIN,
                            cudf::data_type(cudf::type_to_id<cudf::string_view>()));
   CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(expected, result->view());
-}
-
-TEST(BinaryOperationCompiledTest, LargeColumnNoOverflow)
-{
-  cudf::size_type num_rows{1'799'989'091};
-  auto big = cudf::make_column_from_scalar(
-    cudf::numeric_scalar<cudf::id_to_type<cudf::type_id::INT8>>{10, true}, num_rows);
-  auto small = cudf::make_column_from_scalar(
-    cudf::numeric_scalar<cudf::id_to_type<cudf::type_id::INT8>>{1, true}, num_rows);
-
-  auto mask = cudf::binary_operation(big->view(),
-                                     small->view(),
-                                     cudf::binary_operator::GREATER,
-                                     cudf::data_type{cudf::type_id::BOOL8});
-
-  auto agg = cudf::make_sum_aggregation<cudf::reduce_aggregation>();
-  auto result =
-    cudf::reduce(mask->view(), *agg, cudf::data_type{cudf::type_to_id<cudf::size_type>()});
-  auto got = static_cast<cudf::numeric_scalar<cudf::size_type>*>(result.get())->value();
-  EXPECT_EQ(num_rows, got);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

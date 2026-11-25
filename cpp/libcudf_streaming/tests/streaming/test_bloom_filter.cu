@@ -14,8 +14,8 @@
 
 #include <cuco/bloom_filter_ref.cuh>
 #include <cuco/extent.cuh>
-#include <cuco/hash_functions.cuh>
 #include <cuco/utility/cuda_thread_scope.cuh>
+#include <cuda/std/functional>
 
 #include <cstddef>
 #include <cstdint>
@@ -24,8 +24,7 @@
 
 namespace {
 
-using policy_type =
-  cudf::arrow_bloom_filter_policy<std::uint64_t, cuco::identity_hash<std::uint64_t>>;
+using policy_type = cudf::arrow_bloom_filter_policy<std::uint64_t, cuda::std::identity>;
 
 __global__ void block_index_kernel(std::uint32_t upper_hash,
                                    std::size_t num_blocks,

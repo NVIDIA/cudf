@@ -30,20 +30,17 @@ struct [[nodiscard]] jit_bundle_t {
   [[nodiscard]] std::vector<std::string> get_include_directories() const;
 };
 
-struct [[nodiscard]] kernel {
+/**
+ * @brief Non-owning kernel reference with stream-aware launch helpers.
+ *
+ * The kernel's owning library must remain alive while using this reference.
+ */
+struct [[nodiscard]] kernel_ref {
  private:
-  rtcx::library _library;
   rtcx::kernel_ref _kernel;
 
  public:
-  kernel(rtcx::library lib, rtcx::kernel_ref kernel) : _library(std::move(lib)), _kernel(kernel) {}
-  kernel(kernel const&)            = default;
-  kernel(kernel&&)                 = default;
-  kernel& operator=(kernel const&) = default;
-  kernel& operator=(kernel&&)      = default;
-  ~kernel()                        = default;
-
-  rtcx::kernel_ref get() const { return _kernel; }
+  explicit kernel_ref(rtcx::kernel_ref kernel) : _kernel(kernel) {}
 
   rtcx::kernel_occupancy_config max_occupancy_config(size_t dynamic_shared_memory_bytes,
                                                      int32_t block_size_limit) const
@@ -74,11 +71,19 @@ struct [[nodiscard]] kernel {
 };
 
 /**
- * @brief Converts an LTO binary type to the corresponding RTCX binary type
- * @param type The LTO binary type to convert
- * @return The corresponding RTCX binary type
+ * @brief Kernel reference that retains shared ownership of its library.
  */
-rtcx::binary_type as_rtcx_binary_type(lto_binary_type type);
+struct [[nodiscard]] kernel : kernel_ref {
+ private:
+  rtcx::library _library;
+
+ public:
+  kernel(rtcx::library lib, rtcx::kernel_ref kernel) : kernel_ref(kernel), _library(std::move(lib))
+  {
+  }
+
+  kernel_ref get() const { return *this; }
+};
 
 /**
  * @brief Gets a kernel from an embedded CUDA source file
@@ -98,7 +103,26 @@ kernel get_kernel(std::string const& name,
                   std::string const& kernel_instance);
 
 /**
- * @brief Gets a kernel fragment from an embedded CUDA source file
+ * @brief Gets a cached LTO fragment compiled from caller-provided CUDA source.
+ *
+ * Filesystem headers and their dependencies must remain unchanged while caches may be reused.
+ *
+ * @param name Translation-unit name used for compilation and logging
+ * @param source_code Null-terminated CUDA source
+ * @param header_include_names Names of additional in-memory headers
+ * @param headers Matching null-terminated header contents
+ * @param include_paths Filesystem header directories, searched before bundled directories
+ * @param use_pch Enable automatic precompiled headers on supported NVRTC versions
+ */
+rtcx::blob get_user_fragment(char const* name,
+                             char const* source_code,
+                             std::span<char const* const> header_include_names,
+                             std::span<char const* const> headers,
+                             std::span<char const* const> include_paths,
+                             bool use_pch);
+
+/**
+ * @brief Gets a cached kernel LTO fragment from an embedded CUDA source file
  * @param name Debug name for the kernel fragment (used for caching and logging)
  * @param source_file_id Identifier for the embedded source file (used to locate the source and for
  * caching)

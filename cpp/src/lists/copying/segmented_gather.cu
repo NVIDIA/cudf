@@ -30,7 +30,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& value_column,
                                          lists_column_view const& gather_map,
                                          out_of_bounds_policy bounds_policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_EXPECTS(is_index_type(gather_map.child().type()),
                "Gather map should be list column of index type");
@@ -128,7 +128,7 @@ std::unique_ptr<column> segmented_gather(lists_column_view const& source_column,
                                          lists_column_view const& gather_map_list,
                                          out_of_bounds_policy bounds_policy,
                                          cuda::stream_ref stream,
-                                         rmm::device_async_resource_ref mr)
+                                         cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
   return detail::segmented_gather(source_column, gather_map_list, bounds_policy, stream, mr);

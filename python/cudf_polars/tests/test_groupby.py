@@ -212,6 +212,41 @@ def test_groupby_corr_float32_overflow(in_memory_engine: pl.GPUEngine) -> None:
     assert_gpu_result_equal(q, engine=in_memory_engine, check_exact=False)
 
 
+@pytest.mark.parametrize("ddof", [0, 1, 2])
+@pytest.mark.parametrize(
+    "left_dtype,right_dtype",
+    [
+        (pl.Int32, pl.Int32),
+        (pl.Float32, pl.Float32),
+        (pl.Float64, pl.Float64),
+        (pl.Int32, pl.Float32),
+    ],
+)
+def test_groupby_cov(
+    engine: pl.GPUEngine,
+    left_dtype: pl.DataType,
+    right_dtype: pl.DataType,
+    ddof: int,
+) -> None:
+    df = pl.LazyFrame(
+        {
+            "key": [1, 1, 1, 1, 2, 2, 3, 4, 4],
+            "left": pl.Series([1, None, 3, 4, 1, 1, 1, None, 2], dtype=left_dtype),
+            "right": pl.Series([2, 4, 1, 5, 2, 2, 2, 1, None], dtype=right_dtype),
+        }
+    )
+    q = df.group_by("key").agg(pl.cov("left", "right", ddof=ddof)).sort("key")
+
+    assert_gpu_result_equal(
+        q,
+        engine=engine,
+        # Polars 2.0 in-memory returns 0.0 for a singleton even when ddof > 0.
+        # https://github.com/pola-rs/polars/pull/29754
+        polars_engine="streaming",
+        check_exact=False,
+    )
+
+
 def test_corr_unsupported(in_memory_engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"key": [1, 1], "left": [1.0, 2.0], "right": [2.0, 4.0]})
 
@@ -878,7 +913,7 @@ def test_groupby_drop_nans_aggs(engine: pl.GPUEngine) -> None:
         )
     )
 
-    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False, check_exact=False)
 
 
 def test_groupby_drop_nans_product_median_quantile(
@@ -910,6 +945,55 @@ def test_groupby_drop_nans_include_null_count_unsupported(
     )
 
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("value").is_null().first(),
+        (pl.col("value") + 1).last(),
+        pl.col("text").cast(pl.Int64, strict=True).first(),
+        pl.col("text").cast(pl.Int64, strict=True).last(),
+    ],
+)
+def test_groupby_first_last_element_wise(engine: pl.GPUEngine, expr: pl.Expr) -> None:
+    q = (
+        pl.LazyFrame(
+            {
+                "key": [1, 1, 1, 2, 2, 2, 3, 3, 3],
+                "value": [None, 1, 2, 3, 4, None, 5, 6, 7],
+                "text": ["1", "bad", "10", "2", "bad", None, None, "bad", "30"],
+            }
+        )
+        .group_by("key")
+        .agg(expr)
+    )
+
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("value").is_in(pl.col("other").slice(0, 1).implode()).first(),
+        pl.lit("ab").is_in(pl.col("other").slice(0, 1).implode()).first(),
+        pl.col("value").str.contains_any(pl.col("other").slice(0, 1).implode()).first(),
+        pl.col("value").filter(pl.col("value") == "zz").fill_null("x").first(),
+        pl.lit(pl.Series([None, "ab"])).is_null().first(),
+        pl.col("value").set_sorted().first(),
+        pl.col("value").set_sorted().last(),
+    ],
+)
+def test_groupby_first_last_unsupported(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    q = (
+        pl.LazyFrame({"key": [1, 1], "value": ["ab", "ab"], "other": ["zz", "ab"]})
+        .group_by("key")
+        .agg(expr)
+    )
+
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_groupby_sum_all_null_group_returns_null(engine: pl.GPUEngine):

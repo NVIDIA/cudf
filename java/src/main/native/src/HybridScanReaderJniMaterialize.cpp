@@ -64,6 +64,7 @@ Java_ai_rapids_cudf_HybridScanReader_materializeFilterColumns(JNIEnv* env,
     auto result =
       std::make_unique<cudf::io::table_with_metadata>(wrapper->reader->materialize_filter_columns(
         holder.span(), spans, mut_view, mode, wrapper->options, stream, mr));
+    row_mask_col->set_null_count(mut_view.null_count());
     // Hold both owned until the output array exists and its elements are pinned, so that the
     // only throw points come before either is released.
     cudf::jni::native_jlongArray out(env, 2);
@@ -130,7 +131,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeAll
                                                            wrapper->options,
                                                            cudf::get_default_stream(),
                                                            cudf::get_current_device_resource_ref());
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -207,7 +208,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializeFil
     }
     auto mut_view = wrapper->chunked_filter_row_mask->mutable_view();
     auto result   = wrapper->reader->materialize_filter_columns_chunk(mut_view);
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    wrapper->chunked_filter_row_mask->set_null_count(mut_view.null_count());
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -285,7 +287,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_HybridScanReader_materializePay
     auto* wrapper  = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto* row_mask = reinterpret_cast<cudf::column_view const*>(row_mask_view_handle);
     auto result    = wrapper->reader->materialize_payload_columns_chunk(*row_mask);
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }
@@ -330,7 +332,7 @@ Java_ai_rapids_cudf_HybridScanReader_materializeAllColumnsChunk(JNIEnv* env, jcl
     cudf::jni::auto_set_device(env);
     auto* wrapper = reinterpret_cast<hybrid_scan_reader_wrapper*>(handle);
     auto result   = wrapper->reader->materialize_all_columns_chunk();
-    return cudf::jni::convert_table_for_return(env, result.tbl);
+    return cudf::jni::convert_table_with_row_count_for_return(env, result.tbl);
   }
   JNI_CATCH(env, nullptr);
 }

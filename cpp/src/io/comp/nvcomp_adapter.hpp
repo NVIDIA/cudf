@@ -9,12 +9,15 @@
 
 #include <cudf/io/detail/nvcomp_adapter.hpp>
 #include <cudf/io/types.hpp>
+#include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
 #include <optional>
+#include <span>
+#include <string>
 
 namespace cudf::io::detail::nvcomp {
 /**
@@ -57,6 +60,26 @@ size_t batched_decompress_temp_size(compression_type compression,
                                     size_t max_uncomp_chunk_size,
                                     size_t max_total_uncomp_size,
                                     cuda::stream_ref stream);
+
+/**
+ * @brief Return the amount of temporary space required in bytes for a given compression
+ * operation.
+ *
+ * The size returned reflects the size of the scratch buffer `batched_compress` allocates for
+ * nvCOMP.
+ *
+ * @param[in] compression Compression type
+ * @param[in] num_chunks The number of compression chunks to be processed
+ * @param[in] max_uncomp_chunk_size Maximum size of any single uncompressed chunk
+ * @param[in] max_total_uncomp_size Maximum total size of uncompressed data
+ * @param[in] stream CUDA stream that the compression will run on
+ * @returns The total required size in bytes
+ */
+size_t batched_compress_temp_size(compression_type compression,
+                                  size_t num_chunks,
+                                  size_t max_uncomp_chunk_size,
+                                  size_t max_total_uncomp_size,
+                                  cuda::stream_ref stream);
 
 /**
  * @brief Return the amount of temporary space required in bytes for a given decompression
@@ -142,5 +165,83 @@ void batched_compress(compression_type compression,
                       device_span<codec_exec_result> results,
                       cuda::stream_ref stream,
                       cudf::memory_resources mr);
+
+/**
+ * @brief If nvCOMP Cascaded is disabled, returns the reason as a string.
+ *
+ * Cascaded has no fallback implementation, so it is unavailable whenever `LIBCUDF_NVCOMP_POLICY`
+ * disables stable nvCOMP integrations.
+ *
+ * @param params Optional parameters to query status with different configurations
+ * @returns Reason for the feature disablement, `std::nullopt` if the feature is enabled
+ */
+[[nodiscard]] std::optional<std::string> is_cascaded_disabled(
+  feature_status_parameters params = feature_status_parameters());
+
+/**
+ * @brief Maximum size of uncompressed chunks that can be compressed with nvCOMP Cascaded.
+ *
+ * @returns maximum chunk size
+ */
+[[nodiscard]] size_t cascaded_compress_max_allowed_chunk_size();
+
+/**
+ * @brief Gets input and output alignment requirements for nvCOMP Cascaded compression.
+ *
+ * @returns required alignment
+ */
+[[nodiscard]] size_t cascaded_compress_required_alignment();
+
+/**
+ * @brief Gets the maximum size any chunk could compress to with nvCOMP Cascaded.
+ *
+ * @param value_type Integral type the chunk data is interpreted as
+ * @param max_uncomp_chunk_size Size of the largest uncompressed chunk in the batch
+ * @returns maximum compressed chunk size
+ */
+[[nodiscard]] size_t cascaded_compress_max_output_chunk_size(type_id value_type,
+                                                             size_t max_uncomp_chunk_size);
+
+/**
+ * @brief Device batch compression with nvCOMP Cascaded.
+ *
+ * @param[in] value_type Integral type the data of every chunk is interpreted as; the chunk sizes
+ * must be multiples of its size
+ * @param[in] inputs List of input buffers
+ * @param[out] outputs List of output buffers
+ * @param[out] results List of output status structures
+ * @param[in] max_uncomp_chunk_size Size of the largest uncompressed chunk in the batch
+ * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources; only the temporary resource is used
+ */
+void batched_cascaded_compress(type_id value_type,
+                               device_span<device_span<uint8_t const> const> inputs,
+                               device_span<device_span<uint8_t> const> outputs,
+                               device_span<codec_exec_result> results,
+                               size_t max_uncomp_chunk_size,
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr);
+
+/**
+ * @brief Device batch decompression with nvCOMP Cascaded.
+ *
+ * nvCOMP decompresses a batch only if all of its chunks were compressed with the same value type,
+ * so the chunks are given in groups of one value type each. Group `i` holds the chunks in
+ * `[group_offsets[i], group_offsets[i + 1])`, and the groups are decompressed concurrently.
+ *
+ * @param[in] inputs List of input buffers
+ * @param[out] outputs List of output buffers
+ * @param[out] results List of output status structures
+ * @param[in] group_offsets Offsets of the chunk groups, starting with 0 and ending with the number
+ * of chunks
+ * @param[in] stream CUDA stream to use
+ * @param[in] mr Memory resources; only the temporary resource is used
+ */
+void batched_cascaded_decompress(device_span<device_span<uint8_t const> const> inputs,
+                                 device_span<device_span<uint8_t> const> outputs,
+                                 device_span<codec_exec_result> results,
+                                 std::span<size_t const> group_offsets,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
 
 }  // namespace cudf::io::detail::nvcomp

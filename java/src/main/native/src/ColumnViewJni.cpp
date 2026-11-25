@@ -859,7 +859,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_stringSplit(
     auto const delimiter      = std::string(delimiter_jstr);
     auto const max_split      = limit > 1 ? limit - 1 : limit;
     auto result = cudf::strings::split(strings_column, cudf::string_scalar{delimiter}, max_split);
-    return cudf::jni::convert_table_for_return(env, std::move(result));
+    return cudf::jni::convert_table_with_row_count_for_return(env, std::move(result));
   }
   JNI_CATCH(env, 0);
 }
@@ -897,7 +897,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_stringSplitRe(JNIEnv
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
     auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
     auto result               = cudf::strings::split_re(strings_column, *regex_prog, max_split);
-    return cudf::jni::convert_table_for_return(env, std::move(result));
+    return cudf::jni::convert_table_with_row_count_for_return(env, std::move(result));
   }
   JNI_CATCH(env, 0);
 }
@@ -1548,8 +1548,13 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_containsVector(JNIEnv* en
   JNI_CATCH(env, 0);
 }
 
-JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
-  JNIEnv* env, jobject j_object, jlong handle, jstring j_udf, jboolean j_is_ptx)
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
+                                                                 jobject j_object,
+                                                                 jlong handle,
+                                                                 jstring j_udf,
+                                                                 jboolean j_is_ptx,
+                                                                 jint j_dtype,
+                                                                 jint j_scale)
 {
   JNI_TRY
   {
@@ -1564,7 +1569,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(
                       cudf::null_aware::NO,
                       std::nullopt,
                       inputs,
-                      std::array{cudf::transform_output{cudf::data_type(cudf::type_id::INT32),
+                      std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                         cudf::output_nullability::PRESERVE}},
                       {},
                       std::nullopt)
@@ -2125,8 +2130,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ColumnView_extractRe(JNIEnv* en
     auto const flags          = static_cast<cudf::strings::regex_flags>(regex_flags);
     auto const groups         = static_cast<cudf::strings::capture_groups>(capture_groups);
     auto const regex_prog     = cudf::strings::regex_program::create(pattern, flags, groups);
-    return cudf::jni::convert_table_for_return(env,
-                                               cudf::strings::extract(strings_column, *regex_prog));
+    return cudf::jni::convert_table_with_row_count_for_return(
+      env, cudf::strings::extract(strings_column, *regex_prog));
   }
   JNI_CATCH(env, 0);
 }

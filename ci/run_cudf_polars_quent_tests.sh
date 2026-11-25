@@ -7,7 +7,10 @@ set -euo pipefail
 # Support invoking or sourcing this script outside the repository root.
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
-BRIDGE_DIR="${PWD}/python/cudf_polars/quent/bridge"
+REPO_ROOT="${PWD}"
+QUENT_DIR="${REPO_ROOT}/python/cudf_polars/quent"
+BRIDGE_DIR="${QUENT_DIR}/bridge"
+TARGET_DIR="${QUENT_DIR}/target"
 TRACKED_STUB="${BRIDGE_DIR}/cudf_polars_quent.pyi"
 
 pushd "${BRIDGE_DIR}"
@@ -15,15 +18,11 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo check --locked
 cargo clean -p cudf-polars-quent
-rm -f dist/*.whl target/wheels/*.whl
+rm -f dist/*.whl "${TARGET_DIR}"/wheels/*.whl
 
-# maturin reads the wheel version from Cargo.toml, which needs SemVer: strip leading zeros
-# rapids-pre-commit-hooks: disable-next-line
-# (26.12.00a62 -> 26.12.0a62) and mark pre-releases (26.12.0a62 -> 26.12.0-a62). maturin maps
-# the result back to the original PEP 440 version. Local runs keep the checked-in version.
+# maturin reads the wheel version from Cargo.toml. Local runs keep the checked-in version.
 if [[ -n "${RAPIDS_PACKAGE_VERSION:-}" ]]; then
-  cargo_version=$(sed -E 's/(^|\.)0+([0-9])/\1\2/g; s/([0-9])(a|rc)([0-9])/\1-\2\3/' <<< "${RAPIDS_PACKAGE_VERSION}")
-  sed -i "s/^version = .*/version = \"${cargo_version}\"/" Cargo.toml
+  "${REPO_ROOT}/ci/utils/set_cargo_version.sh" "${RAPIDS_PACKAGE_VERSION}" Cargo.toml
 fi
 popd
 
@@ -39,7 +38,7 @@ else
   python -m maturin build --release
   popd
   shopt -s nullglob
-  generated_wheels=("${BRIDGE_DIR}"/target/wheels/*.whl)
+  generated_wheels=("${TARGET_DIR}"/wheels/*.whl)
   shopt -u nullglob
 fi
 
@@ -53,7 +52,7 @@ if [[ "$(basename "${generated_wheels[0]}")" != *-cp312-abi3-*.whl ]]; then
 fi
 
 shopt -s nullglob
-generated_stubs=("${BRIDGE_DIR}"/target/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
+generated_stubs=("${TARGET_DIR}"/*/build/cudf-polars-quent-*/out/cudf_polars_quent.pyi)
 shopt -u nullglob
 if ((${#generated_stubs[@]} == 0)); then
   echo "No generated Quent stub found" >&2
@@ -74,4 +73,18 @@ pushd python/cudf_polars/quent/analyzer
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked --all-targets
+cargo check --locked --no-default-features
+popd
+
+pushd python/cudf_polars/quent/store
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked --all-targets
+popd
+
+pushd python/cudf_polars/quent/browser
+cargo fmt --all -- --check
+cargo clippy --locked --features generate --all-targets -- -D warnings
+cargo test --locked --features generate --all-targets
+cargo build --locked --release --target wasm32-unknown-unknown
 popd

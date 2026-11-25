@@ -12,7 +12,7 @@ from pylibcudf.libcudf.types cimport order as cpp_order
 from pylibcudf.table cimport Table
 from rmm.pylibrmm.stream cimport Stream
 
-from rapidsmpf.memory.buffer_resource cimport BufferResource
+from rapidsmpf.memory.buffer_resource cimport BufferResource, cpp_BufferResource
 from rapidsmpf.streaming.core.message cimport Message
 from cudf_streaming.table_chunk cimport TableChunk, cpp_TableChunk
 
@@ -233,7 +233,11 @@ cdef class Ordering:
         """
         if self.strict_boundaries:
             return self
-        return Ordering.from_cpp(self._handle.as_strict(deref(br.ptr())))
+        cdef cpp_BufferResource* resource = br.ptr()
+        cdef cpp_Ordering result
+        with nogil:
+            result = self._handle.as_strict(deref(resource))
+        return Ordering.from_cpp(move(result))
 
     @property
     def keys(self) -> tuple:

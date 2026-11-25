@@ -5,7 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
-cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.3 FATAL_ERROR)
 
 include(../cmake/rapids_config.cmake)
 include(rapids-cmake)
@@ -573,7 +573,7 @@ endfunction()
 # amortize the cost of JIT compilation for kernels that have matching signatures
 function(precompile_string_kernel_fragments)
   list(APPEND CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES uint8_t uint16_t uint32_t uint64_t
-       cuda::std::span<char>
+       cudf::mutable_string_view
   )
   foreach(OUTPUT_TYPE IN LISTS CUDF_PRECOMPILE_STRING_OUTPUT_PHYSICAL_TYPES)
     # Pre-compile for up to 8 output columns
@@ -752,6 +752,7 @@ add_library(
   src/groupby/hash/single_pass_argminmax.cu
   src/groupby/hash/single_pass_argminmax_nested.cu
   src/groupby/hash/single_pass_fused_minmax_sum.cu
+  src/groupby/hash/single_pass_m2.cu
   src/groupby/hash/single_pass_minmax.cu
   src/groupby/hash/single_pass_product.cu
   src/groupby/hash/single_pass_sum_overflow.cu
@@ -895,6 +896,7 @@ add_library(
   src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp
+  src/join/asof_join.cu
   src/join/conditional_join.cu
   src/join/cross_join.cu
   src/join/direct_join.cu
@@ -1124,12 +1126,14 @@ add_library(
   src/strings/replace/replace_slice.cu
   src/strings/reverse.cu
   src/strings/scan/scan_inclusive.cu
+  src/strings/search/contains.cu
   src/strings/search/contains_multiple.cu
   src/strings/search/count.cu
   src/strings/search/findall.cu
   src/strings/search/find.cu
   src/strings/search/find_instance.cu
   src/strings/search/find_multiple.cu
+  src/strings/search/starts_with.cu
   src/strings/slice.cu
   src/strings/split/partition.cu
   src/strings/split/split.cu
@@ -1160,6 +1164,7 @@ add_library(
   src/text/minhash.cu
   src/text/ngrams_tokenize.cu
   src/text/normalize.cu
+  src/text/normalize_spaces.cu
   src/text/replace.cu
   src/text/stemmer.cu
   src/text/bpe/byte_pair_encoding.cu

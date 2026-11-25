@@ -61,11 +61,10 @@ namespace CUDF_EXPORT cudf {
  *
  * @return A new table with explode_col exploded.
  */
-std::unique_ptr<table> explode(
-  table_view const& input_table,
-  size_type explode_column_idx,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+std::unique_ptr<table> explode(table_view const& input_table,
+                               size_type explode_column_idx,
+                               cuda::stream_ref stream   = cudf::get_default_stream(),
+                               cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Explodes a list column's elements and includes a position column.
@@ -110,8 +109,8 @@ std::unique_ptr<table> explode(
 std::unique_ptr<table> explode_position(
   table_view const& input_table,
   size_type explode_column_idx,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Explodes a list column's elements retaining any null entries or empty lists inside.
@@ -154,8 +153,8 @@ std::unique_ptr<table> explode_position(
 std::unique_ptr<table> explode_outer(
   table_view const& input_table,
   size_type explode_column_idx,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Explodes a list column's elements retaining any null entries or empty lists and includes a
@@ -200,8 +199,8 @@ std::unique_ptr<table> explode_outer(
 std::unique_ptr<table> explode_outer_position(
   table_view const& input_table,
   size_type explode_column_idx,
-  cuda::stream_ref stream           = cudf::get_default_stream(),
-  rmm::device_async_resource_ref mr = cudf::get_current_device_resource_ref());
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

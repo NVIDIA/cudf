@@ -21,7 +21,7 @@ from cudf_polars.dsl.utils.replace import replace
 from cudf_polars.utils.uri import strip_file_uri
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from rmm.pylibrmm.stream import Stream
 
@@ -34,6 +34,10 @@ if TYPE_CHECKING:
     ]
     _Layout = tuple[_ElementLayout, ...]
     _FieldIds = tuple[int | None, tuple["_FieldIds", ...]]
+    _HybridRead = Callable[
+        [list[str], plc.expressions.Expression],
+        tuple[Sequence[plc.Column], list[plc.io.types.ColumnNameSpec]] | None,
+    ]
 
 __all__ = ["IcebergColumn", "LakehouseScanOptions", "read_lake_files"]
 
@@ -141,7 +145,10 @@ class LakehouseScanOptions:
         to keep.
     partition_values
         Maps a physical field ID to the value its Iceberg identity-transformed
-        partition field takes, one row per path.
+        partition field takes, one row per path. Polars only uses a value for
+        a file that lacks the column: a file that holds it supplies it, and
+        for a file written under a partition spec that lacks the field the
+        value is the initial default, not partition data.
     partition_errors
         Maps a physical field ID to the reason polars could not supply the
         values of its Iceberg identity-transformed partition field. Such a
@@ -314,15 +321,24 @@ class LakehouseScanOptions:
             if defaults_kind != "iceberg":  # pragma: no cover; only kind polars emits
                 raise NotImplementedError(f"Unhandled default values {defaults_kind!r}")
             partition_fields, raw_initial_defaults = defaults_payload
-            for physical_id, value in partition_fields.items():
-                if isinstance(value, str):
-                    partition_errors[physical_id] = value
-                else:
-                    partition_values[physical_id] = pl.Series._from_pyseries(value)
             initial_defaults = {
                 physical_id: pl.Series._from_pyseries(value)
                 for physical_id, value in raw_initial_defaults.items()
             }
+            for physical_id, value in partition_fields.items():
+                if isinstance(value, str):
+                    partition_errors[physical_id] = value
+                else:
+                    series = pl.Series._from_pyseries(value)
+                    # Polars gives no value for the trailing files whose
+                    # partition spec dropped the field. They take the initial
+                    # default.
+                    if (missing := len(paths) - len(series)) > 0:
+                        default = initial_defaults.get(physical_id)
+                        series = series.extend_constant(
+                            None if default is None else default.item(), missing
+                        )
+                    partition_values[physical_id] = series
         return cls(
             columns=columns,
             position_deletes=position_deletes,
@@ -455,6 +471,7 @@ def read_lake_files(
     predicate: expr.Expr | None = None,
     *,
     with_source_index: bool = False,
+    hybrid_read: _HybridRead | None = None,
     stream: Stream,
 ) -> tuple[DataFrame, list[int], plc.Column | None, bool]:
     """
@@ -479,6 +496,13 @@ def read_lake_files(
     with_source_index
         Whether to return the index into ``paths`` of the file each row was
         read from when ``predicate`` is given.
+    hybrid_read
+        Reads the files with the hybrid scan reader when a parquet filter
+        applies to the read, given the names of the columns to read and the
+        filter, both in terms of the file. Returns the columns as the file
+        stores them with their names, or ``None`` when every row group is
+        pruned. Only valid for a single data file without
+        ``with_source_index``. ``None`` reads with the default parquet reader.
     stream
         CUDA stream used for device memory operations and kernel launches.
 
@@ -502,7 +526,6 @@ def read_lake_files(
             column.physical_id: column.name
             for column in lake_options.columns
             if column.name in projected
-            and column.physical_id not in lake_options.partition_values
         }
     else:
         wanted = {name: name for name in schema if name in projected}
@@ -537,19 +560,31 @@ def read_lake_files(
         stop = start + len(list(group))
         present = frozenset(keys)
         read_keys = [key for key in wanted if key in present]
+        # Columns that the files lack take the partition value of each file.
+        # The values are per file, so every row of each file must be read.
+        # TODO: https://github.com/NVIDIA/cudf/issues/25120. Ensure that predicate
+        # pushdown is still applied when the predicate is on a removed column.
+        fallback_values = {
+            key: lake_options.partition_values[key].slice(start, stop - start)
+            for key in wanted
+            if key not in present and key in lake_options.partition_values
+        }
         filters = None
         if predicate is not None:
-            filters, group_exact = _group_filter(
-                predicate,
-                predicate_columns,
-                paths[start],
-                footers[start],
-                read_keys,
-                wanted,
-                schema,
-                stream=stream,
-            )
-            exact = exact and group_exact
+            if fallback_values:
+                exact = False
+            else:
+                filters, group_exact = _group_filter(
+                    predicate,
+                    predicate_columns,
+                    paths[start],
+                    footers[start],
+                    read_keys,
+                    wanted,
+                    schema,
+                    stream=stream,
+                )
+                exact = exact and group_exact
         frame, source_index = _read_group(
             paths[start:stop],
             read_keys,
@@ -558,9 +593,11 @@ def read_lake_files(
             wanted,
             schema,
             lake_options,
+            fallback_values,
             filters,
             start if track_source else None,
             by_field_id=by_field_id,
+            hybrid_read=hybrid_read,
             stream=stream,
         )
         frames.append(frame)
@@ -999,10 +1036,12 @@ def _read_group(
     wanted: Mapping[Any, str],
     schema: Schema,
     lake_options: LakehouseScanOptions,
+    fallback_values: Mapping[Any, pl.Series],
     filters: plc.expressions.Expression | None,
     source_offset: int | None,
     *,
     by_field_id: bool,
+    hybrid_read: _HybridRead | None,
     stream: Stream,
 ) -> tuple[DataFrame, plc.Column | None]:
     """
@@ -1031,6 +1070,10 @@ def _read_group(
     lake_options
         Options of the scan, giving the defaults for columns the files do
         not hold.
+    fallback_values
+        Maps the key of each wanted column that the files do not hold to its
+        partition value for each file. ``filters`` must be ``None`` when this
+        is non-empty.
     filters
         Parquet filter to apply while reading, in terms of the names the
         files hold, or ``None`` to read every row.
@@ -1040,6 +1083,9 @@ def _read_group(
     by_field_id
         Whether ``present`` and ``wanted`` are keyed by Iceberg field ID
         rather than by column name.
+    hybrid_read
+        Reads the files with the hybrid scan reader when ``filters`` is
+        given, or ``None`` to always read with the default parquet reader.
     stream
         CUDA stream used for device memory operations and kernel launches.
 
@@ -1058,37 +1104,51 @@ def _read_group(
     num_rows = sum(rows_per_path)
     source_index: plc.Column | None = None
     if present:
-        options = (
-            plc.io.parquet.ParquetReaderOptions.builder(plc.io.SourceInfo(list(paths)))
-            .allow_mismatched_pq_schemas(val=True)
-            .build()
-        )
         name_by_key = dict(zip(footer.keys, footer.names, strict=True))
-        options.set_column_names([name_by_key[key] for key in present])
-        if filters is not None:
-            options.set_filter(filters)
-        if source_offset is not None:
-            options.enable_prepend_source_index_column(val=True)
-        table = plc.io.parquet.read_parquet(options, stream=stream)
-        num_rows = table.tbl.num_rows()
-        names = table.column_names(include_children=True)
-        columns = table.tbl.columns()
-        if source_offset is not None:
-            source_index = (
-                columns[0]
-                if source_offset == 0
-                else plc.binaryop.binary_operation(
-                    columns[0],
-                    plc.Scalar.from_py(
-                        source_offset, plc.DataType(plc.TypeId.INT32), stream=stream
-                    ),
-                    plc.binaryop.BinaryOperator.ADD,
-                    plc.DataType(plc.TypeId.INT32),
-                    stream=stream,
+        file_names = [name_by_key[key] for key in present]
+        columns: Sequence[plc.Column]
+        names: list[plc.io.types.ColumnNameSpec]
+        if hybrid_read is not None and filters is not None:
+            assert source_offset is None
+            result = hybrid_read(file_names, filters)
+            if result is None:
+                columns, names, num_rows = [], [], 0
+            else:
+                columns, names = result
+                num_rows = columns[0].size()
+        else:
+            options = (
+                plc.io.parquet.ParquetReaderOptions.builder(
+                    plc.io.SourceInfo(list(paths))
                 )
+                .allow_mismatched_pq_schemas(val=True)
+                .build()
             )
-            names = names[1:]
-            columns = columns[1:]
+            options.set_column_names(file_names)
+            if filters is not None:
+                options.set_filter(filters)
+            if source_offset is not None:
+                options.enable_prepend_source_index_column(val=True)
+            table = plc.io.parquet.read_parquet(options, stream=stream)
+            num_rows = table.tbl.num_rows()
+            names = table.column_names(include_children=True)
+            columns = table.tbl.columns()
+            if source_offset is not None:
+                source_index = (
+                    columns[0]
+                    if source_offset == 0
+                    else plc.binaryop.binary_operation(
+                        columns[0],
+                        plc.Scalar.from_py(
+                            source_offset, plc.DataType(plc.TypeId.INT32), stream=stream
+                        ),
+                        plc.binaryop.BinaryOperator.ADD,
+                        plc.DataType(plc.TypeId.INT32),
+                        stream=stream,
+                    )
+                )
+                names = names[1:]
+                columns = columns[1:]
         key_by_name = dict(zip(footer.names, footer.keys, strict=True))
         read = {
             key_by_name[name]: (column, children)
@@ -1134,11 +1194,24 @@ def _read_group(
                 stream=stream,
             )
             frame_columns.append(Column(obj, name=name, dtype=dtype))
-        elif by_field_id and key in lake_options.partition_errors:
+        elif (
+            by_field_id and key in lake_options.partition_errors and key not in present
+        ):
             raise pl.exceptions.ComputeError(
                 "failed to resolve Iceberg column mapping: "
                 "error loading identity transform value from metadata for "
                 f"missing field: {lake_options.partition_errors[key]}"
+            )
+        elif key in fallback_values:
+            (obj,) = plc.filling.repeat(
+                plc.Table([plc.Column.from_arrow(fallback_values[key], stream=stream)]),
+                plc.Column.from_arrow(
+                    pl.Series(values=rows_per_path, dtype=pl.Int32()), stream=stream
+                ),
+                stream=stream,
+            ).columns()
+            frame_columns.append(
+                Column(obj, name=name, dtype=dtype).astype(dtype, stream)
             )
         else:
             default = lake_options.initial_defaults.get(key) if by_field_id else None

@@ -7,8 +7,7 @@
 
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/std/utility>
 
 namespace cudf {
@@ -28,7 +27,7 @@ using index_type = cuda::std::pair<side, cudf::size_type>;
 /**
  * @brief Vector of `index_type` values.
  */
-using index_vector = rmm::device_uvector<index_type>;
+using index_vector = cuda::device_buffer<index_type>;
 
 /**
  * @copydoc std::unique_ptr<cudf::table> merge(
@@ -37,7 +36,7 @@ using index_vector = rmm::device_uvector<index_type>;
  *            std::vector<cudf::order> const& column_order,
  *            std::vector<cudf::null_order> const& null_precedence,
  *            cuda::stream_ref stream,
- *            rmm::device_async_resource_ref mr)
+ *            cudf::memory_resources mr)
  *
  * @param stream CUDA stream used for device memory operations and kernel launches
  */
@@ -46,7 +45,7 @@ std::unique_ptr<cudf::table> merge(std::vector<table_view> const& tables_to_merg
                                    std::vector<cudf::order> const& column_order,
                                    std::vector<cudf::null_order> const& null_precedence,
                                    cuda::stream_ref stream,
-                                   rmm::device_async_resource_ref mr);
+                                   cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

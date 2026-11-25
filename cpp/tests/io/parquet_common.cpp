@@ -9,6 +9,7 @@
 
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_io_utils.hpp>
 #include <cudf/io/parquet_metadata.hpp>
@@ -18,7 +19,10 @@
 #include <cuda/std/type_traits>
 
 #include <src/io/parquet/compact_protocol_reader.hpp>
+#include <src/io/parquet/timestamp_utils.cuh>
 
+#include <cstdint>
+#include <cstring>
 #include <format>
 #include <numeric>
 #include <string>
@@ -253,6 +257,32 @@ void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                                                  file_meta_data);
 }
 
+void edit_footer(std::vector<char>& buffer,
+                 std::function<void(cudf::io::parquet::FileMetaData&)> const& edit)
+{
+  namespace pq_experimental = cudf::io::parquet::experimental;
+
+  // parquet files end with 4-byte footer_length and 4-byte magic == "PAR1"
+  auto constexpr ender_size = 2 * sizeof(uint32_t);
+  CUDF_EXPECTS(buffer.size() >= ender_size, "Buffer is too small to be a Parquet file");
+  uint32_t footer_size{};
+  std::memcpy(&footer_size, buffer.data() + buffer.size() - ender_size, sizeof(footer_size));
+  CUDF_EXPECTS(buffer.size() >= ender_size + footer_size, "Invalid Parquet footer length");
+  auto const footer_begin = buffer.size() - ender_size - footer_size;
+
+  auto file_meta_data = pq_experimental::read_parquet_footer_bytes(
+    {reinterpret_cast<uint8_t const*>(buffer.data()) + footer_begin, footer_size});
+  edit(file_meta_data);
+  auto const footer = pq_experimental::write_parquet_footer_bytes(file_meta_data);
+
+  auto const new_footer_size = static_cast<uint32_t>(footer.size());
+  auto const size_bytes      = reinterpret_cast<char const*>(&new_footer_size);
+  buffer.resize(footer_begin);
+  buffer.insert(buffer.end(), footer.begin(), footer.end());
+  buffer.insert(buffer.end(), size_bytes, size_bytes + sizeof(new_footer_size));
+  buffer.insert(buffer.end(), {'P', 'A', 'R', '1'});
+}
+
 // returns the number of bits used for dictionary encoding data at the given page location.
 // this assumes the data is uncompressed.
 // throws cudf::logic_error if the page_loc data is invalid.
@@ -309,6 +339,15 @@ cudf::io::parquet::OffsetIndex read_offset_index(
 cudf::io::parquet::Statistics const& get_statistics(cudf::io::parquet::ColumnChunk const& chunk)
 {
   return chunk.meta_data.statistics;
+}
+
+std::vector<uint8_t> to_int96_bytes(cuda::std::pair<int64_t, int32_t> int96)
+{
+  auto const [nanos, julian_days] = int96;
+  auto bytes                      = std::vector<uint8_t>(cudf::io::parquet::detail::int96_size);
+  std::memcpy(bytes.data(), &nanos, sizeof(nanos));
+  std::memcpy(bytes.data() + sizeof(nanos), &julian_days, sizeof(julian_days));
+  return bytes;
 }
 
 // read page header from datasource at location indicated by page_loc,
@@ -766,7 +805,7 @@ cudf::table_view get_row_group_slice(ordered_rg_source const& src, cudf::size_ty
   return cudf::slice(src.table->view(), {start, end}).front();
 }
 
-std::unique_ptr<cudf::table> build_expected_ordered_table(
+std::unique_ptr<cudf::table> create_expected_ordered_table(
   cudf::host_span<ordered_rg_source const* const> sources,
   cudf::host_span<std::vector<cudf::size_type> const> rg_selection)
 {

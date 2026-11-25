@@ -590,7 +590,6 @@ cdef class SourceInfo:
 
                 new_sources.append(buffer.read().encode())
             sources = new_sources
-            self.byte_sources = sources
         if isinstance(sources[0], bytes):
             self._init_byte_like_sources(sources, bytes)
         elif isinstance(sources[0], io.BytesIO):
@@ -622,15 +621,18 @@ cdef class SourceInfo:
     def _init_byte_like_sources(self, list sources, type expected_type):
         cdef const unsigned char[::1] c_buffer
         cdef bint empty_buffer = True
+        self.byte_sources = []
 
         for src in sources:
             if not isinstance(src, expected_type):
                 raise ValueError("All sources must be of the same type!")
 
             if expected_type is bytes:
-                c_buffer = src
+                buf = src
             else:
-                c_buffer = src.getbuffer()
+                buf = src.getbuffer()
+            c_buffer = buf
+            self.byte_sources.append(buf)
 
             if c_buffer.shape[0] > 0:
                 self._hspans.push_back(

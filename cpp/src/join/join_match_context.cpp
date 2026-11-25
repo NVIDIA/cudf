@@ -4,19 +4,7 @@
  */
 #include "join_match_state.hpp"
 
-// The context's own members still use the deprecated fields.
-// TODO: Remove this suppression with the deprecated fields and constructor in 27.02 (#20958).
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
 namespace cudf {
-join_match_context::join_match_context(
-  table_view const& left_table,  // NOLINT(modernize-pass-by-value)
-  std::unique_ptr<rmm::device_uvector<size_type>> match_counts)
-  : _left_table{left_table}, _match_counts{std::move(match_counts)}
-{
-}
-
 join_match_context::join_match_context(table_view left_table,
                                        std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
                                        std::unique_ptr<detail::join_match_state> state)
@@ -39,5 +27,3 @@ device_span<size_type const> join_match_context::match_counts() const
   return *_match_counts;
 }
 }  // namespace cudf
-
-#pragma GCC diagnostic pop

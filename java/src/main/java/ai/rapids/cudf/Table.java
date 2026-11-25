@@ -2914,6 +2914,10 @@ public final class Table implements AutoCloseable {
           condition.getNativeHandle(), joinKind.nativeId);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftGatherMap);
+      reachabilityFence(rightGatherMap);
+      reachabilityFence(leftTable);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3085,6 +3089,8 @@ public final class Table implements AutoCloseable {
       return conditionalLeftJoinRowCount(getNativeView(), rightTable.getNativeView(),
               condition.getNativeHandle());
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3110,6 +3116,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle());
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3143,6 +3151,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle(), outputRowCount);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3175,6 +3185,10 @@ public final class Table implements AutoCloseable {
       long matchesColumnHandle = mixedSizeInfo[1];
       return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3208,6 +3222,10 @@ public final class Table implements AutoCloseable {
               nullEquality == NullEquality.EQUAL);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3248,7 +3266,12 @@ public final class Table implements AutoCloseable {
               joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
+      reachabilityFence(joinSize);
     }
   }
 
@@ -3443,6 +3466,8 @@ public final class Table implements AutoCloseable {
       return conditionalInnerJoinRowCount(getNativeView(), rightTable.getNativeView(),
           condition.getNativeHandle());
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3468,6 +3493,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle());
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3501,6 +3528,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle(), outputRowCount);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3533,6 +3562,10 @@ public final class Table implements AutoCloseable {
       long matchesColumnHandle = mixedSizeInfo[1];
       return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3566,6 +3599,10 @@ public final class Table implements AutoCloseable {
           nullEquality == NullEquality.EQUAL);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3606,7 +3643,12 @@ public final class Table implements AutoCloseable {
           joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
+      reachabilityFence(joinSize);
     }
   }
 
@@ -3735,6 +3777,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle());
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3768,6 +3812,10 @@ public final class Table implements AutoCloseable {
               nullEquality == NullEquality.EQUAL);
       return buildJoinGatherMaps(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3834,6 +3882,8 @@ public final class Table implements AutoCloseable {
       return conditionalLeftSemiJoinRowCount(getNativeView(), rightTable.getNativeView(),
           condition.getNativeHandle());
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3857,6 +3907,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle());
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3886,6 +3938,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle(), outputRowCount);
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -3919,6 +3973,10 @@ public final class Table implements AutoCloseable {
           nullEquality == NullEquality.EQUAL);
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }
@@ -3978,6 +4036,8 @@ public final class Table implements AutoCloseable {
       return conditionalLeftAntiJoinRowCount(getNativeView(), rightTable.getNativeView(),
           condition.getNativeHandle());
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -4001,6 +4061,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle());
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -4030,6 +4092,8 @@ public final class Table implements AutoCloseable {
               condition.getNativeHandle(), outputRowCount);
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
       reachabilityFence(condition);
     }
   }
@@ -4063,6 +4127,10 @@ public final class Table implements AutoCloseable {
           nullEquality == NullEquality.EQUAL);
       return buildSingleJoinGatherMap(gatherMapData);
     } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
       reachabilityFence(condition);
     }
   }

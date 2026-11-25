@@ -275,6 +275,27 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
+  ReservableMemory:
+    doc: >-
+      Reservable bytes of one memory type on a worker's rapidsmpf
+      BufferResource. The set of memory types and each memory types' limits
+      are defined by the rapidsmpf BufferResource.
+    resource:
+      bytes: { kind: occupancy, known-bounds: true }
+    events:
+      declared:
+        attributes:
+          instance_name: string
+          worker: { scope-ref: Worker }
+          memory_type: string
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+      resized:
+        multi: true
+        attributes:
+          limits: { sets-resource-bounds: true }
+          configured_limit: i64
+
   Storage:
     doc: A worker-local storage resource whose capacity may be unknown.
     resource:
@@ -312,7 +333,12 @@ fsms:
       exit: {}
 
   Worker:
-    doc: A rank that executes a physical query plan.
+    doc: >-
+      A rank that executes a physical query plan.
+
+      A nonzero `dropped_reservation_event_count` at exit means reservation
+      telemetry is incomplete because some individual events were dropped
+      before they were recorded.
     states:
       init:
         initial: true
@@ -320,7 +346,9 @@ fsms:
           instance_name: string
           engine: { scope-ref: Engine }
         to: [exit]
-      exit: {}
+      exit:
+        attributes:
+          dropped_reservation_event_count: u64
 
   Query:
     doc: One collect or sink operation.
@@ -384,3 +412,28 @@ fsms:
         attributes:
           error: string
           values: OperatorStatistics
+
+  ReservationOccupancy:
+    doc: >-
+      Reserved-but-not-yet-consumed bytes for one memory type by an Actor.
+
+      Reservations are made against a specific `ReservableMemory` resource (a
+      memory tier with some maximum capacity). This metric increases when a new
+      reservation is made. It decreases when allocations are made against the
+      reservation or when unused bytes are returned to the reservation manager.
+
+      A nonzero `dropped_reservation_event_count` at exit means reservation
+
+    states:
+      created:
+        initial: true
+        attributes:
+          worker: { scope-ref: Worker }
+          actor: { option: { ref: Actor } }
+          site: { option: string }
+        to: [held]
+      held:
+        attributes:
+          memory: { uses: ReservableMemory }
+        to: [held, released]
+      released: {}

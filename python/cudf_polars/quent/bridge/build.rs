@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             analyzer_package: Some("cudf-polars-quent-analyzer".to_owned()),
             collector_sink: true,
+            generate_timestamped_methods: true,
             ..Default::default()
         },
     )?;
@@ -44,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "cudf_polars_quent_browser::generate::generate_bundle".to_owned(),
         ),
         collector_server: true,
+        timestamped_methods: true,
         ..Default::default()
     };
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);

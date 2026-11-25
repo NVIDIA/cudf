@@ -103,6 +103,7 @@ impl EngineEntity for Engine {
 struct WorkerData {
     engine_id: Option<Uuid>,
     instance_name: Option<String>,
+    dropped_reservation_event_count: u64,
     exited: bool,
 }
 
@@ -119,7 +120,13 @@ impl EntityEventAccumulator for WorkerData {
                 self.engine_id = Some(engine.target);
                 self.instance_name = Some(instance_name);
             }
-            WorkerEvent::Exit { .. } => self.exited = true,
+            WorkerEvent::Exit {
+                dropped_reservation_event_count,
+                ..
+            } => {
+                self.dropped_reservation_event_count = dropped_reservation_event_count;
+                self.exited = true;
+            }
         }
     }
 }
@@ -127,6 +134,12 @@ impl EntityEventAccumulator for WorkerData {
 #[derive(Debug)]
 pub struct Worker(AnalyzedEntity<WorkerData>);
 entity_impl!(Worker);
+
+impl Worker {
+    pub(super) fn dropped_reservation_event_count(&self) -> u64 {
+        self.0.accumulator().dropped_reservation_event_count
+    }
+}
 
 impl WorkerEntity for Worker {
     fn to_ui(&self, _epoch: TimeUnixNanoSec) -> ui::Worker {

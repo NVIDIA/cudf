@@ -17,6 +17,7 @@ from rapidsmpf.streaming.core.actor import define_actor
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
 from cudf_polars.dsl.ir import IR, Rolling
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.overlap import (
     BufferedChunk,
     OverlapInput,
@@ -34,6 +35,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     evaluate_chunk,
     process_children,
     recv_metadata,
+    reservation_context,
     send_metadata,
     shutdown_on_error,
 )
@@ -157,7 +159,13 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
             with (
                 opaque_memory_usage(
                     await reserve_memory(
-                        self.context, size=concat_bytes, net_memory_delta=0
+                        self.context,
+                        size=concat_bytes,
+                        net_memory_delta=0,
+                        reservation_context=reservation_context(
+                            self.ir_context.actor_bound_quent_ir_execution_state,
+                            ReservationSite.CONCATENATE_INPUTS,
+                        ),
                     )
                 ),
                 stream_ordered_after(
@@ -191,7 +199,13 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         )
         with opaque_memory_usage(
             await reserve_memory(
-                self.context, size=result.data_alloc_size(), net_memory_delta=0
+                self.context,
+                size=result.data_alloc_size(),
+                net_memory_delta=0,
+                reservation_context=reservation_context(
+                    self.ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.EVALUATE_TRIM_COPY,
+                ),
             )
         ):
             table = table.copy(result.stream, self.context.br().device_mr)
@@ -311,6 +325,10 @@ async def rolling_actor(
             policy: OverlapPolicy[BufferedChunkT],
         ) -> None:
             """Prepare input and execute one concrete overlap policy."""
+            policy.reservation_context = reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.OVERLAP_RESERVE,
+            )
             with RollingManager(context, ir, ir_context, policy) as manager:
                 async with OverlapInput(
                     context,

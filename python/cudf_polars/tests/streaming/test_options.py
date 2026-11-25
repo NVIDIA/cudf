@@ -170,6 +170,7 @@ def test_rapidsmpf_options_serialized() -> None:
         log="DEBUG",
         pinned_max_pool_size="4GiB",
         experimental_unbounded_file_read_cache="host",
+        max_reservation_events=123,
     )
     strings = opts.to_rapidsmpf_options().get_strings()
     assert strings["statistics"] == "True"
@@ -179,6 +180,7 @@ def test_rapidsmpf_options_serialized() -> None:
     assert strings["log"] == "DEBUG"
     assert strings["pinned_max_pool_size"] == "4GiB"
     assert strings["experimental_unbounded_file_read_cache"] == "host"
+    assert strings["max_reservation_events"] == "123"
 
 
 def test_rapidsmpf_options_unspecified_fields_absent() -> None:
@@ -207,6 +209,27 @@ def test_rapidsmpf_options_explicit_overrides_env_var(
 def test_rapidsmpf_options_env_var_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("RAPIDSMPF_LOG", raising=False)
     assert "log" not in StreamingOptions().to_rapidsmpf_options().get_strings()
+
+
+def test_max_reservation_events_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RAPIDSMPF_MAX_RESERVATION_EVENTS", "456")
+    options = StreamingOptions()
+
+    assert options.max_reservation_events == 456
+    assert (
+        options.to_rapidsmpf_options().get_strings()["max_reservation_events"] == "456"
+    )
+
+
+def test_max_reservation_events_cli() -> None:
+    parser = argparse.ArgumentParser()
+    StreamingOptions._add_cli_args(parser)
+
+    options = StreamingOptions._from_argparse(
+        parser.parse_args(["--max-reservation-events", "789"])
+    )
+
+    assert options.max_reservation_events == 789
 
 
 def test_ucxx_progress_mode_picks_up_env_var(

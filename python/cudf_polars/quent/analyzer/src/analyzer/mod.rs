@@ -9,6 +9,7 @@ mod timeline;
 use std::collections::{HashMap, HashSet};
 
 use quent_analyzer::{AnalyzerError, AnalyzerResult, Entity};
+use quent_dynamic_attributes::DynamicAttribute;
 use quent_events::Event;
 use quent_query_engine_analyzer::{QueryEngineModel, ui::UiAnalyzer};
 use quent_query_engine_ui::{
@@ -32,12 +33,27 @@ use crate::{
     resource::{DeclaredResource, DeclaredResourceGroup},
 };
 
+fn add_dropped_reservation_event_count(
+    attributes: &mut Vec<DynamicAttribute>,
+    counts: impl Iterator<Item = u64>,
+) {
+    let count = counts.fold(0_u64, u64::saturating_add);
+    if count != 0 {
+        attributes.push(DynamicAttribute::u64(
+            "dropped_reservation_event_count",
+            count,
+        ));
+    }
+}
+
 /// Query-engine UI adapter for the schema-generated cudf-polars event model.
 pub struct CudfPolarsUiAnalyzer {
     pub(super) model: CudfPolarsModel,
     pub(super) actors: HashMap<Uuid, ActorSpan>,
     pub(super) evaluates: Vec<EvaluateSpan>,
     pub(super) evaluate_indices: HashMap<Uuid, usize>,
+    pub(super) occupancies: Vec<crate::reservation::OccupancySpan>,
+    pub(super) occupancy_indices: HashMap<Uuid, usize>,
     pub(super) resources: HashMap<Uuid, DeclaredResource>,
     pub(super) resource_groups: HashMap<Uuid, DeclaredResourceGroup>,
 }
@@ -62,6 +78,12 @@ impl CudfPolarsUiAnalyzer {
         self.evaluate_indices
             .get(&id)
             .and_then(|&index| self.evaluates.get(index))
+    }
+
+    pub(super) fn occupancy(&self, id: Uuid) -> Option<&crate::reservation::OccupancySpan> {
+        self.occupancy_indices
+            .get(&id)
+            .and_then(|&index| self.occupancies.get(index))
     }
 
     pub(super) fn is_known_resource_group(&self, group_id: Uuid, engine_id: Uuid) -> bool {

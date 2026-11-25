@@ -169,6 +169,12 @@ class StreamingOptions:
         Env: ``RAPIDSMPF_ALLOW_OVERBOOKING_BY_DEFAULT``.
         Default: ``True``.
         Category: rapidsmpf.
+    max_reservation_events
+        Maximum reservation-event records retained between drains while
+        recording. Additional events are dropped and counted.
+        Env: ``RAPIDSMPF_MAX_RESERVATION_EVENTS``.
+        Default: ``1000000``.
+        Category: rapidsmpf.
     pinned_memory
         Enable pinned host memory.
         Env: ``RAPIDSMPF_PINNED_MEMORY``.
@@ -384,6 +390,9 @@ class StreamingOptions:
     )
     allow_overbooking_by_default: bool | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_ALLOW_OVERBOOKING_BY_DEFAULT", parse_boolean
+    )
+    max_reservation_events: int | Unspecified = _opt(
+        "rapidsmpf", "RAPIDSMPF_MAX_RESERVATION_EVENTS", int
     )
     pinned_memory: bool | Unspecified = _opt(
         "rapidsmpf", "RAPIDSMPF_PINNED_MEMORY", parse_boolean
@@ -732,6 +741,15 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Allow memory overallocation by default in high-level reservation APIs.
                 Env: RAPIDSMPF_ALLOW_OVERBOOKING_BY_DEFAULT. Built-in default: true."""),
+        )
+        g.add_argument(
+            "--max-reservation-events",
+            dest="max_reservation_events",
+            default=None,
+            type=int,
+            help=textwrap.dedent("""\
+                Maximum reservation-event records retained between drains.
+                Env: RAPIDSMPF_MAX_RESERVATION_EVENTS. Built-in default: 1000000."""),
         )
         g.add_argument(
             "--pinned-memory",

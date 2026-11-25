@@ -16,6 +16,7 @@ from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.streaming.core.actor import define_actor
 
 from cudf_polars.containers import DataFrame
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
@@ -27,6 +28,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     ChannelManager,
     empty_table_chunk,
     recv_metadata,
+    reservation_context,
     send_metadata,
     shutdown_channels_on_error,
 )
@@ -156,7 +158,15 @@ async def concatenate_node(
             stream = ir_context.get_cuda_stream()
             seq_num = 0
             async with (
-                AllGatherManager(context, comm, collective_id) as allgather,
+                AllGatherManager(
+                    context,
+                    comm,
+                    collective_id,
+                    reservation_context=reservation_context(
+                        ir_context.actor_bound_quent_ir_execution_state,
+                        ReservationSite.ALLGATHER_PARTITIONS,
+                    ),
+                ) as allgather,
                 shutdown_channels_on_error(context, ch_in, ch_out),
             ):
                 with allgather.inserting() as inserter:
@@ -220,6 +230,10 @@ async def concatenate_node(
                                 chunk.data_alloc_size() for chunk in chunks
                             ),
                             net_memory_delta=0,
+                            reservation_context=reservation_context(
+                                ir_context.actor_bound_quent_ir_execution_state,
+                                ReservationSite.CONCATENATE_INPUTS,
+                            ),
                         )
                         with opaque_memory_usage(extra):
                             df = await ir_context.to_thread(

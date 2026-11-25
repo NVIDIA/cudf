@@ -18,6 +18,7 @@ from rapidsmpf.streaming.coll.sparse_alltoall import SparseAlltoall
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.ir import Union
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.dispatch import (
     generate_ir_sub_network,
     ir_context_for_node,
@@ -31,6 +32,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     gather_in_task_group,
     process_children,
     recv_metadata,
+    reservation_context,
     send_metadata,
 )
 from cudf_polars.streaming.utils import partition_owner, partition_range
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from rapidsmpf.communicator.communicator import Communicator
+    from rapidsmpf.memory.reservation_events import ReservationContext
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
 
@@ -180,10 +183,15 @@ async def _send_chunk(
     ch_out: Channel[TableChunk],
     chunk: TableChunk,
     sequence_number: int,
+    reservation_context: ReservationContext,
 ) -> int:
     """Make ``chunk`` available, send it, and return the next sequence number."""
     chunk, _ = await make_table_chunks_available_or_wait(
-        context, chunk, reserve_extra=0, net_memory_delta=0
+        context,
+        chunk,
+        reserve_extra=0,
+        net_memory_delta=0,
+        reservation_context=reservation_context,
     )
     await ch_out.send(context, Message(sequence_number, chunk))
     return sequence_number + 1
@@ -235,6 +243,10 @@ async def _passthrough_union(
                     TableChunk.from_message(msg, br=context.br()),
                     reserve_extra=0,
                     net_memory_delta=0,
+                    reservation_context=reservation_context(
+                        ir_context.actor_bound_quent_ir_execution_state,
+                        ReservationSite.DATA_FORWARD,
+                    ),
                 )
             await ch_out.send(context, Message(sequence_number, out_chunk))
             num_ch_chunks += 1
@@ -251,6 +263,7 @@ async def _exchange_child(
     *,
     owned: Sequence[ChunkStore],
     drop: bool,
+    reservation_context: ReservationContext,
 ) -> None:
     """
     Route one child's chunks to their owning ranks.
@@ -281,6 +294,7 @@ async def _exchange_child(
                     chunk,
                     reserve_extra=chunk.into_packed_data_cost(),
                     net_memory_delta=0,
+                    reservation_context=reservation_context,
                 )
                 exchange.insert(dst, chunk.into_packed_data(extra))
             index += 1
@@ -296,6 +310,7 @@ async def _exchange_child(
 async def _ordered_union(
     context: Context,
     comm: Communicator,
+    ir_context: IRExecutionContext,
     ch_out: Channel[TableChunk],
     chs_in: Sequence[Channel[TableChunk]],
     metadata: Sequence[ChannelMetadata],
@@ -311,6 +326,11 @@ async def _ordered_union(
     a collective before consuming all of its input (e.g. dynamic-planning
     sampling) could stall this rank's exchange and deadlock other ranks.
     """
+    quent_state = ir_context.actor_bound_quent_ir_execution_state
+    exchange_attributes = reservation_context(
+        quent_state, ReservationSite.DATA_EXCHANGE
+    )
+    emit_attributes = reservation_context(quent_state, ReservationSite.DATA_EMIT)
     nchildren = len(chs_in)
     if len(collective_ids) != nchildren:
         raise RuntimeError(
@@ -327,7 +347,15 @@ async def _ordered_union(
             local_values[child * comm.nranks + comm.rank] = meta.local_count
     # The AllGather is closed before child 0's exchange starts, so the two
     # share collective_ids[0].
-    gathered = await allgather_reduce(context, comm, collective_ids[0], *local_values)
+    gathered = await allgather_reduce(
+        context,
+        comm,
+        collective_ids[0],
+        *local_values,
+        reservation_context=reservation_context(
+            quent_state, ReservationSite.DATA_ALLGATHER
+        ),
+    )
     plan = _OrderedUnionPlan(
         nranks=comm.nranks,
         counts=tuple(
@@ -359,6 +387,7 @@ async def _ordered_union(
                 collective_ids[child],
                 owned=owned,
                 drop=meta.duplicated and comm.rank != 0,
+                reservation_context=exchange_attributes,
             )
             exchanged.put_nowait(owned)
 
@@ -373,6 +402,7 @@ async def _ordered_union(
                         ch_out,
                         TableChunk.from_message(msg, br=context.br()),
                         sequence_number,
+                        emit_attributes,
                     )
 
     try:
@@ -426,7 +456,7 @@ async def union_node(
         )
         if _needs_ordered_exchange(ir, comm.nranks, metadata):
             await _ordered_union(
-                context, comm, ch_out, chs_in, metadata, collective_ids
+                context, comm, ir_context, ch_out, chs_in, metadata, collective_ids
             )
         else:
             # Unordered union, single rank, or every child duplicated: each

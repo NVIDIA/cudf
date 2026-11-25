@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 include!(concat!(env!("OUT_DIR"), "/cudfpolars.rs"));
 

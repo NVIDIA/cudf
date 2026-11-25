@@ -16,13 +16,18 @@ from cudf_polars.streaming.benchmarks.pdsh import PDSHQueries
 from cudf_polars.streaming.benchmarks.utils import (
     FailedRecord,
     RunConfig,
+    SQLQueries,
     check_input_data_type,
     run_polars_query,
 )
 from cudf_polars.testing.engine_utils import warns_on_spmd
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pytest_subtests import SubTests
+
+    import polars as pl
 
     from cudf_polars.engine.spmd import SPMDEngine
     from cudf_polars.streaming.benchmarks.utils import RunOptions, ValidationMethod
@@ -32,6 +37,13 @@ TPCH_SUFFIX = "/*.parquet"
 EXPECTED_WARNINGS: dict[int, str] = {
     11: "ConditionalJoin not supported for multiple partitions.",
     22: "ConditionalJoin not supported for multiple partitions.",
+}
+
+# The Polars SQL queries that do not yet run on the GPU, with the reason. The
+# tests are strict: fixing one fails its test until the entry is removed.
+EXPECTED_SQL_FAILURES: dict[int, str] = {
+    11: "Comparing Decimals whose common scale does not fit in 38 digits, #25395",
+    20: "Comparing Decimals whose common scale does not fit in 38 digits, #25395",
 }
 
 
@@ -152,3 +164,19 @@ def test_tpch_query(
                     and record.validation_result.status == "Failed"
                 ):
                     pytest.fail(record.validation_result.message or "Validation failed")
+
+
+def test_tpch_sql_query(
+    request: pytest.FixtureRequest,
+    q_id: int,
+    tpch_run_config: RunConfig,
+    tpc_sql_directory: Path,
+    tpc_assert_sql_matches_cpu: Callable[[pl.LazyFrame], None],
+) -> None:
+    reason = EXPECTED_SQL_FAILURES.get(q_id)
+    if reason is not None:
+        request.applymarker(pytest.mark.xfail(reason=reason))
+
+    queries = SQLQueries("pdsh", tpc_sql_directory / "tpch")
+    frame = getattr(queries, f"q{q_id}")(tpch_run_config).frame
+    tpc_assert_sql_matches_cpu(frame)

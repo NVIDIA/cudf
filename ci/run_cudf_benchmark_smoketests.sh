@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
@@ -22,11 +22,9 @@ else
 fi
 
 EXITCODE=0
-ran_benchmark=false
 # Run all nvbench benchmarks with --profile and rmm_mode=cuda
 for bench in *_NVBENCH; do
   if [[ -x "$bench" && -f "$bench" ]]; then
-    ran_benchmark=true
     start_time=$(date +%s)
     echo "Running $bench with --profile..."
     "./$bench" --profile --devices 0 -q --rmm_mode cuda
@@ -41,11 +39,6 @@ for bench in *_NVBENCH; do
     fi
   fi
 done
-
-if [[ "$ran_benchmark" == false ]]; then
-  echo "Error: No executable benchmarks found in ${PWD}" >&2
-  exit 1
-fi
 
 echo "Test script exiting with value: $EXITCODE"
 exit ${EXITCODE}

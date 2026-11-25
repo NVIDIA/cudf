@@ -15,7 +15,8 @@ gpu_inventory=$(< "$evidence/gpus.csv")
 repeat=false
 if [[ "$gpu_inventory" == *"${target_gpu},"* ]]; then
     repeat=true
-elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-[0-9][0-9] ]]; then
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-[0-9][0-9] ||
+    "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == plain-[0-9][0-9] ]]; then
     echo 'Target GPU was not assigned' | tee "$evidence/skipped.txt"
     echo 'replay=false' >> "$GITHUB_OUTPUT"
     exit 0

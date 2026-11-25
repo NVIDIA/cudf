@@ -14,7 +14,7 @@ import pytest
 
 _output = Path(os.environ["CUDF_POLARS_DIAGNOSTICS_DIR"])
 _trial = os.environ["CUDF_POLARS_DIAGNOSTICS_TRIAL"]
-_trace = not _trial.startswith("gdb-")
+_trace = not _trial.startswith(("gdb-", "plain-"))
 _warmup_first = (
     "tests/expressions/test_agg.py::"
     "test_n_unique_sorted[spmd-small-data0-Int64-False-True-True-False]"
@@ -112,7 +112,7 @@ def pytest_sessionstart(session):
             subprocess.run(
                 ["conda", "list", "--explicit"], stdout=packages, check=True
             )
-        if _trial.startswith("gdb-"):
+        if _trial.startswith(("gdb-", "plain-")):
             from watch_gpu_events import watch_gpu_events
 
             stopped = threading.Event()

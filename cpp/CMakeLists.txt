@@ -42,6 +42,12 @@ option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in lib
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
 option(CUDF_DOWNLOAD_ZSTD "Download and build Zstd from source" ON)
 mark_as_advanced(CUDF_DOWNLOAD_ZSTD)
+if(NOT BUILD_SHARED_LIBS AND NOT CUDF_DOWNLOAD_ZSTD)
+  message(
+    FATAL_ERROR
+      "Static cuDF builds require CUDF_DOWNLOAD_ZSTD=ON because the packaged Zstd target and tracing shim are not exported."
+  )
+endif()
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)
 mark_as_advanced(CUDF_LARGE_STRINGS_DISABLED)
 option(

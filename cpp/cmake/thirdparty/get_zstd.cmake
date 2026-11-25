@@ -17,10 +17,13 @@ function(find_and_configure_zstd)
     find_package(zstd 1.5.7 EXACT CONFIG REQUIRED)
     # Conda omits the static target in 1.5.7. Once we upgrade to 1.6, use zstd::libzstd_static
     # instead of reconstructing its interface here.
+
+    # Clear older cache entries so a changed package prefix cannot reuse the wrong archive.
+    unset(CUDF_ZSTD_STATIC_LIBRARY CACHE)
     find_file(
       CUDF_ZSTD_STATIC_LIBRARY libzstd.a
       PATHS "${zstd_DIR}/../.."
-      NO_DEFAULT_PATH REQUIRED
+      NO_DEFAULT_PATH NO_CACHE REQUIRED
     )
     message(STATUS "Using packaged Zstd archive: ${CUDF_ZSTD_STATIC_LIBRARY}")
     get_target_property(package_includes zstd::libzstd_shared INTERFACE_INCLUDE_DIRECTORIES)

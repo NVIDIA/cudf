@@ -375,7 +375,7 @@ row_filter_expression_converter::row_filter_expression_converter(
   CUDF_EXPECTS(std::cmp_less_equal(offset, col_types.size()),
                "Number of prepended columns exceeds the number of input columns",
                std::invalid_argument);
-  _has_null_check.resize(col_types.size() - offset, false);
+  _nested_is_null_mask.resize(col_types.size() - offset, false);
   _converted_expr = expr.accept(*this);
 }
 
@@ -409,7 +409,7 @@ std::reference_wrapper<ast::expression const> row_filter_expression_converter::v
                    "Column index in the filter expression is out of range",
                    std::out_of_range);
       if (cudf::is_nested(_col_types[col_idx + _offset])) {
-        _has_null_check[col_idx] = true;
+        _nested_is_null_mask[col_idx] = true;
         return _tree.push(
           ast::column_reference{static_cast<size_type>(_col_types.size()) + col_idx});
       }
@@ -428,9 +428,10 @@ std::reference_wrapper<ast::expression const> row_filter_expression_converter::v
   CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
 }
 
-row_filter_expression_converter::converted_expression row_filter_expression_converter::release() &&
+std::tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<bool>>
+row_filter_expression_converter::get_converted_expr() &&
 {
-  return {std::move(_tree), _converted_expr, std::move(_has_null_check)};
+  return {std::move(_tree), _converted_expr, std::move(_nested_is_null_mask)};
 }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(
@@ -562,16 +563,15 @@ void parquet_expression_simplifier::validate_operands(ast::expression const& exp
       std::invalid_argument);
   } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
              operation != nullptr) {
-    // A nested column is only supported as the direct operand of IS_NULL
-    if (operation->get_operator() == ast::ast_operator::IS_NULL) {
-      auto const operand = extract_unary_operand(*operation);
-      if (operand.operand_type == operand_kind::COLUMN_REF) {
-        validate_column_reference(*operand.col_ref);
-        return;
-      }
-    }
+    auto const is_null = operation->get_operator() == ast::ast_operator::IS_NULL;
     for (auto const& operand : operation->get_operands()) {
-      validate_operands(operand.get());
+      // Nested columns are only valid directly under IS_NULL as only their validity is known
+      auto const* ref = dynamic_cast<ast::column_reference const*>(&operand.get());
+      if (is_null and ref != nullptr) {
+        validate_column_reference(*ref);
+      } else {
+        validate_operands(operand.get());
+      }
     }
   } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
     // Column name references must not exist in the normalized filter expression

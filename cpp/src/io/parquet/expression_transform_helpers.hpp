@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -256,20 +257,11 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
  * Offsets every column reference by `offset` to account for the prepended columns, and replaces
  * `IS_NULL` on a nested column `i` with a reference to column `num_columns + i`, where
  * `num_columns` is the number of input columns. The caller must append a null check column for
- * every input column after the prepended ones, filling the slots flagged in `has_null_check` with
- * `is_null` of the corresponding input column.
+ * every input column after the prepended ones, filling the slots flagged in `nested_is_null_mask`
+ * with `is_null` of the corresponding input column.
  */
 class row_filter_expression_converter : public ast::detail::expression_transformer {
  public:
-  /**
-   * @brief Converted filter expression and the input columns that need a null check column
-   */
-  struct converted_expression {
-    ast::tree tree;  ///< Owns the nodes of `expr`
-    std::reference_wrapper<ast::expression const> expr;
-    std::vector<bool> has_null_check;  ///< Per input column after the prepended columns
-  };
-
   /**
    * @brief Constructs and converts the filter expression
    *
@@ -303,18 +295,21 @@ class row_filter_expression_converter : public ast::detail::expression_transform
     ast::column_name_reference const& expr) override;
 
   /**
-   * @brief Releases the converted expression along with the input columns that need a null check
+   * @brief Moves out the converted expression along with the input columns that need a null check
    *
-   * @return Converted expression
+   * @return Tuple of the AST tree owning the converted expression's nodes, the converted
+   * expression, and whether each input column after the prepended ones needs a null check column
    */
-  [[nodiscard]] converted_expression release() &&;
+  [[nodiscard]] std::
+    tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<bool>>
+    get_converted_expr() &&;
 
  private:
   size_type _offset;
   std::span<data_type const> _col_types;
   ast::tree _tree;
   std::reference_wrapper<ast::expression const> _converted_expr;
-  std::vector<bool> _has_null_check;
+  std::vector<bool> _nested_is_null_mask;
 };
 
 /**

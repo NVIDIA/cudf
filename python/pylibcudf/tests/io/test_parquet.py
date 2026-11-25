@@ -442,6 +442,93 @@ def test_read_parquet_bloom_filter_decimal_scale_mismatch(tmp_path):
 
 
 @requires_pyarrow_bloom_filters
+@pytest.mark.parametrize(
+    "decimal_width,literal_type",
+    [
+        (plc.TypeId.DECIMAL32, pa.decimal32(9, 2)),
+        (plc.TypeId.DECIMAL64, pa.decimal64(18, 2)),
+        (plc.TypeId.DECIMAL128, pa.decimal128(38, 2)),
+    ],
+)
+def test_read_parquet_decimal_width_bloom_filters(
+    tmp_path, decimal_width, literal_type
+) -> None:
+    """Bloom filters hash literals of `decimal_width` as the physical type, and
+    cannot prune values narrowed by `decimal_width` as they may truncate to the
+    literal.
+    """
+    # INT32, INT64 and FIXED_LEN_BYTE_ARRAY(16) columns. Both row groups span
+    # -3.00 to 3.00 so that stats cannot prune them. Row group 0 holds 0.05, or
+    # 42949672.97 in the wider columns, which truncates to 0.05 as DECIMAL32
+    columns = {"int32": 9, "int64": 18, "flba": 38}
+    path = tmp_path / "decimal_width_bloom.parquet"
+    schema = pa.schema(
+        [
+            (name, pa.decimal128(precision, 2))
+            for name, precision in columns.items()
+        ]
+    )
+    with pq.ParquetWriter(
+        path,
+        schema,
+        store_decimal_as_integer=True,
+        bloom_filter_options={name: BLOOM_FILTER_OPTIONS for name in columns},
+    ) as writer:
+        for odd in (5, 7):
+            writer.write_table(
+                pa.table(
+                    {
+                        name: [
+                            decimal.Decimal(
+                                2**32 + 5 if v == 5 and precision > 9 else v
+                            ).scaleb(-2)
+                            for v in [-300, 300, odd] * 100
+                        ]
+                        for name, precision in columns.items()
+                    },
+                    schema=schema,
+                )
+            )
+    metadata = pq.ParquetFile(path).metadata
+    assert all(
+        metadata.row_group(rg).column(col).bloom_filter_offset is not None
+        for rg in range(metadata.num_row_groups)
+        for col in range(len(columns))
+    )
+
+    for name, precision in columns.items():
+        physical_size = {9: 4, 18: 8, 38: 16}[precision]
+        narrowed = physical_size > literal_type.byte_width
+        has_5 = physical_size == 4 or literal_type.byte_width == 4
+        for value, num_row_groups in [(7, 1), (5, 1 if has_5 else 0)]:
+            options = (
+                plc.io.parquet.ParquetReaderOptions.builder(
+                    plc.io.SourceInfo([str(path)])
+                )
+                .decimal_width(decimal_width)
+                .build()
+            )
+            literal = pa.scalar(
+                decimal.Decimal(value).scaleb(-2), literal_type
+            )
+            options.set_filter(
+                Operation(
+                    ASTOperator.EQUAL,
+                    ColumnNameReference(name),
+                    Literal(plc.Scalar.from_arrow(literal)),
+                )
+            )
+            result = plc.io.parquet.read_parquet(options)
+            if narrowed:
+                assert result.num_row_groups_after_bloom_filter in (None, 2)
+            else:
+                assert (
+                    result.num_row_groups_after_bloom_filter == num_row_groups
+                )
+            assert result.tbl.num_rows() == (100 if value == 7 or has_5 else 0)
+
+
+@requires_pyarrow_bloom_filters
 @pytest.mark.parametrize("arrow_type", [pa.float32(), pa.float64()])
 @pytest.mark.parametrize("zero,literal", [(-0.0, 0.0), (0.0, -0.0)])
 def test_read_parquet_bloom_filter_signed_zero(
@@ -1257,12 +1344,99 @@ def test_read_parquet_column_chunk_bounds_arrow_schema_duration(
 
     # Explicit int64 and duration arrow types must not mix, in either order
     for paths in ([duration_path, int64_path], [int64_path, duration_path]):
-        with pytest.raises(
-            ValueError, match="Mismatching parquet statistics dtype"
-        ):
+        with pytest.raises(RuntimeError, match="same schema"):
             plc.io.parquet_metadata.read_parquet_column_chunk_bounds(
                 read_footers(paths), columns=["d"]
             )
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_arrow_schema_duration_mismatch(tmp_path, mismatched):
+    def write(name, dtype, *, store_schema=True):
+        path = tmp_path / f"{name}.parquet"
+        write_table(
+            pa.table({"d": pa.array([1, 2], type=dtype)}),
+            path,
+            store_schema=store_schema,
+        )
+        return path
+
+    def read(paths, *, use_arrow_schema=True):
+        builder = plc.io.parquet.ParquetReaderOptions.builder(
+            plc.io.SourceInfo([str(p) for p in paths])
+        ).use_arrow_schema(use_arrow_schema)
+        if mismatched:
+            builder = builder.allow_mismatched_pq_schemas(True)
+        options = builder.build()
+        if mismatched:
+            options.set_column_names(["d"])
+        return plc.io.parquet.read_parquet(options).tbl.columns()[0].to_arrow()
+
+    ms = write("ms", pa.duration("ms"))
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    # Explicit arrow types must match in either order, but only if in use
+    for other in (write("us", pa.duration("us")), write("int64", pa.int64())):
+        for paths in ([ms, other], [other, ms]):
+            with pytest.raises(error, match=match):
+                read(paths)
+            assert read(paths, use_arrow_schema=False).equals(
+                pa.array([1, 2, 1, 2])
+            )
+
+    # Sources without an arrow:schema follow the zeroth source's arrow types
+    no_schema = write("no_schema", pa.int64(), store_schema=False)
+    assert read([ms, no_schema]).equals(
+        pa.array([1, 2, 1, 2], type=pa.duration("ms"))
+    )
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+@pytest.mark.parametrize("units", [("ms", "us"), ("us", "ns"), ("ns", "ms")])
+def test_read_parquet_timestamp_units(tmp_path, units, mismatched):
+    # Naive timestamps have only a logical type, which differs in unit
+    paths = [tmp_path / f"{unit}.parquet" for unit in units]
+    for path, unit in zip(paths, units, strict=True):
+        write_table(pa.table({"t": pa.array([1], pa.timestamp(unit))}), path)
+    error, match = (
+        (ValueError, "mismatching data type or schema")
+        if mismatched
+        else (RuntimeError, "same schema")
+    )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        with pytest.raises(error, match=match):
+            plc.io.parquet.read_parquet(options)
+
+
+@pytest.mark.parametrize("mismatched", [False, True])
+def test_read_parquet_converted_type(tmp_path, mismatched):
+    # UTC timestamps also get the deprecated converted type, naive ones do not
+    paths = [tmp_path / "utc.parquet", tmp_path / "naive.parquet"]
+    for path, tz in zip(paths, ("UTC", None), strict=True):
+        write_table(
+            pa.table({"t": pa.array([1], pa.timestamp("us", tz))}), path
+        )
+    for order in (paths, paths[::-1]):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo(order)
+            )
+            .allow_mismatched_pq_schemas(mismatched)
+            .build()
+        )
+        options.set_column_names(["t"])
+        assert plc.io.parquet.read_parquet(options).tbl.num_rows() == 2
 
 
 def test_file_metadata_schema_element_nesting() -> None:

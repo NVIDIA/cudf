@@ -326,9 +326,16 @@ class orc_metadata {
    * @param schema ORC schema
    * @param num_rows number of rows
    * @param num_stripes number of stripes
+   * @param calendar_kind calendar recorded in the footer, or `std::nullopt` if absent
    */
-  orc_metadata(orc_schema schema, uint64_t num_rows, size_type num_stripes)
-    : _schema{std::move(schema)}, _num_rows{num_rows}, _num_stripes{num_stripes}
+  orc_metadata(orc_schema schema,
+               uint64_t num_rows,
+               size_type num_stripes,
+               std::optional<orc::CalendarKind> calendar_kind = std::nullopt)
+    : _schema{std::move(schema)},
+      _num_rows{num_rows},
+      _num_stripes{num_stripes},
+      _calendar_kind{calendar_kind}
   {
   }
 
@@ -356,10 +363,22 @@ class orc_metadata {
    */
   [[nodiscard]] auto num_stripes() const { return _num_stripes; }
 
+  /**
+   * @brief Returns the calendar recorded in the ORC footer.
+   *
+   * A missing value means the writer did not specify a calendar. This accessor does not
+   * convert values. See `orc_reader_options::enable_convert_dates_to_proleptic` for DATE
+   * conversion.
+   *
+   * @return Calendar kind, or `std::nullopt` if the footer has no calendar field
+   */
+  [[nodiscard]] auto calendar_kind() const { return _calendar_kind; }
+
  private:
   orc_schema _schema;
   uint64_t _num_rows;
   size_type _num_stripes;
+  std::optional<orc::CalendarKind> _calendar_kind;
 };
 
 /**

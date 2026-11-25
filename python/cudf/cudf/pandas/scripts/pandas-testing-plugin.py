@@ -4,12 +4,17 @@
 import hashlib
 import importlib
 import json
+import math
 import sys
 import traceback
 from collections import defaultdict
 from functools import wraps
+from pathlib import Path
+from statistics import median
 
 import pytest
+
+_EXCLUDED_SHARD_FILES = pytest.StashKey[set[Path]]()
 
 
 def positive_int(value):
@@ -42,6 +47,16 @@ def pytest_addoption(parser):
         default=1,
         help="Total number of shards.",
     )
+    group.addoption(
+        "--shard-by-file",
+        action="store_true",
+        help="Assign test files to shards before importing them.",
+    )
+    group.addoption(
+        "--shard-file-timings",
+        type=Path,
+        help="JSON mapping of test file paths to previous test durations in seconds.",
+    )
 
 
 def _sha256_hash(value: str) -> int:
@@ -64,6 +79,55 @@ def partition_items_by_shard(items, shard_id, num_shards):
         )
         target.append(item)
     return selected, deselected
+
+
+def excluded_shard_files(root, shard_id, num_shards, timings):
+    files = sorted(
+        path.relative_to(root).as_posix()
+        for path in (root / "tests").rglob("*.py")
+        if path.name.startswith("test_") or path.name.endswith("_test.py")
+    )
+    if not files:
+        raise pytest.UsageError(
+            "--shard-by-file requires the staged pandas tests"
+        )
+    weights = {}
+    if timings is not None:
+        try:
+            weights = json.loads(timings.read_text())
+        except (OSError, ValueError) as error:
+            raise pytest.UsageError(
+                f"Cannot read shard timings {timings}: {error}"
+            ) from error
+        if not isinstance(weights, dict) or any(
+            not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+            for value in weights.values()
+        ):
+            raise pytest.UsageError(
+                "Shard timings must map paths to nonnegative seconds"
+            )
+    known = [weights[path] for path in files if weights.get(path, 0) > 0]
+    default = median(known) if known else 1.0
+    costs = {path: weights.get(path, default) or default for path in files}
+    totals = [0.0] * num_shards
+    excluded = set()
+    # Assign the slowest files first so unusually expensive modules are spread
+    # across shards. The sorted paths and lowest shard index break ties.
+    for path in sorted(files, key=lambda path: -costs[path]):
+        shard = min(range(num_shards), key=totals.__getitem__)
+        totals[shard] += costs[path]
+        if shard != shard_id:
+            excluded.add(root / path)
+    return excluded
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_ignore_collect(collection_path, config):
+    if collection_path in config.stash.get(_EXCLUDED_SHARD_FILES, ()):
+        return True
+    return None
 
 
 def pytest_report_collectionfinish(config, items):
@@ -12506,6 +12570,13 @@ def pytest_configure(config):
             f"--shard-id ({shard_id}) must be in "
             f"[0, --num-shards ({num_shards}))"
         )
+    if num_shards > 1 and config.getoption("shard_by_file"):
+        config.stash[_EXCLUDED_SHARD_FILES] = excluded_shard_files(
+            config.rootpath,
+            shard_id,
+            num_shards,
+            config.getoption("shard_file_timings"),
+        )
 
 
 @pytest.hookimpl(trylast=True)
@@ -12513,12 +12584,18 @@ def pytest_collection_modifyitems(session, config, items):
     num_shards = config.getoption("num_shards")
     sharded = num_shards > 1
     if sharded:
-        shard_id = config.getoption("shard_id")
-        # Keep only this shard's items before applying skip/xfail markers so
-        # the markers are only attached to the tests this shard will run.
-        items[:], deselected = partition_items_by_shard(
-            items, shard_id, num_shards
-        )
+        if config.getoption("shard_by_file"):
+            # Pytest bypasses the ignore hook for explicitly requested files.
+            excluded = config.stash[_EXCLUDED_SHARD_FILES]
+            deselected = [item for item in items if item.path in excluded]
+            if deselected:
+                items[:] = [
+                    item for item in items if item.path not in excluded
+                ]
+        else:
+            items[:], deselected = partition_items_by_shard(
+                items, config.getoption("shard_id"), num_shards
+            )
         if deselected:
             # Tell pytest what the other shards took, so reporting plugins
             # account for them instead of seeing them vanish at collection.

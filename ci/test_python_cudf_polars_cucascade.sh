@@ -19,9 +19,10 @@ rapids-logger "Build cudf-polars-cucascade"
 python -m pip install --no-build-isolation --no-deps -v ./python/cudf_polars/cucascade
 
 rapids-logger "pytest cudf-polars-cucascade"
-# The pytest entry point, unlike `python -m pytest`, does not put the working directory on
-# sys.path, so the tests import the installed extension rather than its source directory.
-cd python/cudf_polars/cucascade
+# Run from the repository root so that neither pytest nor the Ray workers, which put the
+# working directory on sys.path, import the extension's source directory instead of the
+# installed extension.
 pytest \
   --junitxml="${RAPIDS_TESTS_DIR}/junit-cudf-polars-cucascade.xml" \
-  --durations=20
+  --durations=20 \
+  python/cudf_polars/cucascade/tests

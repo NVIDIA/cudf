@@ -797,7 +797,9 @@ dependencies:
     common:
       - output_types: conda
         packages:
-          # cuCascade's io core: io_uring transport (found with pkg-config) and TLS.
+          # cuCascade's io core: io_uring transport (found with pkg-config), TLS, and
+          # NVML for its topology discovery.
+          - cuda-nvml-dev
           - liburing
           - openssl
           - pkg-config

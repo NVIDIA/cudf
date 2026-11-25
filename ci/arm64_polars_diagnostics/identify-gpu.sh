@@ -11,6 +11,13 @@ nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$evidence/
 trial=$CUDF_POLARS_DIAGNOSTICS_TRIAL
 gpu_inventory=$(< "$evidence/gpus.csv")
 shuffle_gpu=GPU-ffa4d437-0552-ea7a-0e5d-0fe4bf4fd918
+# These GPUs have carried the archived shuffle or a reproduced synchronization fault.
+shuffle_gpus=(
+    "$shuffle_gpu"
+    GPU-1ae60e36-999e-c6da-6055-0ad23bd269d2
+    GPU-0a09faf2-4209-1445-fcce-4d121c0d7c98
+    GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
+)
 # The paired replay can compare both conditions on any GPU with a known Dask fault.
 dask_gpus=(
     GPU-1ae60e36-999e-c6da-6055-0ad23bd269d2
@@ -25,9 +32,14 @@ driver_gpus=(
     GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
     GPU-c546a04e-2234-c700-68f5-02cc3997c685
 )
-if [[ "$trial" == shuffle-probe-* && "$gpu_inventory" == *"$shuffle_gpu,"* ]]; then
-    # Preserve the archived test schedule while capturing a native stack on recurrence.
-    trial=signal-target-frozen-shuffle
+if [[ "$trial" == shuffle-probe-* ]]; then
+    for gpu in "${shuffle_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            # Preserve the archived test schedule while capturing a native stack on recurrence.
+            trial=signal-target-frozen-shuffle
+            break
+        fi
+    done
 elif [[ "$trial" == driver-reference ]]; then
     # Verify the alternate userspace driver in CI even if no known GPU is assigned.
     trial=signal-driver-dask-datetime
@@ -42,7 +54,9 @@ fi
 
 # Repeat on GPUs associated with the failures being replayed.
 target_gpus=("$shuffle_gpu")
-if [[ "$trial" == *-aggregation ]]; then
+if [[ "$trial" == signal-target-frozen-shuffle ]]; then
+    target_gpus=("${shuffle_gpus[@]}")
+elif [[ "$trial" == *-aggregation ]]; then
     target_gpus=(GPU-55411e83-90e6-d36b-43de-0d7e24c8489a)
 elif [[ "$trial" == *-dask-datetime ]]; then
     target_gpus=("${dask_gpus[@]}")

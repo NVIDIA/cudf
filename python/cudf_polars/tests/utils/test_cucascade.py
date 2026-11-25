@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,7 @@ import polars as pl
 
 import pylibcudf as plc
 
+from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils import cucascade
 
 
@@ -164,6 +166,25 @@ def test_installed_libcudf_version_does_not_need_the_pylibcudf_distribution_name
     assert cucascade._installed_cudf_version() is not None
 
 
+def test_installed_libcudf_version_unknown(monkeypatch):
+    monkeypatch.setitem(sys.modules, "pylibcudf._version", None)
+    assert cucascade._installed_cudf_version() is None
+
+
+def test_cache_is_created_once(recording_extension):
+    cucascade.configure_cucascade(1 << 30)
+    first = cucascade._cache
+    cucascade.configure_cucascade(2 << 30)
+    assert cucascade._cache is first
+    assert first.config["cache_bytes"] == 1 << 30
+
+
+def test_wrap_sources_opens_one_path(fake_cache):
+    (source,) = cucascade.wrap_sources(["s3://bucket/a.parquet"])
+    assert source.path == "s3://bucket/a.parquet"
+    assert fake_cache.opened == ["s3://bucket/a.parquet"]
+
+
 def test_wrap_sources_opens_every_remote_path(fake_cache):
     paths = ["s3://bucket/a.parquet", "s3://bucket/b.parquet"]
     sources = cucascade.wrap_sources(paths)
@@ -230,6 +251,60 @@ def test_register_layouts_skips_local_files(fake_cache, parquet_info):
     parquet_info.path = "/local/t.parquet"
     cucascade.register_layouts([parquet_info])
     assert fake_cache.layouts == {}
+
+
+class LocalSource(plc.io.types.FilepathSource):
+    """A cache source that reads a local file."""
+
+    def nbytes(self):
+        return self.size
+
+
+class LocalScanCache(FakeScanCache):
+    """Stands in for the cache, serving local files as if they were s3:// objects."""
+
+    def open(self, path):
+        self.opened.append(path)
+        return LocalSource(path, Path(path).stat().st_size)
+
+
+@pytest.fixture
+def local_cache(monkeypatch):
+    cache = LocalScanCache()
+    monkeypatch.setattr(cucascade, "_cache", cache)
+    monkeypatch.setattr(cucascade, "_registered", set())
+    monkeypatch.setattr(cucascade, "_is_s3", lambda path: True)
+    return cache
+
+
+@pytest.fixture
+def parquet_path(tmp_path):
+    path = tmp_path / "t.parquet"
+    pl.DataFrame({"a": range(1000), "b": [str(i) for i in range(1000)]}).write_parquet(
+        path, row_group_size=250
+    )
+    return str(path)
+
+
+def test_register_layouts_from_sources(local_cache, parquet_path):
+    sources = cucascade.wrap_sources([parquet_path])
+    cucascade.register_layouts_from_sources([parquet_path], sources)
+    cucascade.register_layouts_from_sources([parquet_path], sources)
+    assert list(local_cache.layouts) == [parquet_path]
+    _, columns, col_index, *_ = local_cache.layouts[parquet_path]
+    assert columns == ["a", "b"]
+    assert col_index == [0, 1] * 4
+
+
+def test_register_layouts_from_sources_disabled(disabled, parquet_path):
+    cucascade.register_layouts_from_sources([parquet_path], [None])
+
+
+def test_query_reads_through_the_cache(local_cache, parquet_path, engine):
+    q = pl.scan_parquet(parquet_path).filter(pl.col("a") > 10).select("b")
+    assert_gpu_result_equal(q, engine=engine)
+    assert parquet_path in local_cache.opened
+    assert parquet_path in local_cache.layouts
 
 
 @pytest.mark.parametrize("cache_bytes, nranks", [(0, 1), (0, 4), (1 << 30, 1)])

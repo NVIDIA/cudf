@@ -210,24 +210,14 @@ def _layout(info: Any) -> tuple[list[str], list[int], list[int], list[int]]:
     base = options(None)
     row_groups = reader(base).all_row_groups(base)
     columns = list(file_metadata.columnchunk_metadata.keys())
-    col_index: list[int] = []
-    offsets: list[int] = []
-    sizes: list[int] = []
-    # One call with every column selected returns the chunks row-group-major.
+    # The columns are the leaves (``s.x``, ``l.list.element``), so selecting all of them
+    # returns one chunk per column per row group, row-group-major.
     all_opts = options(columns)
     ranges = reader(all_opts).all_column_chunks_byte_ranges(row_groups, all_opts)
-    if len(ranges) == len(row_groups) * len(columns):
-        for k, rng in enumerate(ranges):
-            col_index.append(k % len(columns))
-            offsets.append(rng.offset)
-            sizes.append(rng.size)
-    else:  # nested columns: one call per column
-        for i, name in enumerate(columns):
-            opts = options([name])
-            for rng in reader(opts).all_column_chunks_byte_ranges(row_groups, opts):
-                col_index.append(i)
-                offsets.append(rng.offset)
-                sizes.append(rng.size)
+    assert len(ranges) == len(row_groups) * len(columns)
+    col_index = [k % len(columns) for k in range(len(ranges))]
+    offsets = [rng.offset for rng in ranges]
+    sizes = [rng.size for rng in ranges]
     return columns, col_index, offsets, sizes
 
 

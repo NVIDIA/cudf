@@ -85,7 +85,9 @@ cpdef Column divide_decimal(
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
         With DecimalIntermediate.STANDARD, a result is also null if the
-        rescaled dividend overflows the widest of the input and output types.
+        magnitude of the rescaled dividend does not fit in an unsigned 64-bit
+        integer (if all three types are DECIMAL32) or an unsigned 128-bit
+        integer (otherwise).
         DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)
@@ -158,7 +160,9 @@ cpdef Column divide_decimal_column_scalar(
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
         With DecimalIntermediate.STANDARD, a result is also null if the
-        rescaled dividend overflows the widest of the input and output types.
+        magnitude of the rescaled dividend does not fit in an unsigned 64-bit
+        integer (if all three types are DECIMAL32) or an unsigned 128-bit
+        integer (otherwise).
         DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)
@@ -231,7 +235,9 @@ cpdef Column divide_decimal_scalar_column(
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
         With DecimalIntermediate.STANDARD, a result is also null if the
-        rescaled dividend overflows the widest of the input and output types.
+        magnitude of the rescaled dividend does not fit in an unsigned 64-bit
+        integer (if all three types are DECIMAL32) or an unsigned 128-bit
+        integer (otherwise).
         DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)

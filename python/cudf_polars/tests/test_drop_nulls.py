@@ -153,10 +153,11 @@ def test_fill_null_scalar_receiver_column_fill(engine: pl.GPUEngine, scalar, val
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_fill_null_null_scalar_receiver_keeps_fill_sortedness():
+@pytest.mark.parametrize("values", [[3.0], [3.0, 2.0, 1.0]])
+def test_fill_null_null_scalar_receiver_keeps_fill_sortedness(values):
     dtype = DataType(pl.Float64())
     stream = get_cuda_stream()
-    df = DataFrame.from_polars(pl.DataFrame({"a": [3.0, 2.0, 1.0]}), stream=stream)
+    df = DataFrame.from_polars(pl.DataFrame({"a": values}), stream=stream)
     fill = df.column_map["a"].set_sorted(
         is_sorted=plc.types.Sorted.YES,
         order=plc.types.Order.DESCENDING,

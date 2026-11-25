@@ -1581,29 +1581,20 @@ class UnaryFunction(Expr):
                 )
             else:
                 evaluated = fill_value.evaluate(df, context=context)
-                if column.size == 1 and evaluated.size == 1:
-                    # replace_nulls has no kernel for nested scalars.
+                if column.size == 1:
                     if column.null_count == 0:
+                        (column,) = broadcast(
+                            column, target_length=evaluated.size, stream=df.stream
+                        )
                         return column
-                    if column.dtype == evaluated.dtype:
-                        return Column(evaluated.obj, dtype=self.dtype)
-                if evaluated.is_scalar:
-                    arg = evaluated.obj_scalar(stream=df.stream)
-                else:
-                    arg = evaluated.obj
-                    if column.size == 1 != evaluated.size:
-                        if column.null_count == 1:
-                            if column.dtype == evaluated.dtype:
-                                return Column(
-                                    evaluated.obj, dtype=self.dtype
-                                ).sorted_like(evaluated)
-                        else:
-                            (column,) = broadcast(
-                                column,
-                                target_length=evaluated.size,
-                                stream=df.stream,
-                            )
-                            return column
+                    return Column(evaluated.obj, dtype=self.dtype).sorted_like(
+                        evaluated
+                    )
+                arg = (
+                    evaluated.obj_scalar(stream=df.stream)
+                    if evaluated.is_scalar
+                    else evaluated.obj
+                )
             if isinstance(arg, plc.Scalar) and dtypes.can_cast(
                 column.dtype.plc_type, arg.type()
             ):  # pragma: no cover

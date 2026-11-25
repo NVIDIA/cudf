@@ -303,6 +303,33 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_ifElseSS(
   JNI_CATCH(env, 0);
 }
 
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_applyNullMask(JNIEnv* env,
+                                                                     jclass,
+                                                                     jlong j_col,
+                                                                     jlong j_bool_mask)
+{
+  JNI_NULL_CHECK(env, j_col, "column is null", 0);
+  JNI_NULL_CHECK(env, j_bool_mask, "mask column is null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto const col_view  = reinterpret_cast<cudf::column_view*>(j_col);
+    auto const mask_view = reinterpret_cast<cudf::column_view*>(j_bool_mask);
+
+    auto [bool_mask, bool_null_count] = cudf::bools_to_mask(*mask_view);
+    auto copy                         = std::make_unique<cudf::column>(*col_view);
+    auto result                       = cudf::structs::detail::superimpose_and_sanitize_nulls(
+      static_cast<cudf::bitmask_type const*>(bool_mask->data()),
+      bool_null_count,
+      std::move(copy),
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref());
+
+    return release_as_jlong(result);
+  }
+  JNI_CATCH(env, 0);
+}
+
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_getElement(JNIEnv* env,
                                                                   jclass,
                                                                   jlong from,

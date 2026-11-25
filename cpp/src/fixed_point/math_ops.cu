@@ -58,11 +58,16 @@ using compute_rep_t =
  * output value is 0, if either operand is null or the division has no result.
  *
  * @tparam OutRep The representation type of the output
+ * @tparam RhsRep The representation type of the divisor
  * @tparam CompRep The representation type both operands are widened to for the division
  * @tparam LhsIterator Iterator yielding optional dividends
  * @tparam RhsIterator Iterator yielding optional divisors
  */
-template <typename OutRep, typename CompRep, typename LhsIterator, typename RhsIterator>
+template <typename OutRep,
+          typename RhsRep,
+          typename CompRep,
+          typename LhsIterator,
+          typename RhsIterator>
 struct divide_decimal_fn {
   LhsIterator lhs;
   RhsIterator rhs;
@@ -76,12 +81,13 @@ struct divide_decimal_fn {
   {
     auto const l        = lhs[i];
     auto const r        = rhs[i];
-    auto const quotient = (l and r) ? divide_and_round<OutRep>(static_cast<CompRep>(l->value()),
+    auto const quotient = (l and r)
+                            ? divide_and_round<OutRep, RhsRep>(static_cast<CompRep>(l->value()),
                                                                static_cast<CompRep>(r->value()),
                                                                exponent,
                                                                method,
                                                                intermediate)
-                                    : cuda::std::optional<OutRep>{};
+                            : cuda::std::optional<OutRep>{};
     output[i]           = quotient.value_or(OutRep{0});
     output_valid[i]     = quotient.has_value();
   }
@@ -115,17 +121,17 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
     make_fixed_width_column(output_type, size, mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto valid = cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), size, cuda::no_init);
 
+  using Fn = divide_decimal_fn<OutRep, typename RhsT::rep, CompRep, LhsIterator, RhsIterator>;
   thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
                      cuda::counting_iterator<size_type>{0},
                      size,
-                     divide_decimal_fn<OutRep, CompRep, LhsIterator, RhsIterator>{
-                       lhs,
-                       rhs,
-                       exponent,
-                       method,
-                       intermediate,
-                       result->mutable_view().begin<OutRep>(),
-                       valid.data()});
+                     Fn{lhs,
+                        rhs,
+                        exponent,
+                        method,
+                        intermediate,
+                        result->mutable_view().begin<OutRep>(),
+                        valid.data()});
 
   auto [null_mask, null_count] = cudf::detail::bools_to_mask(
     column_view{data_type{type_id::BOOL8}, size, valid.data(), nullptr, 0}, stream, mr);

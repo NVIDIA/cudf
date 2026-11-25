@@ -162,6 +162,7 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
  * `lhs * 10^exponent` does not fit in the magnitude type of `CompRep`.
  *
  * @tparam OutRep The representation type of the output
+ * @tparam RhsRep The representation type of the divisor, before widening
  * @tparam CompRep The representation type both operands have been widened to
  * @param lhs The dividend's representation
  * @param rhs The divisor's representation
@@ -170,7 +171,7 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
  * @param intermediate The width of the intermediate value used to rescale the dividend
  * @return The quotient's representation at the output scale, or no value
  */
-template <typename OutRep, typename CompRep>
+template <typename OutRep, typename RhsRep, typename CompRep>
 __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
                                                                CompRep rhs,
                                                                int32_t exponent,
@@ -192,9 +193,13 @@ __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
   if (exponent >= 0) {
     if (!checked_power<U, numeric::Radix::BASE_10>(factor, exponent) ||
         cuda::mul_overflow(dividend, dividend, factor)) {
-      if (intermediate == decimal_intermediate::WIDE) {
-        return divide_and_round_wide<OutRep>(
-          magnitude(lhs), magnitude(rhs), exponent, negative, method);
+      // An overflowing dividend is at least 2^64 (or 2^128), so unless the divisor or the output
+      // is 128 bits wide, the quotient has more digits than the output can hold.
+      if constexpr (sizeof(OutRep) == sizeof(__int128_t) || sizeof(RhsRep) == sizeof(__int128_t)) {
+        if (intermediate == decimal_intermediate::WIDE) {
+          return divide_and_round_wide<OutRep>(
+            magnitude(lhs), magnitude(rhs), exponent, negative, method);
+        }
       }
       return cuda::std::nullopt;
     }

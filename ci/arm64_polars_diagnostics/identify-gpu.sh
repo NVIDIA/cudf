@@ -19,7 +19,8 @@ if [[ "$gpu_inventory" == *"${target_gpu},"* ]]; then
     repeat=true
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-[0-9][0-9] ||
     "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == plain-[0-9][0-9] ||
-    "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-target-*-aggregation ]]; then
+    "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-target-*-aggregation ||
+    "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-context-target-*-frozen-shuffle ]]; then
     echo 'Target GPU was not assigned' | tee "$evidence/skipped.txt"
     echo 'replay=false' >> "$GITHUB_OUTPUT"
     exit 0

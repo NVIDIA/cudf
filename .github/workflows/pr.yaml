@@ -19,7 +19,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [signal-context-aggregation, signal-context-shuffle]
+        trial:
+          - signal-context-reference-frozen-shuffle
+          - signal-context-target-01-frozen-shuffle
+          - signal-context-target-02-frozen-shuffle
+          - signal-context-target-03-frozen-shuffle
+          - signal-context-target-04-frozen-shuffle
+          - signal-context-target-05-frozen-shuffle
+          - signal-context-target-06-frozen-shuffle
+          - signal-context-target-07-frozen-shuffle
+          - signal-context-target-08-frozen-shuffle
     permissions:
       actions: read
       contents: read
@@ -53,7 +62,7 @@ jobs:
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ endsWith(matrix.trial, '-aggregation') && 'd9ea4287c649fc0d6fcd6bdd2f4670373f3406a2' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
+          ref: ${{ contains(matrix.trial, '-frozen-') && 'ed03e588cefe03804174c2141f4893d2f4f01833' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
           path: replay-source
           persist-credentials: false
       - name: Install the fault reporter compiler

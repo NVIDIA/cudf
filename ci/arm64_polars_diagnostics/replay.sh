@@ -34,6 +34,10 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-aggregation ]]; then
     export RAPIDS_REF_NAME=pull-request/25384
     export CUDF_POLARS_PACKAGE_RUN_ID=45661654812
     export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/aggregation-arm64-explicit.txt"
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-frozen-shuffle ]]; then
+    export RAPIDS_REF_NAME=pull-request/25452
+    export CUDF_POLARS_PACKAGE_RUN_ID=45449689051
+    export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/frozen-shuffle-arm64-explicit.txt"
 else
     # The first shuffle failure's packages were rebuilt at the same source revision.
     export RAPIDS_REF_NAME=pull-request/25532

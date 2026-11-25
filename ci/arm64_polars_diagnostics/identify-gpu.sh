@@ -12,6 +12,8 @@ nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$evidence/
 target_gpu=GPU-ffa4d437-0552-ea7a-0e5d-0fe4bf4fd918
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-aggregation ]]; then
     target_gpu=GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-dask-datetime ]]; then
+    target_gpu=GPU-1ae60e36-999e-c6da-6055-0ad23bd269d2
 fi
 gpu_inventory=$(< "$evidence/gpus.csv")
 repeat=false
@@ -20,6 +22,7 @@ if [[ "$gpu_inventory" == *"${target_gpu},"* ]]; then
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-[0-9][0-9] ||
     "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == plain-[0-9][0-9] ||
     "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-target-*-aggregation ||
+    "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-target-*-dask-datetime ||
     "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-context-target-*-frozen-shuffle ]]; then
     echo 'Target GPU was not assigned' | tee "$evidence/skipped.txt"
     echo 'replay=false' >> "$GITHUB_OUTPUT"

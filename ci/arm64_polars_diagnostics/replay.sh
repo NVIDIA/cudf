@@ -38,6 +38,12 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-frozen-shuffle ]]; then
     export RAPIDS_REF_NAME=pull-request/25452
     export CUDF_POLARS_PACKAGE_RUN_ID=45449689051
     export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/frozen-shuffle-arm64-explicit.txt"
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-dask-datetime ]]; then
+    export RAPIDS_REF_NAME=pull-request/25552
+    export CUDF_POLARS_PACKAGE_RUN_ID=45690010190
+    export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/dask-datetime-arm64-explicit.txt"
+    # The test runner sees a closed connection when a separate Dask worker faults.
+    export DASK_DISTRIBUTED__WORKER__PRELOAD='["dask_fault_preload"]'
 else
     # The first shuffle failure's packages were rebuilt at the same source revision.
     export RAPIDS_REF_NAME=pull-request/25532

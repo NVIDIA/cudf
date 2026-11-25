@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-allocator-stress
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-fault-capture
   cancel-in-progress: true
 
 jobs:
@@ -25,10 +25,15 @@ jobs:
           - signal-context-target-02-frozen-shuffle
           - signal-context-target-03-frozen-shuffle
           - signal-context-target-04-frozen-shuffle
-          - signal-context-target-05-frozen-shuffle
-          - signal-context-target-06-frozen-shuffle
-          - signal-context-target-07-frozen-shuffle
-          - signal-context-target-08-frozen-shuffle
+          - signal-reference-dask-datetime
+          - signal-target-01-dask-datetime
+          - signal-target-02-dask-datetime
+          - signal-target-03-dask-datetime
+          - signal-target-04-dask-datetime
+          - signal-target-05-dask-datetime
+          - signal-target-06-dask-datetime
+          - signal-target-07-dask-datetime
+          - signal-target-08-dask-datetime
     permissions:
       actions: read
       contents: read
@@ -62,7 +67,7 @@ jobs:
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ contains(matrix.trial, '-frozen-') && 'ed03e588cefe03804174c2141f4893d2f4f01833' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
+          ref: ${{ endsWith(matrix.trial, '-dask-datetime') && 'b67a6d83fad084fc600354b0787f1b4b35f9c5d2' || 'ed03e588cefe03804174c2141f4893d2f4f01833' }}
           path: replay-source
           persist-credentials: false
       - name: Install the fault reporter compiler

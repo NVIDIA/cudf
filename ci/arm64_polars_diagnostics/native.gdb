@@ -10,7 +10,9 @@ commands
   silent
   printf "\nCUDF_NATIVE_SIGSEGV\n"
   p $_siginfo
+  info symbol $pc
   x/i $pc
+  info registers
   thread apply all bt
   info sharedlibrary
   info proc mappings

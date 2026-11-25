@@ -13,6 +13,7 @@ import pytest
 
 _output = Path(os.environ["CUDF_POLARS_DIAGNOSTICS_DIR"])
 _trial = os.environ["CUDF_POLARS_DIAGNOSTICS_TRIAL"]
+_trace = not _trial.startswith("gdb-")
 _warmup_first = (
     "tests/expressions/test_agg.py::"
     "test_n_unique_sorted[spmd-small-data0-Int64-False-True-True-False]"
@@ -110,9 +111,10 @@ def pytest_sessionstart(session):
             subprocess.run(
                 ["conda", "list", "--explicit"], stdout=packages, check=True
             )
-    elif _trial.startswith(("native-", "warmup-")):
+    elif _trial.startswith(("gdb-", "native-", "warmup-")):
         session._cudf_debugger = _attach_debugger(worker)
-        _trace_partition_and_pack(worker)
+        if _trace:
+            _trace_partition_and_pack(worker)
 
 
 @pytest.hookimpl(trylast=True)
@@ -130,7 +132,7 @@ def pytest_sessionfinish(session):
 
 def pytest_runtest_logstart(nodeid):
     worker = os.environ.get("PYTEST_XDIST_WORKER")
-    if worker:
+    if worker and _trace:
         with (_output / f"{worker}.tests.log").open("a") as log:
             log.write(f"{time.monotonic_ns()} {nodeid}\n")
 

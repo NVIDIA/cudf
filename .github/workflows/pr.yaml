@@ -15,11 +15,11 @@ jobs:
   arm64-polars-repro:
     name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 40
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
-        trial: [control, native-1, native-2, warmup-serial, warmup-shared]
+        trial: [gdb-reference, gdb-01, gdb-02, gdb-03, gdb-04, gdb-05, gdb-06, gdb-07, gdb-08, gdb-09, gdb-10, gdb-11, gdb-12]
     permissions:
       actions: read
       contents: read
@@ -53,6 +53,13 @@ jobs:
           MAMBA_USE_SHARDED_REPODATA: 'false'
           RATTLER_SHARDED: 'false'
         run: bash ci/arm64_polars_diagnostics/replay.sh
+      - name: Record final GPU health counters
+        if: always()
+        run: |
+          evidence=artifacts/arm64-polars
+          if [[ -f "$evidence/gpu-health-before.txt" ]]; then
+            nvidia-smi -q -d ECC,PAGE_RETIREMENT,ROW_REMAPPER,RESET_STATUS > "$evidence/gpu-health-after.txt" 2>&1 || true
+          fi
       - name: Upload reproduction evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

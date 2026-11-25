@@ -18,6 +18,12 @@
 
 namespace cudf::detail {
 
+// Construction compares the build table with itself; every probe entry point
+// validates exact recursive types, including decimal scales.
+using hash_csr_physical_equality_comparator =
+  cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+    cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
+
 /**
  * @brief Equality comparator for hash table probing with row-level equality.
  */
@@ -87,11 +93,13 @@ decltype(auto) dispatch_join_comparator(
     cudf::detail::row::equality::two_table_comparator{preprocessed_left, preprocessed_right};
 
   if (cudf::detail::has_nested_columns(left_table)) {
-    auto const d_equal = row_comparator.equal_to<true>(left_nulls, compare_nulls);
+    auto const d_equal = row_comparator.equal_to<true>(
+      left_nulls, compare_nulls, hash_csr_physical_equality_comparator{});
     return std::forward<Fn>(fn)(pair_equal{d_equal}, d_hasher);
   }
 
-  auto const d_equal = row_comparator.equal_to<false>(left_nulls, compare_nulls);
+  auto const d_equal = row_comparator.equal_to<false>(
+    left_nulls, compare_nulls, hash_csr_physical_equality_comparator{});
   return std::forward<Fn>(fn)(pair_equal{d_equal}, d_hasher);
 }
 

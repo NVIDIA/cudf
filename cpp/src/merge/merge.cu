@@ -52,6 +52,11 @@ namespace {
 
 template <bool has_nulls>
 struct row_lexicographic_tagged_comparator {
+  // merge() requires identical recursive types before constructing the merge queue.
+  using physical_comparator =
+    cudf::detail::row::lexicographic::equal_scale_physical_element_comparator<
+      cudf::detail::row::lexicographic::sorting_physical_element_comparator>;
+
   row_lexicographic_tagged_comparator(table_device_view const lhs,
                                       table_device_view const rhs,
                                       device_span<order const> const column_order,
@@ -70,11 +75,13 @@ struct row_lexicographic_tagged_comparator {
     table_device_view const* ptr_right_dview{r_side == side::LEFT ? &_lhs : &_rhs};
     auto const comparator = [&]() {
       if constexpr (has_nulls) {
-        return cudf::detail::row::lexicographic::device_row_comparator<false, bool>{
-          has_nulls, *ptr_left_dview, *ptr_right_dview, _column_order, _null_precedence};
+        return cudf::detail::row::lexicographic::
+          device_row_comparator<false, bool, physical_comparator>{
+            has_nulls, *ptr_left_dview, *ptr_right_dview, _column_order, _null_precedence};
       } else {
-        return cudf::detail::row::lexicographic::device_row_comparator<false, bool>{
-          has_nulls, *ptr_left_dview, *ptr_right_dview, _column_order};
+        return cudf::detail::row::lexicographic::
+          device_row_comparator<false, bool, physical_comparator>{
+            has_nulls, *ptr_left_dview, *ptr_right_dview, _column_order};
       }
     }();
 

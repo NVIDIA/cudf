@@ -318,6 +318,10 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
       left_by, {}, {}, stream, mr.as_temporary());
     auto const row_less = cudf::detail::row::lexicographic::two_table_comparator{
       _right_lex_preprocessed, std::move(left_lex)};
+    // join() requires exact grouping-key types, and construction admits only flat keys.
+    using physical_order =
+      cudf::detail::row::lexicographic::equal_scale_physical_element_comparator<
+        cudf::detail::row::lexicographic::sorting_physical_element_comparator>;
     auto const right_group_rows =
       cuda::transform_iterator(_right_group_offsets.begin(), to_lhs_index{});
     thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
@@ -326,15 +330,17 @@ cuda::device_buffer<size_type> asof_join_impl::probe(table_view const& left_by,
                         cudf::detail::row::rhs_iterator(0),
                         cudf::detail::row::rhs_iterator(0) + left_on.size(),
                         group_positions.begin(),
-                        row_less.less<false>(nullate::DYNAMIC{has_nulls}));
+                        row_less.less<false>(nullate::DYNAMIC{has_nulls}, physical_order{}));
 
     // lower_bound gives only a candidate: reject missing/unequal groups and null grouping keys.
     auto left_eq =
       cudf::detail::row::equality::preprocessed_table::create(left_by, stream, mr.as_temporary());
     auto const row_equal =
       cudf::detail::row::equality::two_table_comparator{_right_eq_preprocessed, std::move(left_eq)};
-    auto const equal =
-      row_equal.equal_to<false>(nullate::DYNAMIC{has_nulls}, null_equality::UNEQUAL);
+    using physical_equality = cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+      cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
+    auto const equal = row_equal.equal_to<false>(
+      nullate::DYNAMIC{has_nulls}, null_equality::UNEQUAL, physical_equality{});
     launch_probe(group_positions.data(), equal);
   } else {
     launch_probe(nullptr, always_equal{});

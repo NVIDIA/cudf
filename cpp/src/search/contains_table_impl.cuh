@@ -221,9 +221,11 @@ void dispatch_nan_comparator(table_view const& haystack,
     }
   }();
 
+  // contains() already checked exact recursive types, so decimal scales cannot differ.
   if (compare_nans == nan_equality::ALL_EQUAL) {
     using nan_equal_comparator =
-      cudf::detail::row::equality::nan_equal_physical_equality_comparator;
+      cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+        cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
     auto const d_self_equal = self_equal.equal_to<HasNested>(
       nullate::DYNAMIC{haystack_has_nulls}, compare_nulls, nan_equal_comparator{});
     auto const d_two_table_equal = two_table_equal.equal_to<HasNested>(
@@ -239,8 +241,10 @@ void dispatch_nan_comparator(table_view const& haystack,
                      contained,
                      stream);
   } else {
-    using nan_unequal_comparator = cudf::detail::row::equality::physical_equality_comparator;
-    auto const d_self_equal      = self_equal.equal_to<HasNested>(
+    using nan_unequal_comparator =
+      cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+        cudf::detail::row::equality::physical_equality_comparator>;
+    auto const d_self_equal = self_equal.equal_to<HasNested>(
       nullate::DYNAMIC{haystack_has_nulls}, compare_nulls, nan_unequal_comparator{});
     auto const d_two_table_equal = two_table_equal.equal_to<HasNested>(
       nullate::DYNAMIC{has_any_nulls}, compare_nulls, nan_unequal_comparator{});

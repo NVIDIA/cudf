@@ -421,6 +421,10 @@ class key_remap_table : public key_remap_table_interface {
     } else {
       auto const two_table_equal =
         cudf::detail::row::equality::two_table_comparator(preprocessed_left, _preprocessed_right);
+      // key_remapping_impl::probe rejects unequal recursive types before reaching this path.
+      using physical_comparator =
+        cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+          cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
 
       auto const left_row_hasher = cudf::detail::row::hash::row_hasher{preprocessed_left};
       auto const d_left_hasher   = left_row_hasher.device_hasher(cudf::nullate::DYNAMIC{HAS_NULLS});
@@ -428,8 +432,8 @@ class key_remap_table : public key_remap_table_interface {
         0, make_key_pair<lhs_index_type, decltype(d_left_hasher)>{d_left_hasher});
 
       if (_right_has_nested_columns) {
-        auto const device_comparator =
-          two_table_equal.equal_to<true>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
+        auto const device_comparator = two_table_equal.equal_to<true>(
+          cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls, physical_comparator{});
         find_matches(iter,
                      probe_comparator{device_comparator},
                      left_keys,
@@ -437,8 +441,8 @@ class key_remap_table : public key_remap_table_interface {
                      stream,
                      cudf::get_current_device_resource_ref());
       } else {
-        auto const device_comparator =
-          two_table_equal.equal_to<false>(cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls);
+        auto const device_comparator = two_table_equal.equal_to<false>(
+          cudf::nullate::DYNAMIC{HAS_NULLS}, _compare_nulls, physical_comparator{});
         find_matches(iter,
                      probe_comparator{device_comparator},
                      left_keys,

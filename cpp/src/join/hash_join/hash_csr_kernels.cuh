@@ -47,11 +47,13 @@ using hash_csr_primitive_equal = primitive_pair_equal;
 using hash_csr_non_nested_equal =
   pair_equal<decltype(std::declval<cudf::detail::row::equality::two_table_comparator const&>()
                         .template equal_to<false>(std::declval<hash_csr_dynamic_nulls>(),
-                                                  std::declval<null_equality>()))>;
+                                                  std::declval<null_equality>(),
+                                                  hash_csr_physical_equality_comparator{}))>;
 using hash_csr_nested_equal =
   pair_equal<decltype(std::declval<cudf::detail::row::equality::two_table_comparator const&>()
                         .template equal_to<true>(std::declval<hash_csr_dynamic_nulls>(),
-                                                 std::declval<null_equality>()))>;
+                                                 std::declval<null_equality>(),
+                                                 hash_csr_physical_equality_comparator{}))>;
 
 constexpr thread_index_type hash_csr_block_size = 256;
 constexpr thread_index_type hash_csr_warps_per_block =

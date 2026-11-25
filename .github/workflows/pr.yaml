@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-memcheck
+  group: ${{ github.workflow }}-${{ github.ref }}-original-source
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [memcheck]
+        trial: [gdb-reference, gdb-01, gdb-02, gdb-03, gdb-04, gdb-05, gdb-06, gdb-07, gdb-08, gdb-09, gdb-10, gdb-11, gdb-12]
     permissions:
       actions: read
       contents: read
@@ -53,7 +53,7 @@ jobs:
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ed03e588cefe03804174c2141f4893d2f4f01833
+          ref: 4b383a45d42d6ce75dc96fb9c50be380c624a9a3
           path: replay-source
           persist-credentials: false
       - name: Replay the Conda Polars job

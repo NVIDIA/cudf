@@ -6,6 +6,7 @@
 import ctypes
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -111,6 +112,21 @@ def pytest_sessionstart(session):
             subprocess.run(
                 ["conda", "list", "--explicit"], stdout=packages, check=True
             )
+        if _trial.startswith("gdb-"):
+            from watch_gpu_events import watch_gpu_events
+
+            stopped = threading.Event()
+            watcher = threading.Thread(
+                target=watch_gpu_events,
+                args=(
+                    os.environ["CUDF_POLARS_GPU_UUID"],
+                    _output / "gpu-xid.log",
+                    stopped,
+                ),
+                daemon=True,
+            )
+            session._cudf_gpu_watcher = (stopped, watcher)
+            watcher.start()
     elif _trial.startswith(("gdb-", "native-", "warmup-")):
         session._cudf_debugger = _attach_debugger(worker)
         if _trace:
@@ -119,6 +135,11 @@ def pytest_sessionstart(session):
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session):
+    watcher = getattr(session, "_cudf_gpu_watcher", None)
+    if watcher is not None:
+        stopped, thread = watcher
+        stopped.set()
+        thread.join(timeout=3)
     debugger = getattr(session, "_cudf_debugger", None)
     if debugger is not None and debugger.poll() is None:
         # Keep the debugger attached through teardown of the session fixtures.

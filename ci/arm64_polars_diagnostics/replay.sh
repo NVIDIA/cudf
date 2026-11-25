@@ -6,11 +6,13 @@ set -euo pipefail
 
 export RAPIDS_REPOSITORY=NVIDIA/cudf
 export RAPIDS_BASE_BRANCH=main
-export RAPIDS_REF_NAME=pull-request/25452
-export RAPIDS_SHA=ed03e588cefe03804174c2141f4893d2f4f01833
+export RAPIDS_REF_NAME=pull-request/25532
+export RAPIDS_SHA=4b383a45d42d6ce75dc96fb9c50be380c624a9a3
 export CUDF_POLARS_DIAGNOSTICS_DIR="$PWD/artifacts/arm64-polars"
 export RAPIDS_TESTS_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/test-results"
 export RAPIDS_COVERAGE_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/coverage"
+{ read -r _; IFS=, read -r CUDF_POLARS_GPU_UUID _; } < "$CUDF_POLARS_DIAGNOSTICS_DIR/gpus.csv"
+export CUDF_POLARS_GPU_UUID
 
 export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics
@@ -19,9 +21,9 @@ if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
     export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"
 fi
 
-# The replay uses the package artifacts from the failing run even when this workflow is rerun.
+# The original run's packages were rebuilt at the same source revision on retry.
 rapids-download-from-github() {
-    GITHUB_RUN_ID=45449689051 command rapids-download-from-github "$@"
+    GITHUB_RUN_ID=45518453978 command rapids-download-from-github "$@"
 }
 export -f rapids-download-from-github
 

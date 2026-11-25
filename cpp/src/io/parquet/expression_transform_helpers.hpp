@@ -255,10 +255,9 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
  * @brief Converts a normalized Parquet filter expression into one evaluated on the decoded rows
  *
  * Offsets every column reference by `offset` to account for the prepended columns, and replaces
- * `IS_NULL` on a nested column `i` with a reference to column `num_columns + i`, where
- * `num_columns` is the number of input columns. The caller must append a null check column for
- * every input column after the prepended ones, filling the slots flagged in `nested_is_null_mask`
- * with `is_null` of the corresponding input column.
+ * `IS_NULL` on the `k`-th distinct nested column with a reference to column `num_columns + k`,
+ * where `num_columns` is the number of input columns. The caller must append `is_null` of each
+ * column in `null_check_cols`, in order, to the input columns.
  */
 class row_filter_expression_converter : public ast::detail::expression_transformer {
  public:
@@ -298,10 +297,10 @@ class row_filter_expression_converter : public ast::detail::expression_transform
    * @brief Moves out the converted expression along with the input columns that need a null check
    *
    * @return Tuple of the AST tree owning the converted expression's nodes, the converted
-   * expression, and whether each input column after the prepended ones needs a null check column
+   * expression, and the indices of the input columns whose `is_null` must be appended, in order
    */
   [[nodiscard]] std::
-    tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<bool>>
+    tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<size_type>>
     get_converted_expr() &&;
 
  private:
@@ -309,7 +308,7 @@ class row_filter_expression_converter : public ast::detail::expression_transform
   std::span<data_type const> _col_types;
   ast::tree _tree;
   std::reference_wrapper<ast::expression const> _converted_expr;
-  std::vector<bool> _nested_is_null_mask;
+  std::vector<size_type> _null_check_cols;
 };
 
 /**

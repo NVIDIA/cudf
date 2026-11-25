@@ -1078,7 +1078,7 @@ std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
     input, std::back_inserter(col_types), [](auto const& col) { return col.type(); });
 
   // `tree` owns the nodes of `filter_expr` and must outlive its evaluation
-  [[maybe_unused]] auto const [tree, filter_expr, nested_is_null_mask] =
+  [[maybe_unused]] auto const [tree, filter_expr, null_check_col_indices] =
     row_filter_expression_converter{expr->get(), num_prepended_cols, col_types}
       .get_converted_expr();
 
@@ -1089,25 +1089,16 @@ std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
                    : cudf::detail::compute_column(filter_input, filter_expr.get(), _stream, mr);
   };
 
-  auto nested_cols = std::vector<column_view>{};
-  for (std::size_t col_idx = 0; col_idx < nested_is_null_mask.size(); ++col_idx) {
-    if (nested_is_null_mask[col_idx]) {
-      nested_cols.push_back(input.column(static_cast<size_type>(col_idx) + num_prepended_cols));
-    }
-  }
-  if (nested_cols.empty()) { return evaluate(input); }
+  if (null_check_col_indices.empty()) { return evaluate(input); }
 
-  auto const null_check_cols =
-    synthesize_null_check_columns(nested_cols, _stream, _mr.as_temporary());
-
-  // Append a null check column for each input column after the prepended ones. Columns without a
-  // null check are never referenced, so reuse the first null check column to fill their slots
+  // Append a null check column for each nested column under IS_NULL, in slot order
+  auto null_check_cols = std::vector<std::unique_ptr<column>>{};
+  null_check_cols.reserve(null_check_col_indices.size());
   auto filter_cols = std::vector<column_view>(input.begin(), input.end());
-  filter_cols.reserve(filter_cols.size() + nested_is_null_mask.size());
-  std::size_t null_check_idx = 0;
-  for (auto const needs_null_check : nested_is_null_mask) {
-    filter_cols.push_back(needs_null_check ? null_check_cols[null_check_idx++]->view()
-                                           : null_check_cols.front()->view());
+  filter_cols.reserve(filter_cols.size() + null_check_col_indices.size());
+  for (auto const col_idx : null_check_col_indices) {
+    null_check_cols.push_back(cudf::is_null(input.column(col_idx), _stream, _mr.as_temporary()));
+    filter_cols.push_back(null_check_cols.back()->view());
   }
   return evaluate(table_view{filter_cols});
 }

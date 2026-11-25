@@ -20,6 +20,7 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <iterator>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -375,7 +376,6 @@ row_filter_expression_converter::row_filter_expression_converter(
   CUDF_EXPECTS(std::cmp_less_equal(offset, col_types.size()),
                "Number of prepended columns exceeds the number of input columns",
                std::invalid_argument);
-  _nested_is_null_mask.resize(col_types.size() - offset, false);
   _converted_expr = expr.accept(*this);
 }
 
@@ -404,14 +404,16 @@ std::reference_wrapper<ast::expression const> row_filter_expression_converter::v
   if (expr.get_operator() == ast::ast_operator::IS_NULL) {
     auto const operand = extract_unary_operand(expr);
     if (operand.operand_type == operand_kind::COLUMN_REF) {
-      auto const col_idx = operand.col_ref->get_column_index();
-      CUDF_EXPECTS(std::cmp_less(col_idx + _offset, _col_types.size()),
+      auto const col_idx = operand.col_ref->get_column_index() + _offset;
+      CUDF_EXPECTS(std::cmp_less(col_idx, _col_types.size()),
                    "Column index in the filter expression is out of range",
                    std::out_of_range);
-      if (cudf::is_nested(_col_types[col_idx + _offset])) {
-        _nested_is_null_mask[col_idx] = true;
-        return _tree.push(
-          ast::column_reference{static_cast<size_type>(_col_types.size()) + col_idx});
+      if (cudf::is_nested(_col_types[col_idx])) {
+        // Reference the null check column of `col_idx`, appended after the input columns
+        auto const it   = std::ranges::find(_null_check_cols, col_idx);
+        auto const slot = std::distance(_null_check_cols.begin(), it);
+        if (it == _null_check_cols.end()) { _null_check_cols.push_back(col_idx); }
+        return _tree.push(ast::column_reference{static_cast<size_type>(_col_types.size() + slot)});
       }
     }
   }
@@ -428,10 +430,10 @@ std::reference_wrapper<ast::expression const> row_filter_expression_converter::v
   CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
 }
 
-std::tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<bool>>
+std::tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<size_type>>
 row_filter_expression_converter::get_converted_expr() &&
 {
-  return {std::move(_tree), _converted_expr, std::move(_nested_is_null_mask)};
+  return {std::move(_tree), _converted_expr, std::move(_null_check_cols)};
 }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(

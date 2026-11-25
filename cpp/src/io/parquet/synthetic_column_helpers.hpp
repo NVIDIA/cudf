@@ -17,7 +17,6 @@
 #include <cstddef>
 #include <memory>
 #include <span>
-#include <vector>
 
 namespace cudf::io::parquet::detail {
 
@@ -59,16 +58,5 @@ namespace cudf::io::parquet::detail {
   row_range const& read_info,
   cuda::stream_ref stream,
   cudf::memory_resources mr);
-
-/**
- * @brief Synthesizes a null check column for each of the given columns in a single launch
- *
- * @param columns Columns to check for nulls, all of the same size
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used for output and temporary device allocations
- * @return One BOOL8 column per input column, true where the input row is null
- */
-[[nodiscard]] std::vector<std::unique_ptr<cudf::column>> synthesize_null_check_columns(
-  std::span<cudf::column_view const> columns, cuda::stream_ref stream, cudf::memory_resources mr);
 
 }  // namespace cudf::io::parquet::detail

@@ -4223,13 +4223,16 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
     cudf::test::lists_column_wrapper<int32_t>{{{}, {}, {}, {4}}, parent_validity.begin()};
   auto other_child          = fixed_width_column_wrapper<int32_t>{5, 6, 7, 8};
   auto const other_validity = std::array{true, true, true, false};
-  auto const other = cudf::test::structs_column_wrapper{{other_child}, other_validity.begin()};
-  auto const input = cudf::table_view{{id, structure, list, other}};
-  auto metadata    = cudf::io::table_input_metadata{input};
+  auto const other    = cudf::test::structs_column_wrapper{{other_child}, other_validity.begin()};
+  auto no_nulls_child = fixed_width_column_wrapper<int32_t>{9, 10, 11, 12};
+  auto const no_nulls = cudf::test::structs_column_wrapper{{no_nulls_child}};
+  auto const input    = cudf::table_view{{id, structure, list, other, no_nulls}};
+  auto metadata       = cudf::io::table_input_metadata{input};
   metadata.column_metadata[0].set_name("id");
   metadata.column_metadata[1].set_name("structure");
   metadata.column_metadata[2].set_name("list");
   metadata.column_metadata[3].set_name("other");
+  metadata.column_metadata[4].set_name("no_nulls");
 
   std::vector<char> buffer;
   auto const options =
@@ -4242,13 +4245,15 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
   }
   writer.close();
 
-  auto const id_ref         = column_name_reference{"id"};
-  auto cutoff               = cudf::numeric_scalar<int32_t>{25};
-  auto const cutoff_literal = cudf::ast::literal{cutoff};
-  auto const first_group    = operation{ast_operator::LESS, id_ref, cutoff_literal};
-  auto const other_ref      = column_name_reference{"other"};
-  auto const other_is_null  = operation{ast_operator::IS_NULL, other_ref};
-  auto const other_is_valid = operation{ast_operator::NOT, other_is_null};
+  auto const id_ref           = column_name_reference{"id"};
+  auto cutoff                 = cudf::numeric_scalar<int32_t>{25};
+  auto const cutoff_literal   = cudf::ast::literal{cutoff};
+  auto const first_group      = operation{ast_operator::LESS, id_ref, cutoff_literal};
+  auto const other_ref        = column_name_reference{"other"};
+  auto const other_is_null    = operation{ast_operator::IS_NULL, other_ref};
+  auto const other_is_valid   = operation{ast_operator::NOT, other_is_null};
+  auto const no_nulls_ref     = column_name_reference{"no_nulls"};
+  auto const no_nulls_is_null = operation{ast_operator::IS_NULL, no_nulls_ref};
 
   for (auto const* name : {"structure", "list"}) {
     SCOPED_TRACE(name);
@@ -4281,7 +4286,11 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
     }
     auto const null_in_first_group = operation{ast_operator::LOGICAL_AND, is_null, first_group};
     check(operation{ast_operator::LOGICAL_AND, null_in_first_group, other_is_valid}, {0}, {10}, 1);
-    check(operation{ast_operator::LOGICAL_OR, is_valid, first_group}, {0, 1, 3}, {10, 20, 40}, 2);
+    auto const valid_or_first_group = operation{ast_operator::LOGICAL_OR, is_valid, first_group};
+    check(operation{ast_operator::LOGICAL_OR, valid_or_first_group, no_nulls_is_null},
+          {0, 1, 3},
+          {10, 20, 40},
+          2);
 
     auto const comparison      = operation{ast_operator::EQUAL, ref, cutoff_literal};
     auto const null_comparison = operation{ast_operator::IS_NULL, comparison};

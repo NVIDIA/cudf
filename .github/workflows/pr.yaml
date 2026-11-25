@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [plain-01, plain-02, plain-03, plain-04, plain-05, plain-06, plain-07, plain-08, plain-09, plain-10, plain-11, plain-12]
+        trial: [plain-01, plain-02, plain-03, plain-04, plain-05, plain-06, plain-07, plain-08, plain-09, plain-10, plain-11, plain-12, memcheck]
     permissions:
       actions: read
       contents: read

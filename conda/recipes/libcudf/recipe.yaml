@@ -115,6 +115,10 @@ outputs:
         - flatbuffers =${{ flatbuffers_version }}
         - rapids-logger =0.3
         - zlib ${{ zlib_version }}
+        - zstd-static =1.5.7
+      ignore_run_exports:
+        by_name:
+          - zstd
 
   - package:
       name: libcudf
@@ -330,6 +334,7 @@ outputs:
         - cuda-cudart-dev
         - cuda-nvrtc-dev
         - libnvjitlink-dev
+        - zstd-static =1.5.7
       run:
         - librmm =${{ minor_version }}
         - rapids-logger =0.3
@@ -349,6 +354,7 @@ outputs:
           - libkvikio
           - librdkafka
           - librmm
+          - zstd
           - libzlib
           - libnvcomp
     about:

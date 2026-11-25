@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-memcheck
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [gdb-reference, gdb-01, gdb-02, gdb-03, gdb-04, gdb-05, gdb-06, gdb-07, gdb-08, gdb-09, gdb-10, gdb-11, gdb-12]
+        trial: [memcheck]
     permissions:
       actions: read
       contents: read

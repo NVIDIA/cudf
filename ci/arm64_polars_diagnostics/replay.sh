@@ -27,7 +27,9 @@ export -f rapids-download-from-github
 
 # The frozen checkout has stale test calls to the ColRef constructor.
 git -C replay-source apply --unidiff-zero "$PWD/ci/arm64_polars_diagnostics/colref-tests.patch"
-if [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck ]]; then
+    cp ci/arm64_polars_diagnostics/memcheck-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh
+elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
     # Resolve the exact packages once and run fresh pytest processes on the same GPU.
     mv replay-source/ci/run_cudf_polars_pytests{,-once}.sh
     cp ci/arm64_polars_diagnostics/repeat-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh

@@ -13,6 +13,7 @@
 #include <cudf/aggregation.hpp>
 #include <cudf/concatenate.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table.hpp>
@@ -33,6 +34,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <thread>
 #include <tuple>
@@ -1402,6 +1404,44 @@ TEST_F(StreamingGroupbyTest, ManySmallBatches)
 
   auto [keys, results] = streaming_agg.finalize();
   verify_against_groupby(keys, results, batches, KEY_COL, reqs);
+}
+
+template <typename T>
+struct StreamingGroupbyMeanOverflowTest : public cudf::test::BaseFixture {};
+
+using mean_overflow_types = cudf::test::Types<int64_t, uint64_t>;
+TYPED_TEST_SUITE(StreamingGroupbyMeanOverflowTest, mean_overflow_types);
+
+// Each batch and each merged object adds to a SUM that wraps V while the MEAN of the same column
+// accumulates in double. A group with only null values has a null SUM and MEAN.
+TYPED_TEST(StreamingGroupbyMeanOverflowTest, SumWrapsWhileMeanDoesNot)
+{
+  using K = int32_t;
+  using V = TypeParam;
+
+  auto constexpr max = std::numeric_limits<V>::max();
+
+  std::vector<cudf::groupby::streaming_aggregation_request> reqs;
+  reqs.push_back(make_req(1, cudf::make_sum_aggregation<cudf::groupby_aggregation>()));
+  reqs.push_back(make_req(1, cudf::make_mean_aggregation<cudf::groupby_aggregation>()));
+  cudf::groupby::streaming_groupby worker1(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  cudf::groupby::streaming_groupby worker2(KEY_COL, reqs, DEFAULT_MAX_DISTINCT_KEYS);
+  for (int b = 0; b < 3; ++b) {
+    cudf::test::fixed_width_column_wrapper<K> keys{0, 0, 1, 2};
+    cudf::test::fixed_width_column_wrapper<V> vals{{max, max, static_cast<V>(b), V{7}},
+                                                   {true, true, true, false}};
+    (b < 2 ? worker1 : worker2).aggregate(cudf::table_view{{keys, vals}});
+  }
+  worker1.merge(worker2);
+  auto [keys, results] = worker1.finalize();
+
+  using S                = cudf::detail::target_type_t<V, cudf::aggregation::SUM>;
+  auto const wrapped_sum = static_cast<S>(6 * static_cast<uint64_t>(max));
+  cudf::test::fixed_width_column_wrapper<K> ek{0, 1, 2};
+  cudf::test::fixed_width_column_wrapper<S> e_sum{{wrapped_sum, S{3}, S{0}}, {true, true, false}};
+  cudf::test::fixed_width_column_wrapper<double> e_mean{{static_cast<double>(max), 1.0, 0.0},
+                                                        {true, true, false}};
+  check(keys, results, cudf::table_view{{ek}}, {e_sum, e_mean});
 }
 
 // Test that exceeding distinct-key capacity throws.

@@ -48,7 +48,7 @@ from cudf_polars.streaming.base import StatsCollector
 from cudf_polars.streaming.parallel import lower_ir_graph_with_node_map
 from cudf_polars.streaming.statistics import collect_statistics
 from cudf_polars.streaming.utils import _concat
-from cudf_polars.utils.config import get_total_device_memory
+from cudf_polars.utils.config import RankLocalCPUComputeMode, get_total_device_memory
 
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
@@ -707,9 +707,17 @@ def execute_ir_on_rank(
     except (MemoryError, BaseExceptionGroup) as e:
         if (mem_error := _find_memory_error(e)) is not None:
             target_partition_size = config_options.executor.target_partition_size
+            cpu_hint = (
+                ' Setting `rank_local_cpu_compute="on_oom"` may help if the error '
+                "comes from an operation that supports evaluation on the CPU."
+                if config_options.executor.rank_local_cpu_compute
+                == RankLocalCPUComputeMode.NEVER
+                else ""
+            )
             hint = (
                 f"Try lowering `target_partition_size` (current {target_partition_size}) "
                 f"and/or RAPIDSMPF_SPILL_DEVICE_LIMIT (default '80%') to reduce peak memory."
+                f"{cpu_hint}"
                 f"\nSee https://docs.nvidia.com/cudf/latest/cudf_polars/memory_errors/ "
                 f"for troubleshooting guidance."
                 f"\nOriginal error:\n{mem_error}"
@@ -1000,7 +1008,11 @@ def _evaluate_on_rank(
         )
         quent_operator_map = build_quent_operator_map(ir, physical_op_by_id)
     ir_context = IRExecutionContext(
-        py_executor, get_cuda_stream=ctx.br().stream_pool.get_stream, query_id=query_id
+        py_executor,
+        get_cuda_stream=ctx.br().stream_pool.get_stream,
+        query_id=query_id,
+        rank_local_cpu_compute=config_options.executor.rank_local_cpu_compute,
+        statistics=ctx.statistics(),
     )
 
     prefetch_file_metadata = config_options.parquet_options.prefetch_file_metadata

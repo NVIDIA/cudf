@@ -5,11 +5,11 @@
 
 #pragma once
 
-#include "error.hpp"
 #include "io/comp/compression.hpp"
 #include "io/parquet/parquet_common.hpp"
 #include "io/statistics/statistics.cuh"
 #include "io/utilities/column_buffer.hpp"
+#include "io/utilities/kernel_error.hpp"
 
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -343,7 +343,7 @@ struct PageNestingInfo {
  * The nz map producer walks a page's definition levels once up front and precomputes a valid-rank
  * map, so that the decode kernel can place values without decoding levels
  * itself. For now, only the DELTA encodings have a consumer for the map. See
- * `classify_nz_map_kind` in reader_impl_preprocess.cu.
+ * `classify_nz_map_kind` in reader_impl_chunking_utils.cuh.
  *
  * uint8_t to minimize the overhead in PageInfo
  */

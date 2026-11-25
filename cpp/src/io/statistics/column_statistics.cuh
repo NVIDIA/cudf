@@ -14,6 +14,8 @@
 #include "temp_storage_wrapper.cuh"
 #include "typed_statistics_chunk.cuh"
 
+#include <cudf/utilities/concepts.hpp>
+
 #include <cuda/std/type_traits>
 
 namespace cudf {
@@ -87,7 +89,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO != detail::io_file_format::PARQUET or !cuda::std::is_same_v<T, list_view>))
+             (IO != detail::io_file_format::PARQUET or not cudf::concepts::list_view<T>))
   {
     // Temporarily disable stats writing for int96 timestamps
     // TODO: https://github.com/NVIDIA/cudf/issues/10438
@@ -133,7 +135,7 @@ struct calculate_group_statistics_functor {
   template <typename T>
   __device__ void operator()(stats_state_s& s, uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cudf::concepts::list_view<T>)
   {
     operator()<statistics::byte_array_view>(s, t);
   }
@@ -195,7 +197,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             (IO == detail::io_file_format::ORC or !cuda::std::is_same_v<T, list_view>))
+             (IO == detail::io_file_format::ORC or not cudf::concepts::list_view<T>))
   {
     detail::storage_wrapper<block_size> storage(temp_storage);
 
@@ -217,8 +219,9 @@ struct merge_group_statistics_functor {
 
     // PARQUET-1246: if a float/double column contains any NaN, min/max must be omitted,
     // else a reader doing NaN predicate pushdown skips the row group. spark-rapids#15004.
+    // The `nan_count` written alongside lets newer readers still prune on NaN-free chunks.
     if constexpr (IO == detail::io_file_format::PARQUET) {
-      if (chunk.has_nan) { chunk.has_minmax = false; }
+      if (chunk.nan_count > 0) { chunk.has_minmax = false; }
     }
 
     if (t == 0) { s.ck = get_untyped_chunk(chunk); }
@@ -230,7 +233,7 @@ struct merge_group_statistics_functor {
                              uint32_t const num_chunks,
                              uint32_t t)
     requires(detail::statistics_type_category<T, IO>::include_extrema and
-             IO == detail::io_file_format::PARQUET and cuda::std::is_same_v<T, list_view>)
+             IO == detail::io_file_format::PARQUET and cudf::concepts::list_view<T>)
   {
     operator()<statistics::byte_array_view>(s, chunks, num_chunks, t);
   }

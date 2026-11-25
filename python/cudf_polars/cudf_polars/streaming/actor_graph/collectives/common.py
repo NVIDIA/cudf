@@ -41,28 +41,31 @@ class _CollectiveIDPool:
     """Pool of vacant collective IDs."""
 
     def __init__(self) -> None:
-        # Since 3.7, dict.popitem() is guaranteed LIFO.
-        self.vacancy: dict[int, None] = dict.fromkeys(
-            range(Shuffler.max_concurrent_shuffles)
-        )
+        # Most queries need only a handful of IDs, so avoid materializing the
+        # million-entry range every time a query creates its own pool.
+        self._next_id = 0
+        self.vacancy: dict[int, None] = {}
         self.lock = threading.Lock()
 
     def acquire_unsafe(self) -> int:
         # Not thread safe, must be called with self.lock held
-        try:
-            # All ranks must choose the same collective IDs during lowering.
+        # All ranks must agree on allocation order, including reuse of released IDs.
+        if self.vacancy:
             collective_id, _ = self.vacancy.popitem()
-        except KeyError:
+            return collective_id
+        if self._next_id == Shuffler.max_concurrent_shuffles:
             raise ValueError(
                 f"Cannot shuffle more than {Shuffler.max_concurrent_shuffles} "
                 "times in a single query."
-            ) from None
+            )
+        collective_id = self._next_id
+        self._next_id += 1
         return collective_id
 
     def release_unsafe(self, collective_id: int) -> None:
         """Release a collective ID back to the vacancy set."""
         # Not thread safe, must be called with self.lock held
-        if collective_id in self.vacancy:
+        if not 0 <= collective_id < self._next_id or collective_id in self.vacancy:
             raise ValueError("Restoring ID that exists")
         self.vacancy[collective_id] = None
 
@@ -226,14 +229,14 @@ class ReserveOpIDs:
                     # Union needs one ID per child. Only an order-preserving
                     # multi-rank union uses them: ID 0 for the chunk-count
                     # AllGather and then child 0's exchange (the AllGather
-                    # completes before the exchange starts, so they can
+                    # is closed before the exchange starts, so they can
                     # share), and ID i for child i's exchange.
                     self.collective_id_map[node] = [
                         pool.acquire_unsafe() for _ in node.children
                     ]
                 elif isinstance(node, Over) and not node.is_scalar:
                     # Non-scalar Over needs 2 IDs: one for the size AllGather +
-                    # forward shuffle (the AllGather completes before the forward
+                    # forward shuffle (the AllGather is closed before the forward
                     # shuffle starts, so they can share), and a separate ID for
                     # the return shuffle (which overlaps with the forward shuffle
                     # during extract+insert).

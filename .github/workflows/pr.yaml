@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-context-reset
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-driver-compare
   cancel-in-progress: true
 
 jobs:

@@ -35,6 +35,25 @@ static ssize_t write_field(char const* name, uintptr_t value)
   return write(report_fd, text, offset);
 }
 
+static void report_frame_chain(uintptr_t fp, uintptr_t sp)
+{
+  // Reading via /proc avoids taking another fault when frame pointers are omitted or corrupt.
+  // Retain only return addresses, with bounds on both the number and span of frames.
+  int mem = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+  if (mem < 0) { return; }
+  for (unsigned int i = 0; i < 24; ++i) {
+    if (fp < sp || fp - sp > 8 * 1024 * 1024 || fp % sizeof(uintptr_t) != 0) { break; }
+    uintptr_t record[2];
+    if (pread(mem, record, sizeof(record), (off_t)fp) != sizeof(record) || record[1] == 0) {
+      break;
+    }
+    (void)write_field("return_pc", record[1]);
+    if (record[0] <= fp) { break; }
+    fp = record[0];
+  }
+  (void)close(mem);
+}
+
 static void report_segv(int sig, siginfo_t* info, void* context)
 {
   int saved_errno         = errno;
@@ -49,8 +68,12 @@ static void report_segv(int sig, siginfo_t* info, void* context)
 #if defined(__aarch64__)
   (void)write_field("pc", frame->uc_mcontext.pc);
   (void)write_field("lr", frame->uc_mcontext.regs[30]);
+  (void)write_field("x0", frame->uc_mcontext.regs[0]);
+  (void)write_field("x19", frame->uc_mcontext.regs[19]);
+  report_frame_chain(frame->uc_mcontext.regs[29], frame->uc_mcontext.sp);
 #elif defined(__x86_64__)
   (void)write_field("pc", frame->uc_mcontext.gregs[REG_RIP]);
+  report_frame_chain(frame->uc_mcontext.gregs[REG_RBP], frame->uc_mcontext.gregs[REG_RSP]);
 #else
 #error Unsupported fault context
 #endif

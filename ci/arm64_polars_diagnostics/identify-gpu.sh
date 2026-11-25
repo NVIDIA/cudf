@@ -20,17 +20,12 @@ dask_gpus=(
     "$shuffle_gpu"
 )
 if [[ "$trial" == probe-* ]]; then
-    # Both backend failures have occurred on the shuffle GPU.
-    if [[ "$gpu_inventory" == *"$shuffle_gpu,"* && "$trial" == *[02468] ]]; then
-        trial=signal-context-target-frozen-shuffle
-    else
-        for gpu in "${dask_gpus[@]}"; do
-            if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
-                trial=signal-paired-dask-datetime
-                break
-            fi
-        done
-    fi
+    for gpu in "${dask_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            trial=signal-driver-dask-datetime
+            break
+        fi
+    done
 fi
 
 # Repeat on GPUs associated with the failures being replayed.

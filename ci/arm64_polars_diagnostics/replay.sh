@@ -44,6 +44,17 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-dask-datetime ]]; then
     export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/dask-datetime-arm64-explicit.txt"
     # The test runner sees a closed connection when a separate Dask worker faults.
     export DASK_DISTRIBUTED__WORKER__PRELOAD='["dask_fault_preload"]'
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
+        compat_root=$(mktemp -d /tmp/cudf-cuda-compat.XXXXXX)
+        compat_deb="$compat_root/cuda-compat.deb"
+        compat_url=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2604/sbsa
+        curl --fail --silent --show-error --location \
+            "$compat_url/cuda-compat-13-5_620.70.10-1ubuntu1_arm64.deb" -o "$compat_deb"
+        printf '%s  %s\n' '79135e982e3f8bd4c8e1b4336c50cdeea9c1e3da7e2856847b0f670aaac90b70' "$compat_deb" |
+            sha256sum --check
+        dpkg-deb -x "$compat_deb" "$compat_root"
+        export CUDF_POLARS_ALTERNATE_COMPAT="$compat_root/usr/local/cuda-13.5/compat"
+    fi
 else
     # The first shuffle failure's packages were rebuilt at the same source revision.
     export RAPIDS_REF_NAME=pull-request/25532

@@ -163,9 +163,10 @@ class reader_impl {
 
   // Reader configs.
   struct {
-    data_type timestamp_type;  // override output timestamp resolution
-    bool use_index;            // enable or disable attempt to use row index for parsing
-    bool use_np_dtypes;        // enable or disable the conversion to numpy-compatible dtypes
+    data_type timestamp_type;         // override output timestamp resolution
+    bool use_index;                   // enable or disable attempt to use row index for parsing
+    bool convert_dates_to_proleptic;  // rebase explicitly marked hybrid DATE values
+    bool use_np_dtypes;               // enable or disable the conversion to numpy-compatible dtypes
     std::vector<std::string> decimal128_columns;  // control decimals conversion
     bool ignore_timezone_in_stripe_footer;        // ignore writer timezone in strip footer
 

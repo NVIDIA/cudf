@@ -65,6 +65,12 @@ if [[ "${1:-}" == --coverage-comparison ]]; then
     CUDA_VERSION="${RAPIDS_CUDA_VERSION%.*}"
 
     # Every suite must measure this checkout, not an installed copy of the wheel.
+    # The wheel's distribution name (cudf-polars-cu13 / -cu12) differs from the
+    # editable install's (cudf-polars), so installing the editable alongside it
+    # would leave both on sys.path and the site-packages copy would shadow the
+    # checkout for suites that run outside python/cudf_polars.
+    rapids-uv-pip uninstall "cudf-polars-${RAPIDS_PY_CUDA_SUFFIX}"
+
     rapids-uv-pip install --constraint "${PIP_CONSTRAINT}" \
         --config-settings="rapidsai.disable-cuda=true" \
         --config-settings="rapidsai.matrix-entry=cuda=${CUDA_VERSION};cuda_suffixed=true;use_cuda_wheels=true" \

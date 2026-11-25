@@ -549,7 +549,9 @@ async def evaluate_chunk(
             net_memory_delta=0,
         )
     if overbooked > 0:
-        # Run the IR nodes in `irs` on the CPU, if they are CPU capable.
+        # Run the IR nodes in `irs` on the CPU, if they are CPU capable. They still
+        # use the reservation, since the CPU path needs the input and the result
+        # on the device.
         ir_context = replace(
             ir_context, rank_local_cpu_compute=RankLocalCPUComputeMode.ALWAYS
         )

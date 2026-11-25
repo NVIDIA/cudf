@@ -7,6 +7,7 @@ from __future__ import annotations
 import collections
 import datetime
 import threading
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -34,6 +35,13 @@ from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import SPMDEngine
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import MemoryResourceConfig, RankLocalCPUComputeMode
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from cudf_polars.containers import DataFrame
+    from cudf_polars.dsl.ir import IR
+    from cudf_polars.engine.core import StreamingEngine
 
 # The tests count CPU evaluations in this process, so use the in-process
 # engines only.
@@ -566,7 +574,9 @@ def test_on_oom_replays_on_cpu(left, on_oom_engine, cpu_calls, filter_oom):
 
 
 @pytest.fixture
-def overbooking_engine(streaming_engine_factory):
+def overbooking_engine(
+    streaming_engine_factory: Callable[[StreamingOptions], StreamingEngine],
+) -> StreamingEngine:
     # A one byte device limit makes every reservation overbook.
     return streaming_engine_factory(
         StreamingOptions(
@@ -581,7 +591,9 @@ def overbooking_engine(streaming_engine_factory):
 
 
 @pytest.fixture
-def evaluate_ir_modes(monkeypatch):
+def evaluate_ir_modes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> collections.defaultdict[str, set[RankLocalCPUComputeMode]]:
     """Record the ``rank_local_cpu_compute`` mode of each IR node type evaluated."""
     modes: collections.defaultdict[str, set[RankLocalCPUComputeMode]] = (
         collections.defaultdict(set)
@@ -589,7 +601,7 @@ def evaluate_ir_modes(monkeypatch):
     lock = threading.Lock()
     original = actor_utils.evaluate_ir
 
-    def recording(node, *dfs, context):
+    def recording(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataFrame:
         with lock:
             modes[type(node).__name__].add(context.rank_local_cpu_compute)
         return original(node, *dfs, context=context)
@@ -603,8 +615,8 @@ def test_on_oom_overbooking_evaluates_on_cpu(
 ):
     q = left.filter(pl.col("a") > 2).with_columns(c=pl.col("a") * 2)
     assert_gpu_result_equal(q, engine=overbooking_engine)
-    # The overbooked reservation switches the evaluation to "always", so the
-    # Filter runs on the CPU without a GPU attempt first.
+    # The reservation overbooks, so the Filter runs on the CPU without a GPU
+    # attempt first.
     assert evaluate_ir_modes["Filter"] == {RankLocalCPUComputeMode.ALWAYS}
     assert cpu_calls["Filter"] > 0
 

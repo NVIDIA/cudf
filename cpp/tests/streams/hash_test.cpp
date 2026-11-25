@@ -74,6 +74,11 @@ TEST_P(HashTest, SparkMurmurMultiValue)
 
   auto const output = cudf::hashing::spark_murmurhash3_x86_32(
     input, cudf::DEFAULT_HASH_SEED, GetParam(), cudf::test::get_default_stream());
+
+  auto const supported_input =
+    cudf::table_view({strings_col, longs_col, doubles_col, decimal128_col, lists_col});
+  auto const supported_output = cudf::hashing::spark_murmurhash3_x86_32(
+    supported_input, cudf::DEFAULT_HASH_SEED, GetParam(), cudf::test::get_default_stream());
 }
 
 INSTANTIATE_TEST_SUITE_P(Execution,

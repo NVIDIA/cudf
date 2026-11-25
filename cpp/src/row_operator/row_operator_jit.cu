@@ -18,6 +18,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <rmm/exec_policy.hpp>
 
@@ -137,65 +138,64 @@ void launch(kernel const& operation,
                         high);
 }
 
-void check_spark_type(column_view const& column)
+column_view normalize(algorithm alg, column_view const& column)
 {
-  using enum type_id;
+  auto const hash_indices =
+    alg == algorithm::spark_murmurhash3_x86_32 || alg == algorithm::murmurhash3_x64_128;
+  if (!hash_indices) { return column; }
 
-  switch (column.type().id()) {
-    case DICTIONARY32: CUDF_FAIL("Unsupported JIT nested dictionary layout", data_type_error);
-    case LIST:
-      CUDF_EXPECTS(
-        column.child(lists_column_view::child_column_index).type().id() != type_id::STRUCT,
-        "Cannot compute hash of a table with a LIST of STRUCT columns.");
-      check_spark_type(column.child(lists_column_view::child_column_index));
-      break;
-    case STRUCT:
-      for (auto child = column.child_begin(); child != column.child_end(); ++child) {
-        check_spark_type(*child);
-      }
-      break;
-    case TIMESTAMP_SECONDS:
-    case TIMESTAMP_MILLISECONDS:
-    case TIMESTAMP_NANOSECONDS:
-    case DURATION_DAYS:
-    case DURATION_SECONDS:
-    case DURATION_MILLISECONDS:
-    case DURATION_NANOSECONDS:
-      CUDF_FAIL(
-        "Spark MurmurHash3 requires dates in days and timestamps and durations in "
-        "microseconds.");
-    default: break;
+  if (column.type().id() == type_id::DICTIONARY32 && !column.is_empty()) {
+    auto const indices = dictionary_column_view{column}.get_indices_annotated();
+    CUDF_EXPECTS(indices.type().id() == type_id::INT32,
+                 "JIT dictionary index hashing requires INT32 storage",
+                 data_type_error);
+    return indices;
   }
+  if (alg == algorithm::spark_murmurhash3_x86_32 && is_chrono(column.type())) {
+    CUDF_EXPECTS(column.type().id() == type_id::TIMESTAMP_DAYS ||
+                   column.type().id() == type_id::TIMESTAMP_MICROSECONDS ||
+                   column.type().id() == type_id::DURATION_MICROSECONDS,
+                 "Unsupported JIT Spark chrono unit",
+                 data_type_error);
+  }
+  if (column.type().id() != type_id::LIST && column.type().id() != type_id::STRUCT) {
+    return column;
+  }
+
+  std::vector<column_view> children;
+  for (auto child = column.child_begin(); child != column.child_end(); ++child) {
+    children.push_back(normalize(alg, *child));
+  }
+  return column_view{column.type(),
+                     column.size(),
+                     column.head(),
+                     column.null_mask(),
+                     column.null_count(),
+                     column.offset(),
+                     children};
 }
 
 /**
  * @brief Returns input views matching the algorithm's native dictionary hash semantics.
  *
  * Spark Murmur32 and Murmur128 hash dictionary indices, so their non-empty dictionary columns
- * become INT32 index views carrying the parent's null mask, size and offset. Other algorithms
- * retain dictionary views for the existing JIT key lookup. No column data is allocated or copied;
- * the returned views borrow the input buffers.
+ * become INT32 index views carrying the parent's null mask, size and offset, including within
+ * lists and structs. Other algorithms retain dictionary views for the existing JIT key lookup.
+ * No column data is allocated or copied; the returned views borrow the input buffers.
  *
  * @param alg Hash algorithm
  * @param input Input table
  * @return Normalized table view
- * @throws data_type_error If index hashing requires converting non-INT32 storage, allowing the
+ * @throws data_type_error If index storage or a Spark chrono unit is unsupported, allowing the
  * public hash API to fall back to native execution
  */
 table_view normalize(algorithm alg, table_view const& input)
 {
-  auto const hash_indices =
-    alg == algorithm::spark_murmurhash3_x86_32 || alg == algorithm::murmurhash3_x64_128;
+  if (input.num_rows() == 0) { return input; }
+
   std::vector<column_view> columns;
   for (auto const& column : input) {
-    auto view = column;
-    if (hash_indices && column.type().id() == type_id::DICTIONARY32 && !column.is_empty()) {
-      view = dictionary_column_view{column}.get_indices_annotated();
-      CUDF_EXPECTS(view.type().id() == type_id::INT32,
-                   "JIT dictionary index hashing requires INT32 storage",
-                   data_type_error);
-    }
-    columns.push_back(view);
+    columns.push_back(normalize(alg, column));
   }
   return table_view{columns, input.num_rows()};
 }
@@ -209,11 +209,6 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
                                                  cudf::memory_resources mr)
 {
   auto const input = normalize(alg, table);
-  if (alg == algorithm::spark_murmurhash3_x86_32 && input.num_rows() != 0) {
-    for (auto const& column : input) {
-      check_spark_type(column);
-    }
-  }
 
   std::vector<std::unique_ptr<column>> outputs;
 

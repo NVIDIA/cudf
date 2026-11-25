@@ -156,6 +156,41 @@ TEST_P(SparkMurmurHashTest, DictionaryIndices)
   }
 }
 
+TEST_P(SparkMurmurHashTest, NestedDictionaryIndices)
+{
+  cudf::test::dictionary_column_wrapper<cudf::timestamp_s, int64_t> dictionary{
+    {100, 200, 100, 300}, {true, true, false, true}};
+  cudf::test::structs_column_wrapper const input{{dictionary}};
+  cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 0, 2}, {true, true, false, true}};
+  cudf::test::structs_column_wrapper const expected_input{{indices}};
+
+  auto const check = [&](cudf::column_view actual, cudf::column_view expected_values) {
+    auto const expected = cudf::hashing::spark_murmurhash3_x86_32(
+      cudf::table_view{{expected_values}}, 42, cudf::use_jit::NO);
+    auto const result =
+      cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{{actual}}, 42, GetParam());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
+  };
+  check(input, expected_input);
+  check(cudf::slice(input, {1, 4}).front(), cudf::slice(expected_input, {1, 4}).front());
+
+  auto const lists =
+    cudf::make_lists_column(2,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4}.release(),
+                            dictionary.release(),
+                            0,
+                            cudf::create_null_mask(2, cudf::mask_state::UNALLOCATED));
+  auto const expected_lists =
+    cudf::make_lists_column(2,
+                            cudf::test::fixed_width_column_wrapper<int32_t>{0, 2, 4}.release(),
+                            indices.release(),
+                            0,
+                            cudf::create_null_mask(2, cudf::mask_state::UNALLOCATED));
+  check(lists->view(), expected_lists->view());
+  check(cudf::slice(lists->view(), {1, 2}).front(),
+        cudf::slice(expected_lists->view(), {1, 2}).front());
+}
+
 TEST_P(SparkMurmurHashTest, EmptyInput)
 {
   cudf::test::fixed_width_column_wrapper<int32_t> const empty{};

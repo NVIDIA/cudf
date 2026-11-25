@@ -12,6 +12,7 @@
 #include <cuda/cmath>
 #include <cuda/numeric>
 #include <cuda/std/algorithm>
+#include <cuda/std/bit>
 #include <cuda/std/cstdint>
 #include <cuda/std/limits>
 #include <cuda/std/optional>
@@ -84,6 +85,38 @@ __device__ inline cuda::std::optional<OutRep> round_quotient(
 }
 
 /**
+ * @brief Divides `remainder * 2^64 + low` by `divisor`, replacing `remainder` with the remainder.
+ *
+ * Requires the top bit of `divisor` to be set and `remainder < divisor`, so that the quotient fits
+ * in 64 bits.
+ *
+ * @param remainder The high 128 bits of the dividend, replaced with the remainder
+ * @param low The low 64 bits of the dividend
+ * @param divisor The divisor
+ * @return The quotient
+ */
+__device__ inline cuda::std::uint64_t divide_3by2(__uint128_t& remainder,
+                                                  cuda::std::uint64_t low,
+                                                  __uint128_t divisor)
+{
+  using U         = __uint128_t;
+  auto const d_hi = static_cast<cuda::std::uint64_t>(divisor >> 64);
+  auto const d_lo = static_cast<cuda::std::uint64_t>(divisor);
+  auto const r_hi = static_cast<cuda::std::uint64_t>(remainder >> 64);
+  // Estimated from the high 64 bits of `divisor`, this is at most 2 too large since `d_hi >= 2^63`
+  U estimate =
+    r_hi == d_hi ? U{cuda::std::numeric_limits<cuda::std::uint64_t>::max()} : remainder / d_hi;
+  U estimate_rest = remainder - estimate * d_hi;
+  while ((estimate_rest >> 64) == 0 && estimate * d_lo > ((estimate_rest << 64) | low)) {
+    --estimate;
+    estimate_rest += d_hi;
+  }
+  // The true remainder is less than `divisor`, so computing it modulo 2^128 is exact
+  remainder = ((remainder << 64) | low) - estimate * divisor;
+  return static_cast<cuda::std::uint64_t>(estimate);
+}
+
+/**
  * @brief Divides `dividend * 10^exponent` by `divisor` with a 256-bit intermediate, and rounds
  * the quotient.
  *
@@ -127,23 +160,19 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
   // The quotient is at least 2^128, which never fits
   if (hi >= divisor) { return cuda::std::nullopt; }
 
-  if (hi == 0) {
-    return round_quotient<OutRep>(lo / divisor, lo % divisor, divisor, negative, method);
+  // Long division in 64-bit digits, after shifting so that the top bit of the divisor is set.
+  // Since `hi < divisor`, shifting `hi` by the same amount can't overflow.
+  int const shift    = cuda::std::countl_zero(divisor);
+  U const normalized = divisor << shift;
+  if (shift > 0) {
+    hi = (hi << shift) | (lo >> (cuda::std::numeric_limits<U>::digits - shift));
+    lo <<= shift;
   }
-
-  // Shift-subtract long division. `remainder` stays below `divisor`, which is at most 2^127, so
-  // shifting it left by one bit can't overflow.
-  U quotient  = 0;
-  U remainder = hi;
-  for (int bit = cuda::std::numeric_limits<U>::digits - 1; bit >= 0; --bit) {
-    remainder = (remainder << 1) | ((lo >> bit) & 1);
-    quotient <<= 1;
-    if (remainder >= divisor) {
-      remainder -= divisor;
-      quotient |= 1;
-    }
-  }
-  return round_quotient<OutRep>(quotient, remainder, divisor, negative, method);
+  U remainder      = hi;
+  auto const q_hi  = divide_3by2(remainder, static_cast<cuda::std::uint64_t>(lo >> 64), normalized);
+  auto const q_lo  = divide_3by2(remainder, static_cast<cuda::std::uint64_t>(lo), normalized);
+  U const quotient = (U{q_hi} << 64) | q_lo;
+  return round_quotient<OutRep>(quotient, remainder >> shift, divisor, negative, method);
 }
 
 /**

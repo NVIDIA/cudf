@@ -257,7 +257,7 @@ struct transform_program {
  * @throws std::invalid_argument if any of the output or input types are not supported.
  * Supported input types are fixed-width, string, and their dictionary types. Supported output
  * types are fixed-width and string. String outputs are `cudf::string_view`, or
- * `cuda::std::span<char>` when `string_offsets` are given.
+ * `cudf::mutable_string_view` when `string_offsets` are given.
  * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
  * if the number of string offsets does not match the number of output columns.
  * @throws cudf::evaluation_error if the UDF produces an error during execution.

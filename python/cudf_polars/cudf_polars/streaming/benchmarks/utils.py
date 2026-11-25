@@ -893,6 +893,10 @@ def get_executor_options(
         executor_options["quent_context"] = cudf_polars.quent.QuentConfig(
             engine_id=run_config.run_id
         )
+    if run_config.io_mode == "cold":
+        # A cold query reads every byte from storage, so a host cache could only
+        # add the cost of filling it; read without one.
+        executor_options["cucascade_cache_bytes"] = 0
 
     return executor_options
 

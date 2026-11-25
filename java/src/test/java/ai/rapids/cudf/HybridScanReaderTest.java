@@ -5,6 +5,7 @@
 
 package ai.rapids.cudf;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -149,6 +150,18 @@ public class HybridScanReaderTest extends CudfTestBase {
       assertThrows(CudfException.class,
           () -> open.reader.filterRowGroupsWithStats(open.reader.allRowGroups()),
           "after setFilter(null), filter-based APIs must reject with 'Empty input filter expression'");
+    }
+  }
+
+  @Test
+  void testSetFilterJitUnsupported(@TempDir Path tmp) throws IOException {
+    AstExpression expr = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnNameReference("zip_code"), Literal.ofInt(150000));
+    try (OpenReader open = OpenReader.standard(tmp);
+         CompiledExpression jitFilter = expr.compileJit()) {
+      assertThatThrownBy(() -> open.reader.setFilter(jitFilter))
+          .isInstanceOf(CudfException.class)
+          .hasMessage("JIT-compiled expressions cannot be used by a default AST consumer");
     }
   }
 

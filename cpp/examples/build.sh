@@ -28,6 +28,8 @@ while [ : ]; do
   esac
 done
 
+CMAKE_ARGS=("$@")
+
 # Root of examples
 EXAMPLES_DIR=$(dirname "$(realpath "$0")")
 
@@ -49,7 +51,7 @@ build_example() {
   build_dir="${example_dir}/build"
 
   # Configure
-  cmake -S "${example_dir}" -B "${build_dir}" -Dcudf_ROOT="${LIB_BUILD_DIR}"
+  cmake -S "${example_dir}" -B "${build_dir}" -Dcudf_ROOT="${LIB_BUILD_DIR}" "${CMAKE_ARGS[@]}"
   # Build
   cmake --build "${build_dir}" -j"${PARALLEL_LEVEL}"
   # Install if needed

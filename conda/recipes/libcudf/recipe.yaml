@@ -50,7 +50,7 @@ outputs:
           ./build.sh -n -v \
               libcudf libcudf_kafka libcudf_streaming "${test_targets[@]}" \
               --build_metrics --incl_cache_stats --allgpuarch \
-              --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON\" $cmake_args"
+              --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON\" \"-DCUDF_DOWNLOAD_ZSTD=OFF\" $cmake_args"
         secrets:
           - AWS_ACCESS_KEY_ID
           - AWS_SECRET_ACCESS_KEY
@@ -282,7 +282,7 @@ outputs:
       skip: not build_cpp_tests
       script:
         content: |
-          ./cpp/examples/build.sh --install
+          ./cpp/examples/build.sh --install -- -DCUDF_DOWNLOAD_ZSTD=OFF
         secrets:
           - AWS_ACCESS_KEY_ID
           - AWS_SECRET_ACCESS_KEY

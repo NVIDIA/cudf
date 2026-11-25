@@ -223,9 +223,10 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
     auto const type = column.type().id();
     return type == type_id::STRING || type == type_id::LIST || type == type_id::DICTIONARY32;
   });
-  auto const instance     = reflect_hash_kernel(alg, input, nullable, single_row_per_thread);
-  auto const operation    = get_kernel(alg, instance);
-  auto [storage, columns] = create_column_device_views<column_device_view>(input, stream, mr);
+  auto const instance  = reflect_hash_kernel(alg, input, nullable, single_row_per_thread);
+  auto const operation = get_kernel(alg, instance);
+  auto [storage, columns] =
+    create_column_device_views<column_device_view>(input, stream, mr.as_temporary());
 
   launch(operation, columns, input.num_rows(), seed, single_row_per_thread, d_low, d_high, stream);
 

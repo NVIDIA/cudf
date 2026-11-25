@@ -14,6 +14,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -128,6 +129,32 @@ TYPED_TEST(SparkMurmurHashTestFloatTyped, TestExtremes)
 }
 
 class SparkMurmurHashTest : public cudf::test::BaseFixtureWithParam<cudf::use_jit> {};
+
+TEST_P(SparkMurmurHashTest, DictionaryIndices)
+{
+  for (bool const has_nulls : {false, true}) {
+    SCOPED_TRACE(has_nulls);
+    auto const validity        = std::array{true, true, true, !has_nulls};
+    auto const parent_validity = std::array{true, true, true, true, !has_nulls};
+    cudf::test::fixed_width_column_wrapper<int64_t> values{{100, 100, 200, 300, 100},
+                                                           parent_validity.begin()};
+    cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 0}, validity.begin()};
+    for (auto const type :
+         {cudf::type_id::INT8, cudf::type_id::INT16, cudf::type_id::INT32, cudf::type_id::INT64}) {
+      SCOPED_TRACE(static_cast<int>(type));
+      auto const encoded = cudf::dictionary::encode(values, cudf::data_type{type});
+      auto const input   = cudf::slice(encoded->view(), {1, 5}).front();
+      for (uint32_t const seed : {0u, 42u}) {
+        SCOPED_TRACE(seed);
+        auto const expected = cudf::hashing::spark_murmurhash3_x86_32(
+          cudf::table_view{{indices}}, seed, cudf::use_jit::NO);
+        auto const result =
+          cudf::hashing::spark_murmurhash3_x86_32(cudf::table_view{{input}}, seed, GetParam());
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected->view(), result->view());
+      }
+    }
+  }
+}
 
 TEST_P(SparkMurmurHashTest, EmptyInput)
 {

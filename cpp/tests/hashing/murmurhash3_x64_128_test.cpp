@@ -10,8 +10,11 @@
 #include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
 
+#include <array>
 #include <limits>
 #include <type_traits>
 
@@ -186,6 +189,32 @@ TEST_P(MurmurHash3_x64_128_Test, IntegerType)
                                                                      7654781420204105039ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), int64_low);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), int64_high);
+}
+
+TEST_P(MurmurHash3_x64_128_Test, DictionaryIndices)
+{
+  for (bool const has_nulls : {false, true}) {
+    SCOPED_TRACE(has_nulls);
+    auto const validity        = std::array{true, true, true, !has_nulls};
+    auto const parent_validity = std::array{true, true, true, true, !has_nulls};
+    cudf::test::fixed_width_column_wrapper<int64_t> values{{100, 100, 200, 300, 100},
+                                                           parent_validity.begin()};
+    cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 0}, validity.begin()};
+    for (auto const type :
+         {cudf::type_id::INT8, cudf::type_id::INT16, cudf::type_id::INT32, cudf::type_id::INT64}) {
+      SCOPED_TRACE(static_cast<int>(type));
+      auto const encoded = cudf::dictionary::encode(values, cudf::data_type{type});
+      auto const input   = cudf::slice(encoded->view(), {1, 5}).front();
+      for (uint64_t const seed : {uint64_t{0}, uint64_t{0x123456789abcdef0}}) {
+        SCOPED_TRACE(seed);
+        auto const expected =
+          cudf::hashing::murmurhash3_x64_128(cudf::table_view{{indices}}, seed, cudf::use_jit::NO);
+        auto const result =
+          cudf::hashing::murmurhash3_x64_128(cudf::table_view{{input}}, seed, GetParam());
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+      }
+    }
+  }
 }
 
 TEST_P(MurmurHash3_x64_128_Test, ZeroColumns)

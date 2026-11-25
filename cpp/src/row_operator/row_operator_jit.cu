@@ -11,6 +11,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
+#include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -167,14 +168,47 @@ void check_spark_type(column_view const& column)
   }
 }
 
+/**
+ * @brief Returns input views matching the algorithm's native dictionary hash semantics.
+ *
+ * Spark Murmur32 and Murmur128 hash dictionary indices, so their non-empty dictionary columns
+ * become INT32 index views carrying the parent's null mask, size and offset. Other algorithms
+ * retain dictionary views for the existing JIT key lookup. No column data is allocated or copied;
+ * the returned views borrow the input buffers.
+ *
+ * @param alg Hash algorithm
+ * @param input Input table
+ * @return Normalized table view
+ * @throws data_type_error If index hashing requires converting non-INT32 storage, allowing the
+ * public hash API to fall back to native execution
+ */
+table_view normalize(algorithm alg, table_view const& input)
+{
+  auto const hash_indices =
+    alg == algorithm::spark_murmurhash3_x86_32 || alg == algorithm::murmurhash3_x64_128;
+  std::vector<column_view> columns;
+  for (auto const& column : input) {
+    auto view = column;
+    if (hash_indices && column.type().id() == type_id::DICTIONARY32 && !column.is_empty()) {
+      view = dictionary_column_view{column}.get_indices_annotated();
+      CUDF_EXPECTS(view.type().id() == type_id::INT32,
+                   "JIT dictionary index hashing requires INT32 storage",
+                   data_type_error);
+    }
+    columns.push_back(view);
+  }
+  return table_view{columns, input.num_rows()};
+}
+
 std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
-                                                 table_view const& input,
+                                                 table_view const& table,
                                                  type_id low,
                                                  std::optional<type_id> high,
                                                  uint64_t seed,
                                                  cuda::stream_ref stream,
                                                  cudf::memory_resources mr)
 {
+  auto const input = normalize(alg, table);
   if (alg == algorithm::spark_murmurhash3_x86_32 && input.num_rows() != 0) {
     for (auto const& column : input) {
       check_spark_type(column);

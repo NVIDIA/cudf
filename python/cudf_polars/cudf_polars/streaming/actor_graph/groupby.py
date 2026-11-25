@@ -606,7 +606,7 @@ async def _strictify_chunkwise_groupby(
         ),
         duplicated=adjusted_metadata.duplicated,
     )
-    ch_adjusted = context.create_channel()
+    ch_adjusted: Channel[TableChunk] = context.create_channel()
     if tracer is not None:
         tracer.decision = "strictify_chunkwise"
     async with shutdown_channels_on_error(context, ch_adjusted):

@@ -710,7 +710,7 @@ async def _shuffle_and_reassemble(
         sample_byte_count,
     )
 
-    ch_replay = context.create_channel()
+    ch_replay: Channel[TableChunk] = context.create_channel()
     sort_by_input_order = _contains_input_order_window_without_order_by(
         [ne.value for ne in ir.exprs]
     )

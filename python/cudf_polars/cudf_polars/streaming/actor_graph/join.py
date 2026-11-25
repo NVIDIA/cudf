@@ -989,8 +989,8 @@ async def _shuffle_join(
     # Construct a shuffle-shuffle-join pipeline.
     # The shuffle operations will pass chunks through unchanged
     # if the data is already partitioned correctly.
-    ch_left_shuffle = context.create_channel()
-    ch_right_shuffle = context.create_channel()
+    ch_left_shuffle: Channel[TableChunk] = context.create_channel()
+    ch_right_shuffle: Channel[TableChunk] = context.create_channel()
     # note: this is an actor inside of an actor. How should we log that in our traces?
     async with shutdown_on_error(
         context,
@@ -1154,8 +1154,8 @@ async def _ordered_join(
         tracer.decision = _ordered_join_decision(
             left_aligned=left_aligned, right_aligned=right_aligned
         )
-    ch_left_adjusted = context.create_channel()
-    ch_right_adjusted = context.create_channel()
+    ch_left_adjusted: Channel[TableChunk] = context.create_channel()
+    ch_right_adjusted: Channel[TableChunk] = context.create_channel()
     async with shutdown_on_error(
         context,
         chs_aux=(ch_left_adjusted, ch_right_adjusted),
@@ -1978,8 +1978,8 @@ async def join_actor(
         right_sample = join_state.right.sample
         if left_sample is None or right_sample is None:
             raise ValueError("Join inputs have not been sampled")
-        ch_left_replay = context.create_channel()
-        ch_right_replay = context.create_channel()
+        ch_left_replay: Channel[TableChunk] = context.create_channel()
+        ch_right_replay: Channel[TableChunk] = context.create_channel()
         prefilter_execution = make_prefilter_execution(
             context,
             comm,

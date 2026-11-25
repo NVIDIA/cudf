@@ -35,6 +35,7 @@ from cudf_polars.utils.cuda_stream import join_cuda_streams
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
     from cudf_streaming.table_chunk import AvailableTableChunk
     from pylibcudf.utils import CudaStreamLike
@@ -345,7 +346,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
     ) -> int:
         """Find a needle's insertion point in one available index column."""
         needs_cast = index_column.type() != dtype
-        memory_scope = nullcontext()
+        memory_scope: AbstractContextManager[object] = nullcontext()
         if needs_cast:
             memory_scope = opaque_memory_usage(
                 await reserve_memory(

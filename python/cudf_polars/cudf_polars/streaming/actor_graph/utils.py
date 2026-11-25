@@ -951,14 +951,14 @@ class ChunkSampler:
 
     async def sample(self) -> TableSizeStats:
         """Sample the configured channel and return extrapolated statistics."""
-        ch_sampled = self.context.create_channel()
-        temporary_channels = [ch_sampled]
+        ch_sampled: Channel[TableChunk] = self.context.create_channel()
+        temporary_channels: list[Channel[Any]] = [ch_sampled]
         tasks: list[Coroutine[Any, Any, Any]]
         if self.cardinality_estimator is None:
             tasks = [self.sample_channel(ch_sampled), self.store_sample(ch_sampled)]
         else:
-            ch_cardinality_input = self.context.create_channel()
-            ch_cardinality = self.context.create_channel()
+            ch_cardinality_input: Channel[TableChunk] = self.context.create_channel()
+            ch_cardinality: Channel[CardinalityEstimate] = self.context.create_channel()
             temporary_channels.extend((ch_cardinality_input, ch_cardinality))
             # The sampled output must be consumed concurrently with estimation:
             # backpressure there can prevent the cardinality result from being
@@ -1111,8 +1111,8 @@ async def replay_buffered_channel(
             trace_ir=trace_ir,
         ):
             await send_metadata(ch_out, context, metadata)
-            for msg in buffered_chunks:
-                await ch_out.send(context, msg)
+            for buffered in buffered_chunks:
+                await ch_out.send(context, buffered)
             while (msg := await ch_in.recv(context)) is not None:
                 await ch_out.send(context, msg)
             await ch_out.drain(context)

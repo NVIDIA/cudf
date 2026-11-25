@@ -31,6 +31,7 @@ from cudf_polars.streaming.filter_hint import (
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Iterable, Sequence
 
+    from cudf_streaming.bloom_filter import BloomFilterChunk
     from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
@@ -324,7 +325,7 @@ def add_bloom_prefilter(
         LIBCUDF_DEFAULT_HASH_SEED,
         bloom_bytes,
     )
-    ch_filter = context.create_channel()
+    ch_filter: Channel[BloomFilterChunk] = context.create_channel()
     execution.add_channel(ch_filter)
     execution.add_task(
         bloom.build(

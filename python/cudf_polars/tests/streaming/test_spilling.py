@@ -150,7 +150,7 @@ def test_make_spill_function(
 
         # Verify we can extract and make available a spilled message
         spilled_mid = message_ids[1][4]  # Newest message from longest queue
-        spilled_msg = buffers[1].extract(mid=spilled_mid)
+        spilled_msg: Message[TableChunk] = buffers[1].extract(mid=spilled_mid)
 
         spilled_chunk = TableChunk.from_message(spilled_msg, br=context.br())
         assert not spilled_chunk.is_available()  # Should be on host

@@ -432,7 +432,7 @@ async def fanout_node_unbounded(
                 """
                 if buffer_ids[idx]:
                     mid = buffer_ids[idx].pop(0)
-                    msg = output_buffers[idx].extract(mid=mid)
+                    msg: Message[TableChunk] = output_buffers[idx].extract(mid=mid)
                     await chs_out[idx].send(context, msg)
 
             async def drain_output(idx: int) -> None:

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
+    from rapidsmpf.streaming.core.message import Message
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
@@ -140,7 +141,7 @@ async def concatenate_node(
         )
 
         chunks: list[TableChunk]
-        msg: TableChunk | None
+        msg: Message[TableChunk] | None
         if need_global_repartition:
             # Global repartitioning via AllGather to single duplicated chunk.
 

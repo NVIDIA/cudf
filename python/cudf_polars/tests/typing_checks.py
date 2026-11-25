@@ -31,6 +31,7 @@ import pylibcudf as plc
 
 if TYPE_CHECKING:
     from cudf_streaming.table_chunk import AvailableTableChunk, TableChunk
+    from rapidsmpf.streaming.core.message import Message
 
 
 def _check_table_chunk(chunk: TableChunk, available: AvailableTableChunk) -> None:
@@ -40,3 +41,9 @@ def _check_table_chunk(chunk: TableChunk, available: AvailableTableChunk) -> Non
     assert_type(available.table_view(), plc.Table)
     # A chunk that may be spilled has no ``table_view``.
     chunk.table_view()  # type: ignore[attr-defined]
+
+
+def _check_message(msg: Message[TableChunk]) -> None:
+    assert_type(msg.sequence_number, int)
+    assert_type(msg.empty(), bool)
+    msg.no_such_method()  # type: ignore[attr-defined]

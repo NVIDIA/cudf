@@ -28,9 +28,27 @@ on:
         type: string
         default: nightly
 
+# Maven release concurrency
+#
+# We have to be careful when deploying Maven artifacts. `cancel-in-progress` is a
+# common configuration that limits CI to one build at a time. New commits being
+# pushed will cancel an in-progress run. We do want `cancel-in-progress`
+# behavior for most runs/steps, but not for the maven deploy step. The
+# interruption of `cancel-in-progress` during publishing could lead to a
+# corrupt or incorrect release that we cannot undo.
+#
+# Branch and nightly runs keep workflow-level cancellation. Each tag run
+# gets its own workflow group so a competing run can't cancel the whole
+# run. If we allowed workflow-level cancellation for tags, it could stop
+# an active publisher even with cancellation disabled in the job's group.
+#
+# Job-level concurrency applies only to jobs in the same group. Selected
+# build and gather jobs can cancel matching jobs for the same tag. The shared
+# publisher groups jobs by repository and artifact and disables cancellation
+# by competing publisher jobs. The publisher's polling timeout still applies.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}${{ github.ref_type == 'tag' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 permissions: {}
 
@@ -458,6 +476,10 @@ jobs:
       matrix_name: conda-cpp-build
       matrix_filter: 'map(. + {CUDA_MAJOR: (.CUDA_VER | split(".") | .[0])})'
   java-build:
+    # See Maven release concurrency above. Each matrix variant has its own group.
+    concurrency:
+      group: ${{ github.workflow }}-prep-java-build-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}-${{ toJSON(matrix) }}
+      cancel-in-progress: ${{ github.ref_type == 'tag' }}
     needs: ["build-details", "java-build-matrix"]
     permissions:
       actions: read
@@ -484,6 +506,10 @@ jobs:
       artifact-name: cudf_java_${{ matrix.ARCH }}_cu${{ matrix.CUDA_MAJOR }}
   # Assemble the per-classifier JARs into one Maven-repository layout.
   java-gather:
+    # See Maven release concurrency above.
+    concurrency:
+      group: ${{ github.workflow }}-prep-java-gather-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build_type || 'branch' }}
+      cancel-in-progress: ${{ github.ref_type == 'tag' }}
     needs: [java-build]
     runs-on: linux-amd64-cpu4
     permissions:
@@ -513,10 +539,11 @@ jobs:
           if-no-files-found: error
 
   # Publish the assembled Maven repository. maven-publish.yaml routes on
-  # rapids-is-release-build. Release tags -> Maven Central (human-gated via the
-  # Publisher Portal). Other runs -> Sonatype snapshots (immediate, overwrites
+  # rapids-is-release-build. Release tags -> Maven Central (automatic publication).
+  # Other runs -> Sonatype snapshots (immediate, overwrites
   # -SNAPSHOT).
   java-publish:
+    # See Maven release concurrency above for the publisher's policy.
     needs: [java-gather]
     permissions:
       actions: read
@@ -529,6 +556,3 @@ jobs:
     with:
       artifact-name: cudf_java_maven_repo
       source-git-sha: ${{ inputs.sha || github.sha }}
-      # Release path only: false = validate + drop (safe). true = stage
-      # PENDING for manual publish. Ignored on the Sonatype snapshot path.
-      stage-for-maven-central-publish: true

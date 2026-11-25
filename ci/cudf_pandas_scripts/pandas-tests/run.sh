@@ -24,15 +24,10 @@ NUM_SHARDS=${3:-}
 SHARD_ARGS=()
 if [[ -n "${NUM_SHARDS}" ]]; then
     SHARD_ARGS=(--shard-id "${SHARD_ID}" --num-shards "${NUM_SHARDS}")
-    if [[ ${PANDAS_SHARD_BY_FILE:-0} == 1 ]]; then
-        SHARD_ARGS+=(--shard-by-file)
-        if [[ -n ${PANDAS_SHARD_FILE_TIMINGS:-} ]]; then
-            # Keep the external timings path out of pytest's rootdir discovery.
-            SHARD_ARGS+=("--shard-file-timings=$(realpath "${PANDAS_SHARD_FILE_TIMINGS}")")
-        fi
-        if [[ -n ${PANDAS_SHARD_SPLIT_HEAVY_FILES:-} ]]; then
-            SHARD_ARGS+=("--shard-split-heavy-files=${PANDAS_SHARD_SPLIT_HEAVY_FILES}")
-        fi
+    if [[ ${PANDAS_TESTS_BRANCH} == pr ]]; then
+        # Keep the timings path out of pytest's rootdir discovery.
+        shard_timings=$(realpath "$(dirname "$0")/shard-file-timings.json")
+        SHARD_ARGS+=(--shard-by-file "--shard-file-timings=${shard_timings}" --shard-split-heavy-files=6)
     fi
 fi
 RAPIDS_FULL_VERSION=$(<./VERSION)

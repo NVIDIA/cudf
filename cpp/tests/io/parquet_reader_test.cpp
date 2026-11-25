@@ -2887,8 +2887,9 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   auto const input = table_view{{file_col}};
   cudf::io::table_input_metadata input_metadata(input);
   auto& file_metadata = input_metadata.column_metadata[0].set_name("file");
-  file_metadata.child(0).set_name("offset").set_nullability(true);
-  file_metadata.child(1).set_name("inline").set_nullability(true).set_output_as_binary(true);
+  file_metadata.set_struct_column_as_file();
+  file_metadata.child(0).set_name("offset");
+  file_metadata.child(1).set_name("inline");
 
   std::vector<char> file_group;
   cudf::io::write_parquet(
@@ -2896,10 +2897,8 @@ TEST_F(ParquetReaderTest, FileLogicalType)
       .metadata(std::move(input_metadata))
       .build());
   edit_footer(file_group, [](cudf::io::parquet::FileMetaData& fmd) {
-    EXPECT_EQ(fmd.schema[1].name, "file");
     EXPECT_EQ(fmd.schema[2].name, "offset");
     EXPECT_EQ(fmd.schema[3].name, "inline");
-    fmd.schema[1].logical_type = LogicalType{LogicalType::FILE};
     // A signed 64-bit INTEGER annotation on `offset` is allowed and keeps the group FILE
     fmd.schema[2].logical_type = LogicalType{cudf::io::parquet::IntType{64, true}};
   });
@@ -2922,6 +2921,14 @@ TEST_F(ParquetReaderTest, FileLogicalType)
   auto const metadata = read_metadata(std::array{file_group});
   EXPECT_EQ(metadata.schema_info[0].is_file, true);
   EXPECT_EQ(metadata.schema_info[0].children[1].is_binary, true);
+
+  // The read metadata writes the group back as FILE
+  std::vector<char> rewritten;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&rewritten}, input)
+      .metadata(cudf::io::table_input_metadata{metadata})
+      .build());
+  EXPECT_EQ(read_metadata(std::array{rewritten}).schema_info[0].is_file, true);
 
   // A FILE group and a plain struct across sources throw, with or without mismatched schemas
   auto plain_struct = file_group;

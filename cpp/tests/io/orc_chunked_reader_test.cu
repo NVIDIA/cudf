@@ -34,7 +34,6 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
-#include <cuda/stream>
 
 #include <ranges>
 

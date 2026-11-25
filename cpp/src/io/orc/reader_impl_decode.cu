@@ -9,6 +9,7 @@
 #include "io/orc/reader_impl_chunking.hpp"
 #include "io/orc/reader_impl_helpers.hpp"
 #include "io/utilities/hostdevice_span.hpp"
+#include "orc_error.cuh"
 
 #include <cudf/detail/algorithms/copy_if.cuh>
 #include <cudf/detail/copy.hpp>
@@ -430,8 +431,7 @@ void decode_stream_data(int64_t num_dicts,
     update_null_mask(chunks, out_buffers, stream, mr);
   }
 
-  cudf::detail::device_scalar<size_type> error_count(
-    0, stream, cudf::get_current_device_resource_ref());
+  kernel_error error_status(stream, mr.as_temporary());
   decode_column_data(chunks.base_device_ptr(),
                      global_dict.data(),
                      row_groups,
@@ -443,12 +443,15 @@ void decode_stream_data(int64_t num_dicts,
                      row_groups.size().first,
                      row_index_stride,
                      level,
-                     error_count.data(),
+                     error_status.data(),
                      stream);
   chunks.device_to_host_async(stream);
-  // `value` synchronizes
-  auto const num_errors = error_count.value(stream);
-  CUDF_EXPECTS(num_errors == 0, "ORC data decode failed");
+  auto const errors = error_status.value_sync(stream);
+  CUDF_EXPECTS(
+    (errors & static_cast<kernel_error::value_type>(error_code::UNREPRESENTABLE_DATE)) == 0,
+    "ORC DATE cannot be represented in the proleptic Gregorian calendar");
+  CUDF_EXPECTS(errors == 0,
+               "ORC data decode failed with code(s) " + kernel_error::to_string(errors));
 
   std::for_each(col_idx_it + 0, col_idx_it + num_columns, [&](auto col_idx) {
     out_buffers[col_idx].null_count() =
@@ -877,6 +880,10 @@ void reader_impl::decompress_and_decode_stripes(read_mode mode)
 
         // num_child_rows for a struct column will be same, for other nested types it will be
         // calculated.
+        chunk.convert_dates_to_proleptic =
+          _options.convert_dates_to_proleptic and
+          _metadata.per_file_metadata[stripe.source_idx].ff.calendar ==
+            CalendarKind::JULIAN_GREGORIAN;
         chunk.num_child_rows = (chunk.type_kind != STRUCT) ? 0 : chunk.num_rows;
         chunk.dtype_id       = column_types[col_idx].id();
         chunk.decimal_scale  = _metadata.per_file_metadata[stripe.source_idx]

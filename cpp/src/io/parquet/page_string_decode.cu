@@ -4,7 +4,7 @@
  */
 
 #include "delta_binary.cuh"
-#include "error.hpp"
+#include "io/utilities/kernel_error.hpp"
 #include "page_decode.cuh"
 #include "page_state_composed.cuh"
 #include "page_string_utils.cuh"

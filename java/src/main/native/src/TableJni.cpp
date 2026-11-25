@@ -2571,6 +2571,7 @@ Java_ai_rapids_cudf_Table_readORCFromDataSource(JNIEnv* env,
                                                 jint unit,
                                                 jobjectArray dec128_col_names,
                                                 jboolean ignore_timezone_in_stripe_footer,
+                                                jboolean convert_dates_to_proleptic,
                                                 jlong ds_handle)
 {
   JNI_NULL_CHECK(env, ds_handle, "no data source handle given", 0);
@@ -2597,6 +2598,7 @@ Java_ai_rapids_cudf_Table_readORCFromDataSource(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         .decimal128_columns(n_dec128_col_names.as_cpp_vector())
         .ignore_timezone_in_stripe_footer(ignore_timezone_in_stripe_footer)
+        .convert_dates_to_proleptic(convert_dates_to_proleptic)
         .build();
     return convert_table_with_row_count_for_return(env, cudf::io::read_orc(opts).tbl);
   }
@@ -2613,7 +2615,8 @@ Java_ai_rapids_cudf_Table_readORC(JNIEnv* env,
                                   jboolean usingNumPyTypes,
                                   jint unit,
                                   jobjectArray dec128_col_names,
-                                  jboolean ignore_timezone_in_stripe_footer)
+                                  jboolean ignore_timezone_in_stripe_footer,
+                                  jboolean convert_dates_to_proleptic)
 {
   bool read_buffer = true;
   if (buffer == 0) {
@@ -2657,6 +2660,7 @@ Java_ai_rapids_cudf_Table_readORC(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         .decimal128_columns(n_dec128_col_names.as_cpp_vector())
         .ignore_timezone_in_stripe_footer(ignore_timezone_in_stripe_footer)
+        .convert_dates_to_proleptic(convert_dates_to_proleptic)
         .build();
     return convert_table_with_row_count_for_return(env, cudf::io::read_orc(opts).tbl);
   }
@@ -2677,6 +2681,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                               jbooleanArray j_is_map,
                                               jint j_stripe_size_rows,
                                               jstring j_writer_timezone,
+                                              jint j_calendar_kind,
                                               jobject consumer,
                                               jobject host_memory_allocator)
 {
@@ -2738,6 +2743,8 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
+    auto const calendar = static_cast<orc::CalendarKind>(j_calendar_kind);
+    if (calendar != orc::CalendarKind::UNKNOWN_CALENDAR) { opts.set_calendar_kind(calendar); }
     auto writer_ptr                          = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret = new cudf::jni::native_orc_writer_handle(
       std::move(writer_ptr), std::move(data_sink), std::move(stats));
@@ -2759,6 +2766,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                                                    jbooleanArray j_is_map,
                                                                    jint j_stripe_size_rows,
                                                                    jstring j_writer_timezone,
+                                                                   jint j_calendar_kind,
                                                                    jstring j_output_path)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
@@ -2816,6 +2824,8 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
+    auto const calendar = static_cast<orc::CalendarKind>(j_calendar_kind);
+    if (calendar != orc::CalendarKind::UNKNOWN_CALENDAR) { opts.set_calendar_kind(calendar); }
     auto writer_ptr = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret =
       new cudf::jni::native_orc_writer_handle(std::move(writer_ptr), nullptr, std::move(stats));

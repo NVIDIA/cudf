@@ -15,6 +15,7 @@ from statistics import median
 import pytest
 
 _EXCLUDED_SHARD_FILES = pytest.StashKey[set[Path]]()
+_NODE_SHARDED_FILES = pytest.StashKey[set[Path]]()
 
 
 def positive_int(value):
@@ -57,6 +58,12 @@ def pytest_addoption(parser):
         type=Path,
         help="JSON mapping of test file paths to previous test durations in seconds.",
     )
+    group.addoption(
+        "--shard-split-heavy-files",
+        type=positive_int,
+        default=0,
+        help="Split this many of the slowest files by node ID in file-sharded runs.",
+    )
 
 
 def _sha256_hash(value: str) -> int:
@@ -81,7 +88,7 @@ def partition_items_by_shard(items, shard_id, num_shards):
     return selected, deselected
 
 
-def excluded_shard_files(root, shard_id, num_shards, timings):
+def plan_file_shard(root, shard_id, num_shards, timings, split_count):
     files = sorted(
         path.relative_to(root).as_posix()
         for path in (root / "tests").rglob("*.py")
@@ -109,18 +116,28 @@ def excluded_shard_files(root, shard_id, num_shards, timings):
                 "Shard timings must map paths to nonnegative seconds"
             )
     known = [weights[path] for path in files if weights.get(path, 0) > 0]
+    if split_count > len(known):
+        raise pytest.UsageError(
+            "--shard-split-heavy-files exceeds the number of staged tests "
+            "with positive file timings"
+        )
     default = median(known) if known else 1.0
     costs = {path: weights.get(path, default) or default for path in files}
+    ordered = sorted(files, key=lambda path: -costs[path])
+    measured = [path for path in ordered if weights.get(path, 0) > 0]
+    split = set(measured[:split_count])
     totals = [0.0] * num_shards
     excluded = set()
     # Assign the slowest files first so unusually expensive modules are spread
     # across shards. The sorted paths and lowest shard index break ties.
-    for path in sorted(files, key=lambda path: -costs[path]):
+    for path in ordered:
+        if path in split:
+            continue
         shard = min(range(num_shards), key=totals.__getitem__)
         totals[shard] += costs[path]
         if shard != shard_id:
             excluded.add(root / path)
-    return excluded
+    return excluded, {root / path for path in split}
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -12570,13 +12587,22 @@ def pytest_configure(config):
             f"--shard-id ({shard_id}) must be in "
             f"[0, --num-shards ({num_shards}))"
         )
-    if num_shards > 1 and config.getoption("shard_by_file"):
-        config.stash[_EXCLUDED_SHARD_FILES] = excluded_shard_files(
+    shard_by_file = config.getoption("shard_by_file")
+    split_count = config.getoption("shard_split_heavy_files")
+    if split_count and (not shard_by_file or num_shards == 1):
+        raise pytest.UsageError(
+            "--shard-split-heavy-files requires file sharding with multiple shards"
+        )
+    if num_shards > 1 and shard_by_file:
+        excluded, split = plan_file_shard(
             config.rootpath,
             shard_id,
             num_shards,
             config.getoption("shard_file_timings"),
+            split_count,
         )
+        config.stash[_EXCLUDED_SHARD_FILES] = excluded
+        config.stash[_NODE_SHARDED_FILES] = split
 
 
 @pytest.hookimpl(trylast=True)
@@ -12584,17 +12610,24 @@ def pytest_collection_modifyitems(session, config, items):
     num_shards = config.getoption("num_shards")
     sharded = num_shards > 1
     if sharded:
+        shard_id = config.getoption("shard_id")
         if config.getoption("shard_by_file"):
             # Pytest bypasses the ignore hook for explicitly requested files.
             excluded = config.stash[_EXCLUDED_SHARD_FILES]
-            deselected = [item for item in items if item.path in excluded]
-            if deselected:
-                items[:] = [
-                    item for item in items if item.path not in excluded
-                ]
+            split = config.stash[_NODE_SHARDED_FILES]
+            selected, deselected = [], []
+            for item in items:
+                if item.path in excluded or (
+                    item.path in split
+                    and _sha256_hash(item.nodeid) % num_shards != shard_id
+                ):
+                    deselected.append(item)
+                else:
+                    selected.append(item)
+            items[:] = selected
         else:
             items[:], deselected = partition_items_by_shard(
-                items, config.getoption("shard_id"), num_shards
+                items, shard_id, num_shards
             )
         if deselected:
             # Tell pytest what the other shards took, so reporting plugins
